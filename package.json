@@ -1,0 +1,13 @@
+{
+    "scripts": {
+      "lint": "eslint .",
+      "postinstall": "husky install"
+    },
+    "devDependencies": {
+      "@commitlint/cli": "^17.6.1",
+      "@commitlint/config-conventional": "^17.6.1",
+      "@medic/eslint-config": "^1.1.0",
+      "eslint": "^8.31.0",
+      "husky": "^8.0.3"
+    }
+  }

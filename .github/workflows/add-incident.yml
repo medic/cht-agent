@@ -1,0 +1,29 @@
+name: Add incident detail template
+on:
+  issues:
+    types:
+      - labeled
+jobs:
+  add-comment:
+    if: github.event.label.name == 'incident'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Get Today's Date
+        id: date
+        run: echo "TODAY=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+      - name: Add comment
+        uses: peter-evans/create-or-update-comment@v2
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            @${{ github.event.issue.user.login }} update the `incident` metrics below. Include relevant links to the sources of your values e.g. commit, pull request, slack alert, etc.
+            | Metric  | Value |
+            | ------------- | ------------- |
+            | When was the bug introduced (when did the incident begin to impact users)? | _YYYY-MM-DD_  |
+            | When was the bug reported in GitHub? | ${{env.TODAY}}  |
+            | When was the incident mitigated for users? | _YYYY-MM-DD_  |
+
+            - [ ] Incident was reported by an end-user.
+            - [ ] Check for system regressions.
