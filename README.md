@@ -1,50 +1,39 @@
-# CHT Product Template Repository
+# CHT-Agent Repository
 
-This is a template repository for CHT Products. You can generate a new repository with the same directory structure and files as in this repository.
+## System Architecture Overview
 
-## Create a repository from this template
+```
+CLI Interface
+    ↓
+Master Supervisor (Orchestrator)
+├── Research Supervisor
+│   ├── Documentation Search Agent
+│   └── Context Analysis Agent
+│   
+├── [HUMAN VALIDATION CHECKPOINT #1]
+│   • Validate research findings
+│   • Approve orchestration plan
+│   
+├── Development Supervisor
+│   ├── Code Generation Agent
+│   └── Test Environment Agent
+│   
+├── QA Supervisor
+│   ├── Code Validation Agent
+│   └── Test Orchestration Agent
+│   
+└── [HUMAN VALIDATION CHECKPOINT #2]
+    • Review generated code
+    • Verify test results
+    • Approve for completion
+```
 
-When [creating a new repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository) under the Medic organization, select `cht-repo-template` as a template to use for the new repository.
+## Core Design Principles
 
-You can also create a repository directly from the template by following the steps [here](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+1. **Run with any model**: Easily changeable to any model
+2. **Tool Orchestration Over Reinvention**: Agents act as intelligent coordinators of existing CHT tools (cht-conf, cht-toolbox, cht-datasource, cht-docs, npm scripts) rather than implementing custom validation
+3. **Context-Based Learning**: Lightweight file-based memory system that mirrors CHT repository structure
+4. **Incremental Value Delivery**: Each agent provides immediate value while building knowledge over time
+5. **Developer-Friendly Integration**: Seamless integration with existing npm scripts and development workflows
 
-_Note_: You can read more about CHT Product repositories [in the CHT documentation](https://docs.communityhealthtoolkit.org/contribute/code/repository-checklist). 
-
-## Existing default configurations
-
-- The `main` branch is locked via [branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/managing-a-branch-protection-rule).
-- Merges are done through PRs.
-- Automatically delete head branches.
-- Issue templates exist.
-- PR template exists.
-- PRs reference related issues.
-- Commit formats follow the [guidelines](https://docs.communityhealthtoolkit.org/contribute/code/workflow/#commits). More info about linting Git commit messages with Husky [here](https://remarkablemark.org/blog/2019/05/29/git-husky-commitlint/).
-- The following files exist:
-    - `LICENSE` specifying AGPL-3.0 ([example](https://github.com/medic/cht-core/blob/master/LICENSE))
-    - `README.md`
-- The PR template contains a code review checklist.
-- A reviewer for a PR merge is enforced by policy.
-- A linter is set up. [Here](https://github.com/medic/eslint-config)'s more info on how to use the `eslint` configurations.
-
-The PR and issue template content can be adjusted according to the product's purpose.
-
-Additionally, the person who creates the repository might need to share repository access with appropriate teams (this may require admin access).
-
-## Items to consider when developing the CHT Product
-
-To ensure quality, the CHT Products should also follow the guidelines below:
-
-### CI/CD
-
-- Repository runs GitHub Actions CI with automated build and test on each PR.
-
-### Testing
-
-- Unit tests and successful builds for PR merges are set up.
-- Unit tests cover the majority of the code.
-- If applicable, integration tests run to test the solution e2e.
-
-### Observability
-
-- Application faults and errors are logged.
-- Logging configuration can be modified without code changes (eg: verbose mode).
+For WIP, you can find more design details [here](https://github.com/Hareet/cht-agent/blob/main/design/CHT%20Hierarchical%20Multi-Agent%20System%20PoC.md)
