@@ -14,7 +14,9 @@ import { IssueTemplate, CHTDomain } from '../types';
  */
 function parseSimpleYAML(yamlContent: string): Record<string, string> {
   const result: Record<string, string> = {};
-  const lines = yamlContent.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
+  const lines = yamlContent
+    .split('\n')
+    .filter((line) => line.trim() && !line.trim().startsWith('#'));
 
   for (const line of lines) {
     const colonIndex = line.indexOf(':');
@@ -34,7 +36,10 @@ function parseSimpleYAML(yamlContent: string): Record<string, string> {
 /**
  * Extract YAML frontmatter from markdown content
  */
-function extractFrontmatter(content: string): { metadata: Record<string, string>; markdown: string } {
+function extractFrontmatter(content: string): {
+  metadata: Record<string, string>;
+  markdown: string;
+} {
   const lines = content.split('\n');
 
   // Check if file starts with ---
@@ -72,16 +77,14 @@ function validateDomain(domain: string): CHTDomain {
     'tasks-and-targets',
     'messaging',
     'data-sync',
-    'configuration'
+    'configuration',
   ];
 
   if (validDomains.includes(domain as CHTDomain)) {
     return domain as CHTDomain;
   }
 
-  throw new Error(
-    `Invalid domain: "${domain}". Must be one of: ${validDomains.join(', ')}`
-  );
+  throw new Error(`Invalid domain: "${domain}". Must be one of: ${validDomains.join(', ')}`);
 }
 
 /**
@@ -205,8 +208,12 @@ export function parseTicketFile(filePath: string): IssueTemplate {
 
   // Parse technical context
   const components = extractCodeItems(technicalContextSection);
-  const existingReferencesMatch = technicalContextSection.match(/\*\*Existing References:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i);
-  const existingReferences = existingReferencesMatch ? extractBulletList(existingReferencesMatch[1]) : [];
+  const existingReferencesMatch = technicalContextSection.match(
+    /\*\*Existing References:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
+  );
+  const existingReferences = existingReferencesMatch
+    ? extractBulletList(existingReferencesMatch[1])
+    : [];
 
   // Parse requirements, acceptance criteria, and constraints
   const requirements = extractBulletList(requirementsSection);
@@ -214,10 +221,16 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   const constraints = extractBulletList(constraintsSection);
 
   // Parse references
-  const similarImplementationsMatch = referencesSection.match(/\*\*Similar Implementations:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i);
-  const documentationMatch = referencesSection.match(/\*\*Documentation:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i);
+  const similarImplementationsMatch = referencesSection.match(
+    /\*\*Similar Implementations:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
+  );
+  const documentationMatch = referencesSection.match(
+    /\*\*Documentation:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
+  );
 
-  const similarImplementations = similarImplementationsMatch ? extractURLs(similarImplementationsMatch[1]) : [];
+  const similarImplementations = similarImplementationsMatch
+    ? extractURLs(similarImplementationsMatch[1])
+    : [];
   const documentation = documentationMatch ? extractURLs(documentationMatch[1]) : [];
 
   // Build IssueTemplate
@@ -230,16 +243,16 @@ export function parseTicketFile(filePath: string): IssueTemplate {
       technical_context: {
         domain: metadata.domain ? validateDomain(metadata.domain) : undefined,
         components: components,
-        existing_references: existingReferences
+        existing_references: existingReferences,
       },
       requirements: requirements,
       acceptance_criteria: acceptanceCriteria,
       constraints: constraints,
       reference_data: {
         similar_implementations: similarImplementations,
-        documentation: documentation
-      }
-    }
+        documentation: documentation,
+      },
+    },
   };
 
   return issueTemplate;
@@ -255,6 +268,6 @@ export function findTicketFiles(dirPath: string): string[] {
 
   const files = fs.readdirSync(dirPath);
   return files
-    .filter(file => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
-    .map(file => path.join(dirPath, file));
+    .filter((file) => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
+    .map((file) => path.join(dirPath, file));
 }

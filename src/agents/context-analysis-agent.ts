@@ -13,14 +13,14 @@ import {
   CodePattern,
   DesignDecision,
   CHTDomain,
-  DomainComponents
+  DomainComponents,
 } from '../types';
 import {
   loadDomainOverview,
   loadDomainComponents,
   findResolvedIssuesByDomain,
   getRelatedDomains,
-  ensureAgentMemoryExists
+  ensureAgentMemoryExists,
 } from '../utils/context-loader';
 
 export class ContextAnalysisAgent {
@@ -43,14 +43,16 @@ export class ContextAnalysisAgent {
 
     // Domain should have been inferred by now, but handle gracefully if missing
     if (!domain) {
-      console.warn('[Context Analysis Agent] Warning: No domain specified - returning empty analysis');
+      console.warn(
+        '[Context Analysis Agent] Warning: No domain specified - returning empty analysis'
+      );
       return {
         similarContexts: [],
         reusablePatterns: [],
         relevantDesignDecisions: [],
         recommendations: ['Domain not specified - unable to analyze context'],
         historicalSuccessRate: 0.5,
-        relatedDomains: []
+        relatedDomains: [],
       };
     }
 
@@ -68,7 +70,9 @@ export class ContextAnalysisAgent {
 
     // Extract design decisions
     const designDecisions = this.extractDesignDecisions(similarContexts, domain);
-    console.log(`[Context Analysis Agent] Found ${designDecisions.length} relevant design decisions`);
+    console.log(
+      `[Context Analysis Agent] Found ${designDecisions.length} relevant design decisions`
+    );
 
     // Generate recommendations
     const recommendations = this.generateRecommendations(
@@ -83,9 +87,7 @@ export class ContextAnalysisAgent {
     const successRate = this.calculateSuccessRate(similarContexts);
 
     // Get related domains
-    const relatedDomains = domainOverview
-      ? getRelatedDomains(domain)
-      : [];
+    const relatedDomains = domainOverview ? getRelatedDomains(domain) : [];
 
     return {
       similarContexts,
@@ -93,7 +95,7 @@ export class ContextAnalysisAgent {
       relevantDesignDecisions: designDecisions,
       recommendations,
       historicalSuccessRate: successRate,
-      relatedDomains
+      relatedDomains,
     };
   }
 
@@ -110,17 +112,17 @@ export class ContextAnalysisAgent {
     }
 
     // Score and rank issues by similarity
-    const scoredIssues = resolvedIssues.map(resolved => ({
+    const scoredIssues = resolvedIssues.map((resolved) => ({
       issue: resolved,
-      score: this.calculateSimilarityScore(issue, resolved)
+      score: this.calculateSimilarityScore(issue, resolved),
     }));
 
     // Sort by score and return top 5
     return scoredIssues
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
-      .filter(item => item.score > 0.3) // Minimum similarity threshold
-      .map(item => item.issue);
+      .filter((item) => item.score > 0.3) // Minimum similarity threshold
+      .map((item) => item.issue);
   }
 
   /**
@@ -135,7 +137,10 @@ export class ContextAnalysisAgent {
     }
 
     // Domain match (already filtered, but check related domains)
-    if (current.issue.technical_context.domain && resolved.domains.includes(current.issue.technical_context.domain)) {
+    if (
+      current.issue.technical_context.domain &&
+      resolved.domains.includes(current.issue.technical_context.domain)
+    ) {
       score += 0.4;
     }
 
@@ -145,13 +150,14 @@ export class ContextAnalysisAgent {
       ...(resolved.components.api || []),
       ...(resolved.components.webapp || []),
       ...(resolved.components.sentinel || []),
-      ...(resolved.components.shared_libs || [])
+      ...(resolved.components.shared_libs || []),
     ];
 
-    const componentOverlap = currentComponents.filter(comp =>
-      resolvedComponents.some(resolvedComp =>
-        resolvedComp.toLowerCase().includes(comp.toLowerCase()) ||
-        comp.toLowerCase().includes(resolvedComp.toLowerCase())
+    const componentOverlap = currentComponents.filter((comp) =>
+      resolvedComponents.some(
+        (resolvedComp) =>
+          resolvedComp.toLowerCase().includes(comp.toLowerCase()) ||
+          comp.toLowerCase().includes(resolvedComp.toLowerCase())
       )
     ).length;
 
@@ -174,14 +180,14 @@ export class ContextAnalysisAgent {
     // Group contexts by components
     const componentGroups = new Map<string, ResolvedIssueContext[]>();
 
-    contexts.forEach(context => {
+    contexts.forEach((context) => {
       const allComponents = [
         ...(context.components.api || []),
         ...(context.components.webapp || []),
-        ...(context.components.sentinel || [])
+        ...(context.components.sentinel || []),
       ];
 
-      allComponents.forEach(component => {
+      allComponents.forEach((component) => {
         if (!componentGroups.has(component)) {
           componentGroups.set(component, []);
         }
@@ -195,9 +201,9 @@ export class ContextAnalysisAgent {
         patterns.push({
           pattern: `${component} implementation pattern`,
           description: `Commonly used pattern for ${component}`,
-          example: `See resolved issues: ${contexts.map(c => c.id).join(', ')}`,
+          example: `See resolved issues: ${contexts.map((c) => c.id).join(', ')}`,
           domain: contexts[0].domains[0],
-          frequency: contexts.length
+          frequency: contexts.length,
         });
       }
     });
@@ -217,14 +223,14 @@ export class ContextAnalysisAgent {
     // For POC, generate decisions based on context metadata
     // In production, these would be extracted from the full context files
 
-    contexts.forEach(context => {
+    contexts.forEach((context) => {
       if (context.tech_stack && context.tech_stack.length > 0) {
         decisions.push({
           decision: `Use ${context.tech_stack.join(', ')} for ${context.category}`,
           rationale: `Successfully used in ${context.id}`,
           alternatives: [],
           consequences: [`Reference implementation in ${context.id}`],
-          domain
+          domain,
         });
       }
     });
@@ -268,9 +274,7 @@ export class ContextAnalysisAgent {
 
     // Domain-specific recommendations
     if (domainOverview) {
-      recommendations.push(
-        `Review domain overview for key concepts and technologies`
-      );
+      recommendations.push(`Review domain overview for key concepts and technologies`);
     }
 
     // Issue type recommendations
@@ -296,14 +300,14 @@ export class ContextAnalysisAgent {
   private findCommonComponents(contexts: ResolvedIssueContext[]): string[] {
     const componentCounts = new Map<string, number>();
 
-    contexts.forEach(context => {
+    contexts.forEach((context) => {
       const allComponents = [
         ...(context.components.api || []),
         ...(context.components.webapp || []),
-        ...(context.components.sentinel || [])
+        ...(context.components.sentinel || []),
       ];
 
-      allComponents.forEach(component => {
+      allComponents.forEach((component) => {
         componentCounts.set(component, (componentCounts.get(component) || 0) + 1);
       });
     });
@@ -326,7 +330,7 @@ export class ContextAnalysisAgent {
 
     // All resolved issues are successful (phase: completed)
     // In a more complete system, we might track rollbacks, reverts, etc.
-    const successfulContexts = contexts.filter(c => c.phase === 'completed');
+    const successfulContexts = contexts.filter((c) => c.phase === 'completed');
 
     return successfulContexts.length / contexts.length;
   }

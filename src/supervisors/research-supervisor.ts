@@ -14,7 +14,7 @@ import {
   ResearchState,
   ResearchFindings,
   ContextAnalysisResult,
-  OrchestrationPlan
+  OrchestrationPlan,
 } from '../types';
 import { DocumentationSearchAgent } from '../agents/documentation-search-agent';
 import { ContextAnalysisAgent } from '../agents/context-analysis-agent';
@@ -24,32 +24,32 @@ import { enrichIssueTemplate } from '../utils/domain-inference';
 const ResearchStateAnnotation = Annotation.Root({
   messages: Annotation<ResearchState['messages']>({
     reducer: (_current, update) => [..._current, ...update],
-    default: () => []
+    default: () => [],
   }),
   issue: Annotation<IssueTemplate | undefined>({
     reducer: (_current, update) => update ?? _current,
-    default: () => undefined
+    default: () => undefined,
   }),
   researchFindings: Annotation<ResearchFindings | undefined>({
     reducer: (_current, update) => update ?? _current,
-    default: () => undefined
+    default: () => undefined,
   }),
   contextAnalysis: Annotation<ContextAnalysisResult | undefined>({
     reducer: (_current, update) => update ?? _current,
-    default: () => undefined
+    default: () => undefined,
   }),
   orchestrationPlan: Annotation<OrchestrationPlan | undefined>({
     reducer: (_current, update) => update ?? _current,
-    default: () => undefined
+    default: () => undefined,
   }),
   currentPhase: Annotation<ResearchState['currentPhase']>({
     reducer: (_current, update) => update,
-    default: () => 'init' as const
+    default: () => 'init' as const,
   }),
   errors: Annotation<string[]>({
     reducer: (_current, update) => [..._current, ...update],
-    default: () => []
-  })
+    default: () => [],
+  }),
 });
 
 export class ResearchSupervisor {
@@ -61,11 +61,11 @@ export class ResearchSupervisor {
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
       modelName: options.modelName,
-      useMockMCP: options.useMockMCP
+      useMockMCP: options.useMockMCP,
     });
 
     this.contextAgent = new ContextAnalysisAgent({
-      modelName: options.modelName
+      modelName: options.modelName,
     });
 
     this.plannerModel = new ChatAnthropic({
@@ -104,7 +104,7 @@ export class ResearchSupervisor {
     if (!state.issue) {
       return {
         errors: ['No issue provided for documentation search'],
-        currentPhase: 'init' as const
+        currentPhase: 'init' as const,
       };
     }
 
@@ -114,17 +114,19 @@ export class ResearchSupervisor {
       return {
         researchFindings: findings,
         currentPhase: 'context-analysis' as const,
-        messages: [{
-          role: 'assistant' as const,
-          content: `Documentation search completed. Found ${findings.documentationReferences.length} references.`,
-          timestamp: new Date().toISOString()
-        }]
+        messages: [
+          {
+            role: 'assistant' as const,
+            content: `Documentation search completed. Found ${findings.documentationReferences.length} references.`,
+            timestamp: new Date().toISOString(),
+          },
+        ],
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         errors: [`Documentation search failed: ${errorMessage}`],
-        currentPhase: 'doc-search' as const
+        currentPhase: 'doc-search' as const,
       };
     }
   }
@@ -138,7 +140,7 @@ export class ResearchSupervisor {
     if (!state.issue) {
       return {
         errors: ['No issue provided for context analysis'],
-        currentPhase: 'context-analysis' as const
+        currentPhase: 'context-analysis' as const,
       };
     }
 
@@ -148,17 +150,19 @@ export class ResearchSupervisor {
       return {
         contextAnalysis: analysis,
         currentPhase: 'plan-generation' as const,
-        messages: [{
-          role: 'assistant' as const,
-          content: `Context analysis completed. Found ${analysis.similarContexts.length} similar issues.`,
-          timestamp: new Date().toISOString()
-        }]
+        messages: [
+          {
+            role: 'assistant' as const,
+            content: `Context analysis completed. Found ${analysis.similarContexts.length} similar issues.`,
+            timestamp: new Date().toISOString(),
+          },
+        ],
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         errors: [`Context analysis failed: ${errorMessage}`],
-        currentPhase: 'context-analysis' as const
+        currentPhase: 'context-analysis' as const,
       };
     }
   }
@@ -172,7 +176,7 @@ export class ResearchSupervisor {
     if (!state.issue || !state.researchFindings || !state.contextAnalysis) {
       return {
         errors: ['Missing required data for plan generation'],
-        currentPhase: 'plan-generation' as const
+        currentPhase: 'plan-generation' as const,
       };
     }
 
@@ -186,17 +190,19 @@ export class ResearchSupervisor {
       return {
         orchestrationPlan: plan,
         currentPhase: 'complete' as const,
-        messages: [{
-          role: 'assistant' as const,
-          content: 'Orchestration plan generated successfully.',
-          timestamp: new Date().toISOString()
-        }]
+        messages: [
+          {
+            role: 'assistant' as const,
+            content: 'Orchestration plan generated successfully.',
+            timestamp: new Date().toISOString(),
+          },
+        ],
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         errors: [`Plan generation failed: ${errorMessage}`],
-        currentPhase: 'plan-generation' as const
+        currentPhase: 'plan-generation' as const,
       };
     }
   }
@@ -250,7 +256,7 @@ ${issueDetails.acceptance_criteria.map((criteria, i) => `${i + 1}. ${criteria}`)
 
 ## Research Findings
 **Documentation References**: ${findings.documentationReferences.length} found
-${findings.documentationReferences.map(ref => `- ${ref.title}: ${ref.url}`).join('\n')}
+${findings.documentationReferences.map((ref) => `- ${ref.title}: ${ref.url}`).join('\n')}
 
 **Suggested Approaches**:
 ${findings.suggestedApproaches.map((approach, i) => `${i + 1}. ${approach}`).join('\n')}
@@ -295,7 +301,7 @@ Format your response as a structured plan that will guide the development team.`
       `${findings.documentationReferences.length} documentation references found`,
       `${analysis.similarContexts.length} similar past implementations identified`,
       `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`,
-      ...analysis.recommendations.slice(0, 2)
+      ...analysis.recommendations.slice(0, 2),
     ];
 
     // Estimate complexity based on requirements and constraints
@@ -314,7 +320,7 @@ Format your response as a structured plan that will guide the development team.`
       estimatedComplexity: complexity,
       phases,
       riskFactors,
-      estimatedEffort: this.estimateEffort(complexity, phases.length)
+      estimatedEffort: this.estimateEffort(complexity, phases.length),
     };
   }
 
@@ -361,29 +367,29 @@ Format your response as a structured plan that will guide the development team.`
         description: 'Set up development environment and review documentation',
         estimatedComplexity: 'low' as const,
         suggestedComponents: ['development environment', 'documentation'],
-        dependencies: []
+        dependencies: [],
       },
       {
         name: 'Core Implementation',
         description: `Implement ${issue.issue.title}`,
         estimatedComplexity: this.estimateComplexity(issue, analysis),
         suggestedComponents: issue.issue.technical_context.components,
-        dependencies: ['Setup and Configuration']
+        dependencies: ['Setup and Configuration'],
       },
       {
         name: 'Testing',
         description: 'Write and run unit, integration, and e2e tests',
         estimatedComplexity: 'medium' as const,
         suggestedComponents: ['test suite', 'test data'],
-        dependencies: ['Core Implementation']
+        dependencies: ['Core Implementation'],
       },
       {
         name: 'Documentation',
         description: 'Update documentation and configuration examples',
         estimatedComplexity: 'low' as const,
         suggestedComponents: ['docs', 'examples'],
-        dependencies: ['Testing']
-      }
+        dependencies: ['Testing'],
+      },
     ];
 
     return phases;
@@ -421,7 +427,9 @@ Format your response as a structured plan that will guide the development team.`
 
     // Multiple components
     if (issue.issue.technical_context.components.length > 3) {
-      risks.push('Changes span multiple components - requires coordination and integration testing');
+      risks.push(
+        'Changes span multiple components - requires coordination and integration testing'
+      );
     }
 
     return risks;
@@ -434,7 +442,7 @@ Format your response as a structured plan that will guide the development team.`
     const baseHours = {
       low: 4,
       medium: 16,
-      high: 40
+      high: 40,
     };
 
     const hours = baseHours[complexity] * (phaseCount / 4);
@@ -455,7 +463,10 @@ Format your response as a structured plan that will guide the development team.`
 
     // Enrich issue with domain/components if not specified
     let enrichedIssue = issue;
-    if (!issue.issue.technical_context.domain || issue.issue.technical_context.components.length === 0) {
+    if (
+      !issue.issue.technical_context.domain ||
+      issue.issue.technical_context.components.length === 0
+    ) {
       console.log('Domain or components not specified - inferring from description...\n');
       enrichedIssue = await enrichIssueTemplate(issue, this.plannerModel.modelName);
     }
@@ -465,17 +476,19 @@ Format your response as a structured plan that will guide the development team.`
     console.log('========================================\n');
 
     const initialState: typeof ResearchStateAnnotation.State = {
-      messages: [{
-        role: 'user',
-        content: `Research issue: ${enrichedIssue.issue.title}`,
-        timestamp: new Date().toISOString()
-      }],
+      messages: [
+        {
+          role: 'user',
+          content: `Research issue: ${enrichedIssue.issue.title}`,
+          timestamp: new Date().toISOString(),
+        },
+      ],
       issue: enrichedIssue,
       researchFindings: undefined,
       contextAnalysis: undefined,
       orchestrationPlan: undefined,
       currentPhase: 'init',
-      errors: []
+      errors: [],
     };
 
     const result = await this.graph.invoke(initialState);

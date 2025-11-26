@@ -10,7 +10,7 @@ import {
   DomainOverviewMetadata,
   WorkflowComponents,
   ResolvedIssueContext,
-  CHTDomain
+  CHTDomain,
 } from '../types';
 
 const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
@@ -30,7 +30,7 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
   const metadata: any = {};
 
   // Simple YAML parser for our use case
-  frontmatter.split('\n').forEach(line => {
+  frontmatter.split('\n').forEach((line) => {
     const colonIndex = line.indexOf(':');
     if (colonIndex > 0) {
       const key = line.substring(0, colonIndex).trim();
@@ -41,7 +41,7 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
         metadata[key] = value
           .slice(1, -1)
           .split(',')
-          .map(v => v.trim().replace(/['"]/g, ''));
+          .map((v) => v.trim().replace(/['"]/g, ''));
       } else {
         // Remove quotes if present
         metadata[key] = value.replace(/^['"]|['"]$/g, '');
@@ -55,7 +55,9 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
 /**
  * Load domain overview
  */
-export function loadDomainOverview(domain: CHTDomain): { metadata: DomainOverviewMetadata; content: string } | null {
+export function loadDomainOverview(
+  domain: CHTDomain
+): { metadata: DomainOverviewMetadata; content: string } | null {
   const overviewPath = path.join(AGENT_MEMORY_PATH, 'domains', domain, 'overview.md');
 
   if (!fs.existsSync(overviewPath)) {
@@ -67,7 +69,7 @@ export function loadDomainOverview(domain: CHTDomain): { metadata: DomainOvervie
 
   return {
     metadata: metadata as DomainOverviewMetadata,
-    content: body
+    content: body,
   };
 }
 
@@ -89,7 +91,12 @@ export function loadDomainComponents(domain: CHTDomain): DomainComponents | null
  * Load workflow components
  */
 export function loadWorkflowComponents(workflow: string): WorkflowComponents | null {
-  const workflowPath = path.join(AGENT_MEMORY_PATH, 'workflows', workflow, 'involved-components.json');
+  const workflowPath = path.join(
+    AGENT_MEMORY_PATH,
+    'workflows',
+    workflow,
+    'involved-components.json'
+  );
 
   if (!fs.existsSync(workflowPath)) {
     return null;
@@ -119,7 +126,13 @@ export function loadWorkflowFlow(workflow: string): { metadata: any; content: st
  * Find resolved issues by domain
  */
 export function findResolvedIssuesByDomain(domain: CHTDomain): ResolvedIssueContext[] {
-  const domainPath = path.join(AGENT_MEMORY_PATH, 'knowledge-base', 'resolved-issues', 'by-domain', domain);
+  const domainPath = path.join(
+    AGENT_MEMORY_PATH,
+    'knowledge-base',
+    'resolved-issues',
+    'by-domain',
+    domain
+  );
 
   if (!fs.existsSync(domainPath)) {
     return [];
@@ -191,10 +204,10 @@ export function ensureAgentMemoryExists(): void {
     'agent-workspaces/research-agent',
     'agent-workspaces/code-generation-agent',
     'agent-workspaces/test-environment-agent',
-    'indices'
+    'indices',
   ];
 
-  dirs.forEach(dir => {
+  dirs.forEach((dir) => {
     const fullPath = path.join(AGENT_MEMORY_PATH, dir);
     if (!fs.existsSync(fullPath)) {
       fs.mkdirSync(fullPath, { recursive: true });

@@ -10,7 +10,7 @@ import {
   DocumentationReference,
   CHTDomain,
   IssueTemplate,
-  MCPResponse
+  MCPResponse,
 } from '../types';
 
 export class DocumentationSearchAgent {
@@ -43,7 +43,9 @@ export class DocumentationSearchAgent {
     // Process and structure findings
     const findings = this.processMCPResponse(mcpResponse, issue);
 
-    console.log(`[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`);
+    console.log(
+      `[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`
+    );
     console.log(`[Documentation Search Agent] Confidence: ${findings.confidence}`);
 
     return findings;
@@ -56,11 +58,7 @@ export class DocumentationSearchAgent {
     const { title, description, technical_context } = issue.issue;
 
     // Extract key terms
-    const terms = [
-      technical_context.domain,
-      ...technical_context.components,
-      title,
-    ].join(' ');
+    const terms = [technical_context.domain, ...technical_context.components, title].join(' ');
 
     return `${terms} ${description.substring(0, 200)}`;
   }
@@ -95,20 +93,20 @@ export class DocumentationSearchAgent {
 
     // Domain-specific mock responses
     const mockData: Record<CHTDomain, DocumentationReference[]> = {
-      'contacts': [
+      contacts: [
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/reference/contact-page/',
           title: 'Contacts Overview',
           topics: ['contacts', 'hierarchy', 'lineage'],
           relevantSections: ['Contact Types', 'Hierarchies', 'Creating Contacts'],
-          codeExamples: ['contact creation', 'lineage validation']
+          codeExamples: ['contact creation', 'lineage validation'],
         },
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/features/contacts/',
           title: 'Managing Contacts',
           topics: ['contact management', 'profiles', 'relationships'],
           relevantSections: ['Contact Profiles', 'Parent-Child Relationships'],
-        }
+        },
       ],
       'forms-and-reports': [
         {
@@ -116,14 +114,14 @@ export class DocumentationSearchAgent {
           title: 'Forms Reference',
           topics: ['forms', 'xforms', 'enketo', 'validation'],
           relevantSections: ['Form Design', 'Validation Rules', 'Form Submission Pipeline'],
-          codeExamples: ['form validation', 'enketo integration']
+          codeExamples: ['form validation', 'enketo integration'],
         },
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/features/reports/',
           title: 'Reports',
           topics: ['reports', 'data collection', 'submissions'],
           relevantSections: ['Report Types', 'Form Processing', 'Sentinel Transitions'],
-        }
+        },
       ],
       'tasks-and-targets': [
         {
@@ -131,30 +129,30 @@ export class DocumentationSearchAgent {
           title: 'Tasks Reference',
           topics: ['tasks', 'rules engine', 'scheduling'],
           relevantSections: ['Task Configuration', 'Rules Engine', 'Task Emission'],
-          codeExamples: ['task rules', 'scheduling logic']
+          codeExamples: ['task rules', 'scheduling logic'],
         },
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/reference/targets/',
           title: 'Targets Reference',
           topics: ['targets', 'analytics', 'goals'],
           relevantSections: ['Target Configuration', 'Aggregation', 'Progress Tracking'],
-        }
+        },
       ],
-      'authentication': [
+      authentication: [
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/guides/security/',
           title: 'Security and Authentication',
           topics: ['authentication', 'authorization', 'security'],
           relevantSections: ['User Authentication', 'Session Management', 'Permissions'],
-        }
+        },
       ],
-      'messaging': [
+      messaging: [
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/reference/app-settings/sms/',
           title: 'SMS Configuration',
           topics: ['sms', 'messaging', 'notifications'],
           relevantSections: ['SMS Gateway', 'Message Processing', 'Outbound Messages'],
-        }
+        },
       ],
       'data-sync': [
         {
@@ -162,17 +160,17 @@ export class DocumentationSearchAgent {
           title: 'Database and Sync',
           topics: ['sync', 'replication', 'offline', 'couchdb'],
           relevantSections: ['Replication Strategy', 'Offline-First', 'Conflict Resolution'],
-          codeExamples: ['sync configuration', 'purging rules']
-        }
+          codeExamples: ['sync configuration', 'purging rules'],
+        },
       ],
-      'configuration': [
+      configuration: [
         {
           url: 'https://docs.communityhealthtoolkit.org/apps/reference/app-settings/',
           title: 'App Settings',
           topics: ['configuration', 'app-settings', 'cht-conf'],
           relevantSections: ['Base Settings', 'Configuration Options'],
-        }
-      ]
+        },
+      ],
     };
 
     const references = mockData[domain] || [];
@@ -182,8 +180,8 @@ export class DocumentationSearchAgent {
       data: {
         references,
         summary: `Found ${references.length} relevant documentation pages for ${domain}`,
-        relatedTopics: references.flatMap(r => r.topics)
-      }
+        relatedTopics: references.flatMap((r) => r.topics),
+      },
     };
   }
 
@@ -198,7 +196,7 @@ export class DocumentationSearchAgent {
         suggestedApproaches: [],
         relatedDomains: [],
         confidence: 0,
-        source: 'kapa-ai'
+        source: 'kapa-ai',
       };
     }
 
@@ -206,7 +204,7 @@ export class DocumentationSearchAgent {
 
     // Extract code examples
     const relevantExamples = references
-      .flatMap(ref => ref.codeExamples || [])
+      .flatMap((ref) => ref.codeExamples || [])
       .filter((example, index, self) => self.indexOf(example) === index);
 
     // Suggest approaches based on documentation
@@ -221,7 +219,7 @@ export class DocumentationSearchAgent {
       suggestedApproaches,
       relatedDomains,
       confidence: references.length > 0 ? 0.85 : 0.3,
-      source: this.useMockMCP ? 'cached' : 'kapa-ai'
+      source: this.useMockMCP ? 'cached' : 'kapa-ai',
     };
   }
 
@@ -232,9 +230,9 @@ export class DocumentationSearchAgent {
     const approaches: string[] = [];
 
     // Extract relevant sections as approaches
-    references.forEach(ref => {
+    references.forEach((ref) => {
       if (ref.relevantSections) {
-        ref.relevantSections.forEach(section => {
+        ref.relevantSections.forEach((section) => {
           approaches.push(`Follow ${section} pattern from ${ref.title}`);
         });
       }
@@ -255,20 +253,20 @@ export class DocumentationSearchAgent {
    */
   private identifyRelatedDomains(topics: string[]): CHTDomain[] {
     const domainKeywords: Record<CHTDomain, string[]> = {
-      'contacts': ['contact', 'hierarchy', 'lineage', 'person', 'place'],
+      contacts: ['contact', 'hierarchy', 'lineage', 'person', 'place'],
       'forms-and-reports': ['form', 'report', 'xform', 'enketo', 'submission'],
       'tasks-and-targets': ['task', 'target', 'rules', 'scheduling', 'goal'],
-      'authentication': ['auth', 'login', 'permission', 'role', 'security'],
-      'messaging': ['sms', 'message', 'notification', 'alert'],
+      authentication: ['auth', 'login', 'permission', 'role', 'security'],
+      messaging: ['sms', 'message', 'notification', 'alert'],
       'data-sync': ['sync', 'replication', 'offline', 'couchdb', 'purge'],
-      'configuration': ['config', 'settings', 'cht-conf']
+      configuration: ['config', 'settings', 'cht-conf'],
     };
 
     const relatedDomains: CHTDomain[] = [];
 
     for (const [domain, keywords] of Object.entries(domainKeywords)) {
-      const hasMatch = keywords.some(keyword =>
-        topics.some(topic => topic.toLowerCase().includes(keyword))
+      const hasMatch = keywords.some((keyword) =>
+        topics.some((topic) => topic.toLowerCase().includes(keyword))
       );
 
       if (hasMatch) {

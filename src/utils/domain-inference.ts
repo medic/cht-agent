@@ -57,7 +57,7 @@ async function inferUsingLLM(
 ): Promise<{ domain: CHTDomain; components: string[] }> {
   const model = new ChatAnthropic({
     modelName,
-    temperature: 0.2 // Low temperature for consistent categorization
+    temperature: 0.2, // Low temperature for consistent categorization
   });
 
   const prompt = `You are analyzing a Community Health Toolkit (CHT) issue to identify the relevant domain and components.
@@ -116,7 +116,7 @@ Respond in this exact JSON format:
 
   return {
     domain: result.domain as CHTDomain,
-    components: result.components || []
+    components: result.components || [],
   };
 }
 
@@ -135,7 +135,7 @@ export async function inferDomainAndComponents(
     console.log('[Domain Inference] Using domain and components from ticket');
     return {
       domain: issue.issue.technical_context.domain!,
-      components: issue.issue.technical_context.components
+      components: issue.issue.technical_context.components,
     };
   }
 
@@ -169,8 +169,8 @@ export async function enrichIssueTemplate(
       technical_context: {
         ...issue.issue.technical_context,
         domain: domain,
-        components: components.length > 0 ? components : issue.issue.technical_context.components
-      }
-    }
+        components: components.length > 0 ? components : issue.issue.technical_context.components,
+      },
+    },
   };
 }

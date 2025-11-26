@@ -73,7 +73,7 @@ async function main() {
     console.log('🤖 Initializing Research Supervisor...\n');
     const supervisor = new ResearchSupervisor({
       modelName: 'claude-sonnet-4-20250514',
-      useMockMCP: true // Using mocked MCP for now
+      useMockMCP: true, // Using mocked MCP for now
     });
 
     // Display issue details
@@ -111,7 +111,7 @@ async function main() {
 
     if (result.errors.length > 0) {
       console.log('⚠️  Errors encountered:');
-      result.errors.forEach(error => console.log(`   - ${error}`));
+      result.errors.forEach((error) => console.log(`   - ${error}`));
       console.log();
     }
 
@@ -121,7 +121,9 @@ async function main() {
       console.log('─'.repeat(70));
       console.log(`Source: ${result.researchFindings.source}`);
       console.log(`Confidence: ${(result.researchFindings.confidence * 100).toFixed(0)}%`);
-      console.log(`\nDocumentation References (${result.researchFindings.documentationReferences.length}):`);
+      console.log(
+        `\nDocumentation References (${result.researchFindings.documentationReferences.length}):`
+      );
 
       result.researchFindings.documentationReferences.forEach((ref, i) => {
         console.log(`\n${i + 1}. ${ref.title}`);
@@ -149,7 +151,9 @@ async function main() {
       console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
       console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
       console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
-      console.log(`Historical Success Rate: ${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%`);
+      console.log(
+        `Historical Success Rate: ${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%`
+      );
 
       if (result.contextAnalysis.recommendations.length > 0) {
         console.log(`\nRecommendations:`);
@@ -173,7 +177,9 @@ async function main() {
     if (result.orchestrationPlan) {
       console.log('📋 ORCHESTRATION PLAN');
       console.log('─'.repeat(70));
-      console.log(`Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`);
+      console.log(
+        `Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`
+      );
       console.log(`Estimated Effort: ${result.orchestrationPlan.estimatedEffort}`);
       console.log(`\nProposed Approach:`);
       console.log(`   ${result.orchestrationPlan.proposedApproach}`);
@@ -212,7 +218,6 @@ async function main() {
     console.log('   2. Validate research findings');
     console.log('   3. Proceed to Development Phase (coming soon)');
     console.log();
-
   } catch (error) {
     console.error('\n❌ Error running research workflow:', error);
     if (error instanceof Error) {

@@ -1,34 +1,49 @@
 {
-    "name": "cht-agent",
-    "version": "0.1.0",
-    "description": "Hierarchical multi-agent system for CHT development workflows",
-    "main": "dist/index.js",
-    "types": "dist/index.d.ts",
-    "scripts": {
-      "build": "tsc",
-      "dev": "tsc --watch",
-      "lint": "eslint .",
-      "postinstall": "husky install",
-      "research": "node dist/cli/research.js",
-      "example:research": "node dist/examples/research-supervisor-example.js"
-    },
-    "dependencies": {
-      "@langchain/core": "^0.3.0",
-      "@langchain/langgraph": "^0.2.0",
-      "@langchain/anthropic": "^0.3.0",
-      "dotenv": "^16.4.5",
-      "zod": "^3.23.8"
-    },
-    "devDependencies": {
-      "@commitlint/cli": "^17.6.1",
-      "@commitlint/config-conventional": "^17.6.1",
-      "@medic/eslint-config": "^1.1.0",
-      "@types/node": "^20.11.0",
-      "eslint": "^8.31.0",
-      "husky": "^8.0.3",
-      "typescript": "^5.3.3"
-    },
-    "engines": {
-      "node": ">=20.0.0"
-    }
+  "name": "cht-agent",
+  "version": "0.1.0",
+  "description": "Hierarchical multi-agent system for CHT development workflows",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint .",
+    "test": "mocha",
+    "test:watch": "mocha --watch",
+    "postinstall": "husky install",
+    "research": "node dist/cli/research.js",
+    "example:research": "node dist/examples/research-supervisor-example.js"
+  },
+  "dependencies": {
+    "@langchain/anthropic": "^0.3.0",
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^17.6.1",
+    "@commitlint/config-conventional": "^17.6.1",
+    "@medic/eslint-config": "^1.1.0",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/mock-fs": "^4.13.4",
+    "@types/node": "^20.11.0",
+    "@types/sinon": "^21.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.48.0",
+    "@typescript-eslint/parser": "^8.48.0",
+    "chai": "^6.2.1",
+    "eslint": "^8.31.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^8.0.3",
+    "mocha": "^11.7.5",
+    "mock-fs": "^5.5.0",
+    "prettier": "^3.6.2",
+    "sinon": "^21.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
+}
