@@ -12,7 +12,9 @@
     "test:watch": "mocha --watch",
     "postinstall": "husky install",
     "research": "node dist/cli/research.js",
-    "example:research": "node dist/examples/research-supervisor-example.js"
+    "full": "node dist/cli/full.js",
+    "example:research": "node dist/examples/research-supervisor-example.js",
+    "example:full": "node dist/examples/full-workflow-example.js"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",

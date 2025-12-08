@@ -12,7 +12,7 @@ import { IssueTemplate, CHTDomain } from '../types';
 /**
  * Simple YAML parser for flat key-value pairs
  */
-function parseSimpleYAML(yamlContent: string): Record<string, string> {
+const parseSimpleYAML = (yamlContent: string): Record<string, string> => {
   const result: Record<string, string> = {};
   const lines = yamlContent
     .split('\n')
@@ -31,15 +31,15 @@ function parseSimpleYAML(yamlContent: string): Record<string, string> {
   }
 
   return result;
-}
+};
 
 /**
  * Extract YAML frontmatter from markdown content
  */
-function extractFrontmatter(content: string): {
+const extractFrontmatter = (content: string): {
   metadata: Record<string, string>;
   markdown: string;
-} {
+} => {
   const lines = content.split('\n');
 
   // Check if file starts with ---
@@ -64,12 +64,12 @@ function extractFrontmatter(content: string): {
   const markdown = lines.slice(endIndex + 1).join('\n');
 
   return { metadata: parseSimpleYAML(yaml), markdown };
-}
+};
 
 /**
  * Validate that domain is a valid CHTDomain
  */
-function validateDomain(domain: string): CHTDomain {
+const validateDomain = (domain: string): CHTDomain => {
   const validDomains: CHTDomain[] = [
     'authentication',
     'contacts',
@@ -85,22 +85,22 @@ function validateDomain(domain: string): CHTDomain {
   }
 
   throw new Error(`Invalid domain: "${domain}". Must be one of: ${validDomains.join(', ')}`);
-}
+};
 
 /**
  * Extract content from a markdown section
  * Returns all text until the next heading or end of content
  */
-function extractSection(markdown: string, sectionTitle: string): string {
+const extractSection = (markdown: string, sectionTitle: string): string => {
   const regex = new RegExp(`##\\s+${sectionTitle}\\s*\\n([\\s\\S]*?)(?=\\n##|$)`, 'i');
   const match = markdown.match(regex);
   return match ? match[1].trim() : '';
-}
+};
 
 /**
  * Extract bullet list items from text
  */
-function extractBulletList(text: string): string[] {
+const extractBulletList = (text: string): string[] => {
   const lines = text.split('\n');
   const items: string[] = [];
 
@@ -117,12 +117,12 @@ function extractBulletList(text: string): string[] {
   }
 
   return items;
-}
+};
 
 /**
  * Extract code-formatted items (items wrapped in backticks)
  */
-function extractCodeItems(text: string): string[] {
+const extractCodeItems = (text: string): string[] => {
   const items: string[] = [];
   const lines = text.split('\n');
 
@@ -144,12 +144,12 @@ function extractCodeItems(text: string): string[] {
   }
 
   return items;
-}
+};
 
 /**
  * Extract URLs from markdown links
  */
-function extractURLs(text: string): string[] {
+const extractURLs = (text: string): string[] => {
   const urls: string[] = [];
 
   // Match markdown links: [text](url)
@@ -169,12 +169,12 @@ function extractURLs(text: string): string[] {
   }
 
   return urls;
-}
+};
 
 /**
  * Parse a markdown ticket file into an IssueTemplate
  */
-export function parseTicketFile(filePath: string): IssueTemplate {
+export const parseTicketFile = (filePath: string): IssueTemplate => {
   // Read file
   if (!fs.existsSync(filePath)) {
     throw new Error(`Ticket file not found: ${filePath}`);
@@ -256,12 +256,12 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   };
 
   return issueTemplate;
-}
+};
 
 /**
  * Find all ticket files in a directory
  */
-export function findTicketFiles(dirPath: string): string[] {
+export const findTicketFiles = (dirPath: string): string[] => {
   if (!fs.existsSync(dirPath)) {
     return [];
   }
@@ -270,4 +270,4 @@ export function findTicketFiles(dirPath: string): string[] {
   return files
     .filter((file) => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
     .map((file) => path.join(dirPath, file));
-}
+};

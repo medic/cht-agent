@@ -310,3 +310,220 @@ export interface MCPResponse {
   };
   error?: string;
 }
+
+/**
+ * Human feedback for validation checkpoints
+ */
+export interface HumanFeedback {
+  approved: boolean;
+  feedback?: string;
+  additionalContext?: string;
+  timestamp: string;
+}
+
+/**
+ * Validation checkpoint types
+ */
+export type ValidationCheckpoint = 'research' | 'implementation';
+
+/**
+ * Research state with human feedback support
+ */
+export interface ResearchStateWithFeedback extends ResearchState {
+  humanFeedback?: HumanFeedback;
+  iterationCount: number;
+}
+
+// ============================================================================
+// DEVELOPMENT SUPERVISOR TYPES
+// ============================================================================
+
+/**
+ * Development workflow options
+ */
+export interface DevelopmentOptions {
+  chtCorePath: string;
+  previewMode: boolean; // true = staging + diff, false = direct write
+  stagingPath?: string; // OS temp directory when previewMode=true
+}
+
+/**
+ * File language types supported
+ */
+export type FileLanguage =
+  | 'typescript'
+  | 'javascript'
+  | 'json'
+  | 'xml'
+  | 'yaml'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'shell';
+
+/**
+ * File type classification
+ */
+export type FileType = 'source' | 'test' | 'config' | 'documentation' | 'fixture';
+
+/**
+ * Generated file representation
+ */
+export interface GeneratedFile {
+  relativePath: string; // Path relative to cht-core root
+  content: string;
+  language: FileLanguage;
+  type: FileType;
+  description: string;
+  action: 'create' | 'modify'; // New file or modifying existing
+  originalContent?: string; // For diff generation when modifying
+}
+
+/**
+ * Code Generation Agent input
+ */
+export interface CodeGenerationInput {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  chtCorePath: string;
+  additionalContext?: string; // Feedback from previous iteration
+}
+
+/**
+ * Code Generation Agent output
+ */
+export interface CodeGenerationResult {
+  files: GeneratedFile[];
+  summary: string;
+  implementedRequirements: string[];
+  pendingRequirements: string[];
+  notes: string[];
+  confidence: number; // 0-1
+}
+
+/**
+ * Test environment configuration
+ */
+export interface TestEnvironmentConfig {
+  type: 'unit' | 'integration' | 'e2e';
+  framework: string;
+  setupCommands: string[];
+  teardownCommands: string[];
+  dependencies: string[];
+}
+
+/**
+ * Test Environment Agent input
+ */
+export interface TestEnvironmentInput {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  codeGeneration: CodeGenerationResult;
+  chtCorePath: string;
+  additionalContext?: string;
+}
+
+/**
+ * Test Environment Agent output
+ */
+export interface TestEnvironmentResult {
+  configs: TestEnvironmentConfig[];
+  testFiles: GeneratedFile[];
+  testDataFiles: GeneratedFile[];
+  setupInstructions: string[];
+  estimatedCoverage: number; // 0-100
+}
+
+/**
+ * Requirement validation status
+ */
+export interface RequirementValidation {
+  requirement: string;
+  met: boolean;
+  notes?: string;
+}
+
+/**
+ * Acceptance criteria validation status
+ */
+export interface AcceptanceCriteriaValidation {
+  criteria: string;
+  passed: boolean;
+  notes?: string;
+}
+
+/**
+ * Implementation validation result
+ */
+export interface ImplementationValidation {
+  requirementsMet: RequirementValidation[];
+  acceptanceCriteriaPassed: AcceptanceCriteriaValidation[];
+  overallScore: number; // 0-100
+  recommendations: string[];
+}
+
+/**
+ * Development phase types
+ */
+export type DevelopmentPhase =
+  | 'init'
+  | 'code-generation'
+  | 'test-setup'
+  | 'validation'
+  | 'complete';
+
+/**
+ * Development Supervisor State
+ */
+export interface DevelopmentState {
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    timestamp: string;
+  }>;
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  options: DevelopmentOptions;
+  codeGeneration?: CodeGenerationResult;
+  testEnvironment?: TestEnvironmentResult;
+  validationResult?: ImplementationValidation;
+  currentPhase: DevelopmentPhase;
+  errors: string[];
+}
+
+/**
+ * Development Supervisor input (from Research phase)
+ */
+export interface DevelopmentInput {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  options: DevelopmentOptions;
+  additionalContext?: string;
+}
+
+/**
+ * Diff result for a single file
+ */
+export interface FileDiff {
+  relativePath: string;
+  action: 'create' | 'modify' | 'delete';
+  additions: number;
+  deletions: number;
+  diff: string; // Unified diff format
+}
+
+/**
+ * Development workflow result
+ */
+export interface DevelopmentWorkflowResult {
+  approved: boolean;
+  result: DevelopmentState | undefined;
+  iterationCount: number;
+  filesWritten: string[];
+}
