@@ -1,41 +1,46 @@
 #!/usr/bin/env node
 /**
- * CHT Agent - Research CLI
+ * CHT Agent - Full Workflow CLI
  *
- * Command-line interface for running only the research workflow:
+ * Command-line interface for running the complete workflow:
  * 1. Research Phase - Documentation search, context analysis, orchestration plan
  * 2. Human Validation Checkpoint #1 - Approve research or provide feedback
+ * 3. Development Phase - Code generation, test environment setup
+ * 4. Human Validation Checkpoint #2 (preview mode) - Approve changes before writing
  *
- * For the full workflow (research + development), use:
- *   npm run full <ticket-file>
+ * For research-only workflow, use:
+ *   npm run research <ticket-file>
  *
  * Usage:
- *   npm run research <ticket-file>
+ *   npm run full <ticket-file>
  *
  * Environment Variables:
  *   ANTHROPIC_API_KEY - Required for Claude API access
+ *   CHT_CORE_PATH - Path to cht-core codebase (required for development)
  *
  * Examples:
- *   npm run research tickets/my-ticket.md
- *   npm run research /path/to/ticket.md
+ *   npm run full tickets/my-ticket.md
+ *   npm run full /path/to/ticket.md
  */
 
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
+import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
 import { parseTicketFile } from '../utils/ticket-parser';
+import { displayIssueDetails } from '../workflows/research-workflow';
 import {
-  displayIssueDetails,
-  executeResearchWorkflow,
-  displayWorkflowCompletion,
-} from '../workflows/research-workflow';
+  executeFullWorkflow,
+  askDevelopmentOptions,
+  displayFullWorkflowSummary,
+} from '../workflows/orchestrator';
 
 // Load environment variables
 dotenv.config();
 
 const main = async (): Promise<void> => {
   console.log('╔════════════════════════════════════════════════════════════════╗');
-  console.log('║              CHT Multi-Agent System - Research CLI             ║');
+  console.log('║        CHT Multi-Agent System - Full Workflow CLI              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
   // Check for API key
@@ -46,17 +51,26 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
+  // Check for CHT_CORE_PATH
+  const chtCorePath = process.env.CHT_CORE_PATH;
+  if (!chtCorePath) {
+    console.error('❌ Error: CHT_CORE_PATH not found in environment variables');
+    console.log('\nPlease add CHT_CORE_PATH to your .env file:');
+    console.log('CHT_CORE_PATH=/path/to/cht-core\n');
+    process.exit(1);
+  }
+
   try {
     // Check if ticket file is provided
     if (!process.argv[2]) {
       console.error('❌ Error: No ticket file specified\n');
       console.log('Usage:');
-      console.log('  npm run research <ticket-file>\n');
+      console.log('  npm run full <ticket-file>\n');
       console.log('Examples:');
-      console.log('  npm run research tickets/my-ticket.md');
-      console.log('  npm run research /path/to/ticket.md\n');
+      console.log('  npm run full tickets/my-ticket.md');
+      console.log('  npm run full /path/to/ticket.md\n');
       console.log('💡 See tickets/README.md for ticket file format');
-      console.log('💡 For full workflow (research + development), use: npm run full <ticket-file>\n');
+      console.log('💡 For research-only workflow, use: npm run research <ticket-file>\n');
       process.exit(1);
     }
 
@@ -68,28 +82,37 @@ const main = async (): Promise<void> => {
     const ticket = parseTicketFile(ticketPath);
     console.log('✅ Ticket parsed successfully!\n');
 
-    // Create Research Supervisor instance
-    console.log('🤖 Initializing Research Supervisor...\n');
-    const supervisor = new ResearchSupervisor({
+    // Create supervisors
+    console.log('🤖 Initializing Supervisors...\n');
+
+    const researchSupervisor = new ResearchSupervisor({
       modelName: 'claude-sonnet-4-20250514',
       useMockMCP: true, // Using mocked MCP for now
+    });
+
+    const developmentSupervisor = new DevelopmentSupervisor({
+      useMock: true, // Using mock mode for POC
     });
 
     // Display issue details
     displayIssueDetails(ticket);
 
-    // Execute research workflow with human validation
-    const workflowResult = await executeResearchWorkflow(supervisor, ticket);
+    // Ask for development options before starting
+    const developmentOptions = await askDevelopmentOptions(chtCorePath);
 
-    // Display final status
-    displayWorkflowCompletion(workflowResult);
+    // Execute full workflow: Research -> Checkpoint #1 -> Development -> Checkpoint #2
+    const workflowResult = await executeFullWorkflow(
+      researchSupervisor,
+      developmentSupervisor,
+      ticket,
+      developmentOptions
+    );
 
-    if (workflowResult.approved) {
-      console.log('💡 To continue with development, run:');
-      console.log('   npm run full <ticket-file>\n');
-    }
+    // Display final summary
+    displayFullWorkflowSummary(workflowResult);
+
   } catch (error) {
-    console.error('\n❌ Error running research workflow:', error);
+    console.error('\n❌ Error running workflow:', error);
     if (error instanceof Error) {
       console.error('Message:', error.message);
       console.error('Stack:', error.stack);
