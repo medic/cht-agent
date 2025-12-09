@@ -30,7 +30,7 @@ export interface IssueTemplate {
     priority: 'high' | 'medium' | 'low';
     description: string;
     technical_context: {
-      domain?: CHTDomain; // Optional - will be inferred during research if not provided
+      domain: CHTDomain; // Required - must be specified in ticket frontmatter
       components: string[];
       existing_references?: string[];
     };
@@ -249,7 +249,7 @@ export interface ResearchState {
   researchFindings?: ResearchFindings;
   contextAnalysis?: ContextAnalysisResult;
   orchestrationPlan?: OrchestrationPlan;
-  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete';
+  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
   errors: string[];
 }
 

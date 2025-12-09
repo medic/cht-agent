@@ -253,4 +253,107 @@ describe('ContextAnalysisAgent', () => {
       expect(recommendations.some((r: string) => r.includes('integration tests'))).to.be.true;
     });
   });
+
+  describe('analyze', () => {
+    it('should return empty analysis when no domain specified', async () => {
+      const issueWithoutDomain = {
+        issue: {
+          title: 'Test',
+          type: 'feature' as const,
+          priority: 'medium' as const,
+          description: 'Test',
+          technical_context: { domain: undefined as any, components: [] },
+          requirements: [],
+          acceptance_criteria: [],
+          constraints: [],
+        },
+      };
+
+      const result = await agent.analyze(issueWithoutDomain);
+
+      expect(result.similarContexts).to.deep.equal([]);
+      expect(result.recommendations).to.include('Domain not specified - unable to analyze context');
+      expect(result.historicalSuccessRate).to.equal(0.5);
+    });
+
+    it('should return related domains when domain overview exists', async () => {
+      const issue = createTestIssue();
+
+      sinon.stub(contextLoader, 'loadDomainOverview').returns({
+        metadata: { domain: 'contacts', last_updated: '2024-01-15', related_domains: ['forms-and-reports'] },
+        content: 'Overview',
+      });
+      sinon.stub(contextLoader, 'loadDomainComponents').returns(null);
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([]);
+      sinon.stub(contextLoader, 'getRelatedDomains').returns(['forms-and-reports']);
+
+      const result = await agent.analyze(issue);
+
+      expect(result.relatedDomains).to.deep.equal(['forms-and-reports']);
+    });
+
+    it('should calculate historical success rate from similar contexts', async () => {
+      const issue = createTestIssue();
+
+      sinon.stub(contextLoader, 'loadDomainOverview').returns(null);
+      sinon.stub(contextLoader, 'loadDomainComponents').returns(null);
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({ phase: 'completed', category: 'feature', domains: ['contacts'] }),
+        createResolvedContext({ id: 'r2', phase: 'completed', category: 'feature', domains: ['contacts'] }),
+      ]);
+      sinon.stub(contextLoader, 'getRelatedDomains').returns([]);
+
+      const result = await agent.analyze(issue);
+
+      expect(result.historicalSuccessRate).to.equal(1.0);
+    });
+
+    it('should extract patterns from similar contexts', async () => {
+      const issue = createTestIssue();
+
+      sinon.stub(contextLoader, 'loadDomainOverview').returns(null);
+      sinon.stub(contextLoader, 'loadDomainComponents').returns(null);
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({ category: 'feature', domains: ['contacts'], components: { api: ['shared'] } }),
+        createResolvedContext({ id: 'r2', category: 'feature', domains: ['contacts'], components: { api: ['shared'] } }),
+      ]);
+      sinon.stub(contextLoader, 'getRelatedDomains').returns([]);
+
+      const result = await agent.analyze(issue);
+
+      expect(result.reusablePatterns.length).to.be.greaterThan(0);
+    });
+  });
+
+  describe('findSimilarIssues', () => {
+    it('should return empty array when no resolved issues exist', () => {
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([]);
+
+      const issue = createTestIssue();
+      const result = (agent as any).findSimilarIssues(issue, 'contacts');
+
+      expect(result).to.deep.equal([]);
+    });
+
+    it('should return at most 5 similar issues', () => {
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns(
+        Array.from({ length: 10 }, (_, i) =>
+          createResolvedContext({
+            id: `resolved-${i}`,
+            category: 'feature',
+            domains: ['contacts'],
+            components: { api: ['contacts-controller'] },
+          })
+        )
+      );
+
+      const issue = createTestIssue({
+        type: 'feature',
+        technical_context: { domain: 'contacts', components: ['contacts-controller'] },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'contacts');
+
+      expect(result.length).to.be.at.most(5);
+    });
+  });
 });

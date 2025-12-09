@@ -6,3 +6,7 @@ dist/
 .DS_Store
 agent-memory/
 *.tmp
+
+# Test coverage
+.nyc_output/
+coverage/

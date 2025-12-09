@@ -49,6 +49,66 @@ import { CHTDomain, IssueTemplate } from '../types';
 // }
 
 /**
+ * Format array items for prompt, handling empty arrays gracefully
+ */
+function formatListForPrompt(items: string[], emptyMessage: string = 'None provided'): string {
+  if (!items || items.length === 0) {
+    return emptyMessage;
+  }
+  return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+}
+
+/**
+ * Domain classification examples to guide the LLM
+ * These are hardcoded examples that demonstrate correct domain categorization
+ */
+const DOMAIN_EXAMPLES = `
+Seeds/Examples (Correct Domain Classifications):
+
+1. "Add search functionality to find contacts by phone number"
+   → Domain: contacts
+   → Reasoning: Directly involves contact lookup and management
+
+2. "Fix login session expiring too quickly on mobile devices"
+   → Domain: authentication
+   → Reasoning: Session management is part of auth, even though it affects mobile UX
+
+3. "SMS notifications not being sent when tasks are overdue"
+   → Domain: messaging
+   → Reasoning: Primary issue is SMS delivery, tasks-and-targets is secondary
+
+4. "Form submission fails when offline and doesn't sync when back online"
+   → Domain: data-sync
+   → Reasoning: Core issue is sync/replication failure, not the form itself
+
+5. "Add new target widget to show monthly vaccination coverage"
+   → Domain: tasks-and-targets
+   → Reasoning: Targets and coverage metrics are part of tasks-and-targets domain
+`;
+
+/**
+ * Common pitfalls to help the LLM avoid misclassification
+ */
+const DOMAIN_PITFALLS = `
+Pitfalls (Common Misclassifications to Avoid):
+
+1. Avoid placing "form validation errors" into forms-and-reports when the issue is actually about offline behavior.
+   → If sync is involved, prefer data-sync domain.
+
+2. Avoid placing "user can't see certain contacts" into contacts when the issue is about permissions.
+   → If roles/permissions are involved, prefer authentication domain.
+
+3. Avoid placing "task not appearing" into tasks-and-targets when the issue is about rules engine configuration.
+   → If app settings/config changes are needed, consider configuration domain.
+
+4. Avoid placing "SMS not received" into messaging when the issue is about a gateway/integration setup.
+   → If it's a setup/config issue, prefer configuration domain.
+
+5. Avoid placing "report shows wrong data" into forms-and-reports when the issue is about data not syncing.
+   → If data freshness/replication is the root cause, prefer data-sync domain.
+`;
+
+/**
  * Infer domain and components using Claude LLM
  */
 async function inferUsingLLM(
@@ -59,6 +119,16 @@ async function inferUsingLLM(
     modelName,
     temperature: 0.2, // Low temperature for consistent categorization
   });
+
+  // Format reference data for the prompt
+  const similarImplementations = formatListForPrompt(
+    issue.issue.reference_data?.similar_implementations || [],
+    'None provided'
+  );
+  const existingReferences = formatListForPrompt(
+    issue.issue.technical_context.existing_references || [],
+    'None provided'
+  );
 
   const prompt = `You are analyzing a Community Health Toolkit (CHT) issue to identify the relevant domain and components.
 
@@ -78,6 +148,10 @@ CHT Architecture Components (examples):
 - shared-libs/* (Shared libraries: rules-engine, lineage, cht-datasource, etc.)
 - ddocs/* (CouchDB design documents)
 
+${DOMAIN_EXAMPLES}
+
+${DOMAIN_PITFALLS}
+
 Issue to analyze:
 Title: ${issue.issue.title}
 Type: ${issue.issue.type}
@@ -87,12 +161,18 @@ Description:
 ${issue.issue.description}
 
 Requirements:
-${issue.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+${formatListForPrompt(issue.issue.requirements)}
 
 Constraints:
-${issue.issue.constraints.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+${formatListForPrompt(issue.issue.constraints)}
 
-Based on this issue, identify:
+Similar Implementations (PRs/code that solved similar problems):
+${similarImplementations}
+
+Existing Code References (paths in codebase mentioned by ticket author):
+${existingReferences}
+
+Based on this issue and the examples/pitfalls above, identify:
 1. The PRIMARY domain (one of the 7 listed above)
 2. Likely components that would be affected (be specific but realistic)
 
@@ -112,11 +192,43 @@ Respond in this exact JSON format:
     throw new Error('LLM did not return valid JSON response');
   }
 
-  const result = JSON.parse(jsonMatch[0]);
+  // Parse JSON with error handling
+  let result: { domain?: string; components?: string[]; reasoning?: string };
+  try {
+    result = JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    throw new Error(
+      `LLM returned malformed JSON. Parse error: ${error instanceof Error ? error.message : 'Unknown error'}. Raw response: ${jsonMatch[0].substring(0, 200)}...`
+    );
+  }
+
+  // Validate required fields
+  if (!result.domain || typeof result.domain !== 'string') {
+    throw new Error(
+      `LLM response missing required "domain" field. Got: ${JSON.stringify(result)}`
+    );
+  }
+
+  // Validate domain is one of the valid CHT domains
+  const validDomains: CHTDomain[] = [
+    'authentication',
+    'contacts',
+    'forms-and-reports',
+    'tasks-and-targets',
+    'messaging',
+    'data-sync',
+    'configuration',
+  ];
+
+  if (!validDomains.includes(result.domain as CHTDomain)) {
+    throw new Error(
+      `LLM returned invalid domain: "${result.domain}". Must be one of: ${validDomains.join(', ')}`
+    );
+  }
 
   return {
     domain: result.domain as CHTDomain,
-    components: result.components || [],
+    components: Array.isArray(result.components) ? result.components : [],
   };
 }
 

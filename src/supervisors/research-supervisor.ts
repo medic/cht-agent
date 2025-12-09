@@ -18,7 +18,6 @@ import {
 } from '../types';
 import { DocumentationSearchAgent } from '../agents/documentation-search-agent';
 import { ContextAnalysisAgent } from '../agents/context-analysis-agent';
-import { enrichIssueTemplate } from '../utils/domain-inference';
 
 // Define the state annotation for type safety
 const ResearchStateAnnotation = Annotation.Root({
@@ -447,9 +446,13 @@ Format your response as a structured plan that will guide the development team.`
 
     const hours = baseHours[complexity] * (phaseCount / 4);
 
-    if (hours < 8) return `${hours} hours`;
-    if (hours < 40) return `${Math.round(hours / 8)} days`;
-    return `${Math.round(hours / 40)} weeks`;
+    if (hours < 8) return `${hours} hour${hours === 1 ? '' : 's'}`;
+    if (hours < 40) {
+      const days = Math.round(hours / 8);
+      return `${days} day${days === 1 ? '' : 's'}`;
+    }
+    const weeks = Math.round(hours / 40);
+    return `${weeks} week${weeks === 1 ? '' : 's'}`;
   }
 
   /**
@@ -460,30 +463,19 @@ Format your response as a structured plan that will guide the development team.`
     console.log('RESEARCH SUPERVISOR - Starting Research Phase');
     console.log('========================================');
     console.log(`Issue: ${issue.issue.title}`);
-
-    // Enrich issue with domain/components if not specified
-    let enrichedIssue = issue;
-    if (
-      !issue.issue.technical_context.domain ||
-      issue.issue.technical_context.components.length === 0
-    ) {
-      console.log('Domain or components not specified - inferring from description...\n');
-      enrichedIssue = await enrichIssueTemplate(issue, this.plannerModel.modelName);
-    }
-
-    console.log(`Domain: ${enrichedIssue.issue.technical_context.domain}`);
-    console.log(`Components: ${enrichedIssue.issue.technical_context.components.join(', ')}`);
+    console.log(`Domain: ${issue.issue.technical_context.domain}`);
+    console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
     console.log('========================================\n');
 
     const initialState: typeof ResearchStateAnnotation.State = {
       messages: [
         {
           role: 'user',
-          content: `Research issue: ${enrichedIssue.issue.title}`,
+          content: `Research issue: ${issue.issue.title}`,
           timestamp: new Date().toISOString(),
         },
       ],
-      issue: enrichedIssue,
+      issue: issue,
       researchFindings: undefined,
       contextAnalysis: undefined,
       orchestrationPlan: undefined,
@@ -491,7 +483,24 @@ Format your response as a structured plan that will guide the development team.`
       errors: [],
     };
 
-    const result = await this.graph.invoke(initialState);
+    let result: typeof ResearchStateAnnotation.State;
+    try {
+      result = await this.graph.invoke(initialState);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error during graph execution';
+      console.error('\n========================================');
+      console.error('RESEARCH SUPERVISOR - Error during execution');
+      console.error('========================================');
+      console.error(`Error: ${errorMessage}`);
+      console.error('========================================\n');
+
+      // Return state with error recorded
+      return {
+        ...initialState,
+        currentPhase: 'error',
+        errors: [errorMessage],
+      };
+    }
 
     console.log('\n========================================');
     console.log('RESEARCH SUPERVISOR - Research Phase Complete');

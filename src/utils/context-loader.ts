@@ -5,6 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 import {
   DomainComponents,
   DomainOverviewMetadata,
@@ -27,27 +28,18 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
   }
 
   const [, frontmatter, body] = match;
-  const metadata: any = {};
 
-  // Simple YAML parser for our use case
-  frontmatter.split('\n').forEach((line) => {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex > 0) {
-      const key = line.substring(0, colonIndex).trim();
-      const value = line.substring(colonIndex + 1).trim();
-
-      // Handle arrays
-      if (value.startsWith('[') && value.endsWith(']')) {
-        metadata[key] = value
-          .slice(1, -1)
-          .split(',')
-          .map((v) => v.trim().replace(/['"]/g, ''));
-      } else {
-        // Remove quotes if present
-        metadata[key] = value.replace(/^['"]|['"]$/g, '');
-      }
+  // Parse YAML using js-yaml with JSON_SCHEMA to prevent auto date conversion
+  let metadata: any = {};
+  try {
+    const parsed = yaml.load(frontmatter, { schema: yaml.JSON_SCHEMA });
+    if (parsed && typeof parsed === 'object') {
+      metadata = parsed;
     }
-  });
+  } catch (error) {
+    // If YAML parsing fails, return empty metadata
+    console.warn('Failed to parse YAML frontmatter:', error);
+  }
 
   return { metadata, body };
 }
@@ -201,7 +193,7 @@ export function ensureAgentMemoryExists(): void {
     'knowledge-base/resolved-issues/by-domain',
     'knowledge-base/resolved-issues/by-workflow',
     'knowledge-base/patterns',
-    'agent-workspaces/research-agent',
+    'agent-workspaces/research-supervisor',
     'agent-workspaces/code-generation-agent',
     'agent-workspaces/test-environment-agent',
     'indices',

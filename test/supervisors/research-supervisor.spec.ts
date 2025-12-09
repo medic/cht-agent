@@ -152,9 +152,13 @@ describe('ResearchSupervisor - Pure Functions', () => {
 
       const hours = baseHours[complexity] * (phaseCount / 4);
 
-      if (hours < 8) return `${hours} hours`;
-      if (hours < 40) return `${Math.round(hours / 8)} days`;
-      return `${Math.round(hours / 40)} weeks`;
+      if (hours < 8) return `${hours} hour${hours === 1 ? '' : 's'}`;
+      if (hours < 40) {
+        const days = Math.round(hours / 8);
+        return `${days} day${days === 1 ? '' : 's'}`;
+      }
+      const weeks = Math.round(hours / 40);
+      return `${weeks} week${weeks === 1 ? '' : 's'}`;
     };
 
     it('should return hours for small efforts', () => {
@@ -172,7 +176,7 @@ describe('ResearchSupervisor - Pure Functions', () => {
     it('should return weeks for large efforts', () => {
       const effort = estimateEffort('high', 4);
 
-      expect(effort).to.equal('1 weeks'); // 40 hours = 1 week
+      expect(effort).to.equal('1 week'); // 40 hours = 1 week
     });
 
     it('should scale with phase count', () => {

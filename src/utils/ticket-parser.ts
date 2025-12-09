@@ -7,31 +7,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain } from '../types';
-
-/**
- * Simple YAML parser for flat key-value pairs
- */
-function parseSimpleYAML(yamlContent: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  const lines = yamlContent
-    .split('\n')
-    .filter((line) => line.trim() && !line.trim().startsWith('#'));
-
-  for (const line of lines) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) continue;
-
-    const key = line.substring(0, colonIndex).trim();
-    const value = line.substring(colonIndex + 1).trim();
-
-    if (key && value) {
-      result[key] = value;
-    }
-  }
-
-  return result;
-}
 
 /**
  * Extract YAML frontmatter from markdown content
@@ -60,10 +37,58 @@ function extractFrontmatter(content: string): {
     return { metadata: {}, markdown: content };
   }
 
-  const yaml = lines.slice(1, endIndex).join('\n');
+  const yamlContent = lines.slice(1, endIndex).join('\n');
   const markdown = lines.slice(endIndex + 1).join('\n');
 
-  return { metadata: parseSimpleYAML(yaml), markdown };
+  // Parse YAML using js-yaml
+  let metadata: Record<string, string> = {};
+  try {
+    const parsed = yaml.load(yamlContent);
+    if (parsed && typeof parsed === 'object') {
+      // Convert all values to strings for consistency
+      metadata = Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+          key,
+          String(value ?? ''),
+        ])
+      );
+    }
+  } catch (error) {
+    // If YAML parsing fails, return empty metadata
+    console.warn('Failed to parse YAML frontmatter:', error);
+  }
+
+  return { metadata, markdown };
+}
+
+/**
+ * Validate that type is a valid ticket type
+ */
+type TicketType = 'feature' | 'bug' | 'enhancement';
+
+function validateType(type: string): TicketType {
+  const validTypes: TicketType[] = ['feature', 'bug', 'enhancement'];
+
+  if (validTypes.includes(type as TicketType)) {
+    return type as TicketType;
+  }
+
+  throw new Error(`Invalid type: "${type}". Must be one of: ${validTypes.join(', ')}`);
+}
+
+/**
+ * Validate that priority is a valid priority level
+ */
+type TicketPriority = 'high' | 'medium' | 'low';
+
+function validatePriority(priority: string): TicketPriority {
+  const validPriorities: TicketPriority[] = ['high', 'medium', 'low'];
+
+  if (validPriorities.includes(priority as TicketPriority)) {
+    return priority as TicketPriority;
+  }
+
+  throw new Error(`Invalid priority: "${priority}". Must be one of: ${validPriorities.join(', ')}`);
 }
 
 /**
@@ -196,7 +221,11 @@ export function parseTicketFile(filePath: string): IssueTemplate {
     throw new Error('Ticket must have a "priority" in frontmatter (high|medium|low)');
   }
 
-  // Domain is optional - will be inferred during research if not provided
+  if (!metadata.domain) {
+    throw new Error(
+      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration)'
+    );
+  }
 
   // Extract sections from markdown
   const descriptionSection = extractSection(markdown, 'Description');
@@ -233,15 +262,20 @@ export function parseTicketFile(filePath: string): IssueTemplate {
     : [];
   const documentation = documentationMatch ? extractURLs(documentationMatch[1]) : [];
 
+  // Validate type, priority, and domain
+  const validatedType = validateType(metadata.type);
+  const validatedPriority = validatePriority(metadata.priority);
+  const validatedDomain = validateDomain(metadata.domain);
+
   // Build IssueTemplate
   const issueTemplate: IssueTemplate = {
     issue: {
       title: metadata.title,
-      type: metadata.type as 'feature' | 'bug' | 'enhancement',
-      priority: metadata.priority as 'high' | 'medium' | 'low',
+      type: validatedType,
+      priority: validatedPriority,
       description: descriptionSection || markdown.trim() || '',
       technical_context: {
-        domain: metadata.domain ? validateDomain(metadata.domain) : undefined,
+        domain: validatedDomain,
         components: components,
         existing_references: existingReferences,
       },
