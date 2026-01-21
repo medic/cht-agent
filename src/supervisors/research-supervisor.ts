@@ -457,37 +457,21 @@ Format your response as a structured plan that will guide the development team.`
 
   /**
    * Main entry point to run the research workflow
-   * @param issue - The issue template to research
-   * @param additionalContext - Optional feedback from human validation to refine research
    */
-  async research(
-    issue: IssueTemplate,
-    additionalContext?: string
-  ): Promise<ResearchState> {
+  async research(issue: IssueTemplate): Promise<ResearchState> {
     console.log('\n========================================');
     console.log('RESEARCH SUPERVISOR - Starting Research Phase');
     console.log('========================================');
     console.log(`Issue: ${issue.issue.title}`);
-
-    if (additionalContext) {
-      console.log('\n📝 Additional Context from Human Feedback:');
-      console.log(`   ${additionalContext}`);
-    }
-
     console.log(`Domain: ${issue.issue.technical_context.domain}`);
     console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
     console.log('========================================\n');
-
-    // Build initial message, incorporating additional context if provided
-    const initialMessage = additionalContext
-      ? `Research issue: ${issue.issue.title}\n\nAdditional context from human feedback:\n${additionalContext}`
-      : `Research issue: ${issue.issue.title}`;
 
     const initialState: typeof ResearchStateAnnotation.State = {
       messages: [
         {
           role: 'user',
-          content: initialMessage,
+          content: `Research issue: ${issue.issue.title}`,
           timestamp: new Date().toISOString(),
         },
       ],

@@ -11,39 +11,12 @@ import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain } from '../types';
 
 /**
-<<<<<<< HEAD
-=======
- * Simple YAML parser for flat key-value pairs
- */
-const parseSimpleYAML = (yamlContent: string): Record<string, string> => {
-  const result: Record<string, string> = {};
-  const lines = yamlContent
-    .split('\n')
-    .filter((line) => line.trim() && !line.trim().startsWith('#'));
-
-  for (const line of lines) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) continue;
-
-    const key = line.substring(0, colonIndex).trim();
-    const value = line.substring(colonIndex + 1).trim();
-
-    if (key && value) {
-      result[key] = value;
-    }
-  }
-
-  return result;
-};
-
-/**
->>>>>>> 5a1199d (feat: working on development supervisor (WIP))
  * Extract YAML frontmatter from markdown content
  */
-const extractFrontmatter = (content: string): {
+function extractFrontmatter(content: string): {
   metadata: Record<string, string>;
   markdown: string;
-} => {
+} {
   const lines = content.split('\n');
 
   // Check if file starts with ---
@@ -67,7 +40,6 @@ const extractFrontmatter = (content: string): {
   const yamlContent = lines.slice(1, endIndex).join('\n');
   const markdown = lines.slice(endIndex + 1).join('\n');
 
-<<<<<<< HEAD
   // Parse YAML using js-yaml
   let metadata: Record<string, string> = {};
   try {
@@ -118,15 +90,11 @@ function validatePriority(priority: string): TicketPriority {
 
   throw new Error(`Invalid priority: "${priority}". Must be one of: ${validPriorities.join(', ')}`);
 }
-=======
-  return { metadata: parseSimpleYAML(yaml), markdown };
-};
->>>>>>> 5a1199d (feat: working on development supervisor (WIP))
 
 /**
  * Validate that domain is a valid CHTDomain
  */
-const validateDomain = (domain: string): CHTDomain => {
+function validateDomain(domain: string): CHTDomain {
   const validDomains: CHTDomain[] = [
     'authentication',
     'contacts',
@@ -142,22 +110,22 @@ const validateDomain = (domain: string): CHTDomain => {
   }
 
   throw new Error(`Invalid domain: "${domain}". Must be one of: ${validDomains.join(', ')}`);
-};
+}
 
 /**
  * Extract content from a markdown section
  * Returns all text until the next heading or end of content
  */
-const extractSection = (markdown: string, sectionTitle: string): string => {
+function extractSection(markdown: string, sectionTitle: string): string {
   const regex = new RegExp(`##\\s+${sectionTitle}\\s*\\n([\\s\\S]*?)(?=\\n##|$)`, 'i');
   const match = markdown.match(regex);
   return match ? match[1].trim() : '';
-};
+}
 
 /**
  * Extract bullet list items from text
  */
-const extractBulletList = (text: string): string[] => {
+function extractBulletList(text: string): string[] {
   const lines = text.split('\n');
   const items: string[] = [];
 
@@ -174,12 +142,12 @@ const extractBulletList = (text: string): string[] => {
   }
 
   return items;
-};
+}
 
 /**
  * Extract code-formatted items (items wrapped in backticks)
  */
-const extractCodeItems = (text: string): string[] => {
+function extractCodeItems(text: string): string[] {
   const items: string[] = [];
   const lines = text.split('\n');
 
@@ -201,12 +169,12 @@ const extractCodeItems = (text: string): string[] => {
   }
 
   return items;
-};
+}
 
 /**
  * Extract URLs from markdown links
  */
-const extractURLs = (text: string): string[] => {
+function extractURLs(text: string): string[] {
   const urls: string[] = [];
 
   // Match markdown links: [text](url)
@@ -226,12 +194,12 @@ const extractURLs = (text: string): string[] => {
   }
 
   return urls;
-};
+}
 
 /**
  * Parse a markdown ticket file into an IssueTemplate
  */
-export const parseTicketFile = (filePath: string): IssueTemplate => {
+export function parseTicketFile(filePath: string): IssueTemplate {
   // Read file
   if (!fs.existsSync(filePath)) {
     throw new Error(`Ticket file not found: ${filePath}`);
@@ -322,12 +290,12 @@ export const parseTicketFile = (filePath: string): IssueTemplate => {
   };
 
   return issueTemplate;
-};
+}
 
 /**
  * Find all ticket files in a directory
  */
-export const findTicketFiles = (dirPath: string): string[] => {
+export function findTicketFiles(dirPath: string): string[] {
   if (!fs.existsSync(dirPath)) {
     return [];
   }
@@ -336,4 +304,4 @@ export const findTicketFiles = (dirPath: string): string[] => {
   return files
     .filter((file) => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
     .map((file) => path.join(dirPath, file));
-};
+}
