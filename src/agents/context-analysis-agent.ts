@@ -1,9 +1,10 @@
 /**
  * Context Analysis Agent
  *
- * Loads and analyzes relevant context files from previous resolutions
- * Identifies patterns from similar past issues
- * Provides historical insights to other agents
+ * Loads and analyzes relevant context:
+ * 1. Historical context from agent-memory (past resolutions, patterns)
+ * 2. Codebase context from cht-core (relevant source files for the domain)
+ * Provides combined context insights to other agents
  */
 
 import {
@@ -14,6 +15,7 @@ import {
   DesignDecision,
   CHTDomain,
   DomainComponents,
+  CodeContext,
 } from '../types';
 import {
   loadDomainOverview,
@@ -22,14 +24,20 @@ import {
   getRelatedDomains,
   ensureAgentMemoryExists,
 } from '../utils/context-loader';
+import { gatherDomainContext } from '../utils/cht-core-context';
+import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 
 export class ContextAnalysisAgent {
+  private todos: TodoTracker;
+
   constructor(_options: { modelName?: string } = {}) {
     // Model will be used for advanced pattern analysis in future iterations
     // For now, we use rule-based analysis
 
     // Ensure agent-memory directory exists
     ensureAgentMemoryExists();
+
+    this.todos = createAgentTodoTracker('Context Analysis');
   }
 
   /**
@@ -38,6 +46,9 @@ export class ContextAnalysisAgent {
   async analyze(issue: IssueTemplate): Promise<ContextAnalysisResult> {
     console.log('\n[Context Analysis Agent] Starting context analysis...');
     console.log(`[Context Analysis Agent] Domain: ${issue.issue.technical_context.domain}`);
+
+    // Clear any previous todos
+    this.todos.clear();
 
     const domain = issue.issue.technical_context.domain;
 
@@ -51,43 +62,73 @@ export class ContextAnalysisAgent {
         reusablePatterns: [],
         relevantDesignDecisions: [],
         recommendations: ['Domain not specified - unable to analyze context'],
-        historicalSuccessRate: 0.5,
+        historicalSuccessRate: null,
         relatedDomains: [],
+        codeContext: null,
       };
     }
 
-    // Load domain context
+    // Load domain context from agent-memory
+    const loadContextId = this.todos.add('Load domain context', 'Loading domain context');
+    this.todos.start(loadContextId);
     const domainOverview = loadDomainOverview(domain);
     const domainComponents = loadDomainComponents(domain);
+    this.todos.complete(loadContextId);
 
     // Find similar past issues
-    const similarContexts = this.findSimilarIssues(issue, domain);
+    const similarContexts = await this.todos.run(
+      'Find similar past issues',
+      'Finding similar past issues',
+      async () => this.findSimilarIssues(issue, domain)
+    );
     console.log(`[Context Analysis Agent] Found ${similarContexts.length} similar past issues`);
 
     // Extract patterns from similar contexts
-    const patterns = this.extractPatterns(similarContexts, domainComponents);
+    const patterns = await this.todos.run(
+      'Extract reusable patterns',
+      'Extracting reusable patterns',
+      async () => this.extractPatterns(similarContexts, domainComponents)
+    );
     console.log(`[Context Analysis Agent] Extracted ${patterns.length} reusable patterns`);
 
     // Extract design decisions
-    const designDecisions = this.extractDesignDecisions(similarContexts, domain);
+    const designDecisions = await this.todos.run(
+      'Extract design decisions',
+      'Extracting design decisions',
+      async () => this.extractDesignDecisions(similarContexts, domain)
+    );
     console.log(
       `[Context Analysis Agent] Found ${designDecisions.length} relevant design decisions`
     );
 
-    // Generate recommendations
-    const recommendations = this.generateRecommendations(
-      issue,
-      similarContexts,
-      patterns,
-      domainOverview?.content
+    // Gather code context from cht-core codebase
+    const codeContext = await this.todos.run(
+      'Gather code context from cht-core',
+      'Gathering code context from cht-core',
+      async () => this.gatherCodeContext(domain)
+    );
+
+    // Generate recommendations (now including code context info)
+    const recommendations = await this.todos.run(
+      'Generate recommendations',
+      'Generating recommendations',
+      async () => this.generateRecommendations(
+        issue,
+        similarContexts,
+        patterns,
+        domainOverview?.content,
+        codeContext
+      )
     );
     console.log(`[Context Analysis Agent] Generated ${recommendations.length} recommendations`);
 
-    // Calculate historical success rate
+    // Calculate historical success rate (null if no data)
     const successRate = this.calculateSuccessRate(similarContexts);
 
     // Get related domains
     const relatedDomains = domainOverview ? getRelatedDomains(domain) : [];
+
+    this.todos.printSummary();
 
     return {
       similarContexts,
@@ -96,7 +137,33 @@ export class ContextAnalysisAgent {
       recommendations,
       historicalSuccessRate: successRate,
       relatedDomains,
+      codeContext,
     };
+  }
+
+  /**
+   * Gather code context from cht-core codebase
+   */
+  private gatherCodeContext(domain: CHTDomain): CodeContext | null {
+    console.log(`[Context Analysis Agent] Gathering code context for domain: ${domain}`);
+
+    const context = gatherDomainContext(domain, { maxSnippets: 8 });
+
+    if (context) {
+      console.log(
+        `[Context Analysis Agent] Found ${context.codeSnippets.length} code snippets from cht-core`
+      );
+      return {
+        domain: context.domain,
+        description: context.description,
+        codeSnippets: context.codeSnippets,
+        availableFiles: context.availableFiles,
+        missingFiles: context.missingFiles,
+      };
+    } else {
+      console.log('[Context Analysis Agent] No code context available (CHT_CORE_PATH not set?)');
+      return null;
+    }
   }
 
   /**
@@ -245,7 +312,8 @@ export class ContextAnalysisAgent {
     issue: IssueTemplate,
     similarContexts: ResolvedIssueContext[],
     patterns: CodePattern[],
-    domainOverview?: string
+    domainOverview?: string,
+    codeContext?: CodeContext | null
   ): string[] {
     const recommendations: string[] = [];
 
@@ -272,18 +340,30 @@ export class ContextAnalysisAgent {
       );
     }
 
+    // Code context recommendations
+    if (codeContext && codeContext.codeSnippets.length > 0) {
+      const highRelevanceFiles = codeContext.codeSnippets
+        .filter((s) => s.relevance === 'high')
+        .map((s) => s.filePath);
+      if (highRelevanceFiles.length > 0) {
+        recommendations.push(
+          `Key files to review/modify: ${highRelevanceFiles.slice(0, 3).join(', ')}`
+        );
+      }
+    }
+
     // Domain-specific recommendations
     if (domainOverview) {
       recommendations.push(`Review domain overview for key concepts and technologies`);
     }
 
-    // Issue type recommendations
-    if (issue.issue.type === 'feature') {
-      recommendations.push('Ensure comprehensive test coverage for new feature');
-      recommendations.push('Update documentation and configuration examples');
-    } else if (issue.issue.type === 'bug') {
-      recommendations.push('Add regression tests to prevent recurrence');
-      recommendations.push('Check for similar issues in related components');
+    // Issue type recommendations (only if no better recommendations exist)
+    if (recommendations.length < 2) {
+      if (issue.issue.type === 'feature') {
+        recommendations.push('Ensure comprehensive test coverage for new feature');
+      } else if (issue.issue.type === 'bug') {
+        recommendations.push('Add regression tests to prevent recurrence');
+      }
     }
 
     // Priority-based recommendations
@@ -322,10 +402,11 @@ export class ContextAnalysisAgent {
 
   /**
    * Calculate historical success rate from similar contexts
+   * Returns null if no historical data available
    */
-  private calculateSuccessRate(contexts: ResolvedIssueContext[]): number {
+  private calculateSuccessRate(contexts: ResolvedIssueContext[]): number | null {
     if (contexts.length === 0) {
-      return 0.5; // Neutral when no history
+      return null; // No historical data available
     }
 
     // All resolved issues are successful (phase: completed)

@@ -34,6 +34,8 @@ import {
   askDevelopmentOptions,
   displayFullWorkflowSummary,
 } from '../workflows/orchestrator';
+import { getConfiguredModel } from '../llm/types';
+import { isUsingCLIProvider } from '../llm';
 
 // Load environment variables
 dotenv.config();
@@ -43,12 +45,19 @@ const main = async (): Promise<void> => {
   console.log('║        CHT Multi-Agent System - Full Workflow CLI              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
-  // Check for API key
-  if (!process.env.ANTHROPIC_API_KEY) {
+  // Check for API key (not required in CLI mode)
+  const usingCLI = isUsingCLIProvider();
+  if (!usingCLI && !process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
     console.log('\nPlease create a .env file with your Anthropic API key:');
-    console.log('ANTHROPIC_API_KEY=your_api_key_here\n');
+    console.log('ANTHROPIC_API_KEY=your_api_key_here');
+    console.log('\nOr use Claude Code CLI mode:');
+    console.log('LLM_PROVIDER=claude-cli\n');
     process.exit(1);
+  }
+
+  if (usingCLI) {
+    console.log('🔧 Using Claude Code CLI provider (no API key required)\n');
   }
 
   // Check for CHT_CORE_PATH
@@ -83,15 +92,16 @@ const main = async (): Promise<void> => {
     console.log('✅ Ticket parsed successfully!\n');
 
     // Create supervisors
-    console.log('🤖 Initializing Supervisors...\n');
+    const modelName = getConfiguredModel();
+    console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);
 
     const researchSupervisor = new ResearchSupervisor({
-      modelName: 'claude-sonnet-4-20250514',
-      useMockMCP: true, // Using mocked MCP for now
+      modelName,
+      useMockMCP: false, // Use real MCP server
     });
 
     const developmentSupervisor = new DevelopmentSupervisor({
-      useMock: true, // Using mock mode for POC
+      useMock: false, // Use real LLM for code generation
     });
 
     // Display issue details

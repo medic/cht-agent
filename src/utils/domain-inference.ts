@@ -11,8 +11,8 @@
 
 // import * as fs from 'fs';
 // import * as path from 'path';
-import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
+import { createLLMProviderFromEnv } from '../llm';
 
 /**
  * Load domain mapping indices if they exist
@@ -109,16 +109,13 @@ Pitfalls (Common Misclassifications to Avoid):
 `;
 
 /**
- * Infer domain and components using Claude LLM
+ * Infer domain and components using LLM
+ * Supports both API mode (ANTHROPIC_API_KEY) and CLI mode (LLM_PROVIDER=claude-cli)
  */
 async function inferUsingLLM(
-  issue: IssueTemplate,
-  modelName: string = 'claude-sonnet-4-20250514'
+  issue: IssueTemplate
 ): Promise<{ domain: CHTDomain; components: string[] }> {
-  const model = new ChatAnthropic({
-    modelName,
-    temperature: 0.2, // Low temperature for consistent categorization
-  });
+  const llm = createLLMProviderFromEnv();
 
   // Format reference data for the prompt
   const similarImplementations = formatListForPrompt(
@@ -183,8 +180,8 @@ Respond in this exact JSON format:
   "reasoning": "Brief explanation of why this domain and these components"
 }`;
 
-  const response = await model.invoke(prompt);
-  const content = response.content.toString();
+  const response = await llm.invoke(prompt, { temperature: 0.2 });
+  const content = response.content;
 
   // Extract JSON from response
   const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -237,7 +234,7 @@ Respond in this exact JSON format:
  */
 export async function inferDomainAndComponents(
   issue: IssueTemplate,
-  modelName?: string
+  _modelName?: string // Deprecated: model is now determined by LLM_PROVIDER env var
 ): Promise<{ domain: CHTDomain; components: string[] }> {
   // If domain is already specified, keep it
   const hasExistingDomain = issue.issue.technical_context.domain !== undefined;
@@ -258,7 +255,7 @@ export async function inferDomainAndComponents(
   // TODO: Implement index-based inference when indices are populated
 
   // For now, use LLM inference
-  const inferred = await inferUsingLLM(issue, modelName);
+  const inferred = await inferUsingLLM(issue);
 
   console.log(`[Domain Inference] Inferred domain: ${inferred.domain}`);
   console.log(`[Domain Inference] Inferred components: ${inferred.components.join(', ')}`);

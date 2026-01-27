@@ -18,6 +18,7 @@ import {
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import { readFromChtCore, listChtCoreDirectory } from '../utils/staging';
 import { loadIndex } from '../utils/context-loader';
+import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 
 interface TestEnvironmentAgentOptions {
   llmProvider?: LLMProvider;
@@ -27,10 +28,12 @@ interface TestEnvironmentAgentOptions {
 export class TestEnvironmentAgent {
   private llm: LLMProvider;
   private useMock: boolean;
+  private todos: TodoTracker;
 
   constructor(options: TestEnvironmentAgentOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
     this.useMock = options.useMock ?? false;
+    this.todos = createAgentTodoTracker('Test Env');
   }
 
   /**
@@ -42,6 +45,9 @@ export class TestEnvironmentAgent {
     console.log(`[Test Environment Agent] Generated files: ${input.codeGeneration.files.length}`);
     console.log(`[Test Environment Agent] Using LLM: ${this.llm.modelName}`);
 
+    // Clear any previous todos
+    this.todos.clear();
+
     if (input.additionalContext) {
       console.log(`[Test Environment Agent] Additional context from feedback provided`);
     }
@@ -51,19 +57,39 @@ export class TestEnvironmentAgent {
     }
 
     // Analyze generated code to determine test requirements
-    const testRequirements = this.analyzeTestRequirements(input);
+    const testRequirements = await this.todos.run(
+      'Analyze test requirements',
+      'Analyzing test requirements',
+      async () => this.analyzeTestRequirements(input)
+    );
 
     // Gather existing test patterns from cht-core
-    const testPatterns = await this.gatherTestPatterns(input);
+    const testPatterns = await this.todos.run(
+      'Gather test patterns from cht-core',
+      'Gathering test patterns from cht-core',
+      async () => this.gatherTestPatterns(input)
+    );
 
     // Generate test configurations
-    const configs = await this.generateTestConfigs(input, testRequirements);
+    const configs = await this.todos.run(
+      'Generate test configurations',
+      'Generating test configurations',
+      async () => this.generateTestConfigs(input, testRequirements)
+    );
 
     // Generate test files
-    const testFiles = await this.generateTestFiles(input, testPatterns, configs);
+    const testFiles = await this.todos.run(
+      'Generate test files',
+      'Generating test files',
+      async () => this.generateTestFiles(input, testPatterns, configs)
+    );
 
     // Generate test data/fixtures
-    const testDataFiles = await this.generateTestDataFiles(input, testPatterns);
+    const testDataFiles = await this.todos.run(
+      'Generate test fixtures',
+      'Generating test fixtures',
+      async () => this.generateTestDataFiles(input, testPatterns)
+    );
 
     // Generate setup instructions
     const setupInstructions = this.generateSetupInstructions(configs, input);
@@ -82,6 +108,8 @@ export class TestEnvironmentAgent {
     console.log(`[Test Environment Agent] Generated ${testFiles.length} test files`);
     console.log(`[Test Environment Agent] Generated ${testDataFiles.length} fixture files`);
     console.log(`[Test Environment Agent] Estimated coverage: ${estimatedCoverage}%`);
+
+    this.todos.printSummary();
 
     return result;
   }
@@ -247,7 +275,7 @@ export class TestEnvironmentAgent {
   }
 
   /**
-   * Generate test files using LLM
+   * Generate test files using LLM - uses batched approach (plan then generate each file)
    */
   private async generateTestFiles(
     input: TestEnvironmentInput,
@@ -279,9 +307,7 @@ export class TestEnvironmentAgent {
       .join('\n\n')
       .substring(0, 6000);
 
-    const prompt = `You are a CHT (Community Health Toolkit) test engineer generating test files.
-
-## Issue Details
+    const baseContext = `## Issue Details
 Title: ${issue.issue.title}
 Type: ${issue.issue.type}
 Domain: ${issue.issue.technical_context.domain}
@@ -298,53 +324,163 @@ ${configs.map((c) => `- ${c.type} tests using ${c.framework}`).join('\n')}
 ## Existing Test Patterns in CHT
 ${testPatternContext || 'No existing test patterns available'}
 
-${additionalContext ? `## Additional Context from Human Feedback\n${additionalContext}` : ''}
+${additionalContext ? `## Additional Context from Human Feedback\n${additionalContext}` : ''}`;
+
+    // Step 1: Plan which test files to generate (small JSON)
+    console.log('[Test Environment Agent] Step 1: Planning test files to generate...');
+    const filePlan = await this.planTestFiles(baseContext);
+
+    if (filePlan.length === 0) {
+      console.log('[Test Environment Agent] No test files planned for generation');
+      return [];
+    }
+
+    console.log(`[Test Environment Agent] Planned ${filePlan.length} test files to generate`);
+
+    // Step 2: Generate each test file individually (no JSON, just code)
+    const generatedFiles: GeneratedFile[] = [];
+
+    for (const plan of filePlan) {
+      const fileId = this.todos.add(`Generate ${plan.relativePath}`, `Generating ${plan.relativePath}`);
+      this.todos.start(fileId);
+
+      const content = await this.generateSingleTestFile(baseContext, plan);
+
+      if (content) {
+        this.todos.complete(fileId);
+        generatedFiles.push({
+          relativePath: plan.relativePath,
+          content,
+          language: plan.language,
+          type: 'test',
+          description: plan.description,
+          action: 'create',
+        });
+        console.log(`[Test Environment Agent] ✓ Generated ${plan.relativePath}`);
+      } else {
+        this.todos.fail(fileId, 'Empty or invalid content');
+        console.log(`[Test Environment Agent] ✗ Failed to generate ${plan.relativePath}`);
+      }
+    }
+
+    return generatedFiles;
+  }
+
+  /**
+   * Step 1: Plan which test files to generate (returns small JSON)
+   */
+  private async planTestFiles(baseContext: string): Promise<Array<{
+    relativePath: string;
+    language: FileLanguage;
+    testType: 'unit' | 'integration' | 'e2e';
+    description: string;
+  }>> {
+    const planPrompt = `You are a CHT (Community Health Toolkit) test engineer planning test files.
+
+${baseContext}
 
 ## Task
-Generate test files for the implementation. For each test file:
-1. Follow CHT testing patterns and conventions
-2. Use appropriate assertion libraries (chai for mocha)
-3. Include setup/teardown hooks where needed
-4. Add meaningful test descriptions
-5. Cover happy path and edge cases
+List the test files that need to be created to properly test this implementation.
+Do NOT include the actual test code - just list the files with metadata.
 
 Respond with a JSON object in this exact format:
 {
   "files": [
     {
-      "relativePath": "path/to/file.spec.ts",
-      "content": "test file content",
+      "relativePath": "tests/unit/example.spec.ts",
       "language": "typescript",
-      "type": "test",
-      "description": "Tests for component X"
+      "testType": "unit",
+      "description": "Unit tests for example service"
     }
   ]
-}`;
+}
+
+Keep the list focused - include unit tests for each source file, and integration tests if needed.
+Valid testTypes: unit, integration, e2e
+Valid languages: typescript, javascript`;
 
     try {
-      interface GeneratedOutput {
-        files: GeneratedFile[];
+      interface TestFilePlanOutput {
+        files: Array<{
+          relativePath: string;
+          language: FileLanguage;
+          testType: 'unit' | 'integration' | 'e2e';
+          description: string;
+        }>;
       }
 
-      const result = await this.llm.invokeForJSON<GeneratedOutput>(prompt, {
-        temperature: 0.3,
+      const result = await this.llm.invokeForJSON<TestFilePlanOutput>(planPrompt, {
+        temperature: 0.2,
       });
 
-      // Ensure all files are marked as test type
-      return (result.files || []).map((file) => ({
-        ...file,
-        type: 'test' as const,
-        action: 'create' as const,
-        language: this.inferLanguage(file.relativePath),
-      }));
+      return result.files || [];
     } catch (error) {
-      console.error('[Test Environment Agent] Error generating test files:', error);
+      console.error('[Test Environment Agent] Error planning test files:', error);
       return [];
     }
   }
 
   /**
-   * Generate test data/fixture files
+   * Step 2: Generate a single test file (returns plain code, no JSON)
+   */
+  private async generateSingleTestFile(
+    baseContext: string,
+    filePlan: {
+      relativePath: string;
+      language: FileLanguage;
+      testType: 'unit' | 'integration' | 'e2e';
+      description: string;
+    }
+  ): Promise<string | null> {
+    const generatePrompt = `You are a CHT (Community Health Toolkit) test engineer generating test files.
+
+${baseContext}
+
+## Test File to Generate
+Path: ${filePlan.relativePath}
+Language: ${filePlan.language}
+Test Type: ${filePlan.testType}
+Description: ${filePlan.description}
+
+## Instructions
+Generate the complete test file content for ${filePlan.relativePath}.
+- Follow CHT testing patterns and conventions
+- Use appropriate assertion libraries (chai for mocha)
+- Include setup/teardown hooks where needed
+- Add meaningful test descriptions
+- Cover happy path and edge cases
+- Include proper imports
+
+IMPORTANT: Output ONLY the code. Do not wrap in markdown code blocks. Do not include any explanation before or after the code.`;
+
+    try {
+      const response = await this.llm.invoke(generatePrompt, {
+        temperature: 0.3,
+      });
+
+      let content = response.content.trim();
+
+      // Remove markdown code blocks if the LLM added them anyway
+      const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
+      if (codeBlockMatch) {
+        content = codeBlockMatch[1];
+      }
+
+      // Basic validation - ensure we got some content
+      if (content.length < 20) {
+        console.error(`[Test Environment Agent] Generated content too short for ${filePlan.relativePath}`);
+        return null;
+      }
+
+      return content;
+    } catch (error) {
+      console.error(`[Test Environment Agent] Error generating ${filePlan.relativePath}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate test data/fixture files - uses batched approach
    */
   private async generateTestDataFiles(
     input: TestEnvironmentInput,
@@ -375,54 +511,175 @@ Respond with a JSON object in this exact format:
       return [];
     }
 
-    const prompt = `You are a CHT test engineer generating test fixture data.
-
-## Issue
+    const uniqueFixtureTypes = [...new Set(fixtureTypes)];
+    const baseContext = `## Issue
 ${issue.issue.title}
 
 ## Fixture Types Needed
-${[...new Set(fixtureTypes)].join(', ')}
+${uniqueFixtureTypes.join(', ')}
 
 ## Domain
-${issue.issue.technical_context.domain}
+${issue.issue.technical_context.domain}`;
+
+    // Step 1: Plan which fixture files to generate
+    console.log('[Test Environment Agent] Step 1: Planning fixture files to generate...');
+    const filePlan = await this.planFixtureFiles(baseContext, uniqueFixtureTypes);
+
+    if (filePlan.length === 0) {
+      console.log('[Test Environment Agent] No fixture files planned for generation');
+      return [];
+    }
+
+    console.log(`[Test Environment Agent] Planned ${filePlan.length} fixture files to generate`);
+
+    // Step 2: Generate each fixture file individually
+    const generatedFiles: GeneratedFile[] = [];
+
+    for (const plan of filePlan) {
+      const fileId = this.todos.add(`Generate fixture ${plan.relativePath}`, `Generating fixture ${plan.relativePath}`);
+      this.todos.start(fileId);
+
+      const content = await this.generateSingleFixtureFile(baseContext, plan);
+
+      if (content) {
+        this.todos.complete(fileId);
+        generatedFiles.push({
+          relativePath: plan.relativePath,
+          content,
+          language: plan.language,
+          type: 'fixture',
+          description: plan.description,
+          action: 'create',
+        });
+        console.log(`[Test Environment Agent] ✓ Generated ${plan.relativePath}`);
+      } else {
+        this.todos.fail(fileId, 'Empty or invalid content');
+        console.log(`[Test Environment Agent] ✗ Failed to generate ${plan.relativePath}`);
+      }
+    }
+
+    return generatedFiles;
+  }
+
+  /**
+   * Plan which fixture files to generate (returns small JSON)
+   */
+  private async planFixtureFiles(baseContext: string, fixtureTypes: string[]): Promise<Array<{
+    relativePath: string;
+    language: FileLanguage;
+    fixtureType: string;
+    description: string;
+  }>> {
+    const planPrompt = `You are a CHT test engineer planning test fixture files.
+
+${baseContext}
 
 ## Task
-Generate test fixture files with realistic sample data for CHT. Include:
-1. Valid data for happy path tests
-2. Edge case data
-3. Invalid data for error testing
+List the fixture files needed to support testing. Consider:
+- Each fixture type (${fixtureTypes.join(', ')}) may need its own file
+- Include valid data, edge cases, and invalid data files
 
-Respond with a JSON object:
+Do NOT include the actual fixture data - just list the files with metadata.
+
+Respond with a JSON object in this exact format:
 {
   "files": [
     {
       "relativePath": "tests/fixtures/contacts.json",
-      "content": "{ fixture data }",
       "language": "json",
-      "type": "fixture",
+      "fixtureType": "contacts",
       "description": "Sample contact data for testing"
     }
   ]
-}`;
+}
+
+Valid languages: json, typescript, javascript`;
 
     try {
-      interface GeneratedOutput {
-        files: GeneratedFile[];
+      interface FixturePlanOutput {
+        files: Array<{
+          relativePath: string;
+          language: FileLanguage;
+          fixtureType: string;
+          description: string;
+        }>;
       }
 
-      const result = await this.llm.invokeForJSON<GeneratedOutput>(prompt, {
+      const result = await this.llm.invokeForJSON<FixturePlanOutput>(planPrompt, {
+        temperature: 0.2,
+      });
+
+      return result.files || [];
+    } catch (error) {
+      console.error('[Test Environment Agent] Error planning fixture files:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Generate a single fixture file (returns plain content, no JSON wrapper)
+   */
+  private async generateSingleFixtureFile(
+    baseContext: string,
+    filePlan: {
+      relativePath: string;
+      language: FileLanguage;
+      fixtureType: string;
+      description: string;
+    }
+  ): Promise<string | null> {
+    const generatePrompt = `You are a CHT test engineer generating test fixture data.
+
+${baseContext}
+
+## Fixture File to Generate
+Path: ${filePlan.relativePath}
+Language: ${filePlan.language}
+Fixture Type: ${filePlan.fixtureType}
+Description: ${filePlan.description}
+
+## Instructions
+Generate realistic test fixture data for CHT. Include:
+1. Valid data for happy path tests
+2. Edge case data (empty strings, boundary values)
+3. Invalid data for error testing
+
+IMPORTANT: Output ONLY the file content. Do not wrap in markdown code blocks. Do not include any explanation before or after the content.
+If generating JSON, output valid JSON only.`;
+
+    try {
+      const response = await this.llm.invoke(generatePrompt, {
         temperature: 0.4,
       });
 
-      return (result.files || []).map((file) => ({
-        ...file,
-        type: 'fixture' as const,
-        action: 'create' as const,
-        language: this.inferLanguage(file.relativePath),
-      }));
+      let content = response.content.trim();
+
+      // Remove markdown code blocks if the LLM added them anyway
+      const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
+      if (codeBlockMatch) {
+        content = codeBlockMatch[1];
+      }
+
+      // Basic validation
+      if (content.length < 10) {
+        console.error(`[Test Environment Agent] Generated content too short for ${filePlan.relativePath}`);
+        return null;
+      }
+
+      // If it's supposed to be JSON, validate it
+      if (filePlan.language === 'json') {
+        try {
+          JSON.parse(content);
+        } catch {
+          console.error(`[Test Environment Agent] Generated invalid JSON for ${filePlan.relativePath}`);
+          return null;
+        }
+      }
+
+      return content;
     } catch (error) {
-      console.error('[Test Environment Agent] Error generating fixture files:', error);
-      return [];
+      console.error(`[Test Environment Agent] Error generating ${filePlan.relativePath}:`, error);
+      return null;
     }
   }
 
@@ -501,26 +758,6 @@ Respond with a JSON object:
     }
 
     return Math.min(Math.round(coverage), 95);
-  }
-
-  /**
-   * Infer language from file extension
-   */
-  private inferLanguage(filePath: string): FileLanguage {
-    const ext = filePath.split('.').pop()?.toLowerCase();
-    const languageMap: Record<string, FileLanguage> = {
-      ts: 'typescript',
-      js: 'javascript',
-      json: 'json',
-      xml: 'xml',
-      yml: 'yaml',
-      yaml: 'yaml',
-      md: 'markdown',
-      html: 'html',
-      css: 'css',
-      sh: 'shell',
-    };
-    return languageMap[ext || ''] || 'typescript';
   }
 
   /**

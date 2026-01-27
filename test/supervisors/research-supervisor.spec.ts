@@ -48,6 +48,7 @@ describe('ResearchSupervisor - Pure Functions', () => {
     recommendations: ['Recommendation 1'],
     historicalSuccessRate: 0.8,
     relatedDomains: ['contacts'],
+    codeContext: null,
     ...overrides,
   });
 

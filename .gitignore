@@ -10,3 +10,4 @@ agent-memory/
 # Test coverage
 .nyc_output/
 coverage/
+log

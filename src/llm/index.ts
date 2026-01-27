@@ -29,7 +29,11 @@ export {
   createLLMProviderFromEnv,
   createLLMProviderWithOptions,
   getLLMConfigFromEnv,
+  getCLIConfigFromEnv,
+  isUsingCLIProvider,
+  ExtendedProviderType,
 } from './factory';
 
 // Export individual providers (for direct use if needed)
 export { createAnthropicProvider } from './providers/anthropic';
+export { createClaudeCLIProvider, validateClaudeCLI, ClaudeCLIConfig } from './providers/claude-cli';

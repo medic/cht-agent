@@ -34,6 +34,7 @@ import {
   writeToChtCore,
   clearStaging,
 } from '../utils/staging';
+import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
 
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
@@ -94,6 +95,7 @@ export class DevelopmentSupervisor {
   private testEnvAgent: TestEnvironmentAgent;
   private llm: LLMProvider;
   private useMock: boolean;
+  private todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
@@ -109,6 +111,8 @@ export class DevelopmentSupervisor {
       useMock: this.useMock,
     });
 
+    this.todos = createSupervisorTodoTracker('Development');
+
     this.graph = this.buildGraph();
   }
 
@@ -117,16 +121,16 @@ export class DevelopmentSupervisor {
    */
   private buildGraph() {
     const workflow = new StateGraph(DevelopmentStateAnnotation)
-      // Define nodes
-      .addNode('codeGeneration', this.codeGenerationNode.bind(this))
-      .addNode('testEnvironment', this.testEnvironmentNode.bind(this))
-      .addNode('validation', this.validationNode.bind(this))
+      // Define nodes (names must not conflict with state attributes)
+      .addNode('generateCode', this.codeGenerationNode.bind(this))
+      .addNode('setupTests', this.testEnvironmentNode.bind(this))
+      .addNode('validateImpl', this.validationNode.bind(this))
 
       // Define edges
-      .addEdge(START, 'codeGeneration')
-      .addEdge('codeGeneration', 'testEnvironment')
-      .addEdge('testEnvironment', 'validation')
-      .addEdge('validation', END);
+      .addEdge(START, 'generateCode')
+      .addEdge('generateCode', 'setupTests')
+      .addEdge('setupTests', 'validateImpl')
+      .addEdge('validateImpl', END);
 
     return workflow.compile();
   }
@@ -137,8 +141,12 @@ export class DevelopmentSupervisor {
   private async codeGenerationNode(state: typeof DevelopmentStateAnnotation.State) {
     console.log('\n=== CODE GENERATION NODE ===');
 
+    const todoId = 'development-1'; // First todo
+    this.todos.start(todoId);
+
     if (!state.issue || !state.orchestrationPlan || !state.researchFindings ||
         !state.contextAnalysis || !state.options) {
+      this.todos.fail(todoId, 'Missing required data');
       return {
         errors: ['Missing required data for code generation'],
         currentPhase: 'init' as const,
@@ -154,6 +162,8 @@ export class DevelopmentSupervisor {
         chtCorePath: state.options.chtCorePath,
       });
 
+      this.todos.complete(todoId);
+
       return {
         codeGeneration: result,
         currentPhase: 'test-setup' as const,
@@ -167,6 +177,7 @@ export class DevelopmentSupervisor {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.todos.fail(todoId, errorMessage);
       return {
         errors: [`Code generation failed: ${errorMessage}`],
         currentPhase: 'code-generation' as const,
@@ -180,7 +191,11 @@ export class DevelopmentSupervisor {
   private async testEnvironmentNode(state: typeof DevelopmentStateAnnotation.State) {
     console.log('\n=== TEST ENVIRONMENT NODE ===');
 
+    const todoId = 'development-2'; // Second todo
+    this.todos.start(todoId);
+
     if (!state.issue || !state.orchestrationPlan || !state.codeGeneration || !state.options) {
+      this.todos.fail(todoId, 'Missing required data');
       return {
         errors: ['Missing required data for test environment setup'],
         currentPhase: 'test-setup' as const,
@@ -195,6 +210,8 @@ export class DevelopmentSupervisor {
         chtCorePath: state.options.chtCorePath,
       });
 
+      this.todos.complete(todoId);
+
       return {
         testEnvironment: result,
         currentPhase: 'validation' as const,
@@ -208,6 +225,7 @@ export class DevelopmentSupervisor {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.todos.fail(todoId, errorMessage);
       return {
         errors: [`Test environment setup failed: ${errorMessage}`],
         currentPhase: 'test-setup' as const,
@@ -221,7 +239,11 @@ export class DevelopmentSupervisor {
   private async validationNode(state: typeof DevelopmentStateAnnotation.State) {
     console.log('\n=== VALIDATION NODE ===');
 
+    const todoId = 'development-3'; // Third todo
+    this.todos.start(todoId);
+
     if (!state.issue || !state.codeGeneration) {
+      this.todos.fail(todoId, 'Missing required data');
       return {
         errors: ['Missing required data for validation'],
         currentPhase: 'validation' as const,
@@ -234,6 +256,9 @@ export class DevelopmentSupervisor {
         state.codeGeneration,
         state.testEnvironment
       );
+
+      this.todos.complete(todoId);
+      this.todos.printSummary();
 
       return {
         validationResult: validation,
@@ -248,6 +273,8 @@ export class DevelopmentSupervisor {
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.todos.fail(todoId, errorMessage);
+      this.todos.printSummary();
       return {
         errors: [`Validation failed: ${errorMessage}`],
         currentPhase: 'validation' as const,
@@ -387,6 +414,14 @@ Respond with a JSON object:
     }
 
     console.log('========================================\n');
+
+    // Initialize todos for the development workflow
+    this.todos.clear();
+    this.todos.addMany([
+      { content: 'Generate code', activeForm: 'Generating code' },
+      { content: 'Setup test environment', activeForm: 'Setting up test environment' },
+      { content: 'Validate implementation', activeForm: 'Validating implementation' },
+    ]);
 
     const initialState: typeof DevelopmentStateAnnotation.State = {
       messages: [

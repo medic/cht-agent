@@ -26,6 +26,7 @@ import {
   askDevelopmentOptions,
   displayFullWorkflowSummary,
 } from '../workflows/orchestrator';
+import { getConfiguredModel } from '../llm/types';
 
 // Load environment variables
 dotenv.config();
@@ -65,10 +66,11 @@ const runExample = async (): Promise<void> => {
     console.log('✅ Ticket parsed successfully!\n');
 
     // Create supervisors
-    console.log('🤖 Initializing Supervisors...\n');
+    const modelName = getConfiguredModel();
+    console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);
 
     const researchSupervisor = new ResearchSupervisor({
-      modelName: 'claude-sonnet-4-20250514',
+      modelName,
       useMockMCP: true, // Using mocked MCP for demo
     });
 

@@ -157,7 +157,7 @@ export interface ResearchFindings {
   suggestedApproaches: string[];
   relatedDomains: CHTDomain[];
   confidence: number; // 0-1
-  source: 'kapa-ai' | 'local-docs' | 'cached';
+  source: 'kapa-ai' | 'local-docs' | 'cached' | 'mock' | 'error';
 }
 
 /**
@@ -206,6 +206,27 @@ export interface DesignDecision {
 }
 
 /**
+ * Code snippet from cht-core codebase
+ */
+export interface CodeSnippet {
+  filePath: string;
+  content: string;
+  language: string;
+  relevance: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Code context gathered from cht-core codebase
+ */
+export interface CodeContext {
+  domain: CHTDomain;
+  description: string;
+  codeSnippets: CodeSnippet[];
+  availableFiles: string[];
+  missingFiles: string[];
+}
+
+/**
  * Context analysis results from Context Analysis Agent
  */
 export interface ContextAnalysisResult {
@@ -213,8 +234,11 @@ export interface ContextAnalysisResult {
   reusablePatterns: CodePattern[];
   relevantDesignDecisions: DesignDecision[];
   recommendations: string[];
-  historicalSuccessRate: number; // 0-1
+  /** Historical success rate (0-1), null if no historical data available */
+  historicalSuccessRate: number | null;
   relatedDomains: CHTDomain[];
+  /** Code context gathered from cht-core codebase */
+  codeContext: CodeContext | null;
 }
 
 /**
@@ -223,7 +247,8 @@ export interface ContextAnalysisResult {
 export interface OrchestrationPlan {
   summary: string;
   keyFindings: string[];
-  proposedApproach: string;
+  /** Synthesized recommendation based on all research findings */
+  recommendedApproach: string;
   estimatedComplexity: 'low' | 'medium' | 'high';
   phases: Array<{
     name: string;
@@ -286,8 +311,101 @@ export interface AgentMessage {
   };
 }
 
+// ============================================================================
+// MCP (Model Context Protocol) Types for CHT Documentation Server
+// ============================================================================
+
 /**
- * MCP (Model Context Protocol) tool call for Kapa.AI
+ * Available MCP tools for CHT documentation
+ */
+export type MCPToolName = 'search_docs' | 'ask_question' | 'get_sources';
+
+/**
+ * Parameters for search_docs MCP tool
+ */
+export interface MCPSearchDocsParams {
+  query: string;
+  maxResults?: number;
+}
+
+/**
+ * Parameters for ask_question MCP tool
+ */
+export interface MCPAskQuestionParams {
+  question: string;
+  threadId?: string; // For conversation continuity
+}
+
+/**
+ * Raw response from search_docs MCP tool
+ * Returns markdown-formatted document snippets
+ */
+export interface MCPSearchDocsResponse {
+  /** Markdown content with document snippets, titles, and source URLs */
+  content: string;
+}
+
+/**
+ * Raw response from ask_question MCP tool
+ * Returns markdown-formatted answer with sources
+ */
+export interface MCPAskQuestionResponse {
+  /** Markdown content with answer, sources, thread ID, and question ID */
+  content: string;
+}
+
+/**
+ * Raw response from get_sources MCP tool
+ */
+export interface MCPGetSourcesResponse {
+  /** Markdown list of available documentation sources */
+  content: string;
+}
+
+/**
+ * Parsed document from search_docs response
+ */
+export interface MCPParsedDocument {
+  title: string;
+  section: string;
+  content: string;
+  sourceUrl: string;
+}
+
+/**
+ * Parsed answer from ask_question response
+ */
+export interface MCPParsedAnswer {
+  answer: string;
+  sources: Array<{
+    title: string;
+    url: string;
+  }>;
+  threadId?: string;
+  questionAnswerId?: string;
+}
+
+/**
+ * Parsed source from get_sources response
+ */
+export interface MCPParsedSource {
+  type: string;
+  description: string;
+}
+
+/**
+ * MCP Client configuration
+ */
+export interface MCPClientConfig {
+  /** MCP server URL */
+  serverUrl: string;
+  /** Request timeout in milliseconds */
+  timeout?: number;
+}
+
+/**
+ * Legacy MCP types (kept for backward compatibility)
+ * @deprecated Use the new MCP* types instead
  */
 export interface MCPToolCall {
   tool: 'search_docs' | 'get_context';
@@ -299,7 +417,8 @@ export interface MCPToolCall {
 }
 
 /**
- * MCP Response from Kapa.AI
+ * Legacy MCP Response (kept for backward compatibility)
+ * @deprecated Use MCPSearchDocsResponse or MCPAskQuestionResponse instead
  */
 export interface MCPResponse {
   success: boolean;

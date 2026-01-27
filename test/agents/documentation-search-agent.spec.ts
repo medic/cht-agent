@@ -37,7 +37,7 @@ describe('DocumentationSearchAgent', () => {
 
       expect(result.documentationReferences).to.be.an('array');
       expect(result.documentationReferences.length).to.be.greaterThan(0);
-      expect(result.source).to.equal('cached');
+      expect(result.source).to.equal('mock');
       expect(result.confidence).to.be.greaterThan(0);
     });
 
@@ -173,7 +173,7 @@ describe('DocumentationSearchAgent', () => {
         technical_context: { domain: 'contacts', components: [] },
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       expect(query).to.include('contacts');
     });
@@ -186,7 +186,7 @@ describe('DocumentationSearchAgent', () => {
         },
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       expect(query).to.include('api/contacts-controller');
     });
@@ -196,7 +196,7 @@ describe('DocumentationSearchAgent', () => {
         title: 'Add contact search feature',
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       expect(query).to.include('Add contact search feature');
     });
@@ -207,7 +207,7 @@ describe('DocumentationSearchAgent', () => {
         description: longDescription,
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       // Query should be shorter than full description
       expect(query.length).to.be.lessThan(700);
@@ -226,7 +226,7 @@ describe('DocumentationSearchAgent', () => {
       ];
       const issue = createTestIssue();
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
       expect(approaches.some((a: string) => a.includes('Contact Types'))).to.be.true;
       expect(approaches.some((a: string) => a.includes('Hierarchies'))).to.be.true;
@@ -236,7 +236,7 @@ describe('DocumentationSearchAgent', () => {
       const references: any[] = [];
       const issue = createTestIssue({ type: 'feature' });
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
       expect(approaches.some((a: string) => a.includes('best practices'))).to.be.true;
     });
@@ -245,7 +245,7 @@ describe('DocumentationSearchAgent', () => {
       const references: any[] = [];
       const issue = createTestIssue({ type: 'bug' });
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
       expect(approaches.some((a: string) => a.includes('Debug'))).to.be.true;
     });
@@ -261,9 +261,19 @@ describe('DocumentationSearchAgent', () => {
       ];
       const issue = createTestIssue();
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
       expect(approaches.length).to.be.at.most(5);
+    });
+
+    it('should extract recommendations from answer text', () => {
+      const references: any[] = [];
+      const issue = createTestIssue();
+      const answer = '- Use the contact API\n- Follow the hierarchy pattern\n- Test offline';
+
+      const approaches = agent.generateApproaches(references, issue, answer);
+
+      expect(approaches.some((a: string) => a.includes('contact API'))).to.be.true;
     });
   });
 
@@ -271,7 +281,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify contacts domain from topics', () => {
       const topics = ['contact', 'person'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('contacts');
     });
@@ -279,7 +289,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify forms-and-reports domain from topics', () => {
       const topics = ['form', 'enketo'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('forms-and-reports');
     });
@@ -287,7 +297,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify tasks-and-targets domain from topics', () => {
       const topics = ['task', 'target', 'rules'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('tasks-and-targets');
     });
@@ -295,7 +305,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify authentication domain from topics', () => {
       const topics = ['auth', 'permission', 'role'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('authentication');
     });
@@ -303,7 +313,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify messaging domain from topics', () => {
       const topics = ['sms', 'notification'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('messaging');
     });
@@ -311,7 +321,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify data-sync domain from topics', () => {
       const topics = ['sync', 'replication', 'offline'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('data-sync');
     });
@@ -319,7 +329,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify configuration domain from topics', () => {
       const topics = ['config', 'settings'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('configuration');
     });
@@ -327,7 +337,7 @@ describe('DocumentationSearchAgent', () => {
     it('should return empty array when no topics match', () => {
       const topics = ['random', 'unrelated'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.deep.equal([]);
     });
@@ -335,72 +345,28 @@ describe('DocumentationSearchAgent', () => {
     it('should identify multiple domains from mixed topics', () => {
       const topics = ['contact', 'hierarchy', 'form', 'submission'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('contacts');
       expect(domains).to.include('forms-and-reports');
     });
   });
 
-  describe('processMCPResponse', () => {
-    it('should return empty findings for unsuccessful response', () => {
-      const issue = createTestIssue();
-      const mcpResponse = { success: false, data: null };
-
-      const findings = (agent as any).processMCPResponse(mcpResponse, issue);
-
-      expect(findings.documentationReferences).to.deep.equal([]);
-      expect(findings.confidence).to.equal(0);
-    });
-
-    it('should extract unique code examples', () => {
-      const issue = createTestIssue();
-      const mcpResponse = {
-        success: true,
-        data: {
-          references: [
-            { url: 'https://1.com', title: 'T1', topics: [], codeExamples: ['example1', 'example2'] },
-            { url: 'https://2.com', title: 'T2', topics: [], codeExamples: ['example1', 'example3'] },
-          ],
-          summary: 'Test',
-          relatedTopics: [],
-        },
-      };
-
-      const findings = (agent as any).processMCPResponse(mcpResponse, issue);
-
-      // Should deduplicate 'example1'
-      expect(findings.relevantExamples).to.have.lengthOf(3);
-    });
-
-    it('should use "cached" source when using mock MCP', () => {
-      const issue = createTestIssue();
-      const mcpResponse = {
-        success: true,
-        data: {
-          references: [{ url: 'https://1.com', title: 'T1', topics: [] }],
-          summary: 'Test',
-          relatedTopics: [],
-        },
-      };
-
-      const findings = (agent as any).processMCPResponse(mcpResponse, issue);
-
-      expect(findings.source).to.equal('cached');
-    });
-  });
-
   describe('MCP integration', () => {
-    it('should throw error when MCP is disabled and not implemented', async () => {
+    it('should return empty findings with error source when MCP fails', async () => {
+      // Create agent without mock - will try to connect to real MCP which won't exist
       const agentWithoutMock = new DocumentationSearchAgent({ useMockMCP: false });
       const issue = createTestIssue();
 
-      try {
-        await agentWithoutMock.search(issue);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('MCP integration not yet implemented');
-      }
+      // Should not throw, but return error findings
+      const result = await agentWithoutMock.search(issue);
+
+      expect(result.documentationReferences).to.deep.equal([]);
+      expect(result.confidence).to.equal(0);
+      expect(result.source).to.equal('error');
+      expect(result.suggestedApproaches).to.include(
+        'MCP server unavailable - manual documentation review recommended'
+      );
     });
   });
 });

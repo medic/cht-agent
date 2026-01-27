@@ -68,8 +68,9 @@ export const displayResearchResults = (result: ResearchState, duration: string):
     console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
     console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
     console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
+    const successRate = result.contextAnalysis.historicalSuccessRate;
     console.log(
-      `Historical Success Rate: ${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%`
+      `Historical Success Rate: ${successRate !== null ? `${(successRate * 100).toFixed(0)}%` : 'N/A (no historical data)'}`
     );
 
     if (result.contextAnalysis.recommendations.length > 0) {
@@ -98,8 +99,8 @@ export const displayResearchResults = (result: ResearchState, duration: string):
       `Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`
     );
     console.log(`Estimated Effort: ${result.orchestrationPlan.estimatedEffort}`);
-    console.log(`\nProposed Approach:`);
-    console.log(`   ${result.orchestrationPlan.proposedApproach}`);
+    console.log(`\nRecommended Approach:`);
+    console.log(`   ${result.orchestrationPlan.recommendedApproach}`);
 
     console.log(`\nKey Findings:`);
     result.orchestrationPlan.keyFindings.forEach((finding, i) => {

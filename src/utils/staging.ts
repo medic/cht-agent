@@ -11,13 +11,20 @@ import * as os from 'os';
 import { GeneratedFile, FileDiff } from '../types';
 
 /**
- * Read file content safely, returning null if file doesn't exist
+ * Read file content safely, returning null if file doesn't exist or is a directory
  */
 const readFileSafe = async (filePath: string): Promise<string | null> => {
   try {
+    // Check if it's a file first
+    const stats = await fs.promises.stat(filePath);
+    if (!stats.isFile()) {
+      return null; // Return null for directories or other non-file types
+    }
     return await fs.promises.readFile(filePath, 'utf-8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    const code = (error as NodeJS.ErrnoException).code;
+    // Return null for common "not readable" errors
+    if (code === 'ENOENT' || code === 'EISDIR' || code === 'EACCES') {
       return null;
     }
     throw error;

@@ -18,6 +18,7 @@ import {
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import { readFromChtCore, listChtCoreDirectory } from '../utils/staging';
 import { loadIndex } from '../utils/context-loader';
+import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 
 interface CodeGenerationAgentOptions {
   llmProvider?: LLMProvider;
@@ -27,10 +28,12 @@ interface CodeGenerationAgentOptions {
 export class CodeGenerationAgent {
   private llm: LLMProvider;
   private useMock: boolean;
+  private todos: TodoTracker;
 
   constructor(options: CodeGenerationAgentOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
     this.useMock = options.useMock ?? false;
+    this.todos = createAgentTodoTracker('Code Gen');
   }
 
   /**
@@ -42,6 +45,9 @@ export class CodeGenerationAgent {
     console.log(`[Code Generation Agent] CHT Core Path: ${input.chtCorePath}`);
     console.log(`[Code Generation Agent] Using LLM: ${this.llm.modelName}`);
 
+    // Clear any previous todos
+    this.todos.clear();
+
     if (input.additionalContext) {
       console.log(`[Code Generation Agent] Additional context from feedback provided`);
     }
@@ -51,13 +57,25 @@ export class CodeGenerationAgent {
     }
 
     // Gather context from cht-core
-    const codeContext = await this.gatherCodeContext(input);
+    const codeContext = await this.todos.run(
+      'Gather code context from cht-core',
+      'Gathering code context from cht-core',
+      async () => this.gatherCodeContext(input)
+    );
 
     // Generate code using LLM
-    const generatedFiles = await this.generateWithLLM(input, codeContext);
+    const generatedFiles = await this.todos.run(
+      'Generate code with LLM',
+      'Generating code with LLM',
+      async () => this.generateWithLLM(input, codeContext)
+    );
 
     // Validate generated files
-    const validatedFiles = this.validateGeneratedFiles(generatedFiles);
+    const validatedFiles = await this.todos.run(
+      'Validate generated files',
+      'Validating generated files',
+      async () => this.validateGeneratedFiles(generatedFiles)
+    );
 
     // Determine which requirements were implemented
     const { implemented, pending } = this.analyzeRequirements(
@@ -76,6 +94,8 @@ export class CodeGenerationAgent {
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
     console.log(`[Code Generation Agent] Confidence: ${(result.confidence * 100).toFixed(0)}%`);
+
+    this.todos.printSummary();
 
     return result;
   }
@@ -104,6 +124,10 @@ export class CodeGenerationAgent {
     // Get files from suggested components in the orchestration plan
     for (const phase of orchestrationPlan.phases) {
       for (const component of phase.suggestedComponents) {
+        // Skip if it doesn't look like a file path (must have extension or be a known file)
+        if (!this.looksLikeFilePath(component)) {
+          continue;
+        }
         // Try to read existing files for context
         const content = await readFromChtCore(component, chtCorePath);
         if (content) {
@@ -144,7 +168,7 @@ export class CodeGenerationAgent {
   }
 
   /**
-   * Generate code using LLM
+   * Generate code using LLM - uses batched approach (plan then generate each file)
    */
   private async generateWithLLM(
     input: CodeGenerationInput,
@@ -165,9 +189,7 @@ export class CodeGenerationAgent {
       charCount += snippet.length;
     }
 
-    const prompt = `You are a CHT (Community Health Toolkit) developer generating implementation code.
-
-## Issue Details
+    const baseContext = `## Issue Details
 Title: ${issue.issue.title}
 Type: ${issue.issue.type}
 Domain: ${issue.issue.technical_context.domain}
@@ -179,7 +201,7 @@ Requirements:
 ${issue.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 ## Orchestration Plan
-Approach: ${orchestrationPlan.proposedApproach}
+Recommended Approach: ${orchestrationPlan.recommendedApproach}
 
 Phases:
 ${orchestrationPlan.phases.map((p, i) => `${i + 1}. ${p.name}: ${p.description}`).join('\n')}
@@ -193,46 +215,168 @@ ${context.relatedPatterns.map((p) => `- ${p}`).join('\n') || 'No patterns availa
 ## Existing Code Context
 ${existingCodeContext || 'No existing code context available'}
 
-${additionalContext ? `## Additional Context from Human Feedback\n${additionalContext}` : ''}
+${additionalContext ? `## Additional Context from Human Feedback\n${additionalContext}` : ''}`;
+
+    // Step 1: Plan - get list of files to generate (small JSON)
+    const filePlan = await this.todos.run(
+      'Plan files to generate',
+      'Planning files to generate',
+      async () => this.planFiles(baseContext)
+    );
+
+    if (filePlan.length === 0) {
+      console.log('[Code Generation Agent] No files planned for generation');
+      return [];
+    }
+
+    console.log(`[Code Generation Agent] Planned ${filePlan.length} files to generate`);
+
+    // Step 2: Generate each file individually (no JSON, just code)
+    const generatedFiles: GeneratedFile[] = [];
+
+    for (const plan of filePlan) {
+      const fileId = this.todos.add(`Generate ${plan.relativePath}`, `Generating ${plan.relativePath}`);
+      this.todos.start(fileId);
+
+      const content = await this.generateSingleFile(baseContext, plan, context.existingFiles);
+
+      if (content) {
+        this.todos.complete(fileId);
+        generatedFiles.push({
+          relativePath: plan.relativePath,
+          content,
+          language: plan.language,
+          type: plan.type,
+          description: plan.description,
+          action: plan.action || 'create',
+        });
+        console.log(`[Code Generation Agent] ✓ Generated ${plan.relativePath}`);
+      } else {
+        this.todos.fail(fileId, 'Empty or invalid content');
+        console.log(`[Code Generation Agent] ✗ Failed to generate ${plan.relativePath}`);
+      }
+    }
+
+    return generatedFiles;
+  }
+
+  /**
+   * Step 1: Plan which files to generate (returns small JSON)
+   */
+  private async planFiles(baseContext: string): Promise<Array<{
+    relativePath: string;
+    language: FileLanguage;
+    type: FileType;
+    description: string;
+    action: 'create' | 'modify';
+  }>> {
+    const planPrompt = `You are a CHT (Community Health Toolkit) developer planning implementation.
+
+${baseContext}
 
 ## Task
-Generate the implementation code for this issue. For each file:
-1. Follow CHT coding patterns and conventions
-2. Use TypeScript where appropriate
-3. Include proper error handling
-4. Add inline documentation
+List the files that need to be created or modified to implement this feature.
+Do NOT include the actual code content - just list the files with metadata.
 
 Respond with a JSON object in this exact format:
 {
   "files": [
     {
-      "relativePath": "path/to/file.ts",
-      "content": "file content here",
+      "relativePath": "webapp/src/ts/services/example.service.ts",
       "language": "typescript",
       "type": "source",
-      "description": "Brief description of what this file does",
+      "description": "Service to handle example functionality",
       "action": "create"
     }
-  ],
-  "summary": "Overall summary of changes",
-  "notes": ["Note 1", "Note 2"]
-}`;
+  ]
+}
+
+Keep the list focused - only include files that are essential for this feature.
+Valid types: source, test, config, documentation, fixture
+Valid languages: typescript, javascript, json, xml, yaml, markdown, html, css, shell`;
 
     try {
-      interface GeneratedOutput {
-        files: GeneratedFile[];
-        summary?: string;
-        notes?: string[];
+      interface FilePlanOutput {
+        files: Array<{
+          relativePath: string;
+          language: FileLanguage;
+          type: FileType;
+          description: string;
+          action: 'create' | 'modify';
+        }>;
       }
 
-      const result = await this.llm.invokeForJSON<GeneratedOutput>(prompt, {
-        temperature: 0.3,
+      const result = await this.llm.invokeForJSON<FilePlanOutput>(planPrompt, {
+        temperature: 0.2,
       });
 
       return result.files || [];
     } catch (error) {
-      console.error('[Code Generation Agent] Error generating code:', error);
+      console.error('[Code Generation Agent] Error planning files:', error);
       return [];
+    }
+  }
+
+  /**
+   * Step 2: Generate a single file (returns plain code, no JSON)
+   */
+  private async generateSingleFile(
+    baseContext: string,
+    filePlan: {
+      relativePath: string;
+      language: FileLanguage;
+      type: FileType;
+      description: string;
+    },
+    existingFiles: Map<string, string>
+  ): Promise<string | null> {
+    // Check if we're modifying an existing file
+    const existingContent = existingFiles.get(filePlan.relativePath);
+
+    const generatePrompt = `You are a CHT (Community Health Toolkit) developer generating code.
+
+${baseContext}
+
+## File to Generate
+Path: ${filePlan.relativePath}
+Language: ${filePlan.language}
+Type: ${filePlan.type}
+Description: ${filePlan.description}
+
+${existingContent ? `## Existing File Content (to modify)\n\`\`\`${filePlan.language}\n${existingContent.substring(0, 3000)}\n\`\`\`\n` : ''}
+
+## Instructions
+Generate the complete file content for ${filePlan.relativePath}.
+- Follow CHT coding patterns and conventions
+- Include proper error handling
+- Add inline documentation
+- Make sure the code is complete and functional
+
+IMPORTANT: Output ONLY the code. Do not wrap in markdown code blocks. Do not include any explanation before or after the code.`;
+
+    try {
+      const response = await this.llm.invoke(generatePrompt, {
+        temperature: 0.3,
+      });
+
+      let content = response.content.trim();
+
+      // Remove markdown code blocks if the LLM added them anyway
+      const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
+      if (codeBlockMatch) {
+        content = codeBlockMatch[1];
+      }
+
+      // Basic validation - ensure we got some content
+      if (content.length < 10) {
+        console.error(`[Code Generation Agent] Generated content too short for ${filePlan.relativePath}`);
+        return null;
+      }
+
+      return content;
+    } catch (error) {
+      console.error(`[Code Generation Agent] Error generating ${filePlan.relativePath}:`, error);
+      return null;
     }
   }
 
@@ -541,5 +685,18 @@ module.exports = {
       .split('-')
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join('');
+  }
+
+  /**
+   * Check if a string looks like a file path (has extension)
+   */
+  private looksLikeFilePath(str: string): boolean {
+    // Must contain a slash (path separator) and have a file extension
+    const hasPathSeparator = str.includes('/') || str.includes('\\');
+    const hasExtension = /\.[a-zA-Z0-9]+$/.test(str);
+    // Also check it doesn't have spaces (human-readable descriptions have spaces)
+    const hasNoSpaces = !str.includes(' ');
+
+    return hasPathSeparator && hasExtension && hasNoSpaces;
   }
 }

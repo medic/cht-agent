@@ -96,14 +96,28 @@ export interface LLMProvider {
  */
 export const DEFAULT_CONFIG = {
   temperature: 0.3,
-  maxTokens: 4096,
+  maxTokens: 16384, // Increased for code generation tasks
 } as const;
 
 /**
  * Default models for each provider
+ * Note: Opus 4.5 requires patch-package fix for LangChain top_p bug
+ * See: patches/@langchain+anthropic+0.3.34.patch
  */
 export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
-  anthropic: 'claude-sonnet-4-20250514',
+  anthropic: 'claude-opus-4-5-20251101',
   openai: 'gpt-4-turbo-preview',
   gemini: 'gemini-pro',
 } as const;
+
+/**
+ * Get the configured model name from environment or use default
+ * Reads from LLM_MODEL environment variable
+ */
+export function getConfiguredModel(provider: LLMProviderType = 'anthropic'): string {
+  const envModel = process.env.LLM_MODEL;
+  if (envModel && envModel.trim()) {
+    return envModel.trim();
+  }
+  return DEFAULT_MODELS[provider];
+}

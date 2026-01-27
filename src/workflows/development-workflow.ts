@@ -239,19 +239,24 @@ export const createDevelopmentInput = (
   researchResult: ResearchState,
   options: DevelopmentOptions
 ): DevelopmentInput | null => {
-  if (!researchResult.issue ||
-      !researchResult.orchestrationPlan ||
-      !researchResult.researchFindings ||
-      !researchResult.contextAnalysis) {
-    console.error('❌ Missing required data from research phase');
+  const missingFields: string[] = [];
+  if (!researchResult.issue) missingFields.push('issue');
+  if (!researchResult.orchestrationPlan) missingFields.push('orchestrationPlan');
+  if (!researchResult.researchFindings) missingFields.push('researchFindings');
+  if (!researchResult.contextAnalysis) missingFields.push('contextAnalysis');
+
+  if (missingFields.length > 0) {
+    console.error('❌ Missing required data from research phase:');
+    missingFields.forEach(field => console.error(`   - ${field}`));
     return null;
   }
 
+  // At this point we've validated all required fields exist
   return {
-    issue: researchResult.issue,
-    orchestrationPlan: researchResult.orchestrationPlan,
-    researchFindings: researchResult.researchFindings,
-    contextAnalysis: researchResult.contextAnalysis,
+    issue: researchResult.issue!,
+    orchestrationPlan: researchResult.orchestrationPlan!,
+    researchFindings: researchResult.researchFindings!,
+    contextAnalysis: researchResult.contextAnalysis!,
     options,
   };
 };

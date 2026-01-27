@@ -24,6 +24,7 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
     anthropicApiKey: config.apiKey,
     temperature: config.temperature ?? DEFAULT_CONFIG.temperature,
     maxTokens: config.maxTokens ?? DEFAULT_CONFIG.maxTokens,
+    topP: undefined, // Explicitly set to undefined to prevent LangChain from sending -1 default
   });
 
   const invoke = async (prompt: string, options?: InvokeOptions): Promise<LLMResponse> => {
@@ -33,6 +34,7 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
         anthropicApiKey: config.apiKey,
         temperature: options.temperature,
         maxTokens: options.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens,
+        topP: undefined, // Explicitly set to undefined to prevent LangChain from sending -1 default
       })
       : model;
 
@@ -64,6 +66,7 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
         anthropicApiKey: config.apiKey,
         temperature: options.temperature,
         maxTokens: options.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens,
+        topP: undefined, // Explicitly set to undefined to prevent LangChain from sending -1 default
       })
       : model;
 
@@ -99,18 +102,45 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
   };
 
   const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> => {
-    const response = await invoke(prompt, options);
-    const content = response.content;
+    // Increase maxTokens for JSON responses to avoid truncation
+    const jsonOptions = {
+      ...options,
+      maxTokens: options?.maxTokens ?? 16384,
+    };
 
-    // Try to extract JSON from the response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('LLM response did not contain valid JSON');
+    const response = await invoke(prompt, jsonOptions);
+    let content = response.content;
+
+    // Check if response was truncated
+    if (response.stopReason === 'max_tokens') {
+      console.warn('[LLM] Response was truncated due to max_tokens limit');
     }
 
+    // Strip markdown code blocks if present
+    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      content = codeBlockMatch[1].trim();
+    }
+
+    // Try to extract JSON object from the response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('LLM response did not contain valid JSON object');
+    }
+
+    let jsonStr = jsonMatch[0];
+
+    // Clean up common JSON issues
+    // Remove trailing commas before ] or }
+    jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
+
     try {
-      return JSON.parse(jsonMatch[0]) as T;
+      return JSON.parse(jsonStr) as T;
     } catch (error) {
+      // Log a snippet of the problematic JSON for debugging
+      const snippet = jsonStr.substring(0, 500);
+      console.error(`[LLM] JSON parse error. First 500 chars: ${snippet}...`);
+      console.error(`[LLM] Stop reason: ${response.stopReason}`);
       throw new Error(`Failed to parse LLM response as JSON: ${error}`);
     }
   };
