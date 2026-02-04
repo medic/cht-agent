@@ -43,27 +43,32 @@ Build a **portable context database** of CHT issues, patterns, and resolutions. 
 ```mermaid
 flowchart TB
     CLI[CLI Interface]
-
     CLI --> Master[Master Supervisor - Orchestrator]
 
-    Master --> Research[Research Supervisor]
-    Research --> DocLayer[Documentation Access Layer<br/>Kapa AI MCP]
-    Research --> ContextLayer[Code Context Layer<br/>Local context files]
+    subgraph research_phase [Research Phase]
+        Master --> Research[Research Supervisor]
+        Research --> DocLayer[Documentation Access Layer<br/>Kapa AI MCP]
+        Research --> ContextLayer[Code Context Layer<br/>Local context files]
+    end
 
-    Research --> HC1{{"HUMAN CHECKPOINT #1<br/>• Validate research findings<br/>• Approve orchestration plan"}}
+    DocLayer --> HC1{{"HUMAN CHECKPOINT #1<br/>• Validate research findings<br/>• Approve orchestration plan"}}
+    ContextLayer --> HC1
 
-    HC1 --> Dev[Development Supervisor]
-    Dev --> CodeGen[Code Generation Layer<br/>Claude Code CLI / Claude API]
-    Dev --> TestEnv[Test Generation Layer<br/>Unit, Integration, E2E tests]
+    subgraph dev_phase [Development Phase]
+        HC1 --> Dev[Development Supervisor]
+        Dev --> CodeGen[Code Generation Layer<br/>Claude Code CLI / Claude API]
+        Dev --> TestGen[Test Generation Layer<br/>Unit, Integration, E2E tests]
+    end
 
-    HC1 --> QA[QA Supervisor]
-    QA --> Validation[Code Validation Layer<br/>ESLint, Shellcheck]
-    QA --> TestOrch[Test Orchestration Layer<br/>npm scripts, Mocha/Jest]
+    subgraph qa_phase [QA Phase]
+        CodeGen --> QA[QA Supervisor]
+        TestGen --> QA
+        QA --> Validation[Code Validation Layer<br/>ESLint, Shellcheck]
+        QA --> TestOrch[Test Orchestration Layer<br/>npm scripts, Mocha/Jest]
+    end
 
-    Dev --> HC2
-    QA --> HC2
-
-    HC2{{"HUMAN CHECKPOINT #2<br/>• Review generated code<br/>• Verify test results<br/>• Approve for completion"}}
+    Validation --> HC2{{"HUMAN CHECKPOINT #2<br/>• Review generated code<br/>• Verify test results<br/>• Approve for completion"}}
+    TestOrch --> HC2
 ```
 
 **Key Insight**: The "layers" are not custom agents we build from scratch. They are **configuration points** where we plug in the best available tools and services.
