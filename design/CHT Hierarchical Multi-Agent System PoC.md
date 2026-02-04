@@ -43,31 +43,33 @@ Build a **portable context database** of CHT issues, patterns, and resolutions. 
 ```mermaid
 flowchart TB
     CLI[CLI Interface]
-    CLI --> Master[Master Supervisor - Orchestrator]
+    Master[Master Supervisor - Orchestrator]
+    Research[Research Supervisor]
+    DocLayer[Documentation Access Layer<br/>Kapa AI MCP]
+    ContextLayer[Code Context Layer<br/>Local context files]
+    HC1{{"HUMAN CHECKPOINT #1<br/>Validate research findings<br/>Approve orchestration plan"}}
+    Dev[Development Supervisor]
+    CodeGen[Code Generation Layer<br/>Claude Code CLI / Claude API]
+    TestGen[Test Generation Layer<br/>Unit, Integration, E2E tests]
+    QA[QA Supervisor]
+    Validation[Code Validation Layer<br/>ESLint, Shellcheck]
+    TestOrch[Test Orchestration Layer<br/>npm scripts, Mocha/Jest]
+    HC2{{"HUMAN CHECKPOINT #2<br/>Review generated code<br/>Verify test results<br/>Approve for completion"}}
 
-    subgraph research_phase [Research Phase]
-        Master --> Research[Research Supervisor]
-        Research --> DocLayer[Documentation Access Layer<br/>Kapa AI MCP]
-        Research --> ContextLayer[Code Context Layer<br/>Local context files]
-    end
-
-    DocLayer --> HC1{{"HUMAN CHECKPOINT #1<br/>• Validate research findings<br/>• Approve orchestration plan"}}
+    CLI --> Master
+    Master --> Research
+    Research --> DocLayer
+    Research --> ContextLayer
+    DocLayer --> HC1
     ContextLayer --> HC1
-
-    subgraph dev_phase [Development Phase]
-        HC1 --> Dev[Development Supervisor]
-        Dev --> CodeGen[Code Generation Layer<br/>Claude Code CLI / Claude API]
-        Dev --> TestGen[Test Generation Layer<br/>Unit, Integration, E2E tests]
-    end
-
-    subgraph qa_phase [QA Phase]
-        CodeGen --> QA[QA Supervisor]
-        TestGen --> QA
-        QA --> Validation[Code Validation Layer<br/>ESLint, Shellcheck]
-        QA --> TestOrch[Test Orchestration Layer<br/>npm scripts, Mocha/Jest]
-    end
-
-    Validation --> HC2{{"HUMAN CHECKPOINT #2<br/>• Review generated code<br/>• Verify test results<br/>• Approve for completion"}}
+    HC1 --> Dev
+    Dev --> CodeGen
+    Dev --> TestGen
+    CodeGen --> QA
+    TestGen --> QA
+    QA --> Validation
+    QA --> TestOrch
+    Validation --> HC2
     TestOrch --> HC2
 ```
 
