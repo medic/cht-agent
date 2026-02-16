@@ -1,0 +1,170 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/medic/cht-agent/agent-memory/schema.json",
+  "title": "CHT Agent Context File Schema",
+  "description": "Schema for validating context files in agent-memory",
+  "type": "object",
+  "definitions": {
+    "CHTDomain": {
+      "type": "string",
+      "enum": [
+        "authentication",
+        "contacts",
+        "forms-and-reports",
+        "tasks-and-targets",
+        "messaging",
+        "data-sync",
+        "configuration"
+      ],
+      "description": "One of the 7 functional domains in CHT"
+    },
+    "CHTWorkflow": {
+      "type": "string",
+      "enum": [
+        "form-submission",
+        "user-registration",
+        "contact-creation",
+        "task-scheduling",
+        "message-processing",
+        "data-migration"
+      ],
+      "description": "Cross-domain workflow processes"
+    },
+    "CHTService": {
+      "type": "string",
+      "enum": ["api", "webapp", "sentinel", "admin"],
+      "description": "CHT services"
+    },
+    "frontmatter": {
+      "type": "object",
+      "description": "YAML frontmatter for markdown context files",
+      "required": ["domain", "title", "last_updated"],
+      "properties": {
+        "domain": {
+          "$ref": "#/definitions/CHTDomain"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Brief descriptive title"
+        },
+        "last_updated": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO date of last update (YYYY-MM-DD)"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          },
+          "description": "Optional freeform tags for searchability"
+        },
+        "related_workflows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CHTWorkflow"
+          },
+          "description": "Related cross-domain workflows"
+        },
+        "related_services": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CHTService"
+          },
+          "description": "Related CHT services"
+        }
+      }
+    },
+    "domainToComponentsIndex": {
+      "type": "object",
+      "description": "Maps domains to their component files",
+      "properties": {
+        "last_updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "domains": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string" },
+              "api": {
+                "type": "object",
+                "properties": {
+                  "controllers": { "type": "array", "items": { "type": "string" } },
+                  "services": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "webapp": {
+                "type": "object",
+                "properties": {
+                  "modules": { "type": "array", "items": { "type": "string" } },
+                  "services": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "sentinel": {
+                "type": "object",
+                "properties": {
+                  "transitions": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "shared_libs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "path": { "type": "string" },
+                    "critical": { "type": "boolean" }
+                  }
+                }
+              },
+              "tests": {
+                "type": "object",
+                "properties": {
+                  "unit": { "type": "array", "items": { "type": "string" } },
+                  "integration": { "type": "array", "items": { "type": "string" } },
+                  "e2e": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "errorPatternsIndex": {
+      "type": "object",
+      "description": "Maps error patterns to locations and solutions",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "common_locations": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "related_domains": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/CHTDomain" }
+          },
+          "typical_causes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "solutions": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "test_scenarios": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
