@@ -92,7 +92,7 @@ The Code Context Layer (OpenDeepWiki) operates as a **separate MCP tool** querie
 │                                                              │
 │  User Query: "How does sentinel process transitions?"        │
 │                                                              │
-│  1. Check agent-memory/mappings for known context routes     │
+│  1. Check agent-memory/indices for known context routes     │
 │                                                              │
 │  ┌──────────────────┐       ┌──────────────────────┐         │
 │  │   Kapa AI MCP    │       │   OpenDeepWiki MCP   │         │
@@ -112,7 +112,7 @@ The Code Context Layer (OpenDeepWiki) operates as a **separate MCP tool** querie
 │                        ▼                                     │
 │  2. Save combined output → outputs/context-results/          │
 │                                                              │
-│  3. User reviews & opens PR → agent-memory/mappings/         │
+│  3. User reviews & opens PR → agent-memory/indices/         │
 │     with new query→repo routing for future lookups           │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -134,5 +134,3 @@ The Code Context Layer (OpenDeepWiki) operates as a **separate MCP tool** querie
   }
 }
 ```
-
----
