@@ -44,8 +44,6 @@ We evaluated tools that can provide **source code architecture understanding** t
 
 ---
 
----
-
 ## Decision: Self-Hosted OpenDeepWiki
 
 Based on squad feedback, we are adopting **OpenDeepWiki (Tier 2)** as the Code Context Layer. The key factors:
