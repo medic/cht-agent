@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   IssueTemplate,
   ResearchFindings,
+  CodeContextFindings,
   ContextAnalysisResult,
   ResolvedIssueContext,
 } from '../../src/types';
@@ -48,6 +49,19 @@ describe('ResearchSupervisor - Pure Functions', () => {
     recommendations: ['Recommendation 1'],
     historicalSuccessRate: 0.8,
     relatedDomains: ['contacts'],
+    ...overrides,
+  });
+
+  const createCodeContextFindings = (
+    overrides: Partial<CodeContextFindings> = {}
+  ): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
+    confidence: 0.8,
+    source: 'mock',
     ...overrides,
   });
 
@@ -193,7 +207,8 @@ describe('ResearchSupervisor - Pure Functions', () => {
     const identifyRiskFactors = (
       issue: IssueTemplate,
       findings: ResearchFindings,
-      analysis: ContextAnalysisResult
+      analysis: ContextAnalysisResult,
+      codeContext?: CodeContextFindings
     ): string[] => {
       const risks: string[] = [];
 
@@ -222,6 +237,16 @@ describe('ResearchSupervisor - Pure Functions', () => {
         risks.push(
           'Changes span multiple components - requires coordination and integration testing'
         );
+      }
+
+      // Code context warnings
+      if (codeContext) {
+        if (codeContext.warnings.length > 0) {
+          risks.push(`Code context warnings: ${codeContext.warnings.join('; ')}`);
+        }
+        if (codeContext.confidence < 0.5) {
+          risks.push('Low confidence in code architecture analysis - manual review recommended');
+        }
       }
 
       return risks;
@@ -296,6 +321,69 @@ describe('ResearchSupervisor - Pure Functions', () => {
       });
 
       const risks = identifyRiskFactors(issue, findings, analysis);
+
+      expect(risks).to.have.lengthOf(0);
+    });
+
+    it('should identify code context warnings as risk', () => {
+      const issue = createTestIssue();
+      const findings = createResearchFindings();
+      const analysis = createContextAnalysis();
+      const codeContext = createCodeContextFindings({
+        warnings: ['Rate limited when querying cht-core'],
+      });
+
+      const risks = identifyRiskFactors(issue, findings, analysis, codeContext);
+
+      expect(risks.some((r) => r.includes('Code context warnings'))).to.be.true;
+      expect(risks.some((r) => r.includes('Rate limited'))).to.be.true;
+    });
+
+    it('should identify low code context confidence as risk', () => {
+      const issue = createTestIssue();
+      const findings = createResearchFindings();
+      const analysis = createContextAnalysis();
+      const codeContext = createCodeContextFindings({
+        confidence: 0.3,
+      });
+
+      const risks = identifyRiskFactors(issue, findings, analysis, codeContext);
+
+      expect(risks.some((r) => r.includes('Low confidence in code architecture'))).to.be.true;
+    });
+
+    it('should not add code context risks when code context is undefined', () => {
+      const issue = createTestIssue({
+        priority: 'low',
+        constraints: [],
+        technical_context: { domain: 'contacts', components: ['comp1'] },
+      });
+      const findings = createResearchFindings({ confidence: 0.9 });
+      const analysis = createContextAnalysis({
+        similarContexts: [{} as ResolvedIssueContext],
+      });
+
+      const risks = identifyRiskFactors(issue, findings, analysis, undefined);
+
+      expect(risks).to.have.lengthOf(0);
+    });
+
+    it('should not add code context risks when there are no warnings and confidence is high', () => {
+      const issue = createTestIssue({
+        priority: 'low',
+        constraints: [],
+        technical_context: { domain: 'contacts', components: ['comp1'] },
+      });
+      const findings = createResearchFindings({ confidence: 0.9 });
+      const analysis = createContextAnalysis({
+        similarContexts: [{} as ResolvedIssueContext],
+      });
+      const codeContext = createCodeContextFindings({
+        warnings: [],
+        confidence: 0.8,
+      });
+
+      const risks = identifyRiskFactors(issue, findings, analysis, codeContext);
 
       expect(risks).to.have.lengthOf(0);
     });
