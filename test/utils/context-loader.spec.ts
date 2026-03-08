@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import proxyquireImport from 'proxyquire';
 import {
   parseFrontmatter,
   loadDomainOverview,
@@ -8,8 +9,7 @@ import {
   ensureAgentMemoryExists,
 } from '../../src/utils/context-loader';
 
-// Use require for proxyquire to avoid ESM conflicts
-const proxyquire = require('proxyquire').noCallThru();
+const proxyquire = proxyquireImport.noCallThru();
 
 describe('context-loader', () => {
   describe('parseFrontmatter', () => {
