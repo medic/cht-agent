@@ -4,7 +4,6 @@ dist/
 *.log
 .env
 .DS_Store
-agent-memory/
 *.tmp
 
 # Test coverage
