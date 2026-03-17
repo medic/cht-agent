@@ -29,7 +29,7 @@ Implement the `CodeGenModule` interface from `interface.ts`:
 1. Create a module directory at `src/layers/code-gen/modules/<module-name>/`.
 2. Implement and export a `CodeGenModule` from `index.ts`.
 3. Register the module in `createDefaultCodeGenRegistry()` in `registry.ts`.
-4. Add unit tests under `test/utils/` (or another existing test area).
+4. Add unit tests under `test/layers/code-gen/`.
 5. If needed, document provider aliases in `PROVIDER_ALIAS_MAP`.
 
 ## Provider Selection

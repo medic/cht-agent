@@ -4,11 +4,7 @@ import {
   CodeGenModuleOutput,
   GeneratedFile,
 } from '../../interface';
-
-function readEnv(name: string): string | undefined {
-  const runtime = globalThis as { process?: { env?: Record<string, string | undefined> } };
-  return runtime.process?.env?.[name];
-}
+import { readEnv } from '../../../../utils/env';
 
 export class ClaudeApiCodeGenModule implements CodeGenModule {
   name = 'claude-api';

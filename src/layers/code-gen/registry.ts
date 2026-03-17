@@ -1,16 +1,11 @@
 import { CodeGenModule } from './interface';
 import { claudeApiCodeGenModule } from './modules/claude-api';
+import { readEnv } from '../../utils/env';
 
 const PROVIDER_ALIAS_MAP: Record<string, string> = {
   anthropic: 'claude-api',
   'claude-cli': 'claude-code-cli',
 };
-
-function readEnv(name: string): string | undefined {
-  const runtime = globalThis as { process?: { env?: Record<string, string | undefined> } };
-  return runtime.process?.env?.[name];
-}
-
 
 export class CodeGenModuleRegistry {
   private readonly modules = new Map<string, CodeGenModule>();
@@ -46,7 +41,6 @@ export class CodeGenModuleRegistry {
     return module;
   }
 }
-
 
 export function createDefaultCodeGenRegistry(): CodeGenModuleRegistry {
   const registry = new CodeGenModuleRegistry();
