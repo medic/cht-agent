@@ -1,8 +1,5 @@
 import { IssueTemplate, OrchestrationPlan, ResearchFindings } from '../../types';
 
-
-export type ParsedTicket = IssueTemplate;
-
 export interface ContextFile {
   path: string;
   content: string;
@@ -10,22 +7,19 @@ export interface ContextFile {
   metadata?: Record<string, string | number | boolean | string[] | number[]>;
 }
 
-
 export interface GeneratedFile {
   path: string;
   content: string;
   purpose?: string;
 }
 
-
 export interface CodeGenModuleInput {
-  ticket: ParsedTicket;
+  ticket: IssueTemplate;
   researchFindings: ResearchFindings;
   contextFiles: ContextFile[];
   orchestrationPlan: OrchestrationPlan;
   targetDirectory: string;
 }
-
 
 export interface CodeGenModuleOutput {
   files: GeneratedFile[];
