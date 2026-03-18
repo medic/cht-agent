@@ -166,7 +166,7 @@ describe('ClaudeApiCodeGenModule', () => {
     orchestrationPlan: {
       summary: 'Implement filters in API and webapp.',
       keyFindings: ['API already supports pagination'],
-      proposedApproach: 'Add filter params and update contacts list UI.',
+      recommendedApproach: 'Add filter params and update contacts list UI.',
       estimatedComplexity: 'medium',
       phases: [
         {

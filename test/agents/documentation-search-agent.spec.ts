@@ -232,22 +232,22 @@ describe('DocumentationSearchAgent', () => {
       expect(approaches.some((a: string) => a.includes('Hierarchies'))).to.be.true;
     });
 
-    it('should add best practices recommendation for features', () => {
+    it('should return empty approaches for features with no answer and no references', () => {
       const references: any[] = [];
       const issue = createTestIssue({ type: 'feature' });
 
       const approaches = agent.generateApproaches(references, issue, '');
 
-      expect(approaches.some((a: string) => a.includes('best practices'))).to.be.true;
+      expect(approaches).to.deep.equal([]);
     });
 
-    it('should add debugging recommendation for bugs', () => {
+    it('should return empty approaches for bugs with no answer and no references', () => {
       const references: any[] = [];
       const issue = createTestIssue({ type: 'bug' });
 
       const approaches = agent.generateApproaches(references, issue, '');
 
-      expect(approaches.some((a: string) => a.includes('Debug'))).to.be.true;
+      expect(approaches).to.deep.equal([]);
     });
 
     it('should limit approaches to 5', () => {
@@ -269,7 +269,7 @@ describe('DocumentationSearchAgent', () => {
     it('should extract recommendations from answer text', () => {
       const references: any[] = [];
       const issue = createTestIssue();
-      const answer = '- Use the contact API\n- Follow the hierarchy pattern\n- Test offline';
+      const answer = '- Use the contact API to fetch and update person documents\n- Follow the hierarchy pattern when creating new places';
 
       const approaches = agent.generateApproaches(references, issue, answer);
 
@@ -353,20 +353,31 @@ describe('DocumentationSearchAgent', () => {
   });
 
   describe('MCP integration', () => {
-    it('should return empty findings with error source when MCP fails', async () => {
-      // Create agent without mock - will try to connect to real MCP which won't exist
+    it('should return empty findings with error source when MCP fails', async function () {
+      this.timeout(35000); // MCP client has 30s timeout
+      // Force MCP failure by pointing to an invalid server URL
+      const originalUrl = process.env.MCP_SERVER_URL;
+      process.env.MCP_SERVER_URL = 'http://localhost:1/nonexistent';
       const agentWithoutMock = new DocumentationSearchAgent({ useMockMCP: false });
       const issue = createTestIssue();
 
       // Should not throw, but return error findings
-      const result = await agentWithoutMock.search(issue);
+      try {
+        const result = await agentWithoutMock.search(issue);
 
-      expect(result.documentationReferences).to.deep.equal([]);
-      expect(result.confidence).to.equal(0);
-      expect(result.source).to.equal('error');
-      expect(result.suggestedApproaches).to.include(
-        'MCP server unavailable - manual documentation review recommended'
-      );
+        expect(result.documentationReferences).to.deep.equal([]);
+        expect(result.confidence).to.equal(0);
+        expect(result.source).to.equal('error');
+        expect(result.suggestedApproaches).to.include(
+          'MCP server unavailable - manual documentation review recommended'
+        );
+      } finally {
+        if (originalUrl === undefined) {
+          delete process.env.MCP_SERVER_URL;
+        } else {
+          process.env.MCP_SERVER_URL = originalUrl;
+        }
+      }
     });
   });
 });

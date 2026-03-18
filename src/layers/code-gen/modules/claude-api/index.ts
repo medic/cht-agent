@@ -43,7 +43,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       `Target Directory: ${input.targetDirectory}`,
       '',
       '## Proposed Approach',
-      input.orchestrationPlan.proposedApproach,
+      input.orchestrationPlan.recommendedApproach,
       '',
       '## Suggested Phases',
       phaseLines || 'No phases were provided.',
