@@ -183,30 +183,75 @@ describe('ClaudeApiCodeGenModule', () => {
     targetDirectory: 'tmp/output/',
   };
 
-  it('should generate a deterministic plan file', async () => {
+  it('should generate code scaffold files from orchestration phases', async () => {
     const output = await claudeApiCodeGenModule.generate(input);
 
     expect(output.files).to.have.length(1);
-    expect(output.files[0].path).to.equal('tmp/output/IMPLEMENTATION_PLAN.md');
-    expect(output.files[0].content).to.include('Generated Implementation Plan');
+    expect(output.files[0].path).to.equal('tmp/output/api/src/controllers/contacts.js');
     expect(output.files[0].content).to.include('Add contact search filters');
-    expect(output.explanation).to.include('implementation-plan artifact');
+    expect(output.files[0].purpose).to.include('API controller scaffold');
   });
 
-  it('should include orchestration phases in plan', async () => {
+  it('should include domain in generated file content', async () => {
     const output = await claudeApiCodeGenModule.generate(input);
 
-    expect(output.files[0].content).to.include('API Update');
-    expect(output.files[0].content).to.include('Introduce filter query params');
+    expect(output.files[0].content).to.include('contacts');
   });
 
-  it('should include documentation references in plan', async () => {
-    const output = await claudeApiCodeGenModule.generate(input);
+  it('should generate webapp service for webapp components', async () => {
+    const webappInput = {
+      ...input,
+      orchestrationPlan: {
+        ...input.orchestrationPlan,
+        phases: [{
+          name: 'UI Update',
+          description: 'Add filter UI.',
+          estimatedComplexity: 'medium' as const,
+          suggestedComponents: ['webapp/services/contacts-filter'],
+          dependencies: [],
+        }],
+      },
+    };
 
-    expect(output.files[0].content).to.include('Managing Contacts');
+    const output = await claudeApiCodeGenModule.generate(webappInput);
+
+    expect(output.files).to.have.length(1);
+    expect(output.files[0].path).to.include('webapp/src/ts/services/');
+    expect(output.files[0].content).to.include('@Injectable');
   });
 
-  it('should handle empty phases gracefully', async () => {
+  it('should generate files for multiple phases and components', async () => {
+    const multiInput = {
+      ...input,
+      orchestrationPlan: {
+        ...input.orchestrationPlan,
+        phases: [
+          {
+            name: 'API',
+            description: 'API work.',
+            estimatedComplexity: 'medium' as const,
+            suggestedComponents: ['api/controllers/contacts'],
+            dependencies: [],
+          },
+          {
+            name: 'UI',
+            description: 'UI work.',
+            estimatedComplexity: 'medium' as const,
+            suggestedComponents: ['webapp/services/contacts-filter'],
+            dependencies: [],
+          },
+        ],
+      },
+    };
+
+    const output = await claudeApiCodeGenModule.generate(multiInput);
+
+    expect(output.files).to.have.length(2);
+    expect(output.files.some(f => f.path.includes('api/'))).to.be.true;
+    expect(output.files.some(f => f.path.includes('webapp/'))).to.be.true;
+  });
+
+  it('should fall back to ticket components when phases have no suggested components', async () => {
     const emptyPhasesInput = {
       ...input,
       orchestrationPlan: { ...input.orchestrationPlan, phases: [] },
@@ -214,38 +259,20 @@ describe('ClaudeApiCodeGenModule', () => {
 
     const output = await claudeApiCodeGenModule.generate(emptyPhasesInput);
 
-    expect(output.files[0].content).to.include('No phases were provided.');
-  });
-
-  it('should handle empty key findings gracefully', async () => {
-    const emptyFindingsInput = {
-      ...input,
-      orchestrationPlan: { ...input.orchestrationPlan, keyFindings: [] },
-    };
-
-    const output = await claudeApiCodeGenModule.generate(emptyFindingsInput);
-
-    expect(output.files[0].content).to.include('No key findings were provided.');
-  });
-
-  it('should handle empty documentation references gracefully', async () => {
-    const emptyRefsInput = {
-      ...input,
-      researchFindings: { ...input.researchFindings, documentationReferences: [] },
-    };
-
-    const output = await claudeApiCodeGenModule.generate(emptyRefsInput);
-
-    expect(output.files[0].content).to.include('No documentation references were provided.');
+    expect(output.files.length).to.be.greaterThan(0);
   });
 
   it('should strip trailing slash from target directory', async () => {
-    const trailingSlashInput = { ...input, targetDirectory: 'tmp/output/' };
+    const output = await claudeApiCodeGenModule.generate(input);
 
-    const output = await claudeApiCodeGenModule.generate(trailingSlashInput);
-
-    expect(output.files[0].path).to.equal('tmp/output/IMPLEMENTATION_PLAN.md');
     expect(output.files[0].path).to.not.include('//');
+  });
+
+  it('should include file count in explanation', async () => {
+    const output = await claudeApiCodeGenModule.generate(input);
+
+    expect(output.explanation).to.include('1 scaffold file');
+    expect(output.explanation).to.include('Add contact search filters');
   });
 
   it('should default to documented model name', async () => {
