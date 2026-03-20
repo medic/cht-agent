@@ -127,6 +127,37 @@ async function runExample() {
       console.log();
     }
 
+    // Code Context Results
+    if (result.codeContextFindings) {
+      console.log('🏗️  CODE CONTEXT RESULTS');
+      console.log('─'.repeat(70));
+      console.log(`Source: ${result.codeContextFindings.source}`);
+      console.log(`Confidence: ${(result.codeContextFindings.confidence * 100).toFixed(0)}%`);
+      console.log(`Repos: ${result.codeContextFindings.relevantRepos.join(', ')}`);
+      console.log(
+        `\nArchitecture Insights (${result.codeContextFindings.architectureInsights.length}):`
+      );
+
+      result.codeContextFindings.architectureInsights.forEach((insight, i) => {
+        console.log(`\n${i + 1}. ${insight.component}`);
+        console.log(`   ${insight.description}`);
+        console.log(`   Patterns: ${insight.patterns.join(', ')}`);
+        console.log(`   Dependencies: ${insight.dependencies.join(', ')}`);
+      });
+
+      if (result.codeContextFindings.moduleRelationships.length > 0) {
+        console.log(
+          `\nModule Relationships (${result.codeContextFindings.moduleRelationships.length}):`
+        );
+        result.codeContextFindings.moduleRelationships.forEach((rel, i) => {
+          console.log(`   ${i + 1}. ${rel.source} → ${rel.target} (${rel.relationship})`);
+          console.log(`      ${rel.description}`);
+        });
+      }
+
+      console.log();
+    }
+
     // Context Analysis Results
     if (result.contextAnalysis) {
       console.log('🔎 CONTEXT ANALYSIS RESULTS');

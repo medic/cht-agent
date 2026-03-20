@@ -16,6 +16,7 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { parseTicketFile } from '../utils/ticket-parser';
+import { saveResearchResults } from '../utils/research-results';
 
 // Load environment variables
 dotenv.config();
@@ -144,6 +145,44 @@ async function main() {
       console.log();
     }
 
+    // Code Context Results
+    if (result.codeContextFindings) {
+      console.log('🏗️  CODE CONTEXT RESULTS');
+      console.log('─'.repeat(70));
+      console.log(`Source: ${result.codeContextFindings.source}`);
+      console.log(`Confidence: ${(result.codeContextFindings.confidence * 100).toFixed(0)}%`);
+      console.log(`Repos: ${result.codeContextFindings.relevantRepos.join(', ')}`);
+      console.log(
+        `\nArchitecture Insights (${result.codeContextFindings.architectureInsights.length}):`
+      );
+
+      result.codeContextFindings.architectureInsights.forEach((insight, i) => {
+        console.log(`\n${i + 1}. ${insight.component}`);
+        console.log(`   ${insight.description}`);
+        console.log(`   Patterns: ${insight.patterns.join(', ')}`);
+        console.log(`   Dependencies: ${insight.dependencies.join(', ')}`);
+      });
+
+      if (result.codeContextFindings.moduleRelationships.length > 0) {
+        console.log(
+          `\nModule Relationships (${result.codeContextFindings.moduleRelationships.length}):`
+        );
+        result.codeContextFindings.moduleRelationships.forEach((rel, i) => {
+          console.log(`   ${i + 1}. ${rel.source} → ${rel.target} (${rel.relationship})`);
+          console.log(`      ${rel.description}`);
+        });
+      }
+
+      if (result.codeContextFindings.warnings.length > 0) {
+        console.log(`\n⚠️  Warnings:`);
+        result.codeContextFindings.warnings.forEach((warning) => {
+          console.log(`   - ${warning}`);
+        });
+      }
+
+      console.log();
+    }
+
     // Context Analysis Results
     if (result.contextAnalysis) {
       console.log('🔎 CONTEXT ANALYSIS RESULTS');
@@ -207,6 +246,14 @@ async function main() {
       }
 
       console.log();
+    }
+
+    // Save results to file
+    try {
+      const outputPath = saveResearchResults(result);
+      console.log(`💾 Results saved to: ${outputPath}\n`);
+    } catch (saveError) {
+      console.warn('⚠️  Could not save results to file:', saveError);
     }
 
     console.log('╔════════════════════════════════════════════════════════════════╗');

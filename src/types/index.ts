@@ -215,6 +215,78 @@ export interface ContextAnalysisResult {
   recommendations: string[];
   historicalSuccessRate: number; // 0-1
   relatedDomains: CHTDomain[];
+  codeArchitectureSummary?: string;
+}
+
+/**
+ * Architecture insight from OpenDeepWiki code analysis
+ */
+export interface ArchitectureInsight {
+  component: string;
+  description: string;
+  patterns: string[];
+  dependencies: string[];
+}
+
+/**
+ * Module relationship from code structure analysis
+ */
+export interface ModuleRelationship {
+  source: string;
+  target: string;
+  relationship: 'imports' | 'extends' | 'implements' | 'calls' | 'depends-on';
+  description: string;
+}
+
+/**
+ * Code context findings from OpenDeepWiki Code Context Agent
+ */
+export interface CodeContextFindings {
+  architectureInsights: ArchitectureInsight[];
+  moduleRelationships: ModuleRelationship[];
+  diagrams: string[]; // Mermaid diagram strings
+  relevantRepos: string[];
+  warnings: string[];
+  confidence: number; // 0-1
+  source: 'opendeepwiki' | 'mock';
+}
+
+/**
+ * Wiki structure entry from OpenDeepWiki
+ */
+export interface WikiStructureEntry {
+  path: string;
+  title: string;
+  description: string;
+  children?: WikiStructureEntry[];
+}
+
+/**
+ * MCP (Model Context Protocol) tool call for OpenDeepWiki
+ */
+export interface OpenDeepWikiMCPToolCall {
+  tool: 'get_wiki_structure' | 'search_code' | 'get_architecture';
+  parameters: {
+    repo: string;
+    query?: string;
+    domain?: CHTDomain;
+    max_results?: number;
+  };
+}
+
+/**
+ * MCP Response from OpenDeepWiki
+ */
+export interface OpenDeepWikiMCPResponse {
+  success: boolean;
+  data?: {
+    architectureInsights: ArchitectureInsight[];
+    moduleRelationships: ModuleRelationship[];
+    diagrams: string[];
+    structure: WikiStructureEntry[];
+  };
+  error?: string;
+  rateLimited?: boolean;
 }
 
 /**
@@ -247,9 +319,10 @@ export interface ResearchState {
   }>;
   issue?: IssueTemplate;
   researchFindings?: ResearchFindings;
+  codeContextFindings?: CodeContextFindings;
   contextAnalysis?: ContextAnalysisResult;
   orchestrationPlan?: OrchestrationPlan;
-  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
+  currentPhase: 'init' | 'doc-search' | 'code-context' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
   errors: string[];
 }
 
