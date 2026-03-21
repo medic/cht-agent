@@ -4,8 +4,9 @@ dist/
 *.log
 .env
 .DS_Store
-agent-memory/
+agent-memory/agent-workspaces/
 *.tmp
+*.bak
 
 # Test coverage
 .nyc_output/
