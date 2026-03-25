@@ -1,5 +1,6 @@
 import { CodeGenModule } from './interface';
-import { claudeApiCodeGenModule } from './modules/claude-api';
+import { createClaudeApiCodeGenModule } from './modules/claude-api';
+import { LLMProvider } from '../../llm';
 import { readEnv } from '../../utils/env';
 
 const PROVIDER_ALIAS_MAP: Record<string, string> = {
@@ -27,7 +28,7 @@ export class CodeGenModuleRegistry {
   }
 
   getActiveModule(providerFromConfig?: string): CodeGenModule {
-    const requestedProvider = providerFromConfig || readEnv('LLM_PROVIDER') || 'claude-api';
+    const requestedProvider = providerFromConfig || readEnv('CODE_GEN_MODULE') || 'claude-api';
     const moduleName = this.resolveProvider(requestedProvider);
     const module = this.get(moduleName);
 
@@ -42,10 +43,10 @@ export class CodeGenModuleRegistry {
   }
 }
 
-export function createDefaultCodeGenRegistry(): CodeGenModuleRegistry {
+export function createDefaultCodeGenRegistry(llmProvider?: LLMProvider): CodeGenModuleRegistry {
   const registry = new CodeGenModuleRegistry();
 
-  registry.register(claudeApiCodeGenModule);
+  registry.register(createClaudeApiCodeGenModule(llmProvider));
 
   return registry;
 }

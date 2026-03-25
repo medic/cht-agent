@@ -9,9 +9,12 @@
  * Supports two modes:
  * - Preview Mode: Writes to staging area, generates diffs, allows review
  * - Direct Mode: Writes directly to cht-core codebase
+ *
+ * Includes a refinement loop: if validation score < 70%, the workflow
+ * loops back to code generation with feedback (up to MAX_ITERATIONS).
  */
 
-import { StateGraph, END, START, Annotation } from '@langchain/langgraph';
+import { StateGraph, START, Annotation } from '@langchain/langgraph';
 import {
   IssueTemplate,
   DevelopmentState,
@@ -36,9 +39,13 @@ import {
 } from '../utils/staging';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
 
+const MAX_ITERATIONS = 3;
+const REFINEMENT_THRESHOLD = 80;
+
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
   useMock?: boolean;
+  skipTestEnvironment?: boolean;
 }
 
 // Define the state annotation for type safety
@@ -87,6 +94,15 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => [..._current, ...update],
     default: () => [],
   }),
+  // Refinement loop state
+  iterationCount: Annotation<number>({
+    reducer: (_current, update) => update,
+    default: () => 0,
+  }),
+  validationFeedback: Annotation<string | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
 });
 
 export class DevelopmentSupervisor {
@@ -95,11 +111,13 @@ export class DevelopmentSupervisor {
   private testEnvAgent: TestEnvironmentAgent;
   private llm: LLMProvider;
   private useMock: boolean;
+  private skipTestEnvironment: boolean;
   private todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
     this.useMock = options.useMock ?? false;
+    this.skipTestEnvironment = options.skipTestEnvironment ?? false;
 
     this.codeGenAgent = new CodeGenerationAgent({
       llmProvider: this.llm,
@@ -117,20 +135,34 @@ export class DevelopmentSupervisor {
   }
 
   /**
-   * Build the LangGraph workflow
+   * Build the LangGraph workflow with conditional refinement loop
    */
   private buildGraph() {
     const workflow = new StateGraph(DevelopmentStateAnnotation)
-      // Define nodes (names must not conflict with state attributes)
+      // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
       .addNode('setupTests', this.testEnvironmentNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
 
-      // Define edges
+      // Define edges with conditional routing from validation
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'setupTests')
       .addEdge('setupTests', 'validateImpl')
-      .addEdge('validateImpl', END);
+      .addConditionalEdges('validateImpl', (state) => {
+        const score = state.validationResult?.overallScore ?? 0;
+        const iterations = state.iterationCount ?? 0;
+
+        if (score < REFINEMENT_THRESHOLD && iterations < MAX_ITERATIONS) {
+          console.log(`[Development Supervisor] Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
+          return 'generateCode';
+        }
+
+        if (score < REFINEMENT_THRESHOLD) {
+          console.log(`[Development Supervisor] Score ${score}% < ${REFINEMENT_THRESHOLD}% but max iterations (${MAX_ITERATIONS}) reached — proceeding to END`);
+        }
+
+        return '__end__';
+      });
 
     return workflow.compile();
   }
@@ -139,7 +171,8 @@ export class DevelopmentSupervisor {
    * Node: Code Generation
    */
   private async codeGenerationNode(state: typeof DevelopmentStateAnnotation.State) {
-    console.log('\n=== CODE GENERATION NODE ===');
+    const iteration = (state.iterationCount ?? 0) + 1;
+    console.log(`\n=== CODE GENERATION NODE (iteration ${iteration}) ===`);
 
     const todoId = 'development-1'; // First todo
     this.todos.start(todoId);
@@ -154,12 +187,16 @@ export class DevelopmentSupervisor {
     }
 
     try {
+      // On retry: pass validation feedback as additionalContext
+      const additionalContext = state.validationFeedback || undefined;
+
       const result = await this.codeGenAgent.generate({
         issue: state.issue,
         orchestrationPlan: state.orchestrationPlan,
         researchFindings: state.researchFindings,
         contextAnalysis: state.contextAnalysis,
         chtCorePath: state.options.chtCorePath,
+        additionalContext,
       });
 
       this.todos.complete(todoId);
@@ -167,10 +204,11 @@ export class DevelopmentSupervisor {
       return {
         codeGeneration: result,
         currentPhase: 'test-setup' as const,
+        iterationCount: iteration,
         messages: [
           {
             role: 'assistant' as const,
-            content: `Code generation completed. Generated ${result.files.length} files with ${(result.confidence * 100).toFixed(0)}% confidence.`,
+            content: `Code generation (iteration ${iteration}) completed. Generated ${result.files.length} files with ${(result.confidence * 100).toFixed(0)}% confidence.`,
             timestamp: new Date().toISOString(),
           },
         ],
@@ -181,6 +219,7 @@ export class DevelopmentSupervisor {
       return {
         errors: [`Code generation failed: ${errorMessage}`],
         currentPhase: 'code-generation' as const,
+        iterationCount: iteration,
       };
     }
   }
@@ -189,6 +228,11 @@ export class DevelopmentSupervisor {
    * Node: Test Environment Setup
    */
   private async testEnvironmentNode(state: typeof DevelopmentStateAnnotation.State) {
+    if (this.skipTestEnvironment) {
+      console.log('\n=== TEST ENVIRONMENT NODE (SKIPPED) ===');
+      return { currentPhase: 'validation' as const };
+    }
+
     console.log('\n=== TEST ENVIRONMENT NODE ===');
 
     const todoId = 'development-2'; // Second todo
@@ -250,6 +294,17 @@ export class DevelopmentSupervisor {
       };
     }
 
+    // Skip validation if no files were generated — nothing to judge
+    if (state.codeGeneration.files.length === 0) {
+      console.log('[Development Supervisor] Skipping validation — no files generated');
+      this.todos.complete(todoId);
+      this.todos.printSummary();
+      return {
+        validationResult: this.heuristicValidation(state.issue, state.codeGeneration, state.testEnvironment),
+        currentPhase: 'complete' as const,
+      };
+    }
+
     try {
       const validation = await this.validateImplementation(
         state.issue,
@@ -260,7 +315,8 @@ export class DevelopmentSupervisor {
       this.todos.complete(todoId);
       this.todos.printSummary();
 
-      return {
+      // Extract feedback for potential retry
+      const feedbackUpdate: Record<string, unknown> = {
         validationResult: validation,
         currentPhase: 'complete' as const,
         messages: [
@@ -271,6 +327,16 @@ export class DevelopmentSupervisor {
           },
         ],
       };
+
+      // Store feedback for refinement loop
+      if (validation.feedbackForCodeGen) {
+        feedbackUpdate.validationFeedback = validation.feedbackForCodeGen;
+      } else if (validation.overallScore < REFINEMENT_THRESHOLD) {
+        // Synthesize feedback from recommendations if none was explicitly provided
+        feedbackUpdate.validationFeedback = this.synthesizeFeedback(validation);
+      }
+
+      return feedbackUpdate;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.todos.fail(todoId, errorMessage);
@@ -283,7 +349,34 @@ export class DevelopmentSupervisor {
   }
 
   /**
-   * Validate the implementation against requirements
+   * Synthesize actionable feedback from validation result when feedbackForCodeGen is not provided
+   */
+  private synthesizeFeedback(validation: ImplementationValidation): string {
+    const parts: string[] = [];
+
+    const failedRequirements = validation.requirementsMet
+      .filter(r => !r.met)
+      .map(r => r.requirement);
+    if (failedRequirements.length > 0) {
+      parts.push(`Unmet requirements: ${failedRequirements.join('; ')}`);
+    }
+
+    const failedCriteria = validation.acceptanceCriteriaPassed
+      .filter(c => !c.passed)
+      .map(c => c.criteria);
+    if (failedCriteria.length > 0) {
+      parts.push(`Failed acceptance criteria: ${failedCriteria.join('; ')}`);
+    }
+
+    if (validation.recommendations.length > 0) {
+      parts.push(`Recommendations: ${validation.recommendations.join('; ')}`);
+    }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Validate the implementation against requirements (code-aware)
    */
   private async validateImplementation(
     issue: IssueTemplate,
@@ -292,7 +385,10 @@ export class DevelopmentSupervisor {
   ): Promise<ImplementationValidation> {
     console.log('[Development Supervisor] Validating implementation...');
 
-    const prompt = `You are a code reviewer validating a CHT implementation.
+    // Build code section with actual file content
+    const codeSection = this.buildCodeSection(codeGen.files, 40000);
+
+    const prompt = `You are a code reviewer validating a CHT implementation. You MUST examine the actual code content below, not just infer quality from file names or descriptions.
 
 ## Issue Requirements
 ${issue.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
@@ -300,8 +396,11 @@ ${issue.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 ## Acceptance Criteria
 ${issue.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
-## Generated Files
+## Generated Files Summary
 ${codeGen.files.map((f) => `- ${f.relativePath}: ${f.description}`).join('\n')}
+
+## Actual Code Content
+${codeSection}
 
 ## Implementation Summary
 ${codeGen.summary}
@@ -311,7 +410,24 @@ ${testEnv ? `Estimated coverage: ${testEnv.estimatedCoverage}%` : 'No test infor
 ${testEnv ? `Test files: ${testEnv.testFiles.length}` : ''}
 
 ## Task
-Evaluate the implementation against requirements and acceptance criteria.
+Evaluate the implementation by examining the ACTUAL CODE above, not just file names.
+For each requirement and acceptance criterion, check if the code actually implements it.
+Look for:
+- Real logic and functionality (not just stubs or TODO comments)
+- Proper handling of the described feature
+- Code that would actually work in a CHT environment
+
+## Scoring Rules
+- overallScore must be consistent with your itemized evaluation: (requirements met / total requirements * 50) + (criteria passed / total criteria * 50) ± 10 for code quality.
+- Do not give a low overallScore if most requirements and criteria pass, and vice versa.
+
+## Grounding Rules
+- Only evaluate code that is actually present in the "Actual Code Content" section above.
+- Do NOT comment on tests, files, or functionality that are not shown in the prompt.
+- Every claim in your evaluation must be traceable to specific code content above.
+
+Also provide specific, actionable feedback that could be used to improve the code in a retry.
+
 Respond with a JSON object:
 {
   "requirementsMet": [
@@ -321,7 +437,8 @@ Respond with a JSON object:
     { "criteria": "...", "passed": true/false, "notes": "..." }
   ],
   "overallScore": 0-100,
-  "recommendations": ["..."]
+  "recommendations": ["..."],
+  "feedbackForCodeGen": "Specific actionable feedback for code generation retry, addressing gaps in the implementation"
 }`;
 
     try {
@@ -333,6 +450,34 @@ Respond with a JSON object:
       // Fallback validation based on heuristics
       return this.heuristicValidation(issue, codeGen, testEnv);
     }
+  }
+
+  /**
+   * Build a section containing actual file content, respecting a character budget
+   */
+  private buildCodeSection(files: GeneratedFile[], budgetChars: number): string {
+    if (files.length === 0) return 'No files generated.';
+
+    const sections: string[] = [];
+    let remaining = budgetChars;
+
+    for (const file of files) {
+      const header = `### ${file.relativePath}\n`;
+      const headerCost = header.length + 10; // account for code fences
+
+      if (remaining < headerCost + 50) break; // Not enough budget for meaningful content
+
+      const availableForContent = remaining - headerCost;
+      const content = file.content.length <= availableForContent
+        ? file.content
+        : file.content.substring(0, availableForContent) + '\n... (truncated)';
+
+      const section = `${header}\`\`\`\n${content}\n\`\`\``;
+      sections.push(section);
+      remaining -= section.length;
+    }
+
+    return sections.join('\n\n');
   }
 
   /**
@@ -409,7 +554,7 @@ Respond with a JSON object:
     console.log(`Using LLM: ${this.llm.modelName}`);
 
     if (input.additionalContext) {
-      console.log('\n📝 Additional Context from Human Feedback:');
+      console.log('\nAdditional Context from Human Feedback:');
       console.log(`   ${input.additionalContext}`);
     }
 
@@ -441,6 +586,8 @@ Respond with a JSON object:
       validationResult: undefined,
       currentPhase: 'init',
       errors: [],
+      iterationCount: 0,
+      validationFeedback: input.additionalContext,
     };
 
     const result = await this.graph.invoke(initialState);
@@ -449,6 +596,7 @@ Respond with a JSON object:
     console.log('DEVELOPMENT SUPERVISOR - Development Phase Complete');
     console.log('========================================');
     console.log(`Final Phase: ${result.currentPhase}`);
+    console.log(`Iterations: ${result.iterationCount ?? 1}`);
     console.log(`Errors: ${result.errors.length}`);
 
     if (result.codeGeneration) {

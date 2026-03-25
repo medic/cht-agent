@@ -14,6 +14,7 @@
     "postinstall": "husky install",
     "research": "node dist/cli/research.js",
     "full": "node dist/cli/full.js",
+    "dev:run": "node dist/cli/dev.js",
     "example:research": "node dist/examples/research-supervisor-example.js",
     "example:full": "node dist/examples/full-workflow-example.js",
     "validate-cli": "node dist/scripts/validate-cli.js"

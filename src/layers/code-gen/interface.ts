@@ -19,6 +19,9 @@ export interface CodeGenModuleInput {
   contextFiles: ContextFile[];
   orchestrationPlan: OrchestrationPlan;
   targetDirectory: string;
+  readFile?: (path: string) => Promise<string | null>;
+  listDirectory?: (dirPath: string) => Promise<string[]>;
+  directoryListing?: string;
 }
 
 export interface CodeGenModuleOutput {

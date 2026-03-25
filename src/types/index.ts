@@ -581,6 +581,7 @@ export interface ImplementationValidation {
   acceptanceCriteriaPassed: AcceptanceCriteriaValidation[];
   overallScore: number; // 0-100
   recommendations: string[];
+  feedbackForCodeGen?: string; // Actionable feedback for refinement loop retry
 }
 
 /**

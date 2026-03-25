@@ -6,6 +6,9 @@
  * - Research findings and documentation references
  * - Context analysis and reusable patterns
  * - Existing code in cht-core codebase
+ *
+ * Delegates LLM-powered code generation to a CodeGenModule via the registry.
+ * The agent handles orchestration: context gathering, validation, requirements analysis.
  */
 
 import {
@@ -19,21 +22,30 @@ import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import { readFromChtCore, listChtCoreDirectory } from '../utils/staging';
 import { loadIndex } from '../utils/context-loader';
 import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
+import {
+  ContextFile,
+  CodeGenModuleInput,
+  GeneratedFile as LayerGeneratedFile,
+} from '../layers/code-gen/interface';
+import { CodeGenModuleRegistry, createDefaultCodeGenRegistry } from '../layers/code-gen/registry';
 
 interface CodeGenerationAgentOptions {
   llmProvider?: LLMProvider;
   useMock?: boolean;
+  codeGenRegistry?: CodeGenModuleRegistry;
 }
 
 export class CodeGenerationAgent {
   private llm: LLMProvider;
   private useMock: boolean;
   private todos: TodoTracker;
+  private registry: CodeGenModuleRegistry;
 
   constructor(options: CodeGenerationAgentOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
     this.useMock = options.useMock ?? false;
     this.todos = createAgentTodoTracker('Code Gen');
+    this.registry = options.codeGenRegistry || createDefaultCodeGenRegistry(this.llm);
   }
 
   /**
@@ -63,7 +75,7 @@ export class CodeGenerationAgent {
       async () => this.gatherCodeContext(input)
     );
 
-    // Generate code using LLM
+    // Generate code via module
     const generatedFiles = await this.todos.run(
       'Generate code with LLM',
       'Generating code with LLM',
@@ -89,7 +101,7 @@ export class CodeGenerationAgent {
       implementedRequirements: implemented,
       pendingRequirements: pending,
       notes: this.generateNotes(validatedFiles, input),
-      confidence: this.calculateConfidence(validatedFiles, input),
+      confidence: this.calculateConfidence(validatedFiles, input, implemented, pending),
     };
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
@@ -105,7 +117,7 @@ export class CodeGenerationAgent {
    */
   private async gatherCodeContext(
     input: CodeGenerationInput
-  ): Promise<{ existingFiles: Map<string, string>; relatedPatterns: string[] }> {
+  ): Promise<{ existingFiles: Map<string, string>; relatedPatterns: string[]; directoryListing: string }> {
     const existingFiles = new Map<string, string>();
     const relatedPatterns: string[] = [];
 
@@ -114,46 +126,79 @@ export class CodeGenerationAgent {
 
     // Load domain-to-components index for relevant directories
     const domainToComponents = loadIndex('domain-to-components');
-    let relevantDirs: string[] = [];
+    let relevantFiles: string[] = [];
 
-    if (domainToComponents && domain && domainToComponents[domain]) {
-      relevantDirs = domainToComponents[domain].paths || [];
-      console.log(`[Code Generation Agent] Found ${relevantDirs.length} relevant paths from index`);
-    }
-
-    // Get files from suggested components in the orchestration plan
-    for (const phase of orchestrationPlan.phases) {
-      for (const component of phase.suggestedComponents) {
-        // Skip if it doesn't look like a file path (must have extension or be a known file)
-        if (!this.looksLikeFilePath(component)) {
-          continue;
-        }
-        // Try to read existing files for context
-        const content = await readFromChtCore(component, chtCorePath);
-        if (content) {
-          existingFiles.set(component, content);
-        }
-      }
-    }
-
-    // Try to list files from relevant directories
-    for (const dir of relevantDirs.slice(0, 5)) { // Limit to 5 directories
-      try {
-        const files = await listChtCoreDirectory(dir, chtCorePath);
-        if (files.length > 0) {
-          console.log(`[Code Generation Agent] Found ${files.length} files in ${dir}`);
-          // Read first few files for context
-          for (const file of files.slice(0, 3)) {
-            if (!file.endsWith('/')) { // Skip directories
-              const content = await readFromChtCore(file, chtCorePath);
-              if (content && !existingFiles.has(file)) {
-                existingFiles.set(file, content);
+    if (domainToComponents?.domains?.[domain]) {
+      const domainData = domainToComponents.domains[domain];
+      // Flatten nested structure (api.controllers, webapp.modules, etc.) into file paths
+      for (const section of ['api', 'webapp', 'sentinel']) {
+        const sectionData = domainData[section];
+        if (sectionData && typeof sectionData === 'object') {
+          for (const [, entries] of Object.entries(sectionData)) {
+            if (Array.isArray(entries)) {
+              for (const entry of entries) {
+                if (typeof entry === 'string') {
+                  relevantFiles.push(entry);
+                }
               }
             }
           }
         }
-      } catch {
-        // Directory might not exist
+      }
+      // Also extract shared_libs paths
+      if (Array.isArray(domainData.shared_libs)) {
+        for (const lib of domainData.shared_libs) {
+          if (lib?.path) {
+            relevantFiles.push(lib.path);
+          }
+        }
+      }
+      console.log(`[Code Generation Agent] Found ${relevantFiles.length} relevant files from index`);
+    }
+
+    // Resolve directory-style components from orchestration plan to actual files
+    for (const phase of orchestrationPlan.phases) {
+      for (const component of phase.suggestedComponents) {
+        const resolvedPaths = this.resolveComponentToFiles(component, domainToComponents);
+        if (resolvedPaths.length > 0) {
+          for (const filePath of resolvedPaths) {
+            if (!existingFiles.has(filePath)) {
+              const content = await readFromChtCore(filePath, chtCorePath);
+              if (content) existingFiles.set(filePath, content);
+            }
+          }
+        } else if (this.looksLikeFilePath(component)) {
+          const content = await readFromChtCore(component, chtCorePath);
+          if (content) existingFiles.set(component, content);
+        }
+      }
+    }
+
+    // Gather cross-domain files (e.g., auth/permission files for contacts ticket)
+    const crossDomainFiles = this.getCrossDomainFiles(issue, domainToComponents);
+    if (crossDomainFiles.length > 0) {
+      console.log(`[Code Generation Agent] Found ${crossDomainFiles.length} cross-domain files`);
+      relevantFiles.push(...crossDomainFiles);
+    }
+
+    // Read ALL relevant files from the index (no artificial limit)
+    for (const filePath of relevantFiles) {
+      if (existingFiles.has(filePath)) continue;
+      if (filePath.endsWith('/')) {
+        try {
+          const files = await listChtCoreDirectory(filePath, chtCorePath);
+          for (const file of files) {
+            if (!file.endsWith('/') && !existingFiles.has(file)) {
+              const content = await readFromChtCore(file, chtCorePath);
+              if (content) existingFiles.set(file, content);
+            }
+          }
+        } catch {
+          // Directory might not exist
+        }
+      } else {
+        const content = await readFromChtCore(filePath, chtCorePath);
+        if (content) existingFiles.set(filePath, content);
       }
     }
 
@@ -164,220 +209,200 @@ export class CodeGenerationAgent {
       }
     }
 
-    return { existingFiles, relatedPatterns };
+    // Build directory listing (repo map) for LLM awareness
+    const directoryListing = await this.buildDirectoryListing(relevantFiles, chtCorePath);
+
+    return { existingFiles, relatedPatterns, directoryListing };
   }
 
   /**
-   * Generate code using LLM - uses batched approach (plan then generate each file)
+   * Resolve a component string (which may be a directory path like "webapp/modules/contacts")
+   * to actual file paths from the domain index.
+   */
+  private resolveComponentToFiles(
+    component: string,
+    domainIndex: any,
+  ): string[] {
+    if (!domainIndex?.domains) return [];
+
+    // Normalize: strip leading/trailing slashes, normalize webapp/ -> webapp/src/ts/
+    const normalized = component.replace(/^\/|\/$/g, '');
+    const variants = [
+      normalized,
+      normalized.replace(/^webapp\/(?!src\/)/, 'webapp/src/ts/'),
+      normalized.replace(/^webapp\/modules\//, 'webapp/src/ts/modules/'),
+      normalized.replace(/^webapp\/services\//, 'webapp/src/ts/services/'),
+    ];
+
+    const matches: string[] = [];
+
+    // Search across all domains (primarily the current domain, but check all)
+    for (const [, domainData] of Object.entries(domainIndex.domains) as [string, any][]) {
+      for (const section of ['api', 'webapp', 'sentinel']) {
+        const sectionData = domainData[section];
+        if (!sectionData || typeof sectionData !== 'object') continue;
+        for (const [, entries] of Object.entries(sectionData)) {
+          if (!Array.isArray(entries)) continue;
+          for (const entry of entries) {
+            if (typeof entry !== 'string') continue;
+            for (const variant of variants) {
+              if (entry.startsWith(variant) || entry.includes(variant)) {
+                matches.push(entry);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return [...new Set(matches)];
+  }
+
+  /**
+   * Gather files from related domains based on ticket keywords.
+   * E.g., a contacts ticket mentioning "permission" should pull auth domain files.
+   */
+  private getCrossDomainFiles(issue: CodeGenerationInput['issue'], domainIndex: any): string[] {
+    if (!domainIndex?.domains) return [];
+
+    const crossDomainKeywords: Record<string, string[]> = {
+      authentication: ['permission', 'auth', 'role', 'login', 'session', 'credential'],
+      configuration: ['app_settings', 'settings', 'config', 'branding'],
+      'data-sync': ['replication', 'sync', 'purge', 'offline'],
+    };
+
+    const ticketText = [
+      issue.issue.title,
+      issue.issue.description,
+      ...issue.issue.requirements,
+      ...issue.issue.technical_context.components,
+    ].join(' ').toLowerCase();
+
+    const files: string[] = [];
+    const currentDomain = issue.issue.technical_context.domain;
+
+    for (const [domain, keywords] of Object.entries(crossDomainKeywords)) {
+      if (domain === currentDomain) continue;
+      const hasMatch = keywords.some(kw => ticketText.includes(kw));
+      if (!hasMatch) continue;
+
+      const domainData = domainIndex.domains[domain];
+      if (!domainData) continue;
+
+      // Pull service files from cross-domain (most likely to be needed)
+      for (const section of ['api', 'webapp']) {
+        const sectionData = domainData[section];
+        if (!sectionData || typeof sectionData !== 'object') continue;
+        const services = sectionData.services;
+        if (Array.isArray(services)) {
+          for (const entry of services) {
+            if (typeof entry === 'string') files.push(entry);
+          }
+        }
+      }
+    }
+
+    return files;
+  }
+
+  /**
+   * Build a directory listing (repo map) from relevant file paths.
+   * Gives the LLM awareness of what files exist in relevant cht-core directories.
+   */
+  private async buildDirectoryListing(relevantFiles: string[], chtCorePath: string): Promise<string> {
+    // Extract unique parent directories from relevant files
+    const dirs = new Set<string>();
+    for (const filePath of relevantFiles) {
+      const lastSlash = filePath.lastIndexOf('/');
+      if (lastSlash > 0) {
+        dirs.add(filePath.substring(0, lastSlash + 1));
+      }
+    }
+
+    const lines: string[] = [];
+    for (const dir of Array.from(dirs).sort()) {
+      try {
+        const entries = await listChtCoreDirectory(dir, chtCorePath);
+        lines.push(`${dir}`);
+        for (const entry of entries) {
+          lines.push(`  ${entry}`);
+        }
+      } catch {
+        // Directory might not exist in cht-core
+      }
+    }
+
+    return lines.length > 0 ? lines.join('\n') : '';
+  }
+
+  /**
+   * Generate code by delegating to the active CodeGenModule
    */
   private async generateWithLLM(
     input: CodeGenerationInput,
-    context: { existingFiles: Map<string, string>; relatedPatterns: string[] }
+    context: { existingFiles: Map<string, string>; relatedPatterns: string[]; directoryListing: string }
   ): Promise<GeneratedFile[]> {
-    const { issue, orchestrationPlan, researchFindings, additionalContext } =
-      input;
+    const moduleInput = this.buildModuleInput(input, context);
+    const moduleOutput = await this.registry.getActiveModule().generate(moduleInput);
+    return this.convertModuleFiles(moduleOutput.files, context.existingFiles);
+  }
 
-    // Build context string from existing files (limit size)
-    let existingCodeContext = '';
-    let charCount = 0;
-    const maxChars = 8000;
+  /**
+   * Convert agent input + gathered context into CodeGenModuleInput
+   */
+  private buildModuleInput(
+    input: CodeGenerationInput,
+    context: { existingFiles: Map<string, string>; relatedPatterns: string[]; directoryListing: string }
+  ): CodeGenModuleInput {
+    const contextFiles: ContextFile[] = [];
 
     for (const [path, content] of context.existingFiles) {
-      const snippet = `\n--- ${path} ---\n${content.substring(0, 1500)}...\n`;
-      if (charCount + snippet.length > maxChars) break;
-      existingCodeContext += snippet;
-      charCount += snippet.length;
+      contextFiles.push({ path, content, source: 'workspace' });
     }
 
-    const baseContext = `## Issue Details
-Title: ${issue.issue.title}
-Type: ${issue.issue.type}
-Domain: ${issue.issue.technical_context.domain}
-
-Description:
-${issue.issue.description}
-
-Requirements:
-${issue.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
-
-## Orchestration Plan
-Recommended Approach: ${orchestrationPlan.recommendedApproach}
-
-Phases:
-${orchestrationPlan.phases.map((p, i) => `${i + 1}. ${p.name}: ${p.description}`).join('\n')}
-
-## Documentation References
-${researchFindings.suggestedApproaches.map((a) => `- ${a}`).join('\n')}
-
-## Reusable Patterns
-${context.relatedPatterns.map((p) => `- ${p}`).join('\n') || 'No patterns available'}
-
-## Existing Code Context
-${existingCodeContext || 'No existing code context available'}
-
-${additionalContext ? `## Additional Context from Human Feedback\n${additionalContext}` : ''}`;
-
-    // Step 1: Plan - get list of files to generate (small JSON)
-    const filePlan = await this.todos.run(
-      'Plan files to generate',
-      'Planning files to generate',
-      async () => this.planFiles(baseContext)
-    );
-
-    if (filePlan.length === 0) {
-      console.log('[Code Generation Agent] No files planned for generation');
-      return [];
+    if (context.relatedPatterns.length > 0) {
+      contextFiles.push({
+        path: 'agent-memory/patterns.md',
+        content: context.relatedPatterns.map(p => `- ${p}`).join('\n'),
+        source: 'agent-memory',
+      });
     }
 
-    console.log(`[Code Generation Agent] Planned ${filePlan.length} files to generate`);
-
-    // Step 2: Generate each file individually (no JSON, just code)
-    const generatedFiles: GeneratedFile[] = [];
-
-    for (const plan of filePlan) {
-      const fileId = this.todos.add(`Generate ${plan.relativePath}`, `Generating ${plan.relativePath}`);
-      this.todos.start(fileId);
-
-      const content = await this.generateSingleFile(baseContext, plan, context.existingFiles);
-
-      if (content) {
-        this.todos.complete(fileId);
-        generatedFiles.push({
-          relativePath: plan.relativePath,
-          content,
-          language: plan.language,
-          type: plan.type,
-          description: plan.description,
-          action: plan.action || 'create',
-        });
-        console.log(`[Code Generation Agent] ✓ Generated ${plan.relativePath}`);
-      } else {
-        this.todos.fail(fileId, 'Empty or invalid content');
-        console.log(`[Code Generation Agent] ✗ Failed to generate ${plan.relativePath}`);
-      }
+    if (input.additionalContext) {
+      contextFiles.push({
+        path: 'feedback/additional-context.md',
+        content: input.additionalContext,
+        source: 'external',
+      });
     }
 
-    return generatedFiles;
+    return {
+      ticket: input.issue,
+      researchFindings: input.researchFindings,
+      contextFiles,
+      orchestrationPlan: input.orchestrationPlan,
+      targetDirectory: input.chtCorePath,
+      readFile: (filePath: string) => readFromChtCore(filePath, input.chtCorePath),
+      listDirectory: (dirPath: string) => listChtCoreDirectory(dirPath, input.chtCorePath),
+      directoryListing: context.directoryListing,
+    };
   }
 
   /**
-   * Step 1: Plan which files to generate (returns small JSON)
+   * Convert layer GeneratedFile[] to agent GeneratedFile[] with inferred metadata
    */
-  private async planFiles(baseContext: string): Promise<Array<{
-    relativePath: string;
-    language: FileLanguage;
-    type: FileType;
-    description: string;
-    action: 'create' | 'modify';
-  }>> {
-    const planPrompt = `You are a CHT (Community Health Toolkit) developer planning implementation.
-
-${baseContext}
-
-## Task
-List the files that need to be created or modified to implement this feature.
-Do NOT include the actual code content - just list the files with metadata.
-
-Respond with a JSON object in this exact format:
-{
-  "files": [
-    {
-      "relativePath": "webapp/src/ts/services/example.service.ts",
-      "language": "typescript",
-      "type": "source",
-      "description": "Service to handle example functionality",
-      "action": "create"
-    }
-  ]
-}
-
-Keep the list focused - only include files that are essential for this feature.
-Valid types: source, test, config, documentation, fixture
-Valid languages: typescript, javascript, json, xml, yaml, markdown, html, css, shell`;
-
-    try {
-      interface FilePlanOutput {
-        files: Array<{
-          relativePath: string;
-          language: FileLanguage;
-          type: FileType;
-          description: string;
-          action: 'create' | 'modify';
-        }>;
-      }
-
-      const result = await this.llm.invokeForJSON<FilePlanOutput>(planPrompt, {
-        temperature: 0.2,
-      });
-
-      return result.files || [];
-    } catch (error) {
-      console.error('[Code Generation Agent] Error planning files:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Step 2: Generate a single file (returns plain code, no JSON)
-   */
-  private async generateSingleFile(
-    baseContext: string,
-    filePlan: {
-      relativePath: string;
-      language: FileLanguage;
-      type: FileType;
-      description: string;
-    },
-    existingFiles: Map<string, string>
-  ): Promise<string | null> {
-    // Check if we're modifying an existing file
-    const existingContent = existingFiles.get(filePlan.relativePath);
-
-    const generatePrompt = `You are a CHT (Community Health Toolkit) developer generating code.
-
-${baseContext}
-
-## File to Generate
-Path: ${filePlan.relativePath}
-Language: ${filePlan.language}
-Type: ${filePlan.type}
-Description: ${filePlan.description}
-
-${existingContent ? `## Existing File Content (to modify)\n\`\`\`${filePlan.language}\n${existingContent.substring(0, 3000)}\n\`\`\`\n` : ''}
-
-## Instructions
-Generate the complete file content for ${filePlan.relativePath}.
-- Follow CHT coding patterns and conventions
-- Include proper error handling
-- Add inline documentation
-- Make sure the code is complete and functional
-
-IMPORTANT: Output ONLY the code. Do not wrap in markdown code blocks. Do not include any explanation before or after the code.`;
-
-    try {
-      const response = await this.llm.invoke(generatePrompt, {
-        temperature: 0.3,
-      });
-
-      let content = response.content.trim();
-
-      // Remove markdown code blocks if the LLM added them anyway
-      const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
-      if (codeBlockMatch) {
-        content = codeBlockMatch[1];
-      }
-
-      // Basic validation - ensure we got some content
-      if (content.length < 10) {
-        console.error(`[Code Generation Agent] Generated content too short for ${filePlan.relativePath}`);
-        return null;
-      }
-
-      return content;
-    } catch (error) {
-      console.error(`[Code Generation Agent] Error generating ${filePlan.relativePath}:`, error);
-      return null;
-    }
+  private convertModuleFiles(
+    moduleFiles: LayerGeneratedFile[],
+    existingFiles: Map<string, string> = new Map()
+  ): GeneratedFile[] {
+    return moduleFiles.map(file => ({
+      relativePath: file.path,
+      content: file.content,
+      language: this.inferLanguage(file.path),
+      type: this.inferFileType(file.path),
+      description: file.purpose || '',
+      action: existingFiles.has(file.path) ? 'modify' as const : 'create' as const,
+    }));
   }
 
   /**
@@ -523,11 +548,16 @@ IMPORTANT: Output ONLY the code. Do not wrap in markdown code blocks. Do not inc
   /**
    * Calculate confidence score
    */
-  private calculateConfidence(files: GeneratedFile[], input: CodeGenerationInput): number {
+  private calculateConfidence(
+    files: GeneratedFile[],
+    input: CodeGenerationInput,
+    implemented: string[] = [],
+    pending: string[] = []
+  ): number {
     let score = 0.5; // Base score
 
     // More files = higher confidence (up to a point)
-    score += Math.min(files.length * 0.05, 0.2);
+    score += Math.min(files.length * 0.03, 0.1);
 
     // Has tests = higher confidence
     if (files.some((f) => f.type === 'test')) {
@@ -539,7 +569,13 @@ IMPORTANT: Output ONLY the code. Do not wrap in markdown code blocks. Do not inc
 
     // Context patterns increase confidence
     if (input.contextAnalysis.reusablePatterns.length > 0) {
-      score += 0.1;
+      score += 0.05;
+    }
+
+    // Requirement completion rate (up to 0.2)
+    const totalRequirements = implemented.length + pending.length;
+    if (totalRequirements > 0) {
+      score += (implemented.length / totalRequirements) * 0.2;
     }
 
     return Math.min(score, 1.0);

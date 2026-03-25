@@ -42,6 +42,10 @@ export interface InvokeOptions {
   temperature?: number;
   maxTokens?: number;
   stopSequences?: string[];
+  /** Override max agentic turns for CLI provider */
+  maxTurns?: number;
+  /** Disable all built-in tools in CLI provider (forces text-only output) */
+  disableTools?: boolean;
 }
 
 /**
@@ -96,7 +100,7 @@ export interface LLMProvider {
  */
 export const DEFAULT_CONFIG = {
   temperature: 0.3,
-  maxTokens: 16384, // Increased for code generation tasks
+  maxTokens: 65536, // High limit for multi-file code generation
 } as const;
 
 /**

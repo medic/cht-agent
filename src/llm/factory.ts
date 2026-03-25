@@ -104,7 +104,7 @@ export const getCLIConfigFromEnv = (): ClaudeCLIConfig => {
     workingDirectory: process.env.CHT_CORE_PATH || process.cwd(),
     timeout: process.env.CLAUDE_CLI_TIMEOUT
       ? parseInt(process.env.CLAUDE_CLI_TIMEOUT, 10)
-      : 300000,
+      : 600000, // 10 minutes — code gen can be slow
     maxTurns: process.env.CLAUDE_CLI_MAX_TURNS
       ? parseInt(process.env.CLAUDE_CLI_MAX_TURNS, 10)
       : 20, // CLI needs multiple turns to complete (test files can need 15+ turns)

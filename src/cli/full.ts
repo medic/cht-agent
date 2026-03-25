@@ -102,6 +102,7 @@ const main = async (): Promise<void> => {
 
     const developmentSupervisor = new DevelopmentSupervisor({
       useMock: false, // Use real LLM for code generation
+      skipTestEnvironment: true, // TODO(#62): re-enable once test gen layer is integrated
     });
 
     // Display issue details

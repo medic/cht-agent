@@ -27,7 +27,7 @@ export interface ClaudeCLIConfig {
   executablePath?: string;
   /** Working directory for CLI execution */
   workingDirectory?: string;
-  /** Timeout in milliseconds (default: 300000 = 5 minutes) */
+  /** Timeout in milliseconds (default: 600000 = 10 minutes) */
   timeout?: number;
   /** Max agentic turns - set to 1 for simple completions (default: 1) */
   maxTurns?: number;
@@ -62,7 +62,7 @@ interface CLIResponse {
 export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvider => {
   const executablePath = config.executablePath ?? 'claude';
   const workingDirectory = config.workingDirectory ?? process.cwd();
-  const timeout = config.timeout ?? 300000; // 5 minutes
+  const timeout = config.timeout ?? 600000; // 10 minutes
   const maxTurns = config.maxTurns ?? 20; // Multiple turns needed - test files can need 15+
   const modelName = config.model ?? 'claude-cli';
   // Note: CLI doesn't support temperature/maxTokens directly via flags
@@ -74,16 +74,33 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   /**
    * Execute Claude CLI with the given prompt
    */
-  const executeCLI = async (prompt: string, _options?: InvokeOptions): Promise<string> => {
+  const executeCLI = async (prompt: string, options?: InvokeOptions): Promise<string> => {
     return new Promise((resolve, reject) => {
+      const effectiveMaxTurns = options?.maxTurns ?? maxTurns;
       const args = [
         '-p', prompt,
         '--output-format', 'json',
-        '--max-turns', maxTurns.toString(),
+        '--max-turns', effectiveMaxTurns.toString(),
+        '--dangerously-skip-permissions',
       ];
+
+      if (options?.disableTools) {
+        // Disable all tools to force text-only output.
+        // Use --disallowedTools with all known tool names as a reliable fallback,
+        // since --tools "" via spawn may not work as expected without a shell.
+        args.push(
+          '--disallowedTools',
+          'Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Agent,NotebookEdit,LSP'
+        );
+      }
 
       // Note: CLI doesn't support temperature/maxTokens directly
       // These are handled by the account settings or model defaults
+
+      // Log process start with key details
+      const promptPreview = prompt.substring(0, 80).replace(/\n/g, ' ');
+      console.log(`[Claude CLI] Starting: "${promptPreview}..." (${prompt.length} chars, maxTurns=${effectiveMaxTurns}, tools=${options?.disableTools ? 'disabled' : 'enabled'})`);
+      const startTime = Date.now();
 
       // Don't use shell: true to avoid prompt being interpreted by shell
       // This allows special characters in prompts to be passed correctly
@@ -102,10 +119,21 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       const stdoutChunks: string[] = [];
       const stderrChunks: string[] = [];
 
+      // Periodic progress logging every 60 seconds
+      const progressId = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        const stdoutSize = stdoutChunks.reduce((sum, c) => sum + c.length, 0);
+        const stderrSize = stderrChunks.reduce((sum, c) => sum + c.length, 0);
+        console.log(`[Claude CLI] Still running... ${elapsed}s elapsed, stdout=${stdoutSize} bytes, stderr=${stderrSize} bytes`);
+      }, 60000);
+
       // Setup timeout
       const timeoutId = setTimeout(() => {
+        clearInterval(progressId);
         proc.kill('SIGTERM');
         activeProcesses.delete(proc);
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        console.log(`[Claude CLI] TIMEOUT after ${elapsed}s`);
         reject(new Error(`Claude CLI timed out after ${timeout}ms`));
       }, timeout);
 
@@ -119,6 +147,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 
       proc.on('error', (error) => {
         clearTimeout(timeoutId);
+        clearInterval(progressId);
         activeProcesses.delete(proc);
 
         const nodeError = error as NodeJS.ErrnoException;
@@ -138,10 +167,14 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 
       proc.on('close', (code) => {
         clearTimeout(timeoutId);
+        clearInterval(progressId);
         activeProcesses.delete(proc);
 
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
         const stdout = stdoutChunks.join('');
         const stderr = stderrChunks.join('');
+
+        console.log(`[Claude CLI] Completed in ${elapsed}s (code=${code}, stdout=${stdout.length} bytes, stderr=${stderr.length} bytes)`);
 
         if (code !== 0 && !stdout) {
           reject(new Error(`Claude CLI exited with code ${code}: ${stderr || 'Unknown error'}`));
