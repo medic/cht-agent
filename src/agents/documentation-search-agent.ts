@@ -19,7 +19,7 @@ export class DocumentationSearchAgent {
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     // Model will be used when MCP integration is complete
     // For now, we use mocked responses
-    this.useMockMCP = options.useMockMCP !== false; // Default to true for POC
+    this.useMockMCP = options.useMockMCP ?? !process.env.MCP_SERVER_URL
   }
 
   /**
@@ -64,25 +64,82 @@ export class DocumentationSearchAgent {
   }
 
   /**
-   * Call Kapa.AI via MCP (mocked for POC)
+   * Call Kapa.AI via MCP
    */
   private async callKapaAI(query: string, domain: CHTDomain): Promise<MCPResponse> {
     if (this.useMockMCP) {
       return this.mockKapaAIResponse(query, domain);
     }
 
-    // TODO: Actual MCP implementation when server is ready
-    // const mcpCall: MCPToolCall = {
-    //   tool: 'search_docs',
-    //   parameters: {
-    //     query,
-    //     domain,
-    //     max_results: 5
-    //   }
-    // };
-    // return await mcp.call(mcpCall);
+    const mcpServerUrl = process.env.MCP_SERVER_URL;
+    if (!mcpServerUrl) {
+      throw new Error('MCP_SERVER_URL is not set in environment');
+    }
 
-    throw new Error('MCP integration not yet implemented');
+    const response = await fetch(mcpServerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'search_docs',
+          arguments: { query, maxResults: 5 },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP server responded with status ${response.status}`);
+    }
+
+    const json = (await response.json()) as {
+      result?: { content?: Array<{ type: string; text?: string }> };
+      error?: { message: string };
+    };
+
+    if (json.error) {
+      throw new Error(`MCP error: ${json.error.message}`);
+    }
+
+    const textContent = json.result?.content
+      ?.filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('\n');
+
+    return this.parseMCPTextResponse(textContent ?? '', domain);
+  }
+
+  /**
+   * Parse free-form MCP text response into structured MCPResponse
+   */
+  private parseMCPTextResponse(text: string, domain: CHTDomain): MCPResponse {
+    if (!text) {
+      return { success: false, error: 'Empty response from MCP server' };
+    }
+
+    const urlRegex = /https?:\/\/[^\s),"]+/g;
+    const urls = [...new Set(text.match(urlRegex) ?? [])];
+
+    const references = urls.map((url) => {
+      const slug = url.match(/\/([^/]+)\/?$/)?.[1]?.replace(/-/g, ' ') ?? url;
+      return {
+        url,
+        title: slug.charAt(0).toUpperCase() + slug.slice(1),
+        topics: [domain],
+        relevantSections: [] as string[],
+      };
+    });
+
+    return {
+      success: true,
+      data: {
+        references,
+        summary: text.substring(0, 300),
+        relatedTopics: [domain],
+      },
+    };
   }
 
   /**

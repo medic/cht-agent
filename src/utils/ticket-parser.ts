@@ -64,10 +64,10 @@ function extractFrontmatter(content: string): {
 /**
  * Validate that type is a valid ticket type
  */
-type TicketType = 'feature' | 'bug' | 'enhancement';
+type TicketType = 'feature' | 'bug' | 'enhancement' | 'documentation';
 
 function validateType(type: string): TicketType {
-  const validTypes: TicketType[] = ['feature', 'bug', 'enhancement'];
+  const validTypes: TicketType[] = ['feature', 'bug', 'enhancement', 'documentation'];
 
   if (validTypes.includes(type as TicketType)) {
     return type as TicketType;
@@ -214,7 +214,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   }
 
   if (!metadata.type) {
-    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|enhancement)');
+    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|enhancement|documentation)');
   }
 
   if (!metadata.priority) {

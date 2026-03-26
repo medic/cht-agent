@@ -26,7 +26,7 @@ export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 export interface IssueTemplate {
   issue: {
     title: string;
-    type: 'feature' | 'bug' | 'enhancement';
+    type: 'feature' | 'bug' | 'enhancement' | 'documentation';
     priority: 'high' | 'medium' | 'low';
     description: string;
     technical_context: {

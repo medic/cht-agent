@@ -1,14 +1,17 @@
-❯ npm run research tickets/10577.md                                                                                        
+❯ npm run research tickets/10644.md                                                                                        
 
-⏺ Bash(npm run research tickets/10577.md)
+⏺ Bash(ls tickets/10644.md 2>&1)
+  ⎿  tickets/10644.md
+
+⏺ Bash(npm run research tickets/10644.md 2>&1)
   ⎿  > cht-agent@0.1.0 research
-     > node dist/cli/research.js tickets/10577.md
+     > node dist/cli/research.js tickets/10644.md
 
      ╔════════════════════════════════════════════════════════════════╗
      ║              CHT Multi-Agent System - Research CLI             ║
      ╚════════════════════════════════════════════════════════════════╝
 
-     📄 Loading ticket from: /Users/andra/Documents/GitHub/cht-agent/tickets/10577.md
+     📄 Loading ticket from: /Users/andra/Documents/GitHub/cht-agent/tickets/10644.md
 
      ✅ Ticket parsed successfully!
 
@@ -16,12 +19,12 @@
 
      📋 Issue Details:
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-     Title: Add ability to filter tasks
-     Type: feature
-     Priority: high
+     Title: Add telemetry to measure task filtering
+     Type: enhancement
+     Priority: medium
      Domain: tasks-and-targets
-     Components: webapp/src/ts/modules/tasks, webapp/src/ts/components/filters, Report filtering feature (existing
-     pattern to follow), task.action.form, task.name
+     Components: webapp/src/ts/modules/tasks, CHT telemetry system, Task filtering feature, Existing telemetry
+     implementations in CHT (pattern to follow)
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
      🔍 Running Research Phase...
@@ -30,10 +33,10 @@
      ========================================
      RESEARCH SUPERVISOR - Starting Research Phase
      ========================================
-     Issue: Add ability to filter tasks
+     Issue: Add telemetry to measure task filtering
      Domain: tasks-and-targets
-     Components: webapp/src/ts/modules/tasks, webapp/src/ts/components/filters, Report filtering feature (existing
-     pattern to follow), task.action.form, task.name
+     Components: webapp/src/ts/modules/tasks, CHT telemetry system, Task filtering feature, Existing telemetry
+     implementations in CHT (pattern to follow)
      ========================================
 
 
@@ -41,14 +44,14 @@
 
      [Documentation Search Agent] Starting documentation search...
      [Documentation Search Agent] Domain: tasks-and-targets
-     [Documentation Search Agent] Issue: Add ability to filter tasks
-     [Documentation Search Agent] Search query: tasks-and-targets webapp/src/ts/modules/tasks
-     webapp/src/ts/components/filters Report filtering feature (existing pattern to follow) task.action.form task.name
-      Add ability to filter tasks # Description
+     [Documentation Search Agent] Issue: Add telemetry to measure task filtering
+     [Documentation Search Agent] Search query: tasks-and-targets webapp/src/ts/modules/tasks CHT telemetry system
+     Task filtering feature Existing telemetry implementations in CHT (pattern to follow) Add telemetry to measure
+     task filtering # Description
 
-     When CHWs provide services in the community, they face challenges navigating the CHT tasks. With numerous tasks
-     listed, it often becomes difficult to scroll through and identify specifi
-     [Documentation Search Agent] Found 10 documentation references
+     Task filtering was recently added to CHT. To understand how this feature is being used and measure its impact,
+     telemetry should be added to track usage of task filters. This will help i
+     [Documentation Search Agent] Found 13 documentation references
      [Documentation Search Agent] Confidence: 0.85
 
      === CONTEXT ANALYSIS NODE ===
@@ -59,7 +62,7 @@
      [Context Analysis Agent] Found 0 similar past issues
      [Context Analysis Agent] Extracted 0 reusable patterns
      [Context Analysis Agent] Found 0 relevant design decisions
-     [Context Analysis Agent] Generated 3 recommendations
+     [Context Analysis Agent] Generated 0 recommendations
 
      === GENERATE PLAN NODE ===
      [Research Supervisor] Generating orchestration plan...
@@ -77,7 +80,7 @@
      ║                      RESEARCH RESULTS                          ║
      ╚════════════════════════════════════════════════════════════════╝
 
-     ⏱️   Duration: 34.64 seconds
+     ⏱️   Duration: 29.73 seconds
      📊 Phase: complete
      ❌ Errors: 0
 
@@ -86,57 +89,60 @@
      Source: kapa-ai
      Confidence: 85%
 
-     Documentation References (10):
+     Documentation References (13):
 
-     1. Tasks sidebar filter.component.ts#L1 L39
-        URL: https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.
-     ts#L1-L39
+     1. #tasksjs
+        URL: https://docs.communityhealthtoolkit.org/building/tasks/tasks-js/#tasksjs
         Topics: tasks-and-targets
 
-     2. Task type filter.component.ts
-        URL: https://github.com/medic/cht-core/blob/master/webapp/src/ts/components/filters/task-type-filter/task-type
-     -filter.component.ts
+     2. E8cdfd90 9d6f 4971 b1eb a426edcd2f32
+        URL: https://github.com/user-attachments/assets/e8cdfd90-9d6f-4971-b1eb-a426edcd2f32
         Topics: tasks-and-targets
 
-     3. Tasks.component.ts#L156 L221
-        URL: https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks.component.ts#L156-L221
+     3. 10577
+        URL: https://github.com/medic/cht-core/issues/10577
         Topics: tasks-and-targets
 
-     4. Tasks content.component.ts#L254 L361
+     4. 4808
+        URL: https://forum.communityhealthtoolkit.org/t/filter-option-for-task/4808
+        Topics: tasks-and-targets
+
+     5. #replication
+        URL: https://docs.communityhealthtoolkit.org/hosting/monitoring/dashboards/#replication
+        Topics: tasks-and-targets
+
+     6. Telemetry
+        URL: https://docs.communityhealthtoolkit.org/technical-overview/data/performance/telemetry/
+        Topics: tasks-and-targets
+
+     7. Data flows for analytics
+        URL: https://docs.communityhealthtoolkit.org/technical-overview/data/analytics/data-flows-for-analytics/
+        Topics: tasks-and-targets
+
+     8. Analytics
+        URL: https://docs.communityhealthtoolkit.org/hosting/analytics/
+        Topics: tasks-and-targets
+
+     9. Querying_training_card_telemetry
         URL:
-     https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-content.component.ts#L254-L361
+     https://docs.communityhealthtoolkit.org/technical-overview/data/analytics/querying_training_card_telemetry/
         Topics: tasks-and-targets
 
-     5. Tasks content.component.ts#L143 L253
-        URL:
-     https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-content.component.ts#L143-L253
+     10. Querying_apdex_telemetry
+        URL: https://docs.communityhealthtoolkit.org/technical-overview/data/analytics/querying_apdex_telemetry/
         Topics: tasks-and-targets
 
-     6. Tasks sidebar filter.component.ts#L40 L168
-        URL: https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.
-     ts#L40-L168
+     11. 1234
+        URL: https://github.com/medic/cht-core/pull/1234
         Topics: tasks-and-targets
 
-     7. Tasks group.component.ts#L149 L266
-        URL:
-     https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-group.component.ts#L149-L266
+     12. Contact page
+        URL: https://docs.communityhealthtoolkit.org/apps/reference/contact-page/
         Topics: tasks-and-targets
 
-     8. Tasks content.component.ts#L362 L370
-        URL:
-     https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-content.component.ts#L362-L370
+     13. Valid ticket.md
+        URL: https://github.com/medic/cht-agent/blob/main/test/fixtures/valid-ticket.md
         Topics: tasks-and-targets
-
-     9. Tasks.component.ts#L1 L42
-        URL: https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks.component.ts#L1-L42
-        Topics: tasks-and-targets
-
-     10. Tasks group.component.ts#L1 L21
-        URL: https://github.com/medic/cht-core/blob/master/webapp/src/ts/modules/tasks/tasks-group.component.ts#L1-L21
-        Topics: tasks-and-targets
-
-     Suggested Approaches:
-        1. Implement following CHT best practices and existing patterns
 
      🔎 CONTEXT ANALYSIS RESULTS
      ──────────────────────────────────────────────────────────────────────
@@ -145,25 +151,18 @@
      Design Decisions: 0
      Historical Success Rate: 50%
 
-     Recommendations:
-        1. Ensure comprehensive test coverage for new feature
-        2. Update documentation and configuration examples
-        3. Validate changes with integration tests before deployment
-
      📋 ORCHESTRATION PLAN
      ──────────────────────────────────────────────────────────────────────
      Estimated Complexity: HIGH
      Estimated Effort: 1 week
 
      Proposed Approach:
-        Implement following CHT best practices and existing patterns
+        Follow CHT best practices
 
      Key Findings:
-        1. 10 documentation references found
+        1. 13 documentation references found
         2. 0 similar past implementations identified
         3. Historical success rate: 50%
-        4. Ensure comprehensive test coverage for new feature
-        5. Update documentation and configuration examples
 
      Implementation Phases (4):
 
@@ -172,9 +171,9 @@
            Components: development environment, documentation
 
         2. Core Implementation [high]
-           Implement Add ability to filter tasks
-           Components: webapp/src/ts/modules/tasks, webapp/src/ts/components/filters, Report filtering feature
-     (existing pattern to follow), task.action.form, task.name
+           Implement Add telemetry to measure task filtering
+           Components: webapp/src/ts/modules/tasks, CHT telemetry system, Task filtering feature, Existing telemetry
+     implementations in CHT (pattern to follow)
            Dependencies: Setup and Configuration
 
         3. Testing [medium]
@@ -189,11 +188,10 @@
 
      ⚠️   Risk Factors:
         1. No similar past implementations found - breaking new ground
-        2. Multiple constraints to satisfy: Filter UX should be consistent with the existing reporting filter feature,
-      Must work offline, Decision needed on whether task type filtering uses `task.action.form` or `task.name`
-     (low-consequence decision), Tasks with multiple actions must be handled correctly when filtering by task type
-        3. High priority issue - requires careful attention and thorough testing
-        4. Changes span multiple components - requires coordination and integration testing
+        2. Multiple constraints to satisfy: Must follow existing CHT telemetry conventions and patterns, Telemetry
+     must work for both online and offline users, Must not degrade the user experience or add noticeable latency to
+     filter interactions
+        3. Changes span multiple components - requires coordination and integration testing
 
      ╔════════════════════════════════════════════════════════════════╗
      ║                  Research Phase Complete! ✅                   ║
@@ -203,9 +201,14 @@
         1. Review the orchestration plan
         2. Validate research findings
         3. Proceed to Development Phase (coming soon)
-  ⎿  (timeout 10m)
+  ⎿  (timeout 5m)
 
-                                                                                         08:05 PM claude-sonnet-4-6
-⏺ Working consistently — 10 real references from the MCP server, 0 errors, 34s runtime. Results are stable across runs.
+                                                                                         07:01 PM claude-sonnet-4-6
+⏺ Research completed in 29.73 seconds. Key findings:
 
-✻ Crunched for 42s
+  - 13 documentation references found, including direct links to the CHT telemetry docs, the related issue #10577 (task
+  filtering feature), and the telemetry analytics querying guides
+  - Risk factors note the need to follow existing CHT telemetry conventions and ensure it works for both online and offline
+   users without adding latency
+
+✻ Sautéed for 42s
