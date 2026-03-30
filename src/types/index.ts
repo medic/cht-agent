@@ -13,7 +13,8 @@ export type CHTDomain =
   | 'tasks-and-targets'
   | 'messaging'
   | 'data-sync'
-  | 'configuration';
+  | 'configuration'
+  | 'interoperability';
 
 /**
  * CHT Services
