@@ -1,5 +1,5 @@
 ---
-domain: forms-and-reports          # Required: One of 7 domains
+domain: forms-and-reports          # Required: One of 8 domains
 title: Enketo Form Rendering       # Required: Brief descriptive title
 last_updated: 2026-02-16           # Required: ISO date
 tags: [enketo, forms, validation]  # Optional: Freeform tags for searchability

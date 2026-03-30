@@ -14,9 +14,10 @@
         "tasks-and-targets",
         "messaging",
         "data-sync",
-        "configuration"
+        "configuration",
+        "interoperability"
       ],
-      "description": "One of the 7 functional domains in CHT"
+      "description": "One of the 8 functional domains in CHT"
     },
     "CHTWorkflow": {
       "type": "string",
