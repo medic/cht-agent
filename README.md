@@ -1,61 +1,25 @@
-# CHT-Agent Repository
+# CHT-Agent
 
-## System Architecture Overview
+A hierarchical multi-agent system to assist with CHT development workflows. It uses layered architecture with human validation checkpoints to research, generate, and validate code for CHT issues.
 
-```
-CLI Interface
-    ↓
-Master Supervisor (Orchestrator)
-├── Research Supervisor
-│   ├── Documentation Search Agent
-│   └── Context Analysis Agent
-│   
-├── [HUMAN VALIDATION CHECKPOINT #1]
-│   • Validate research findings
-│   • Approve orchestration plan
-│   
-├── Development Supervisor
-│   ├── Code Generation Agent
-│   └── Test Environment Agent
-│   
-├── QA Supervisor
-│   ├── Code Validation Agent
-│   └── Test Orchestration Agent
-│   
-└── [HUMAN VALIDATION CHECKPOINT #2]
-    • Review generated code
-    • Verify test results
-    • Approve for completion
-```
-
-## Core Design Principles
-
-1. **Run with any model**: Easily changeable to any model
-2. **Tool Orchestration Over Reinvention**: Agents act as intelligent coordinators of existing CHT tools (cht-conf, cht-toolbox, cht-datasource, cht-docs, npm scripts) rather than implementing custom validation
-3. **Context-Based Learning**: Lightweight file-based memory system that mirrors CHT repository structure
-4. **Incremental Value Delivery**: Each agent provides immediate value while building knowledge over time
-5. **Developer-Friendly Integration**: Seamless integration with existing npm scripts and development workflows
-
-For WIP, you can find more design details [here](https://github.com/Hareet/cht-agent/blob/main/design/CHT%20Hierarchical%20Multi-Agent%20System%20PoC.md)
+For detailed system design, architecture, and implementation phases, see the [Technical POC Plan](designs/CHT%20Hierarchical%20Multi-Agent%20System%20PoC.md).
 
 ## Current Status: Research Supervisor POC
 
 The Research Supervisor and its underlying agents have been implemented:
 
-### ✅ Implemented Components
-
-- **Documentation Search Agent**: Searches CHT documentation (currently mocked, will integrate with Kapa.AI MCP server)
-- **Context Analysis Agent**: Analyzes past implementations and identifies reusable patterns
+- **Documentation Access Layer**: Searches CHT documentation (currently mocked, will integrate with Kapa.AI MCP server)
+- **Code Context Layer**: Analyzes past implementations and identifies reusable patterns
 - **Research Supervisor**: Orchestrates the research phase using LangGraph workflow
 
-### 📁 Project Structure
+## Project Structure
 
 ```
 cht-agent/
 ├── src/
 │   ├── agents/
-│   │   ├── documentation-search-agent.ts    # Doc search with mocked MCP
-│   │   └── context-analysis-agent.ts        # Context analysis
+│   │   ├── documentation-search-agent.ts    # Documentation Access Layer
+│   │   └── context-analysis-agent.ts        # Code Context Layer
 │   ├── supervisors/
 │   │   └── research-supervisor.ts           # LangGraph orchestration
 │   ├── types/
@@ -69,6 +33,7 @@ cht-agent/
 │   ├── workflows/                           # Workflow contexts
 │   ├── knowledge-base/                      # Resolved issues
 │   └── indices/                             # Lookup tables
+├── designs/                                 # System design documents
 └── tickets/                                 # Issue tickets to process
 ```
 
@@ -105,15 +70,9 @@ This will demonstrate the complete research workflow:
 2. Context Analysis (analyzing past implementations)
 3. Orchestration Plan Generation (creating implementation plan)
 
-### Example Output
+## Roadmap
 
-The example processes a sample issue and outputs:
-- Documentation references found
-- Similar past implementations
-- Reusable patterns identified
-- Implementation phases
-- Risk factors
-- Effort estimates
+Track progress and upcoming work on the [CHT-Agent Squad Dashboard](https://github.com/orgs/medic/projects/363).
 
 ## Development
 
@@ -127,12 +86,3 @@ npm run lint
 # Build
 npm run build
 ```
-
-## Next Steps
-
-1. **MCP Integration**: Connect Documentation Search Agent to Kapa.AI MCP server
-2. **Context Population**: Populate agent-memory with actual CHT domain contexts
-3. **Development Supervisor**: Implement code generation and test environment agents
-4. **QA Supervisor**: Implement validation and test orchestration agents
-5. **CLI Interface**: Build command-line interface for issue processing
-
