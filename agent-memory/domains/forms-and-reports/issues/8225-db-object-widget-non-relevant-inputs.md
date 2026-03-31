@@ -10,7 +10,6 @@ lastUpdated: 2024-09-10
 summary: The select-contact feature from the db-object-widget could not load contact data into a sub-group of the inputs group when that group had relevant="false()". Fixed via a patch to enketo-core.
 services:
   - webapp
-  
 techStack:
   - javascript
 ---
