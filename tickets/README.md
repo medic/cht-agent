@@ -175,6 +175,7 @@ domain: contacts
   - `feature` = new functionality
   - `bug` = something is broken
   - `enhancement` = improve existing functionality
+  - `documentation` = document a functionality
 - **Priority**:
   - `high` = urgent/critical
   - `medium` = important but not urgent
