@@ -15,11 +15,13 @@ import {
 
 export class DocumentationSearchAgent {
   private useMockMCP: boolean;
+  private mcpServerUrl: string;
 
-  constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
+  constructor(options: { modelName?: string; useMockMCP?: boolean; mcpServerUrl?: string } = {}) {
     // Model will be used when MCP integration is complete
     // For now, we use mocked responses
     this.useMockMCP = options.useMockMCP !== false; // Default to true for POC
+    this.mcpServerUrl = options.mcpServerUrl ?? process.env.MCP_SERVER_URL ?? 'https://mcp-docs.dev.medicmobile.org/mcp';
   }
 
   /**
@@ -70,6 +72,8 @@ export class DocumentationSearchAgent {
     if (this.useMockMCP) {
       return this.mockKapaAIResponse(query, domain);
     }
+
+    console.log(`[Documentation Search Agent] Calling MCP server: ${this.mcpServerUrl}`);
 
     // TODO: Actual MCP implementation when server is ready
     // const mcpCall: MCPToolCall = {
