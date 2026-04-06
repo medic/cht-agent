@@ -1,6 +1,6 @@
 ---
 id: cht-core-9915
-category: refactoring
+category: improvement
 domain: contacts
 subDomain: forms
 issueNumber: 9915

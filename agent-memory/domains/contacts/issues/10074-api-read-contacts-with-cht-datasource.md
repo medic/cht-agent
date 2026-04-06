@@ -1,6 +1,6 @@
 ---
 id: cht-core-10074
-category: refactoring
+category: improvement
 domain: contacts
 subDomain: cht-datasource
 issueNumber: 10074
