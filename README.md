@@ -37,6 +37,8 @@ cht-agent/
 └── tickets/                                 # Issue tickets to process
 ```
 
+For details on how to structure new issue tickets, see the [Ticket Format Guide](docs/ticket-format.md).
+
 ## Getting Started
 
 ### Prerequisites

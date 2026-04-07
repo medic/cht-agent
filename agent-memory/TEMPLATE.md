@@ -9,7 +9,7 @@ Context files are markdown with YAML frontmatter. Save them under `agent-memory/
 ```yaml
 ---
 id: cht-core-<issue-number>
-category: bug|feature|enhancement|refactoring
+category: bug|feature|improvement
 domain: contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|authentication|configuration|interoperability
 subDomain: <optional, e.g. "enketo", "replication", "purging", "sms-gateway">
 issueNumber: <cht-core issue number>
@@ -62,7 +62,7 @@ techStack:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `id` | Yes | Unique identifier, format: `cht-core-<issue-number>` |
-| `category` | Yes | One of: `bug`, `feature`, `enhancement`, `refactoring` |
+| `category` | Yes | One of: `bug`, `feature`, `improvement` |
 | `domain` | Yes | Must match a `CHTDomain` value from `src/types/index.ts` |
 | `subDomain` | No | More specific area within the domain |
 | `issueNumber` | Yes | The cht-core GitHub issue number |
@@ -78,7 +78,7 @@ techStack:
 1. **Start with closed issues** in [cht-core](https://github.com/medic/cht-core/issues?q=is%3Aissue+is%3Aclosed). Filter by label:
    - `Type: Bug` for bug fixes
    - `Type: Feature` for new features
-   - `Type: Improvement` for enhancements and refactoring
+   - `Type: Improvement` for improvements
 
 2. **Prioritize issues that:**
    - Have linked PRs with code changes (so you can see what was changed)
@@ -249,14 +249,14 @@ Added a deduplication check that runs on contact form submission (both create an
 - #10509: Support uploading attachments in contact forms
 ```
 
-### Example 3: Refactoring
+### Example 3: Improvement
 
 **File:** `agent-memory/domains/data-sync/issues/9838-refactor-contacts-to-cht-datasource.md`
 
 ```yaml
 ---
 id: cht-core-9838
-category: refactoring
+category: improvement
 domain: data-sync
 subDomain: cht-datasource
 issueNumber: 9838

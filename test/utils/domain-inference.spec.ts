@@ -48,6 +48,7 @@ describe('domain-inference', () => {
         'messaging',
         'data-sync',
         'configuration',
+        'interoperability',
       ];
 
       for (const domain of validDomains) {

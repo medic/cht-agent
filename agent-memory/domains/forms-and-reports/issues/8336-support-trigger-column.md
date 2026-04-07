@@ -1,6 +1,6 @@
 ---
 id: cht-core-8336
-category: enhancement
+category: improvement
 domain: forms-and-reports
 subDomain: enketo
 issueNumber: 8336

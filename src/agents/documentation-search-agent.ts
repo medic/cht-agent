@@ -252,6 +252,8 @@ export class DocumentationSearchAgent {
       approaches.push('Implement following CHT best practices and existing patterns');
     } else if (issue.issue.type === 'bug') {
       approaches.push('Debug using CHT debugging guidelines and common issue patterns');
+    } else if (issue.issue.type === 'improvement') {
+      approaches.push('Refine existing behavior using CHT patterns and regression-safe changes');
     }
 
     return approaches.slice(0, 5); // Limit to top 5
