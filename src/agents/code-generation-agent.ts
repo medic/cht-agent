@@ -64,6 +64,15 @@ export class CodeGenerationAgent {
       console.log(`[Code Generation Agent] Additional context from feedback provided`);
     }
 
+    // Selective regeneration: if passing files provided, carry them forward
+    const hasSelectiveRegen = input.passingFiles && input.passingFiles.length > 0;
+    if (hasSelectiveRegen) {
+      console.log(`[Code Generation Agent] Selective regeneration: carrying forward ${input.passingFiles!.length} passing file(s)`);
+      if (input.failingFiles) {
+        console.log(`[Code Generation Agent] Files to regenerate: ${input.failingFiles.map(f => f.path).join(', ')}`);
+      }
+    }
+
     if (this.useMock) {
       return this.generateMockResult(input);
     }
@@ -76,7 +85,7 @@ export class CodeGenerationAgent {
     );
 
     // Generate code via module
-    const generatedFiles = await this.todos.run(
+    const llmResult = await this.todos.run(
       'Generate code with LLM',
       'Generating code with LLM',
       async () => this.generateWithLLM(input, codeContext)
@@ -86,22 +95,32 @@ export class CodeGenerationAgent {
     const validatedFiles = await this.todos.run(
       'Validate generated files',
       'Validating generated files',
-      async () => this.validateGeneratedFiles(generatedFiles)
+      async () => this.validateGeneratedFiles(llmResult.files)
     );
+
+    // Merge: carry forward passing files + newly regenerated files
+    let allFiles = validatedFiles;
+    if (hasSelectiveRegen) {
+      const newlyGeneratedPaths = new Set(validatedFiles.map(f => f.relativePath));
+      const keptFiles = input.passingFiles!.filter(f => !newlyGeneratedPaths.has(f.relativePath));
+      allFiles = [...keptFiles, ...validatedFiles];
+      console.log(`[Code Generation Agent] Merged: ${keptFiles.length} kept + ${validatedFiles.length} regenerated = ${allFiles.length} total`);
+    }
 
     // Determine which requirements were implemented
     const { implemented, pending } = this.analyzeRequirements(
       input.issue.issue.requirements,
-      validatedFiles
+      allFiles
     );
 
     const result: CodeGenerationResult = {
-      files: validatedFiles,
+      files: allFiles,
       summary: this.generateSummary(validatedFiles, input),
       implementedRequirements: implemented,
       pendingRequirements: pending,
       notes: this.generateNotes(validatedFiles, input),
       confidence: this.calculateConfidence(validatedFiles, input, implemented, pending),
+      beadsSessionId: llmResult.beadsSessionId,
     };
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
@@ -341,10 +360,13 @@ export class CodeGenerationAgent {
   private async generateWithLLM(
     input: CodeGenerationInput,
     context: { existingFiles: Map<string, string>; relatedPatterns: string[]; directoryListing: string }
-  ): Promise<GeneratedFile[]> {
+  ): Promise<{ files: GeneratedFile[]; beadsSessionId?: string }> {
     const moduleInput = this.buildModuleInput(input, context);
     const moduleOutput = await this.registry.getActiveModule().generate(moduleInput);
-    return this.convertModuleFiles(moduleOutput.files, context.existingFiles);
+    return {
+      files: this.convertModuleFiles(moduleOutput.files, context.existingFiles),
+      beadsSessionId: moduleOutput.beadsSessionId,
+    };
   }
 
   /**
@@ -385,6 +407,7 @@ export class CodeGenerationAgent {
       readFile: (filePath: string) => readFromChtCore(filePath, input.chtCorePath),
       listDirectory: (dirPath: string) => listChtCoreDirectory(dirPath, input.chtCorePath),
       directoryListing: context.directoryListing,
+      failingFiles: input.failingFiles,
     };
   }
 
@@ -395,14 +418,18 @@ export class CodeGenerationAgent {
     moduleFiles: LayerGeneratedFile[],
     existingFiles: Map<string, string> = new Map()
   ): GeneratedFile[] {
-    return moduleFiles.map(file => ({
-      relativePath: file.path,
-      content: file.content,
-      language: this.inferLanguage(file.path),
-      type: this.inferFileType(file.path),
-      description: file.purpose || '',
-      action: existingFiles.has(file.path) ? 'modify' as const : 'create' as const,
-    }));
+    return moduleFiles.map(file => {
+      const isModify = existingFiles.has(file.path) || !!file.originalContent;
+      return {
+        relativePath: file.path,
+        content: file.content,
+        language: this.inferLanguage(file.path),
+        type: this.inferFileType(file.path),
+        description: file.purpose || '',
+        action: isModify ? 'modify' as const : 'create' as const,
+        originalContent: file.originalContent ?? existingFiles.get(file.path),
+      };
+    });
   }
 
   /**

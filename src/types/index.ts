@@ -508,7 +508,13 @@ export interface CodeGenerationInput {
   contextAnalysis: ContextAnalysisResult;
   chtCorePath: string;
   additionalContext?: string; // Feedback from previous iteration
+  /** Files from previous iteration that passed validation — carry forward unchanged */
+  passingFiles?: GeneratedFile[];
+  /** Files that the validator flagged — only regenerate these (preserves original action) */
+  failingFiles?: FailingFileRef[];
 }
+
+export type FailingFileRef = { path: string; action: 'create' | 'modify' };
 
 /**
  * Code Generation Agent output
@@ -520,6 +526,7 @@ export interface CodeGenerationResult {
   pendingRequirements: string[];
   notes: string[];
   confidence: number; // 0-1
+  beadsSessionId?: string;
 }
 
 /**
@@ -574,6 +581,15 @@ export interface AcceptanceCriteriaValidation {
 }
 
 /**
+ * Per-file validation feedback for selective regeneration
+ */
+export interface FileValidationFeedback {
+  filePath: string;
+  passed: boolean;
+  issues: string[];
+}
+
+/**
  * Implementation validation result
  */
 export interface ImplementationValidation {
@@ -582,6 +598,7 @@ export interface ImplementationValidation {
   overallScore: number; // 0-100
   recommendations: string[];
   feedbackForCodeGen?: string; // Actionable feedback for refinement loop retry
+  perFileFeedback?: FileValidationFeedback[]; // Per-file pass/fail for selective regeneration
 }
 
 /**
@@ -613,6 +630,9 @@ export interface DevelopmentState {
   validationResult?: ImplementationValidation;
   currentPhase: DevelopmentPhase;
   errors: string[];
+  iterationCount?: number;
+  validationFeedback?: string;
+  perFileFeedback?: FileValidationFeedback[];
 }
 
 /**

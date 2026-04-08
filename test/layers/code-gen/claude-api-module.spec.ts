@@ -278,7 +278,7 @@ describe('ClaudeApiCodeGenModule', () => {
       const prompt = invokeStub.firstCall.args[0] as string;
       expect(prompt).to.include('contacts.service.ts');
       expect(prompt).to.include('File Manifest');
-      expect(prompt).to.include('Existing files that may need changes');
+      expect(prompt).to.include('Known existing files');
     });
 
     it('should conform to CodeGenModuleOutput', async () => {

@@ -5,12 +5,13 @@ import {
   ContextFile,
   GeneratedFile,
 } from '../../interface';
-import { LLMProvider, createLLMProviderFromEnv } from '../../../../llm';
+import { LLMProvider, createLLMProviderFromEnv, LLMToolDefinition, ToolHandler } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import {
   PlanSchema,
   FileContentAssertions,
 } from '../../schemas';
+import { BeadsCodeGenSession } from '../../../../utils/beads-client';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -23,6 +24,19 @@ const CONTENT_END = '--- CONTENT END ---';
 const PLAN_START = '=== PLAN ===';
 const PLAN_END = '=== END PLAN ===';
 const PLAN_ITEM_RE = /^\d+\.\s*(MODIFY|CREATE)\s+(\S+)\s*[-–—]\s*(.+)/;
+
+/** Patterns that indicate the start of actual source code (vs LLM reasoning text) */
+const CODE_START_PATTERNS = [
+  /^(import |export |const |let |var |function |class |interface |type |async |return |module\.exports)/,
+  /^(require\(|'use strict'|"use strict")/,
+  /^(\/\*\*|\/\/\s|\/\*|#!\/)/,
+  /^(describe\(|it\(|test\(|beforeEach\(|afterEach\()/,
+  /^(package |@Component|@Injectable|@NgModule)/,
+  /^\s*[{[<]/,
+];
+
+const PROSE_PATTERN = /^[A-Z][a-z].*\s+\w/;
+const CODE_KEYWORD_PATTERN = /^(import|export|const|let|var|function|class|interface|type|async|return|module|require|describe|it|test|before|after|package|@)/;
 
 /**
  * Threshold for switching MODIFY files to search-replace / Python transform mode.
@@ -58,6 +72,9 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
 
   private provider?: LLMProvider;
 
+  /** Beads session for the current generate() call — set/cleared per invocation */
+  private beadsSession: BeadsCodeGenSession | null = null;
+
   constructor(provider?: LLMProvider) {
     this.provider = provider;
   }
@@ -69,31 +86,69 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     return this.provider;
   }
 
+  private initBeadsSession(): void {
+    const beadsDir = path.join(process.cwd(), '.beads');
+    const envFlag = readEnv('BEADS_CODEGEN_ENABLED');
+    if (envFlag === 'false') return;
+    if (!fs.existsSync(beadsDir)) return;
+    this.beadsSession = new BeadsCodeGenSession();
+  }
+
+  /** Fire-and-forget Beads tracking — never blocks the generation pipeline */
+  private fireBeads(label: string, fn: (session: BeadsCodeGenSession) => Promise<unknown>): void {
+    const session = this.beadsSession;
+    if (!session) return;
+    fn(session).catch(err => {
+      console.log(`[Code Gen Module] Beads ${label} failed (non-fatal): ${err}`);
+    });
+  }
+
   async generate(input: CodeGenModuleInput): Promise<CodeGenModuleOutput> {
     const llm = this.getProvider();
 
     console.log(`[Code Gen Module] Generating code for "${input.ticket.issue.title}"...`);
     console.log(`[Code Gen Module] Context: ${input.contextFiles.length} file(s), ${input.orchestrationPlan.phases.length} phase(s)`);
 
+    // Initialize Beads session — await init since subsequent calls depend on it
+    this.initBeadsSession();
+    if (this.beadsSession) {
+      try {
+        await this.beadsSession.initSession(input.ticket.issue.title, input.ticket.issue.technical_context.domain);
+      } catch (err) {
+        console.log(`[Code Gen Module] Beads init failed (non-fatal): ${err}`);
+        this.beadsSession = null;
+      }
+    }
+
     // Phase 1: Build deterministic file manifest
     const manifest = this.buildFileManifest(input.contextFiles);
     console.log(`[Code Gen Module] Manifest: ${manifest.existingFiles.length} existing file(s), ${manifest.allowedDirectories.length} allowed dir(s)`);
 
     // Phase 2: Generate plan (separate focused LLM call)
+    // On selective regeneration, skip plan generation and reuse failing file paths
     let plan: PlanItem[];
     let planTokens = 0;
-    try {
-      const planResult = await this.generatePlan(input, manifest);
-      plan = planResult.plan;
-      planTokens = planResult.tokensUsed;
-    } catch (error) {
-      console.error('[Code Gen Module] Plan generation failed:', error);
-      return {
-        files: [],
-        explanation: `Code generation failed for "${input.ticket.issue.title}".`,
-        tokensUsed: 0,
-        modelUsed: llm.modelName,
-      };
+    if (input.failingFiles && input.failingFiles.length > 0) {
+      console.log(`[Code Gen Module] Selective regeneration: reusing plan for ${input.failingFiles.length} failing file(s)`);
+      plan = input.failingFiles.map(f => ({
+        action: (f.action === 'create' ? 'CREATE' : 'MODIFY') as 'CREATE' | 'MODIFY',
+        filePath: f.path,
+        rationale: 'Regenerate — previous version failed validation',
+      }));
+    } else {
+      try {
+        const planResult = await this.generatePlan(input, manifest);
+        plan = planResult.plan;
+        planTokens = planResult.tokensUsed;
+      } catch (error) {
+        console.error('[Code Gen Module] Plan generation failed:', error);
+        return {
+          files: [],
+          explanation: `Code generation failed for "${input.ticket.issue.title}".`,
+          tokensUsed: 0,
+          modelUsed: llm.modelName,
+        };
+      }
     }
 
     if (plan.length === 0) {
@@ -110,6 +165,9 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     for (const item of plan) {
       console.log(`[Code Gen Module]   ${item.action} ${item.filePath} — ${item.rationale}`);
     }
+
+    // Record plan in Beads
+    this.fireBeads('recordPlan', s => s.recordPlan(plan));
 
     // Phase 2b: Fetch any MODIFY files missing from pre-gathered context
     const originalContentMap = this.buildOriginalContentMap(input.contextFiles);
@@ -138,6 +196,14 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       console.log(`[Code Gen Module]   ${action} ${file.path}`);
     }
 
+    // Close Beads session with summary
+    const successCount = files.length;
+    const failCount = plan.length - successCount;
+    this.fireBeads('close', s => s.closeSession(plan.length, successCount, failCount));
+
+    const beadsSessionId = this.beadsSession?.getSessionId() ?? undefined;
+    this.beadsSession = null; // Clean up per-invocation state
+
     return {
       files,
       explanation:
@@ -145,6 +211,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
         `targeting the ${input.ticket.issue.technical_context.domain} domain.`,
       tokensUsed: totalTokens,
       modelUsed: llm.modelName,
+      beadsSessionId,
     };
   }
 
@@ -222,6 +289,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   ): Promise<{ files: GeneratedFile[]; tokensUsed: number }> {
     const generatedFiles: GeneratedFile[] = [];
     let totalTokens = 0;
+    const codeGenTools = this.buildCodeGenTools(input);
 
     // Reorder: generate code files first, large JSON files last.
     // JSON files (e.g., app_settings.json) use Python transform which is slower.
@@ -238,16 +306,29 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       const planItem = sortedPlan[i];
       console.log(`[Code Gen Module] Generating file ${i + 1}/${plan.length}: ${planItem.filePath}`);
 
+      this.fireBeads('markInProgress', s => s.markFileInProgress(planItem.filePath));
+
       const result = await this.generateSingleFileWithRetry(
-        planItem, plan, input, originalContentMap, generatedFiles
+        planItem, plan, input, originalContentMap, generatedFiles, codeGenTools,
       );
 
       totalTokens += result.tokensUsed;
       if (result.file) {
+        // Attach original content for MODIFY files so upstream can generate diffs
+        const origContent = originalContentMap.get(planItem.filePath);
+        if (planItem.action === 'MODIFY' && origContent) {
+          result.file.originalContent = origContent;
+        }
         generatedFiles.push(result.file);
         console.log(`[Code Gen Module]   OK ${planItem.filePath} (${result.file.content.length} chars)`);
+        this.fireBeads('recordCompleted', s =>
+          s.recordFileCompleted(result.file!.path, result.file!.content, result.file!.purpose),
+        );
       } else {
         console.log(`[Code Gen Module]   FAILED ${planItem.filePath} (no usable content after retries)`);
+        this.fireBeads('recordFailed', s =>
+          s.recordFileFailed(planItem.filePath, ['No usable content after retries']),
+        );
       }
     }
 
@@ -264,6 +345,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
     originalContentMap: Map<string, string>,
     previouslyGenerated: GeneratedFile[],
+    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler },
     maxAttempts: number = 3,
   ): Promise<{ file: GeneratedFile | null; tokensUsed: number }> {
     let lastFailures: string[] = [];
@@ -276,12 +358,15 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
 
       const result = await this.generateSingleFile(
         planItem, fullPlan, input, originalContentMap, previouslyGenerated,
-        lastFailures.length > 0 ? lastFailures : undefined,
+        codeGenTools, lastFailures.length > 0 ? lastFailures : undefined,
       );
 
       totalTokens += result.tokensUsed;
       if (!result.file) {
         lastFailures = ['LLM call returned no usable content'];
+        this.fireBeads('recordAttemptFailure', s =>
+          s.recordAttemptFailure(planItem.filePath, attempt, lastFailures),
+        );
         continue;
       }
 
@@ -304,9 +389,83 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
 
       console.log(`[Code Gen Module]   Assertion failures: ${failures.join('; ')}`);
       lastFailures = failures;
+      this.fireBeads('recordAttemptFailure', s =>
+        s.recordAttemptFailure(planItem.filePath, attempt, failures),
+      );
     }
 
     return { file: null, tokensUsed: totalTokens };
+  }
+
+  /**
+   * Build LLM tool definitions and handler for filesystem access during generation.
+   * Returns undefined when neither readFile nor listDirectory callbacks are available.
+   */
+  private buildCodeGenTools(
+    input: CodeGenModuleInput,
+  ): { tools: LLMToolDefinition[]; toolHandler: ToolHandler } | undefined {
+    if (!input.readFile && !input.listDirectory) return undefined;
+
+    const tools: LLMToolDefinition[] = [];
+
+    if (input.readFile) {
+      tools.push({
+        name: 'read_file',
+        description:
+          'Read the contents of a file from the CHT-Core workspace. ' +
+          'Use this to examine type definitions, interfaces, existing implementations, ' +
+          'or configuration files you need to understand before generating code.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: {
+              type: 'string',
+              description: 'Relative path within the CHT-Core workspace (e.g. "webapp/src/ts/services/auth.service.ts")',
+            },
+          },
+          required: ['path'],
+        },
+      });
+    }
+
+    if (input.listDirectory) {
+      tools.push({
+        name: 'list_directory',
+        description:
+          'List files and subdirectories in a directory within the CHT-Core workspace. ' +
+          'Use this to explore the project structure and find relevant files.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: {
+              type: 'string',
+              description: 'Relative path to a directory (e.g. "webapp/src/ts/services/")',
+            },
+          },
+          required: ['path'],
+        },
+      });
+    }
+
+    const toolHandler: ToolHandler = async (toolName, toolInput) => {
+      const filePath = toolInput.path as string;
+      switch (toolName) {
+        case 'read_file': {
+          if (!input.readFile) return 'Error: read_file is not available';
+          const content = await input.readFile(filePath);
+          return content ?? `Error: File not found: ${filePath}`;
+        }
+        case 'list_directory': {
+          if (!input.listDirectory) return 'Error: list_directory is not available';
+          const entries = await input.listDirectory(filePath);
+          return entries.length > 0 ? entries.join('\n') : `(empty directory: ${filePath})`;
+        }
+        default:
+          return `Error: Unknown tool: ${toolName}`;
+      }
+    };
+
+    return { tools, toolHandler };
   }
 
   /**
@@ -319,6 +478,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
     originalContentMap: Map<string, string>,
     previouslyGenerated: GeneratedFile[],
+    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler },
     previousFailures?: string[],
   ): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
     const llm = this.getProvider();
@@ -328,7 +488,15 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
 
     let response;
     try {
-      response = await llm.invoke(prompt, { temperature: 0.3, maxTokens: 65536, disableTools: true });
+      response = await llm.invoke(prompt, {
+        temperature: 0.3,
+        maxTokens: 65536,
+        // When code gen tools are available (API provider), use them for filesystem access.
+        // When they're not (CLI provider), disable CLI's built-in tools to force text-only output.
+        ...(codeGenTools
+          ? { tools: codeGenTools.tools, toolHandler: codeGenTools.toolHandler }
+          : { disableTools: true }),
+      });
     } catch (error) {
       console.error(`[Code Gen Module]   Failed to generate ${planItem.filePath}:`, error);
       return { file: null, tokensUsed: 0, truncated: false };
@@ -444,12 +612,21 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   // Prompt Builders
   // ============================================================================
 
+  /** Extract validation feedback from external context files (used in both plan and file prompts) */
+  private extractValidationFeedback(contextFiles: ContextFile[]): string {
+    return contextFiles
+      .filter(f => f.source === 'external')
+      .map(f => f.content)
+      .join('\n');
+  }
+
   private buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifest): string {
     const { ticket, orchestrationPlan, researchFindings, contextFiles } = input;
 
     // Build existing code context — include full content for files under 300 lines,
     // first 200 lines for larger files (preserves imports, class structure, public API)
     let existingCodeContext = '';
+    const feedbackContext = this.extractValidationFeedback(contextFiles);
     for (const file of contextFiles) {
       if (file.source !== 'workspace') continue;
       const lines = file.content.split('\n');
@@ -501,12 +678,16 @@ ${manifestSection}
 ${repoMapSection}
 ## Existing Code Context
 ${existingCodeContext || 'No existing code context available'}
-
+${feedbackContext ? `
+## Validation Feedback from Previous Iteration
+The previous code generation attempt was validated and found lacking. Address ALL issues below in your revised plan:
+${feedbackContext}
+` : ''}
 ## Instructions
 List every file you will modify or create as a numbered TODO list.
 Use MODIFY for existing files and CREATE for new files.
-Only reference files within the allowed scope above.
-Keep the plan focused — only include files essential for this feature.
+You are NOT limited to the files listed above — if the feature requires changes to other files (e.g. permission configs, shared settings, app_settings), include them.
+Keep the plan focused — only include source files essential for this feature. Do NOT include test files (*.spec.ts, *.spec.js, *.test.ts, *.test.js) in the plan — test generation is handled by a separate agent.
 Each item MUST have a clear rationale explaining what changes are needed.
 
 Use this EXACT format (do NOT wrap file paths in backticks):
@@ -577,6 +758,15 @@ ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
 ## Documentation References
 ${researchFindings.suggestedApproaches.map((a) => `- ${a}`).join('\n')}`;
+
+    const feedback = this.extractValidationFeedback(input.contextFiles);
+    if (feedback) {
+      prompt += `
+
+## Validation Feedback from Previous Iteration
+The previous attempt at generating this code was validated and found lacking. Address ALL issues below:
+${feedback}`;
+    }
 
     // Include original file content for MODIFY
     if (planItem.action === 'MODIFY') {
@@ -757,8 +947,7 @@ Output ONLY valid Python. No markdown, no explanations. Start with import statem
     return (
       trimmed.includes('import json') ||
       trimmed.includes('import sys') ||
-      (trimmed.startsWith('import ') || trimmed.startsWith('#!/')) &&
-      trimmed.includes('json.')
+      ((trimmed.startsWith('import ') || trimmed.startsWith('#!/')) && trimmed.includes('json.'))
     );
   }
 
@@ -1022,7 +1211,45 @@ Output ONLY the remaining file content — no markdown fences, no delimiters, no
       content = fileMatch[1];
     }
 
+    // Strip LLM reasoning preamble that precedes actual code.
+    // The LLM sometimes outputs "I have enough context...\nHere is the file:\n" before
+    // the actual code. Find the first line that looks like code and strip everything before it.
+    content = this.stripReasoningPreamble(content);
+
     return content.trim();
+  }
+
+  /**
+   * Strip LLM reasoning/thinking text that appears before actual code.
+   * Only activates when the first non-empty line looks like natural language prose,
+   * then finds the first code-like line and drops everything before it.
+   */
+  private stripReasoningPreamble(content: string): string {
+    const lines = content.split('\n');
+
+    // Find first non-empty line
+    const firstNonEmpty = lines.findIndex(l => l.trim().length > 0);
+    if (firstNonEmpty < 0) return content;
+
+    const firstLine = lines[firstNonEmpty].trimStart();
+
+    const looksLikeProse = PROSE_PATTERN.test(firstLine) && !CODE_KEYWORD_PATTERN.test(firstLine);
+    if (!looksLikeProse) return content;
+
+    const codeStartIdx = lines.findIndex((line, idx) => {
+      if (idx <= firstNonEmpty) return false;
+      const trimmedLine = line.trimStart();
+      if (trimmedLine.length === 0) return false;
+      return CODE_START_PATTERNS.some(p => p.test(trimmedLine));
+    });
+
+    if (codeStartIdx > 0) {
+      const stripped = lines.slice(codeStartIdx).join('\n');
+      console.log(`[Code Gen Module]   Stripped ${codeStartIdx} line(s) of LLM reasoning preamble`);
+      return stripped;
+    }
+
+    return content;
   }
 
   private buildManifestSection(manifest: FileManifest): string {
@@ -1031,17 +1258,17 @@ Output ONLY the remaining file content — no markdown fences, no delimiters, no
 No existing files or directories identified. You may create files in appropriate CHT project directories.`;
     }
 
-    let section = '## File Manifest (your working scope)\nYou MUST only modify or create files within these paths.\n';
+    let section = '## File Manifest (known files and directories)\nThese are the files and directories already identified as relevant. You may reference files outside this list if the feature requires it.\n';
 
     if (manifest.existingFiles.length > 0) {
-      section += '\nExisting files that may need changes:\n';
+      section += '\nKnown existing files:\n';
       for (const file of manifest.existingFiles) {
         section += `- ${file}\n`;
       }
     }
 
     if (manifest.allowedDirectories.length > 0) {
-      section += '\nAllowed directories for new files:\n';
+      section += '\nKnown directories:\n';
       for (const dir of manifest.allowedDirectories) {
         section += `- ${dir}\n`;
       }
@@ -1106,6 +1333,22 @@ No existing files or directories identified. You may create files in appropriate
         console.log(`[Code Gen Module]   Fetched ${item.filePath} (${content.length} chars)`);
       } else {
         console.log(`[Code Gen Module]   Could not read ${item.filePath} (null)`);
+      }
+    }
+
+    // Expand allowed directories for CREATE items outside current scope
+    const dirSet = new Set(manifest.allowedDirectories);
+    for (const item of plan) {
+      if (item.action === 'CREATE') {
+        const lastSlash = item.filePath.lastIndexOf('/');
+        if (lastSlash > 0) {
+          const dir = item.filePath.substring(0, lastSlash + 1);
+          if (!dirSet.has(dir)) {
+            dirSet.add(dir);
+            manifest.allowedDirectories.push(dir);
+            console.log(`[Code Gen Module]   Expanded scope: ${dir}`);
+          }
+        }
       }
     }
   }

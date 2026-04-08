@@ -1,4 +1,4 @@
-import { IssueTemplate, OrchestrationPlan, ResearchFindings } from '../../types';
+import { IssueTemplate, OrchestrationPlan, ResearchFindings, FailingFileRef } from '../../types';
 
 export interface ContextFile {
   path: string;
@@ -11,6 +11,8 @@ export interface GeneratedFile {
   path: string;
   content: string;
   purpose?: string;
+  /** Original file content for MODIFY files — enables diff generation upstream */
+  originalContent?: string;
 }
 
 export interface CodeGenModuleInput {
@@ -22,6 +24,8 @@ export interface CodeGenModuleInput {
   readFile?: (path: string) => Promise<string | null>;
   listDirectory?: (dirPath: string) => Promise<string[]>;
   directoryListing?: string;
+  /** When set, only regenerate these files (selective regeneration on retry) */
+  failingFiles?: FailingFileRef[];
 }
 
 export interface CodeGenModuleOutput {
@@ -29,6 +33,7 @@ export interface CodeGenModuleOutput {
   explanation: string;
   tokensUsed?: number;
   modelUsed?: string;
+  beadsSessionId?: string;
 }
 
 export interface CodeGenModule {

@@ -18,6 +18,8 @@ export {
   LLMMessage,
   LLMResponse,
   InvokeOptions,
+  LLMToolDefinition,
+  ToolHandler,
   MessageRole,
   DEFAULT_CONFIG,
   DEFAULT_MODELS,

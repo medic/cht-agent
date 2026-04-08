@@ -36,6 +36,21 @@ export interface LLMMessage {
 }
 
 /**
+ * Tool definition for LLM tool use (Anthropic API)
+ */
+export interface LLMToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/**
+ * Handler that executes tool calls and returns results.
+ * The code gen module provides this to map tool names to actual functions.
+ */
+export type ToolHandler = (toolName: string, toolInput: Record<string, unknown>) => Promise<string>;
+
+/**
  * Options for invoking the LLM
  */
 export interface InvokeOptions {
@@ -46,6 +61,12 @@ export interface InvokeOptions {
   maxTurns?: number;
   /** Disable all built-in tools in CLI provider (forces text-only output) */
   disableTools?: boolean;
+  /** Tool definitions for Anthropic API tool use */
+  tools?: LLMToolDefinition[];
+  /** Handler to execute tool calls — required when tools are provided */
+  toolHandler?: ToolHandler;
+  /** Max tool-use round trips before forcing a text response (default: 10) */
+  maxToolRounds?: number;
 }
 
 /**
@@ -100,19 +121,55 @@ export interface LLMProvider {
  */
 export const DEFAULT_CONFIG = {
   temperature: 0.3,
-  maxTokens: 65536, // High limit for multi-file code generation
+  maxTokens: 65536, // Opus 4.6 supports 128K output, Sonnet/Haiku 4.x support 64K
 } as const;
 
 /**
  * Default models for each provider
- * Note: Opus 4.5 requires patch-package fix for LangChain top_p bug
- * See: patches/@langchain+anthropic+0.3.34.patch
  */
 export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
-  anthropic: 'claude-opus-4-5-20251101',
+  anthropic: 'claude-opus-4-6',
   openai: 'gpt-4-turbo-preview',
   gemini: 'gemini-pro',
 } as const;
+
+/**
+ * Known max output token limits per model.
+ * Used to cap maxTokens so the API doesn't reject oversized requests.
+ * Models not listed here default to DEFAULT_CONFIG.maxTokens.
+ */
+export const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  'claude-opus-4-6': 128000,
+  'claude-sonnet-4-6': 64000,
+  'claude-haiku-4-5': 64000,
+  'claude-haiku-4-5-20251001': 64000,
+  'claude-opus-4-5': 64000,
+  'claude-opus-4-5-20251101': 64000,
+  'claude-sonnet-4-5': 64000,
+  'claude-sonnet-4-5-20250929': 64000,
+  'claude-opus-4-1': 32000,
+  'claude-opus-4-1-20250805': 32000,
+  'claude-opus-4-0': 32000,
+  'claude-opus-4-20250514': 32000,
+  'claude-sonnet-4-0': 64000,
+  'claude-sonnet-4-20250514': 64000,
+};
+
+/**
+ * Get the max output tokens for a given model.
+ * Returns the known limit or DEFAULT_CONFIG.maxTokens as fallback.
+ */
+export function getMaxOutputTokens(model: string): number {
+  return MODEL_MAX_OUTPUT_TOKENS[model] ?? DEFAULT_CONFIG.maxTokens;
+}
+
+/**
+ * Cap a requested maxTokens value to the model's actual limit.
+ */
+export function capMaxTokens(model: string, requested: number): number {
+  const limit = getMaxOutputTokens(model);
+  return Math.min(requested, limit);
+}
 
 /**
  * Get the configured model name from environment or use default

@@ -6,45 +6,145 @@
  */
 
 import { ChatAnthropic } from '@langchain/anthropic';
+import { HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage } from '@langchain/core/messages';
 import {
   LLMProvider,
   LLMConfig,
   LLMMessage,
   LLMResponse,
   InvokeOptions,
+  LLMToolDefinition,
   DEFAULT_CONFIG,
+  capMaxTokens,
 } from '../types';
+
+/**
+ * Extract text content from a LangChain message response.
+ * Handles both plain string and array-of-blocks content.
+ */
+function extractTextContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block: any) => block.type === 'text')
+      .map((block: any) => block.text)
+      .join('');
+  }
+  return JSON.stringify(content);
+}
+
+/**
+ * Convert LLMToolDefinition to LangChain ToolDefinition format.
+ */
+function toLangChainTools(tools: LLMToolDefinition[]) {
+  return tools.map(tool => ({
+    type: 'function' as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.inputSchema,
+    },
+  }));
+}
 
 /**
  * Create an Anthropic LLM provider
  */
 export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
-  const model = new ChatAnthropic({
+  /** Create a ChatAnthropic instance with optional temperature/maxTokens overrides */
+  const createModel = (overrides?: { temperature?: number; maxTokens?: number }) => new ChatAnthropic({
     modelName: config.model,
     anthropicApiKey: config.apiKey,
-    temperature: config.temperature ?? DEFAULT_CONFIG.temperature,
-    maxTokens: config.maxTokens ?? DEFAULT_CONFIG.maxTokens,
-    topP: undefined, // Explicitly set to undefined to prevent LangChain from sending -1 default
+    temperature: overrides?.temperature ?? config.temperature ?? DEFAULT_CONFIG.temperature,
+    maxTokens: capMaxTokens(config.model, overrides?.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens),
+    topP: undefined,
+    streaming: true,
   });
 
-  const invoke = async (prompt: string, options?: InvokeOptions): Promise<LLMResponse> => {
-    const invokeModel = options?.temperature !== undefined
-      ? new ChatAnthropic({
-        modelName: config.model,
-        anthropicApiKey: config.apiKey,
-        temperature: options.temperature,
-        maxTokens: options.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens,
-        topP: undefined, // Explicitly set to undefined to prevent LangChain from sending -1 default
-      })
-      : model;
+  const model = createModel();
 
-    const response = await invokeModel.invoke(prompt);
-    const content = typeof response.content === 'string'
-      ? response.content
-      : JSON.stringify(response.content);
+  /**
+   * Run a multi-round tool-use loop.
+   * Invokes the model with tools bound, executes tool calls via the handler,
+   * and repeats until the model returns a text-only response or maxRounds is reached.
+   */
+  const invokeWithToolLoop = async (
+    baseModel: ChatAnthropic,
+    initialMessages: BaseMessage[],
+    options: InvokeOptions,
+  ): Promise<LLMResponse> => {
+    const langchainTools = toLangChainTools(options.tools!);
+    const boundModel = baseModel.bindTools(langchainTools, { tool_choice: 'auto' });
+    const maxRounds = options.maxToolRounds ?? 10;
+    const totalUsage = { inputTokens: 0, outputTokens: 0 };
+    let lastStopReason: string | undefined;
+
+    const messages = [...initialMessages];
+
+    for (let round = 0; round < maxRounds; round++) {
+      const response = await boundModel.invoke(messages);
+
+      if (response.usage_metadata) {
+        totalUsage.inputTokens += response.usage_metadata.input_tokens;
+        totalUsage.outputTokens += response.usage_metadata.output_tokens;
+      }
+      lastStopReason = response.response_metadata?.stop_reason as string | undefined;
+
+      if (!response.tool_calls || response.tool_calls.length === 0) {
+        return {
+          content: extractTextContent(response.content),
+          model: config.model,
+          usage: totalUsage,
+          stopReason: lastStopReason,
+        };
+      }
+
+      messages.push(response);
+      for (const toolCall of response.tool_calls) {
+        try {
+          const result = await options.toolHandler!(toolCall.name, toolCall.args);
+          messages.push(new ToolMessage({
+            content: result,
+            tool_call_id: toolCall.id!,
+          }));
+        } catch (error) {
+          messages.push(new ToolMessage({
+            content: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            tool_call_id: toolCall.id!,
+            status: 'error',
+          }));
+        }
+      }
+    }
+
+    // Max rounds reached — invoke without tools to force a text response
+    const finalResponse = await baseModel.invoke(messages);
+    if (finalResponse.usage_metadata) {
+      totalUsage.inputTokens += finalResponse.usage_metadata.input_tokens;
+      totalUsage.outputTokens += finalResponse.usage_metadata.output_tokens;
+    }
 
     return {
-      content,
+      content: extractTextContent(finalResponse.content),
+      model: config.model,
+      usage: totalUsage,
+      stopReason: finalResponse.response_metadata?.stop_reason as string | undefined,
+    };
+  };
+
+  const invoke = async (prompt: string, options?: InvokeOptions): Promise<LLMResponse> => {
+    const invokeModel = options?.temperature !== undefined || options?.maxTokens !== undefined
+      ? createModel({ temperature: options?.temperature, maxTokens: options?.maxTokens })
+      : model;
+
+    if (options?.tools?.length && options.toolHandler) {
+      return invokeWithToolLoop(invokeModel, [new HumanMessage(prompt)], options);
+    }
+
+    const response = await invokeModel.invoke(prompt);
+
+    return {
+      content: extractTextContent(response.content),
       model: config.model,
       usage: response.usage_metadata
         ? {
@@ -60,15 +160,21 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
     messages: LLMMessage[],
     options?: InvokeOptions
   ): Promise<LLMResponse> => {
-    const invokeModel = options?.temperature !== undefined
-      ? new ChatAnthropic({
-        modelName: config.model,
-        anthropicApiKey: config.apiKey,
-        temperature: options.temperature,
-        maxTokens: options.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens,
-        topP: undefined, // Explicitly set to undefined to prevent LangChain from sending -1 default
-      })
+    const invokeModel = options?.temperature !== undefined || options?.maxTokens !== undefined
+      ? createModel({ temperature: options?.temperature, maxTokens: options?.maxTokens })
       : model;
+
+    if (options?.tools?.length && options.toolHandler) {
+      const baseMessages: BaseMessage[] = messages.map((msg) => {
+        switch (msg.role) {
+          case 'system': return new SystemMessage(msg.content);
+          case 'assistant': return new AIMessage(msg.content);
+          case 'user':
+          default: return new HumanMessage(msg.content);
+        }
+      });
+      return invokeWithToolLoop(invokeModel, baseMessages, options);
+    }
 
     const langchainMessages: Array<[string, string]> = messages.map((msg) => {
       switch (msg.role) {
@@ -84,12 +190,9 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
     });
 
     const response = await invokeModel.invoke(langchainMessages);
-    const content = typeof response.content === 'string'
-      ? response.content
-      : JSON.stringify(response.content);
 
     return {
-      content,
+      content: extractTextContent(response.content),
       model: config.model,
       usage: response.usage_metadata
         ? {

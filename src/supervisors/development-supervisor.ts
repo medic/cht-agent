@@ -27,6 +27,8 @@ import {
   TestEnvironmentResult,
   ImplementationValidation,
   GeneratedFile,
+  FileValidationFeedback,
+  FailingFileRef,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { TestEnvironmentAgent } from '../agents/test-environment-agent';
@@ -38,9 +40,10 @@ import {
   clearStaging,
 } from '../utils/staging';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
+import { createTwoFilesPatch, structuredPatch } from 'diff';
 
 const MAX_ITERATIONS = 3;
-const REFINEMENT_THRESHOLD = 80;
+const REFINEMENT_THRESHOLD = 75;
 
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
@@ -100,6 +103,11 @@ const DevelopmentStateAnnotation = Annotation.Root({
     default: () => 0,
   }),
   validationFeedback: Annotation<string | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  /** Per-file validation results for selective regeneration */
+  perFileFeedback: Annotation<FileValidationFeedback[] | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -190,6 +198,23 @@ export class DevelopmentSupervisor {
       // On retry: pass validation feedback as additionalContext
       const additionalContext = state.validationFeedback || undefined;
 
+      // Selective regeneration: if we have per-file feedback, only regenerate failing files
+      let passingFiles: GeneratedFile[] | undefined;
+      let failingFiles: FailingFileRef[] | undefined;
+      if (state.perFileFeedback && state.codeGeneration && iteration > 1) {
+        const passing = state.perFileFeedback.filter(f => f.passed);
+        const failing = state.perFileFeedback.filter(f => !f.passed);
+        passingFiles = state.codeGeneration.files.filter(
+          f => passing.some(p => p.filePath === f.relativePath)
+        );
+        failingFiles = failing.map(fb => {
+          const genFile = state.codeGeneration!.files.find(f => f.relativePath === fb.filePath);
+          return { path: fb.filePath, action: genFile?.action ?? 'modify' as const };
+        });
+
+        console.log(`[Development Supervisor] Selective regeneration: keeping ${passingFiles.length} passing file(s), regenerating ${failingFiles.length} failing file(s)`);
+      }
+
       const result = await this.codeGenAgent.generate({
         issue: state.issue,
         orchestrationPlan: state.orchestrationPlan,
@@ -197,6 +222,8 @@ export class DevelopmentSupervisor {
         contextAnalysis: state.contextAnalysis,
         chtCorePath: state.options.chtCorePath,
         additionalContext,
+        passingFiles,
+        failingFiles,
       });
 
       this.todos.complete(todoId);
@@ -336,6 +363,11 @@ export class DevelopmentSupervisor {
         feedbackUpdate.validationFeedback = this.synthesizeFeedback(validation);
       }
 
+      // Store per-file feedback for selective regeneration
+      if (validation.perFileFeedback) {
+        feedbackUpdate.perFileFeedback = validation.perFileFeedback;
+      }
+
       return feedbackUpdate;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -356,23 +388,33 @@ export class DevelopmentSupervisor {
 
     const failedRequirements = validation.requirementsMet
       .filter(r => !r.met)
-      .map(r => r.requirement);
+      .map(r => `${r.requirement}${r.notes ? ` (${r.notes})` : ''}`);
     if (failedRequirements.length > 0) {
-      parts.push(`Unmet requirements: ${failedRequirements.join('; ')}`);
+      parts.push(`Unmet requirements:\n${failedRequirements.map(r => `- ${r}`).join('\n')}`);
     }
 
     const failedCriteria = validation.acceptanceCriteriaPassed
       .filter(c => !c.passed)
-      .map(c => c.criteria);
+      .map(c => `${c.criteria}${c.notes ? ` (${c.notes})` : ''}`);
     if (failedCriteria.length > 0) {
-      parts.push(`Failed acceptance criteria: ${failedCriteria.join('; ')}`);
+      parts.push(`Failed acceptance criteria:\n${failedCriteria.map(c => `- ${c}`).join('\n')}`);
     }
 
     if (validation.recommendations.length > 0) {
-      parts.push(`Recommendations: ${validation.recommendations.join('; ')}`);
+      parts.push(`Recommendations:\n${validation.recommendations.map(r => `- ${r}`).join('\n')}`);
     }
 
-    return parts.join('\n');
+    // Include per-file feedback so the code gen module knows which files need fixing
+    if (validation.perFileFeedback && validation.perFileFeedback.length > 0) {
+      const failedFiles = validation.perFileFeedback.filter(f => !f.passed);
+      if (failedFiles.length > 0) {
+        parts.push(`Files that need fixing:\n${failedFiles.map(f =>
+          `- ${f.filePath}: ${f.issues.join('; ')}`
+        ).join('\n')}`);
+      }
+    }
+
+    return parts.join('\n\n');
   }
 
   /**
@@ -385,8 +427,14 @@ export class DevelopmentSupervisor {
   ): Promise<ImplementationValidation> {
     console.log('[Development Supervisor] Validating implementation...');
 
-    // Build code section with actual file content
+    // Build code section with actual file content (diff-based for MODIFY files)
     const codeSection = this.buildCodeSection(codeGen.files, 40000);
+    const hasModifyFiles = codeGen.files.some(f => f.action === 'modify' && f.originalContent);
+
+    // Test coverage section — omit entirely when test generation was skipped
+    const testSection = this.skipTestEnvironment
+      ? '' // Tests intentionally skipped — don't include in prompt at all
+      : `\n## Test Coverage\n${testEnv ? `Estimated coverage: ${testEnv.estimatedCoverage}%\nTest files: ${testEnv.testFiles.length}` : 'No test information available'}\n`;
 
     const prompt = `You are a code reviewer validating a CHT implementation. You MUST examine the actual code content below, not just infer quality from file names or descriptions.
 
@@ -397,18 +445,14 @@ ${issue.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 ${issue.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
 ## Generated Files Summary
-${codeGen.files.map((f) => `- ${f.relativePath}: ${f.description}`).join('\n')}
+${codeGen.files.map((f) => `- ${f.relativePath} (${f.action}): ${f.description}`).join('\n')}
 
 ## Actual Code Content
-${codeSection}
+${hasModifyFiles ? 'MODIFY files are shown as unified diffs (changed lines with ±3 lines of context). CREATE files are shown in full.\n' : ''}${codeSection}
 
 ## Implementation Summary
 ${codeGen.summary}
-
-## Test Coverage
-${testEnv ? `Estimated coverage: ${testEnv.estimatedCoverage}%` : 'No test information available'}
-${testEnv ? `Test files: ${testEnv.testFiles.length}` : ''}
-
+${testSection}
 ## Task
 Evaluate the implementation by examining the ACTUAL CODE above, not just file names.
 For each requirement and acceptance criterion, check if the code actually implements it.
@@ -423,10 +467,13 @@ Look for:
 
 ## Grounding Rules
 - Only evaluate code that is actually present in the "Actual Code Content" section above.
-- Do NOT comment on tests, files, or functionality that are not shown in the prompt.
+- For MODIFY files shown as diffs: evaluate whether the diff correctly implements the requirement. The surrounding context lines (prefixed with space) show unchanged code for orientation. Lines prefixed with - are removed, + are added.
+- Do NOT comment on tests, files, or functionality that are not shown in the prompt.${this.skipTestEnvironment ? '\n- Test generation was intentionally skipped for this run. Do NOT penalize the score for missing tests or test coverage.' : ''}
 - Every claim in your evaluation must be traceable to specific code content above.
+- Do NOT penalize for file truncation — if content appears complete up to a truncation marker, evaluate what is present.
 
 Also provide specific, actionable feedback that could be used to improve the code in a retry.
+For each generated file, indicate whether it passed or failed validation, and list specific issues found.
 
 Respond with a JSON object:
 {
@@ -438,7 +485,10 @@ Respond with a JSON object:
   ],
   "overallScore": 0-100,
   "recommendations": ["..."],
-  "feedbackForCodeGen": "Specific actionable feedback for code generation retry, addressing gaps in the implementation"
+  "feedbackForCodeGen": "Specific actionable feedback for code generation retry, addressing gaps in the implementation",
+  "perFileFeedback": [
+    { "filePath": "path/to/file.ts", "passed": true/false, "issues": ["specific issue found in this file"] }
+  ]
 }`;
 
     try {
@@ -453,7 +503,16 @@ Respond with a JSON object:
   }
 
   /**
-   * Build a section containing actual file content, respecting a character budget
+   * Build a token-efficient code section for validation.
+   *
+   * Uses a diff-based strategy inspired by Aider / SWE-Agent:
+   * - MODIFY files: send a unified diff (only changed lines + 3 lines context)
+   *   instead of the full file. This eliminates truncation for large files and
+   *   focuses the validator on what actually changed.
+   * - CREATE files: send full content (new files must be seen entirely).
+   *
+   * Falls back to full content for MODIFY files whose originalContent is
+   * unavailable (shouldn't happen, but keeps things robust).
    */
   private buildCodeSection(files: GeneratedFile[], budgetChars: number): string {
     if (files.length === 0) return 'No files generated.';
@@ -462,22 +521,65 @@ Respond with a JSON object:
     let remaining = budgetChars;
 
     for (const file of files) {
-      const header = `### ${file.relativePath}\n`;
-      const headerCost = header.length + 10; // account for code fences
+      if (remaining < 100) break;
 
-      if (remaining < headerCost + 50) break; // Not enough budget for meaningful content
+      let section: string;
 
-      const availableForContent = remaining - headerCost;
-      const content = file.content.length <= availableForContent
-        ? file.content
-        : file.content.substring(0, availableForContent) + '\n... (truncated)';
+      if (file.action === 'modify' && file.originalContent) {
+        const { diff, changedLineCount } = this.generateContextDiff(file.originalContent, file.content, file.relativePath);
+        const origLineCount = file.originalContent.split('\n').length;
+        const changeRatio = origLineCount > 0 ? changedLineCount / origLineCount : 1;
 
-      const section = `${header}\`\`\`\n${content}\n\`\`\``;
+        if (changeRatio <= 0.6) {
+          section = `### ${file.relativePath} (MODIFY — diff only)\n\`\`\`diff\n${diff}\n\`\`\``;
+        } else {
+          section = this.formatFullContentSection(file.relativePath, file.content, remaining, 'MODIFY — full content, extensive changes');
+        }
+      } else {
+        const label = file.action === 'create' ? 'NEW FILE' : 'FULL CONTENT';
+        section = this.formatFullContentSection(file.relativePath, file.content, remaining, label);
+      }
+
+      if (section.length > remaining) {
+        // Truncate section to fit budget
+        section = section.substring(0, remaining - 20) + '\n... (truncated)\n```';
+      }
+
       sections.push(section);
       remaining -= section.length;
     }
 
     return sections.join('\n\n');
+  }
+
+  private formatFullContentSection(filePath: string, content: string, remaining: number, label: string): string {
+    const header = `### ${filePath} (${label})\n`;
+    const headerCost = header.length + 10;
+    const availableForContent = remaining - headerCost;
+    const truncated = content.length <= availableForContent
+      ? content
+      : content.substring(0, availableForContent) + '\n... (truncated)';
+    return `${header}\`\`\`\n${truncated}\n\`\`\``;
+  }
+
+  /**
+   * Generate a unified diff with context lines using the `diff` package (LCS-based).
+   * Returns both the diff text and the number of changed lines (for noisy-diff detection).
+   */
+  private generateContextDiff(original: string, modified: string, filePath: string): { diff: string; changedLineCount: number } {
+    const patch = structuredPatch(`a/${filePath}`, `b/${filePath}`, original, modified, '', '', { context: 3 });
+
+    if (patch.hunks.length === 0) {
+      return { diff: `(no changes detected in ${filePath})`, changedLineCount: 0 };
+    }
+
+    const changedLineCount = patch.hunks.reduce(
+      (sum, hunk) => sum + hunk.lines.filter(l => l[0] === '+' || l[0] === '-').length, 0,
+    );
+
+    const diff = createTwoFilesPatch(`a/${filePath}`, `b/${filePath}`, original, modified, '', '', { context: 3 });
+
+    return { diff, changedLineCount };
   }
 
   /**
@@ -517,8 +619,8 @@ Respond with a JSON object:
 
     let overallScore = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
 
-    // Bonus for having tests
-    if (testEnv && testEnv.testFiles.length > 0) {
+    // Bonus for having tests (only when test generation wasn't skipped)
+    if (!this.skipTestEnvironment && testEnv && testEnv.testFiles.length > 0) {
       overallScore = Math.min(overallScore + 10, 100);
     }
 
@@ -526,7 +628,7 @@ Respond with a JSON object:
     if (metCount < requirementsMet.length) {
       recommendations.push('Some requirements may not be fully implemented - manual review needed');
     }
-    if (!testEnv || testEnv.testFiles.length === 0) {
+    if (!this.skipTestEnvironment && (!testEnv || testEnv.testFiles.length === 0)) {
       recommendations.push('Consider adding more test coverage');
     }
     if (overallScore < 70) {
@@ -588,6 +690,7 @@ Respond with a JSON object:
       errors: [],
       iterationCount: 0,
       validationFeedback: input.additionalContext,
+      perFileFeedback: undefined,
     };
 
     const result = await this.graph.invoke(initialState);

@@ -77,7 +77,8 @@ cht-agent/
 ### Prerequisites
 
 - Node.js >= 20.0.0
-- Anthropic API key
+- Anthropic API key or Claude Code CLI (`claude`) installed
+- (Optional) [Beads](https://github.com/beads-project/beads-cli) — session tracking for code generation. The Code Generation Agent uses Beads to record plans, track per-file generation progress, and log successes/failures. To enable, install the Beads CLI and initialize a `.beads` directory in the project root. Set `BEADS_CODEGEN_ENABLED=false` in `.env` to disable even when `.beads` exists. When disabled, all tracking is silently skipped.
 
 ### Installation
 
