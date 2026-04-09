@@ -13,7 +13,8 @@
     "test:coverage": "nyc --reporter=text --reporter=text-summary --reporter=html npm test",
     "postinstall": "husky install",
     "research": "node dist/cli/research.js",
-    "example:research": "node dist/examples/research-supervisor-example.js"
+    "example:research": "node dist/examples/research-supervisor-example.js",
+    "validate-context": "node dist/cli/validate-context.js"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",
