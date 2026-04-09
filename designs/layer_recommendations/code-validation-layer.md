@@ -59,6 +59,8 @@ The Code Validation Layer runs static analysis and standards compliance checks o
 
 **Key consideration for generated code:** Generated `.ts` files need to be type-checked against cht-core's type environment. A file generated for `webapp/src/ts/services/` needs webapp's tsconfig, Angular types, and the project's own type declarations to resolve correctly. Since cht-core is always available locally, we use its per-directory tsconfigs directly.
 
+**`tsc` scope caveat:** cht-core's tsconfigs typically set `rootDir` and `include` to project-relative paths (e.g. `"include": ["src/**/*"]`). Files in a temp directory outside that scope are silently excluded, meaning `tsc` reports 0 errors without actually type-checking anything. To avoid this false negative, we **stage generated files inside the project tree** in a `.gitignored` directory within `rootDir` (e.g. `src/.validation-staging/`). This ensures the existing tsconfig picks them up naturally and that imports, type declarations, and per-directory tsconfig overrides all resolve correctly. The staging directory is cleaned up after validation.
+
 **Verdict:** Essential for TypeScript files. Run after ESLint.
 
 ### 3. Prettier
@@ -110,8 +112,8 @@ Generated Code (GeneratedFile[])
      │
      ▼
 ┌──────────────────┐
-│  Write to temp   │  ← Generated files written to a temp directory
-│  directory        │    inside or alongside the target project
+│  Stage files in  │  ← Generated files written to a .gitignored
+│  project tree    │    staging directory within target's rootDir
 └────────┬─────────┘
          │
          ▼
@@ -181,9 +183,15 @@ The validation layer should shell out to existing tools and parse their structur
 
 ### Proposed Interface
 
-Follows the same plugin pattern established by the Code Generation Layer (#14):
+Follows the same plugin pattern established by the Code Generation Layer (issue #14):
 
 ```typescript
+interface GeneratedFile {
+  path: string;                 // relative path in target project (e.g. "webapp/src/ts/services/foo.ts")
+  content: string;              // file content
+  action: 'CREATE' | 'MODIFY';
+}
+
 interface ValidationIssue {
   file: string;
   line: number;
@@ -218,16 +226,17 @@ interface CodeValidator {
 
 ```typescript
 async function validate(files: GeneratedFile[], targetProject: string): Promise<ValidationResult> {
-  const tmpDir = await writeTempFiles(files, targetProject);
+  // Stage files inside the project tree so tsc's rootDir/include picks them up
+  const stagingDir = await stageFiles(files, targetProject); // e.g. src/.validation-staging/
 
   // 1. Auto-fix pass (silent)
-  await exec(`eslint --fix --config ${targetProject}/eslint.config.js ${tmpDir}/**`);
-  if (usesPrettier(targetProject)) {
-    await exec(`prettier --write ${tmpDir}/**`);
+  await exec(`eslint --fix --config ${targetProject}/eslint.config.js ${stagingDir}/**`);
+  if (usesPrettier(targetProject)) { // checks for .prettierrc or prettier key in package.json
+    await exec(`prettier --write ${stagingDir}/**`);
   }
 
   // 2. Blocking validation pass
-  const eslintJson = await exec(`eslint --format json --config ... ${tmpDir}/**`);
+  const eslintJson = await exec(`eslint --format json --config ... ${stagingDir}/**`);
   const eslintIssues = parseEslintOutput(eslintJson);
 
   const tsFiles = files.filter(f => f.path.endsWith('.ts'));
@@ -241,7 +250,7 @@ async function validate(files: GeneratedFile[], targetProject: string): Promise<
   const shFiles = files.filter(f => f.path.endsWith('.sh'));
   let shellIssues: ValidationIssue[] = [];
   if (shFiles.length > 0) {
-    const shellOutput = await exec(`shellcheck --format=json ${tmpDir}/*.sh`);
+    const shellOutput = await exec(`shellcheck --format=json ${stagingDir}/*.sh`);
     shellIssues = parseShellCheckOutput(shellOutput);
   }
 
@@ -266,7 +275,7 @@ async function validate(files: GeneratedFile[], targetProject: string): Promise<
 
 2. **Auto-fix first, then validate.** Formatting and trivially fixable issues are resolved automatically. Only real problems surface to the user (or back to the LLM for retry).
 
-3. **Temp directory isolation.** Generated files are written alongside the target project (to resolve imports and types) but in a temp location. This avoids polluting the working tree.
+3. **Stage inside the project tree.** Generated files are written to a `.gitignored` staging directory within the target project's `rootDir` (e.g. `src/.validation-staging/`). This ensures `tsc` includes them via the existing tsconfig and that imports, type declarations, and per-directory overrides resolve correctly. The staging directory is cleaned up after validation.
 
 4. **No LLM in the validation loop.** Validation is deterministic. If it fails, the structured error output is passed back to the Code Generation Layer as additional context for a retry.
 
@@ -275,20 +284,20 @@ async function validate(files: GeneratedFile[], targetProject: string): Promise<
 ## Integration with Other Layers
 
 ```
-Code Generation Layer (#62)
+Code Generation Layer (issue #62)
      │
      │ GeneratedFile[]
      ▼
-Code Validation Layer (#65)
+Code Validation Layer (issue #65)
      │
-     ├── passed: true ──► QA Supervisor (#64) ──► Test Generation
+     ├── passed: true ──► QA Supervisor (issue #64) ──► Test Generation Layer
      │
      └── passed: false ─► Back to Code Generation Layer
                            (retry with ValidationResult as context)
                            Max 2 retries before escalating to user
 ```
 
-The QA Supervisor (#64) only receives code that has passed validation. If validation fails, the `ValidationResult` (with specific errors, line numbers, and rule IDs) is fed back to the Code Generation Layer so the LLM can fix the issues in a targeted retry.
+The QA Supervisor only receives code that has passed validation. If validation fails, the `ValidationResult` (with specific errors, line numbers, and rule IDs) is fed back to the Code Generation Layer so the LLM can fix the issues in a targeted retry.
 
 ---
 
@@ -300,10 +309,10 @@ The QA Supervisor (#64) only receives code that has passed validation. If valida
 | tsc wrapper + error parser | Low | Parse stderr lines with regex for file:line:col format |
 | Prettier wrapper | Low | Binary pass/fail, auto-fix only |
 | ShellCheck wrapper | Low | JSON output similar to ESLint |
-| Temp directory management | Low | Write files, run tools, clean up |
+| Staging directory management | Low | Stage files in project tree, run tools, clean up |
 | Target project config detection | Low | Use cht-core's configs directly |
 | Auto-fix pipeline | Low | Run --fix/--write before validation |
-| Retry integration with Code Gen | Medium | Part of #62/#65, not this layer alone |
+| Retry integration with Code Gen | Medium | Part of Code Generation Layer / Code Validation Layer, not this layer alone |
 
 **Total estimated implementation effort:** Low to Medium. All tools already exist and produce structured output. The work is integration and output parsing, not invention.
 
