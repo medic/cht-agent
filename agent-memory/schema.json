@@ -19,6 +19,11 @@
       ],
       "description": "One of the 8 functional domains in CHT"
     },
+    "CHTCategory": {
+      "type": "string",
+      "enum": ["bug", "feature", "improvement"],
+      "description": "Issue category"
+    },
     "CHTWorkflow": {
       "type": "string",
       "enum": [
@@ -39,44 +44,65 @@
     "frontmatter": {
       "type": "object",
       "description": "YAML frontmatter for markdown context files",
-      "required": ["domain", "title", "last_updated"],
+      "required": ["id", "category", "domain", "issueNumber", "issueUrl", "title", "lastUpdated", "summary", "services", "techStack"],
+      "additionalProperties": true,
       "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^cht-core-\\d+$",
+          "description": "Unique identifier, format: cht-core-<issue-number>"
+        },
+        "category": {
+          "$ref": "#/definitions/CHTCategory"
+        },
         "domain": {
           "$ref": "#/definitions/CHTDomain"
+        },
+        "subDomain": {
+          "type": "string",
+          "description": "More specific area within the domain"
+        },
+        "issueNumber": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The cht-core GitHub issue number"
+        },
+        "issueUrl": {
+          "type": "string",
+          "pattern": "^https://github\\.com/medic/cht-core/issues/\\d+$",
+          "description": "Full URL to the cht-core issue"
         },
         "title": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 100,
+          "maxLength": 200,
           "description": "Brief descriptive title"
         },
-        "last_updated": {
+        "lastUpdated": {
           "type": "string",
-          "format": "date",
-          "description": "ISO date of last update (YYYY-MM-DD)"
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Date of last update (YYYY-MM-DD)"
         },
-        "tags": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 50
-          },
-          "description": "Optional freeform tags for searchability"
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "1-2 sentence overview of the issue and resolution"
         },
-        "related_workflows": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/CHTWorkflow"
-          },
-          "description": "Related cross-domain workflows"
-        },
-        "related_services": {
+        "services": {
           "type": "array",
           "items": {
             "$ref": "#/definitions/CHTService"
           },
-          "description": "Related CHT services"
+          "minItems": 1,
+          "description": "Which CHT services are involved"
+        },
+        "techStack": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "Technologies relevant to the fix"
         }
       }
     },
