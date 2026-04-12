@@ -294,6 +294,120 @@ export function parseTicketFile(filePath: string): IssueTemplate {
 }
 
 /**
+ * Validation result interface
+ */
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Valid ticket types
+ */
+const VALID_TYPES = ['feature', 'bug', 'improvement'] as const;
+
+/**
+ * Valid ticket priorities
+ */
+const VALID_PRIORITIES = ['high', 'medium', 'low'] as const;
+
+/**
+ * Valid CHT domains
+ */
+const VALID_DOMAINS: CHTDomain[] = [
+  'authentication',
+  'contacts',
+  'forms-and-reports',
+  'tasks-and-targets',
+  'messaging',
+  'data-sync',
+  'configuration',
+  'interoperability',
+];
+
+/**
+ * Validate a ticket file
+ */
+export function validateTicketFile(filePath: string): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  try {
+    const ticket = parseTicketFile(filePath);
+
+    // Validate required fields
+    if (!ticket.issue.title?.trim()) {
+      errors.push('Title is required in the YAML frontmatter');
+    }
+
+    if (!ticket.issue.type) {
+      errors.push('Type is required in the YAML frontmatter');
+    } else if (!VALID_TYPES.includes(ticket.issue.type as any)) {
+      errors.push(`Type must be one of: ${VALID_TYPES.join(', ')}`);
+    }
+
+    if (!ticket.issue.priority) {
+      errors.push('Priority is required in the YAML frontmatter');
+    } else if (!VALID_PRIORITIES.includes(ticket.issue.priority as any)) {
+      errors.push(`Priority must be one of: ${VALID_PRIORITIES.join(', ')}`);
+    }
+
+    if (!ticket.issue.technical_context?.domain) {
+      errors.push('Domain is required in the YAML frontmatter');
+    } else if (!VALID_DOMAINS.includes(ticket.issue.technical_context.domain)) {
+      errors.push(`Domain must be one of: ${VALID_DOMAINS.join(', ')}`);
+    }
+
+    // Validate content
+    if (!ticket.issue.description?.trim()) {
+      errors.push('Description cannot be empty');
+    } else if (ticket.issue.description.trim().length < 20) {
+      warnings.push('Description is brief - consider adding more detail');
+    }
+
+    if (!ticket.issue.description.includes('##')) {
+      warnings.push('Ticket should include markdown sections');
+    }
+
+    if (ticket.issue.requirements.length === 0) {
+      warnings.push('Consider adding requirements');
+    }
+
+    if (ticket.issue.acceptance_criteria.length === 0) {
+      warnings.push('Consider adding acceptance criteria');
+    }
+
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes('Ticket file not found')) {
+        errors.push('Ticket file not found');
+      } else if (error.message.includes('must have')) {
+        errors.push(error.message);
+      } else {
+        errors.push(`Failed to process ticket: ${error.message}`);
+      }
+    } else {
+      errors.push('Unknown error occurred');
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings
+  };
+}
+
+/**
+ * Validate all ticket files in a directory
+ */
+export function validateTicketFilesInDirectory(dirPath: string): ValidationResult[] {
+  const files = findTicketFiles(dirPath);
+  return files.map(file => validateTicketFile(file));
+}
+
+/**
  * Find all ticket files in a directory
  */
 export function findTicketFiles(dirPath: string): string[] {
