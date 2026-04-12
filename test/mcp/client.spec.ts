@@ -96,48 +96,6 @@ describe('MCPClient', () => {
     });
   });
 
-  describe('parseAskQuestionResponse()', () => {
-    let client: MCPClient;
-
-    beforeEach(() => {
-      client = new MCPClient();
-    });
-
-    it('should return empty answer and sources for empty content', () => {
-      const result = client.parseAskQuestionResponse({ content: '' });
-      expect(result.answer).to.equal('');
-      expect(result.sources).to.deep.equal([]);
-    });
-
-    it('should parse answer and sources from well-formed response', () => {
-      const content = [
-        'To configure contacts, use the CHT contact hierarchy system.',
-        '**Sources:**',
-        '[Contacts Reference](https://docs.cht.org/contacts)',
-        '[Forms Reference](https://docs.cht.org/forms)',
-        '**Thread ID:** thread-abc-123',
-        '**Question Answer ID:** qa-456',
-      ].join('\n');
-
-      const result = client.parseAskQuestionResponse({ content });
-
-      expect(result.answer).to.include('contact hierarchy');
-      expect(result.sources).to.have.length(2);
-      expect(result.sources[0].title).to.equal('Contacts Reference');
-      expect(result.sources[0].url).to.equal('https://docs.cht.org/contacts');
-      expect(result.threadId).to.equal('thread-abc-123');
-      expect(result.questionAnswerId).to.equal('qa-456');
-    });
-
-    it('should handle response with no sources section', () => {
-      const content = 'Just a plain answer without sources.';
-      const result = client.parseAskQuestionResponse({ content });
-
-      expect(result.answer).to.equal('Just a plain answer without sources.');
-      expect(result.sources).to.deep.equal([]);
-    });
-  });
-
   describe('callTool (via searchDocs) — mocked fetch', () => {
     let client: MCPClient;
     let fetchStub: sinon.SinonStub;

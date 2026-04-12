@@ -8,13 +8,8 @@
 import {
   MCPClientConfig,
   MCPSearchDocsParams,
-  MCPAskQuestionParams,
   MCPSearchDocsResponse,
-  MCPAskQuestionResponse,
-  MCPGetSourcesResponse,
   MCPParsedDocument,
-  MCPParsedAnswer,
-  MCPParsedSource,
 } from '../types';
 
 /**
@@ -99,25 +94,6 @@ export class MCPClient {
     return { content: response };
   }
 
-  /**
-   * Ask a question about CHT documentation
-   */
-  async askQuestion(params: MCPAskQuestionParams): Promise<MCPAskQuestionResponse> {
-    const response = await this.callTool('ask_question', {
-      question: params.question,
-      threadId: params.threadId,
-    });
-
-    return { content: response };
-  }
-
-  /**
-   * Get available documentation sources
-   */
-  async getSources(): Promise<MCPGetSourcesResponse> {
-    const response = await this.callTool('get_sources', {});
-    return { content: response };
-  }
 
   /**
    * Parse search_docs response into structured documents
@@ -139,73 +115,6 @@ export class MCPClient {
     return documents;
   }
 
-  /**
-   * Parse ask_question response into structured answer
-   */
-  parseAskQuestionResponse(response: MCPAskQuestionResponse): MCPParsedAnswer {
-    const content = response.content;
-    const result: MCPParsedAnswer = {
-      answer: '',
-      sources: [],
-    };
-
-    // Extract thread ID
-    const threadIdMatch = content.match(/\*\*Thread ID:\*\*\s*([^\n]+)/);
-    if (threadIdMatch) {
-      result.threadId = threadIdMatch[1].trim();
-    }
-
-    // Extract question answer ID
-    const qaIdMatch = content.match(/\*\*Question Answer ID:\*\*\s*([^\n]+)/);
-    if (qaIdMatch) {
-      result.questionAnswerId = qaIdMatch[1].trim();
-    }
-
-    // Extract sources
-    const sourcesMatch = content.match(
-      /\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/
-    );
-    if (sourcesMatch) {
-      const sourcesText = sourcesMatch[1];
-      const sourceLinks = sourcesText.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g);
-      for (const match of sourceLinks) {
-        result.sources.push({
-          title: match[1],
-          url: match[2],
-        });
-      }
-    }
-
-    // Extract answer (everything before Sources section)
-    const answerMatch = content.match(/^([\s\S]*?)(?=\*\*Sources:\*\*|$)/);
-    if (answerMatch) {
-      result.answer = answerMatch[1].trim();
-    }
-
-    return result;
-  }
-
-  /**
-   * Parse get_sources response into structured sources
-   */
-  parseGetSourcesResponse(response: MCPGetSourcesResponse): MCPParsedSource[] {
-    const sources: MCPParsedSource[] = [];
-    const content = response.content;
-
-    // Parse lines like "- source_type: description"
-    const lines = content.split('\n');
-    for (const line of lines) {
-      const match = line.match(/^-\s*([^:]+):\s*(.+)$/);
-      if (match) {
-        sources.push({
-          type: match[1].trim(),
-          description: match[2].trim(),
-        });
-      }
-    }
-
-    return sources;
-  }
 
   /**
    * Make a tool call to the MCP server

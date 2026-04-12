@@ -294,7 +294,7 @@ export interface AgentMessage {
 /**
  * Available MCP tools for CHT documentation
  */
-export type MCPToolName = 'search_docs' | 'ask_question' | 'get_sources';
+export type MCPToolName = 'search_docs';
 
 /**
  * Parameters for search_docs MCP tool
@@ -302,14 +302,6 @@ export type MCPToolName = 'search_docs' | 'ask_question' | 'get_sources';
 export interface MCPSearchDocsParams {
   query: string;
   maxResults?: number;
-}
-
-/**
- * Parameters for ask_question MCP tool
- */
-export interface MCPAskQuestionParams {
-  question: string;
-  threadId?: string; // For conversation continuity
 }
 
 /**
@@ -322,23 +314,6 @@ export interface MCPSearchDocsResponse {
 }
 
 /**
- * Raw response from ask_question MCP tool
- * Returns markdown-formatted answer with sources
- */
-export interface MCPAskQuestionResponse {
-  /** Markdown content with answer, sources, thread ID, and question ID */
-  content: string;
-}
-
-/**
- * Raw response from get_sources MCP tool
- */
-export interface MCPGetSourcesResponse {
-  /** Markdown list of available documentation sources */
-  content: string;
-}
-
-/**
  * Parsed document from search_docs response
  */
 export interface MCPParsedDocument {
@@ -346,27 +321,6 @@ export interface MCPParsedDocument {
   section: string;
   content: string;
   sourceUrl: string;
-}
-
-/**
- * Parsed answer from ask_question response
- */
-export interface MCPParsedAnswer {
-  answer: string;
-  sources: Array<{
-    title: string;
-    url: string;
-  }>;
-  threadId?: string;
-  questionAnswerId?: string;
-}
-
-/**
- * Parsed source from get_sources response
- */
-export interface MCPParsedSource {
-  type: string;
-  description: string;
 }
 
 /**
