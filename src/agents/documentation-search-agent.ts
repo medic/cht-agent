@@ -2,7 +2,6 @@
  * Documentation Search Agent
  *
  * Searches CHT documentation using MCP integration with Kapa.AI
- * For POC, this uses mocked responses until MCP server is ready
  */
 
 import {
@@ -12,14 +11,20 @@ import {
   IssueTemplate,
   MCPResponse,
 } from '../types';
+import { MCPClient } from '../mcp';
 
 export class DocumentationSearchAgent {
   private useMockMCP: boolean;
+  private mcpServerUrl: string;
+  private mcpClient: MCPClient;
 
-  constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
-    // Model will be used when MCP integration is complete
-    // For now, we use mocked responses
-    this.useMockMCP = options.useMockMCP !== false; // Default to true for POC
+  constructor(options: { modelName?: string; useMockMCP?: boolean; mcpServerUrl?: string } = {}) {
+    this.useMockMCP = options.useMockMCP === true; // Default to false
+    this.mcpServerUrl =
+      options.mcpServerUrl ??
+      process.env.MCP_SERVER_URL ??
+      'https://mcp-docs.dev.medicmobile.org/mcp';
+    this.mcpClient = new MCPClient({ serverUrl: this.mcpServerUrl });
   }
 
   /**
@@ -64,29 +69,43 @@ export class DocumentationSearchAgent {
   }
 
   /**
-   * Call Kapa.AI via MCP (mocked for POC)
+   * Call Kapa.AI via MCP
    */
   private async callKapaAI(query: string, domain: CHTDomain): Promise<MCPResponse> {
     if (this.useMockMCP) {
       return this.mockKapaAIResponse(query, domain);
     }
 
-    // TODO: Actual MCP implementation when server is ready
-    // const mcpCall: MCPToolCall = {
-    //   tool: 'search_docs',
-    //   parameters: {
-    //     query,
-    //     domain,
-    //     max_results: 5
-    //   }
-    // };
-    // return await mcp.call(mcpCall);
+    console.log(`[Documentation Search Agent] Calling MCP server: ${this.mcpServerUrl}`);
 
-    throw new Error('MCP integration not yet implemented');
+    try {
+      const searchResponse = await this.mcpClient.searchDocs({ query, maxResults: 5 });
+      const parsedDocs = this.mcpClient.parseSearchDocsResponse(searchResponse);
+
+      const references: DocumentationReference[] = parsedDocs.map((doc) => ({
+        url: doc.sourceUrl,
+        title: doc.title || doc.section,
+        topics: [],
+        relevantSections: [doc.section].filter(Boolean),
+      }));
+
+      return {
+        success: true,
+        data: {
+          references,
+          summary: `Found ${references.length} relevant documentation pages`,
+          relatedTopics: references.flatMap((r) => r.topics),
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Documentation Search Agent] MCP call failed: ${message}`);
+      return { success: false, error: message };
+    }
   }
 
   /**
-   * Mock Kapa.AI response for POC/testing
+   * Mock Kapa.AI response for testing
    */
   private mockKapaAIResponse(_query: string, domain: CHTDomain): MCPResponse {
     console.log('[Documentation Search Agent] Using MOCKED Kapa.AI response');
