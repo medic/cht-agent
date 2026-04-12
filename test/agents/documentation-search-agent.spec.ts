@@ -1,5 +1,7 @@
 import { expect } from 'chai';
+import * as sinon from 'sinon';
 import { DocumentationSearchAgent } from '../../src/agents/documentation-search-agent';
+import { MCPClient } from '../../src/mcp';
 import { IssueTemplate } from '../../src/types';
 
 describe('DocumentationSearchAgent', () => {
@@ -7,6 +9,10 @@ describe('DocumentationSearchAgent', () => {
 
   beforeEach(() => {
     agent = new DocumentationSearchAgent({ useMockMCP: true });
+  });
+
+  afterEach(() => {
+    sinon.restore();
   });
 
   // Helper to create test issue template
@@ -391,16 +397,37 @@ describe('DocumentationSearchAgent', () => {
   });
 
   describe('MCP integration', () => {
-    it('should throw error when MCP is disabled and not implemented', async () => {
-      const agentWithoutMock = new DocumentationSearchAgent({ useMockMCP: false });
-      const issue = createTestIssue();
+    it('should make a real MCP call (not throw) when useMockMCP is false', async () => {
+      // Inject a stub MCPClient so no real HTTP is made
+      const stubClient = sinon.createStubInstance(MCPClient);
+      stubClient.searchDocs.resolves({ content: '' });
+      stubClient.parseSearchDocsResponse.returns([]);
 
-      try {
-        await agentWithoutMock.search(issue);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('MCP integration not yet implemented');
-      }
+      const agentWithRealMCP = new DocumentationSearchAgent({ useMockMCP: false });
+      // Overwrite the internal client with our stub
+      (agentWithRealMCP as any).mcpClient = stubClient;
+
+      const issue = createTestIssue();
+      const result = await agentWithRealMCP.search(issue);
+
+      // The call should succeed (not throw) and use the real MCP path
+      expect(stubClient.searchDocs.calledOnce).to.be.true;
+      expect(result.source).to.equal('kapa-ai');
+    });
+
+    it('should return empty findings (not crash) when MCP call fails', async () => {
+      const stubClient = sinon.createStubInstance(MCPClient);
+      stubClient.searchDocs.rejects(new Error('Network error'));
+
+      const agentWithRealMCP = new DocumentationSearchAgent({ useMockMCP: false });
+      (agentWithRealMCP as any).mcpClient = stubClient;
+
+      const issue = createTestIssue();
+      const result = await agentWithRealMCP.search(issue);
+
+      expect(result.documentationReferences).to.deep.equal([]);
+      expect(result.confidence).to.equal(0);
+      expect(result.source).to.equal('kapa-ai');
     });
   });
 });

@@ -73,7 +73,7 @@ async function main() {
     console.log('🤖 Initializing Research Supervisor...\n');
     const supervisor = new ResearchSupervisor({
       modelName: 'claude-sonnet-4-20250514',
-      useMockMCP: true, // Using mocked MCP for now
+      useMockMCP: false, // Use real MCP by default
     });
 
     // Display issue details

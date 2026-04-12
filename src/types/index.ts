@@ -158,7 +158,7 @@ export interface ResearchFindings {
   suggestedApproaches: string[];
   relatedDomains: CHTDomain[];
   confidence: number; // 0-1
-  source: 'kapa-ai' | 'local-docs' | 'cached';
+  source: 'kapa-ai' | 'local-docs' | 'cached' | 'mock' | 'error';
 }
 
 /**
@@ -287,8 +287,55 @@ export interface AgentMessage {
   };
 }
 
+// ============================================================================
+// MCP (Model Context Protocol) Types for CHT Documentation Server
+// ============================================================================
+
 /**
- * MCP (Model Context Protocol) tool call for Kapa.AI
+ * Available MCP tools for CHT documentation
+ */
+export type MCPToolName = 'search_docs';
+
+/**
+ * Parameters for search_docs MCP tool
+ */
+export interface MCPSearchDocsParams {
+  query: string;
+  maxResults?: number;
+}
+
+/**
+ * Raw response from search_docs MCP tool
+ * Returns markdown-formatted document snippets
+ */
+export interface MCPSearchDocsResponse {
+  /** Markdown content with document snippets, titles, and source URLs */
+  content: string;
+}
+
+/**
+ * Parsed document from search_docs response
+ */
+export interface MCPParsedDocument {
+  title: string;
+  section: string;
+  content: string;
+  sourceUrl: string;
+}
+
+/**
+ * MCP Client configuration
+ */
+export interface MCPClientConfig {
+  /** MCP server URL */
+  serverUrl: string;
+  /** Request timeout in milliseconds */
+  timeout?: number;
+}
+
+/**
+ * Legacy MCP types (kept for backward compatibility)
+ * @deprecated Use the new MCP* types instead
  */
 export interface MCPToolCall {
   tool: 'search_docs' | 'get_context';
@@ -300,7 +347,8 @@ export interface MCPToolCall {
 }
 
 /**
- * MCP Response from Kapa.AI
+ * Legacy MCP Response (kept for backward compatibility)
+ * @deprecated Use MCPSearchDocsResponse or MCPAskQuestionResponse instead
  */
 export interface MCPResponse {
   success: boolean;
