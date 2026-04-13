@@ -1,0 +1,51 @@
+[
+  {
+    "number": 10729,
+    "title": "SMS parsing fails for messages with special characters in rapidpro integration",
+    "type": "bug",
+    "labels": ["sms", "rapidpro", "parsing"],
+    "url": "https://github.com/medic/cht-core/issues/10729"
+  },
+  {
+    "number": 10751,
+    "title": "Message templates not loading correctly when using dynamic placeholders",
+    "templates",
+    "bug"
+  },
+  {
+    "number": 10754,
+    "title": "Scheduled task duplicate processing when documents have multiple tasks with same due date",
+    "scheduled-tasks",
+    "bug"
+  },
+  {
+    "number": 10780,
+    "title": "Mobile notification delivery failing on Android devices",
+    "notifications",
+    "bug"
+  },
+  {
+    "number": 10783,
+    "title": "Message threading breaks when replies contain emojis",
+    "messaging",
+    "bug"
+  },
+  {
+    "number": 10792,
+    "title": "SMS character count calculation incorrect for Unicode messages",
+    "sms",
+    "bug"
+  },
+  {
+    "number": 10796,
+    "title": "Message queue overflow error during high volume periods",
+    "queue",
+    "bug"
+  },
+  {
+    "number": 10797,
+    "title": "Message status updates not propagating to web interface",
+    "real-time",
+    "bug"
+  }
+]

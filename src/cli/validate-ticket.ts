@@ -10,9 +10,9 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { validateTicketFile } from '../utils/ticket-parser';
+import { validateTicketFile, findTicketFiles, ValidationResult } from '../utils/ticket-parser';
 
-function displayResult(result: any, filePath: string, verbose: boolean = false): void {
+const displayResult = (result: ValidationResult, filePath: string, verbose: boolean = false): void => {
   console.log(`File: ${filePath}`);
   console.log(`Status: ${result.valid ? 'VALID' : 'INVALID'}`);
 
@@ -33,9 +33,9 @@ function displayResult(result: any, filePath: string, verbose: boolean = false):
   if (result.valid && result.errors.length === 0 && (verbose || result.warnings.length === 0)) {
     console.log('\nNo issues found');
   }
-}
+};
 
-function displaySummary(results: any[], totalFiles: number): void {
+const displaySummary = (results: ValidationResult[], totalFiles: number): void => {
   const validCount = results.filter(r => r.valid).length;
   const invalidCount = totalFiles - validCount;
 
@@ -54,9 +54,9 @@ function displaySummary(results: any[], totalFiles: number): void {
         console.log(`  ${index + 1}. ${fileName}`);
       });
   }
-}
+};
 
-function main() {
+const main = (): void => {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
@@ -81,7 +81,6 @@ function main() {
       process.exit(1);
     }
 
-    const { findTicketFiles } = require('../utils/ticket-parser');
     const ticketFiles = findTicketFiles(fullPath);
 
     if (ticketFiles.length === 0) {
@@ -111,6 +110,6 @@ function main() {
       process.exit(1);
     }
   }
-}
+};
 
 main();
