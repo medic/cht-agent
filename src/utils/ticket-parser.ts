@@ -230,6 +230,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
 
   // Extract sections from markdown
   const descriptionSection = extractSection(markdown, 'Description');
+  const hasDescriptionSection = /##\s*Description/i.test(markdown);
   const technicalContextSection = extractSection(markdown, 'Technical Context');
   const requirementsSection = extractSection(markdown, 'Requirements');
   const acceptanceCriteriaSection = extractSection(markdown, 'Acceptance Criteria');
@@ -274,7 +275,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
       title: metadata.title,
       type: validatedType,
       priority: validatedPriority,
-      description: descriptionSection || markdown.trim() || '',
+      description: hasDescriptionSection ? descriptionSection : (descriptionSection || markdown.trim() || ''),
       technical_context: {
         domain: validatedDomain,
         components: components,
@@ -382,8 +383,20 @@ export function validateTicketFile(filePath: string): ValidationResult {
     if (error instanceof Error) {
       if (error.message.includes('Ticket file not found')) {
         errors.push('Ticket file not found');
-      } else if (error.message.includes('must have')) {
-        errors.push(error.message);
+      } else if (error.message.includes('must have a "title"')) {
+        errors.push('Title is required in the YAML frontmatter');
+      } else if (error.message.includes('must have a "type"')) {
+        errors.push('Type is required in the YAML frontmatter');
+      } else if (error.message.includes('must have a "priority"')) {
+        errors.push('Priority is required in the YAML frontmatter');
+      } else if (error.message.includes('must have a "domain"')) {
+        errors.push('Domain is required in the YAML frontmatter');
+      } else if (error.message.includes('Invalid type:')) {
+        errors.push('Type must be one of: feature, bug, improvement');
+      } else if (error.message.includes('Invalid priority:')) {
+        errors.push('Priority must be one of: high, medium, low');
+      } else if (error.message.includes('Invalid domain:')) {
+        errors.push('Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability');
       } else {
         errors.push(`Failed to process ticket: ${error.message}`);
       }
