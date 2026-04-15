@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { validateTicketFile } from '../../src/utils/ticket-parser';
 
 describe('Ticket Validation', () => {
@@ -62,7 +63,9 @@ describe('Ticket Validation', () => {
       const result = validateTicketFile(filePath);
 
       expect(result.valid).to.be.false;
-      expect(result.errors).to.include('Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability');
+      expect(result.errors).to.include(
+        'Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability'
+      );
     });
 
     it('should detect missing domain', () => {
@@ -106,7 +109,7 @@ Short text
 - Requirement 1
 `;
 
-      const tempFile = path.join(fixturesPath, 'temp-brief.md');
+      const tempFile = path.join(os.tmpdir(), 'temp-brief.md');
       fs.writeFileSync(tempFile, briefTicket);
 
       try {
@@ -115,7 +118,9 @@ Short text
         expect(result.valid).to.be.true;
         expect(result.warnings).to.include('Description is brief - consider adding more detail');
       } finally {
-        fs.unlinkSync(tempFile);
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
       }
     });
 
@@ -130,7 +135,7 @@ domain: contacts
 Plain text without sections.
 `;
 
-      const tempFile = path.join(fixturesPath, 'temp-no-sections.md');
+      const tempFile = path.join(os.tmpdir(), 'temp-no-sections.md');
       fs.writeFileSync(tempFile, noSections);
 
       try {
@@ -139,7 +144,9 @@ Plain text without sections.
         expect(result.valid).to.be.true;
         expect(result.warnings).to.include('Ticket should include markdown sections');
       } finally {
-        fs.unlinkSync(tempFile);
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
       }
     });
 
@@ -155,7 +162,7 @@ domain: configuration
 A minimal ticket.
 `;
 
-      const tempFile = path.join(fixturesPath, 'temp-minimal.md');
+      const tempFile = path.join(os.tmpdir(), 'temp-minimal.md');
       fs.writeFileSync(tempFile, minimal);
 
       try {
@@ -165,7 +172,9 @@ A minimal ticket.
         expect(result.warnings).to.include('Consider adding requirements');
         expect(result.warnings).to.include('Consider adding acceptance criteria');
       } finally {
-        fs.unlinkSync(tempFile);
+        if (fs.existsSync(tempFile)) {
+          fs.unlinkSync(tempFile);
+        }
       }
     });
   });

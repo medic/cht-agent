@@ -10,48 +10,50 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { validateTicketFile, findTicketFiles, ValidationResult } from '../utils/ticket-parser';
+import { validateTicketFile, ValidationResult, findTicketFiles } from '../utils/ticket-parser';
 
-const displayResult = (result: ValidationResult, filePath: string, verbose: boolean = false): void => {
+const displayResult = (
+  result: ValidationResult,
+  filePath: string,
+  verbose: boolean = false
+): void => {
   console.log(`File: ${filePath}`);
   console.log(`Status: ${result.valid ? 'VALID' : 'INVALID'}`);
 
   if (result.errors.length > 0) {
     console.log('\nErrors:');
-    result.errors.forEach((error: string) => {
+    result.errors.forEach((error) => {
       console.log(`  - ${error}`);
     });
   }
 
-  if (verbose && result.warnings.length > 0) {
+  if (result.valid && result.errors.length === 0 && result.warnings.length === 0) {
+    console.log('\nNo issues found');
+  } else if (verbose && result.warnings.length > 0) {
     console.log('\nWarnings:');
-    result.warnings.forEach((warning: string) => {
+    result.warnings.forEach((warning) => {
       console.log(`  - ${warning}`);
     });
   }
-
-  if (result.valid && result.errors.length === 0 && (verbose || result.warnings.length === 0)) {
-    console.log('\nNo issues found');
-  }
 };
 
-const displaySummary = (results: ValidationResult[], totalFiles: number): void => {
-  const validCount = results.filter(r => r.valid).length;
-  const invalidCount = totalFiles - validCount;
+const displaySummary = (results: ValidationResult[], filePaths: string[]): void => {
+  const validCount = results.filter((r) => r.valid).length;
+  const invalidCount = results.length - validCount;
 
   console.log('\nValidation Summary');
   console.log('-----------------');
-  console.log(`Files checked: ${totalFiles}`);
+  console.log(`Files checked: ${results.length}`);
   console.log(`Valid: ${validCount}`);
   console.log(`Invalid: ${invalidCount}`);
 
   if (invalidCount > 0) {
     console.log('\nFiles requiring attention:');
     results
-      .filter(r => !r.valid)
+      .filter((r) => !r.valid)
       .forEach((result, index) => {
-        const fileName = result.errors[0].split(': ')[1] || 'Unknown file';
-        console.log(`  ${index + 1}. ${fileName}`);
+        const invalidIndex = results.indexOf(result);
+        console.log(`  ${index + 1}. ${filePaths[invalidIndex]}`);
       });
   }
 };
@@ -64,11 +66,17 @@ const main = (): void => {
     process.exit(1);
   }
 
-  const filePath = args[0];
   const isDirectory = args.includes('--dir');
   const verbose = args.includes('--verbose');
 
-  const fullPath = path.resolve(filePath);
+  // Get path argument (first non-flag argument)
+  const pathArg = args.find((arg) => !arg.startsWith('--'));
+  if (!pathArg) {
+    console.error('Error: No file or directory path provided');
+    process.exit(1);
+  }
+
+  const fullPath = path.resolve(pathArg);
 
   if (!fs.existsSync(fullPath)) {
     console.error(`Error: Path does not exist: ${fullPath}`);
@@ -88,18 +96,18 @@ const main = (): void => {
       return;
     }
 
-    const results = ticketFiles.map(file => validateTicketFile(file));
+    const results = ticketFiles.map((file: string) => validateTicketFile(file));
 
     if (verbose) {
-      results.forEach((result, index) => {
+      results.forEach((result: ValidationResult, index: number) => {
         displayResult(result, ticketFiles[index], true);
         console.log();
       });
     }
 
-    displaySummary(results, ticketFiles.length);
+    displaySummary(results, ticketFiles);
 
-    if (results.some(r => !r.valid)) {
+    if (results.some((r: ValidationResult) => !r.valid)) {
       process.exit(1);
     }
   } else {

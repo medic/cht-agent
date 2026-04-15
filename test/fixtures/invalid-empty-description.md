@@ -6,4 +6,3 @@ domain: messaging
 ---
 
 ## Description
-

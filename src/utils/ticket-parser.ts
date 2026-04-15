@@ -62,55 +62,66 @@ function extractFrontmatter(content: string): {
 }
 
 /**
+ * Valid ticket types
+ */
+const VALID_TYPES = ['feature', 'bug', 'improvement'] as const;
+
+/**
+ * Valid ticket priorities
+ */
+const VALID_PRIORITIES = ['high', 'medium', 'low'] as const;
+
+/**
+ * Valid CHT domains
+ */
+const VALID_DOMAINS: CHTDomain[] = [
+  'authentication',
+  'contacts',
+  'forms-and-reports',
+  'tasks-and-targets',
+  'messaging',
+  'data-sync',
+  'configuration',
+  'interoperability',
+];
+
+/**
  * Validate that type is a valid ticket type
  */
-type TicketType = 'feature' | 'bug' | 'improvement';
+type TicketType = (typeof VALID_TYPES)[number];
 
 function validateType(type: string): TicketType {
-  const validTypes: TicketType[] = ['feature', 'bug', 'improvement'];
-
-  if (validTypes.includes(type as TicketType)) {
+  if (VALID_TYPES.includes(type as TicketType)) {
     return type as TicketType;
   }
 
-  throw new Error(`Invalid type: "${type}". Must be one of: ${validTypes.join(', ')}`);
+  throw new Error(`Invalid type: "${type}". Must be one of: ${VALID_TYPES.join(', ')}`);
 }
 
 /**
  * Validate that priority is a valid priority level
  */
-type TicketPriority = 'high' | 'medium' | 'low';
+type TicketPriority = (typeof VALID_PRIORITIES)[number];
 
 function validatePriority(priority: string): TicketPriority {
-  const validPriorities: TicketPriority[] = ['high', 'medium', 'low'];
-
-  if (validPriorities.includes(priority as TicketPriority)) {
+  if (VALID_PRIORITIES.includes(priority as TicketPriority)) {
     return priority as TicketPriority;
   }
 
-  throw new Error(`Invalid priority: "${priority}". Must be one of: ${validPriorities.join(', ')}`);
+  throw new Error(
+    `Invalid priority: "${priority}". Must be one of: ${VALID_PRIORITIES.join(', ')}`
+  );
 }
 
 /**
  * Validate that domain is a valid CHTDomain
  */
 function validateDomain(domain: string): CHTDomain {
-  const validDomains: CHTDomain[] = [
-    'authentication',
-    'contacts',
-    'forms-and-reports',
-    'tasks-and-targets',
-    'messaging',
-    'data-sync',
-    'configuration',
-    'interoperability',
-  ];
-
-  if (validDomains.includes(domain as CHTDomain)) {
+  if (VALID_DOMAINS.includes(domain as CHTDomain)) {
     return domain as CHTDomain;
   }
 
-  throw new Error(`Invalid domain: "${domain}". Must be one of: ${validDomains.join(', ')}`);
+  throw new Error(`Invalid domain: "${domain}". Must be one of: ${VALID_DOMAINS.join(', ')}`);
 }
 
 /**
@@ -275,7 +286,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
       title: metadata.title,
       type: validatedType,
       priority: validatedPriority,
-      description: hasDescriptionSection ? descriptionSection : (descriptionSection || markdown.trim() || ''),
+      description: hasDescriptionSection ? descriptionSection : markdown.trim(),
       technical_context: {
         domain: validatedDomain,
         components: components,
@@ -304,30 +315,6 @@ export interface ValidationResult {
 }
 
 /**
- * Valid ticket types
- */
-const VALID_TYPES = ['feature', 'bug', 'improvement'] as const;
-
-/**
- * Valid ticket priorities
- */
-const VALID_PRIORITIES = ['high', 'medium', 'low'] as const;
-
-/**
- * Valid CHT domains
- */
-const VALID_DOMAINS: CHTDomain[] = [
-  'authentication',
-  'contacts',
-  'forms-and-reports',
-  'tasks-and-targets',
-  'messaging',
-  'data-sync',
-  'configuration',
-  'interoperability',
-];
-
-/**
  * Validate a ticket file
  */
 export function validateTicketFile(filePath: string): ValidationResult {
@@ -337,38 +324,17 @@ export function validateTicketFile(filePath: string): ValidationResult {
   try {
     const ticket = parseTicketFile(filePath);
 
-    // Validate required fields
-    if (!ticket.issue.title?.trim()) {
-      errors.push('Title is required in the YAML frontmatter');
-    }
-
-    if (!ticket.issue.type) {
-      errors.push('Type is required in the YAML frontmatter');
-    } else if (!VALID_TYPES.includes(ticket.issue.type as any)) {
-      errors.push(`Type must be one of: ${VALID_TYPES.join(', ')}`);
-    }
-
-    if (!ticket.issue.priority) {
-      errors.push('Priority is required in the YAML frontmatter');
-    } else if (!VALID_PRIORITIES.includes(ticket.issue.priority as any)) {
-      errors.push(`Priority must be one of: ${VALID_PRIORITIES.join(', ')}`);
-    }
-
-    if (!ticket.issue.technical_context?.domain) {
-      errors.push('Domain is required in the YAML frontmatter');
-    } else if (!VALID_DOMAINS.includes(ticket.issue.technical_context.domain)) {
-      errors.push(`Domain must be one of: ${VALID_DOMAINS.join(', ')}`);
-    }
-
-    // Validate content
+    // Validate content (metadata already validated by parseTicketFile)
     if (!ticket.issue.description?.trim()) {
       errors.push('Description cannot be empty');
-    } else if (ticket.issue.description.trim().length < 20) {
-      warnings.push('Description is brief - consider adding more detail');
-    }
+    } else {
+      if (ticket.issue.description.trim().length < 20) {
+        warnings.push('Description is brief - consider adding more detail');
+      }
 
-    if (!ticket.issue.description.includes('##')) {
-      warnings.push('Ticket should include markdown sections');
+      if (!ticket.issue.description.includes('##')) {
+        warnings.push('Ticket should include markdown sections');
+      }
     }
 
     if (ticket.issue.requirements.length === 0) {
@@ -378,46 +344,35 @@ export function validateTicketFile(filePath: string): ValidationResult {
     if (ticket.issue.acceptance_criteria.length === 0) {
       warnings.push('Consider adding acceptance criteria');
     }
-
   } catch (error) {
-    if (error instanceof Error) {
-      if (error.message.includes('Ticket file not found')) {
-        errors.push('Ticket file not found');
-      } else if (error.message.includes('must have a "title"')) {
-        errors.push('Title is required in the YAML frontmatter');
-      } else if (error.message.includes('must have a "type"')) {
-        errors.push('Type is required in the YAML frontmatter');
-      } else if (error.message.includes('must have a "priority"')) {
-        errors.push('Priority is required in the YAML frontmatter');
-      } else if (error.message.includes('must have a "domain"')) {
-        errors.push('Domain is required in the YAML frontmatter');
-      } else if (error.message.includes('Invalid type:')) {
-        errors.push('Type must be one of: feature, bug, improvement');
-      } else if (error.message.includes('Invalid priority:')) {
-        errors.push('Priority must be one of: high, medium, low');
-      } else if (error.message.includes('Invalid domain:')) {
-        errors.push('Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability');
-      } else {
-        errors.push(`Failed to process ticket: ${error.message}`);
-      }
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+
+    if (errorMessage.includes('Ticket file not found')) {
+      errors.push('Ticket file not found');
+    } else if (errorMessage.includes('must have a "title"')) {
+      errors.push('Title is required in the YAML frontmatter');
+    } else if (errorMessage.includes('must have a "type"')) {
+      errors.push('Type is required in the YAML frontmatter');
+    } else if (errorMessage.includes('must have a "priority"')) {
+      errors.push('Priority is required in the YAML frontmatter');
+    } else if (errorMessage.includes('must have a "domain"')) {
+      errors.push('Domain is required in the YAML frontmatter');
+    } else if (errorMessage.includes('Invalid type:')) {
+      errors.push(`Type must be one of: ${VALID_TYPES.join(', ')}`);
+    } else if (errorMessage.includes('Invalid priority:')) {
+      errors.push(`Priority must be one of: ${VALID_PRIORITIES.join(', ')}`);
+    } else if (errorMessage.includes('Invalid domain:')) {
+      errors.push(`Domain must be one of: ${VALID_DOMAINS.join(', ')}`);
     } else {
-      errors.push('Unknown error occurred');
+      errors.push(`Failed to process ticket: ${errorMessage}`);
     }
   }
 
   return {
     valid: errors.length === 0,
     errors,
-    warnings
+    warnings,
   };
-}
-
-/**
- * Validate all ticket files in a directory
- */
-export function validateTicketFilesInDirectory(dirPath: string): ValidationResult[] {
-  const files = findTicketFiles(dirPath);
-  return files.map(file => validateTicketFile(file));
 }
 
 /**

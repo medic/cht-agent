@@ -5,6 +5,7 @@ This document explains how to validate ticket files to ensure they meet the requ
 ## Overview
 
 The ticket validation system checks ticket files for:
+
 - Required YAML frontmatter fields
 - Valid field values
 - Complete content
@@ -23,13 +24,13 @@ npm run validate-ticket path/to/ticket.md
 Validate all ticket files in a directory:
 
 ```bash
-npm run validate-ticket --dir path/to/tickets
+npm run validate-ticket path/to/tickets --dir
 ```
 
 Show detailed output for each file:
 
 ```bash
-npm run validate-ticket --dir path/to/tickets --verbose
+npm run validate-ticket path/to/tickets --dir --verbose
 ```
 
 ### Programmatic Usage
@@ -43,7 +44,7 @@ if (result.valid) {
   console.log('Ticket is valid');
 } else {
   console.log('Errors found:');
-  result.errors.forEach(error => console.log(`- ${error}`));
+  result.errors.forEach((error) => console.log(`- ${error}`));
 }
 ```
 
@@ -52,6 +53,7 @@ if (result.valid) {
 ### Required Fields
 
 All tickets must include these fields in the YAML frontmatter:
+
 - `title`: Brief description of the issue
 - `type`: One of 'feature', 'bug', 'improvement'
 - `priority`: One of 'high', 'medium', 'low'
@@ -69,7 +71,7 @@ Invalid ticket:
 
 ```markdown
 ---
-title: 
+title:
 type: invalid-type
 priority: high
 domain: messaging
@@ -80,6 +82,7 @@ domain: messaging
 Missing title and invalid type.
 
 ## Requirements
+
 - Requirement 1
 ```
 
