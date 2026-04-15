@@ -12,6 +12,20 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { validateTicketFile, ValidationResult, findTicketFiles } from '../utils/ticket-parser';
 
+const displayErrors = (errors: string[]): void => {
+  console.log('\nErrors:');
+  errors.forEach((error) => {
+    console.log(`  - ${error}`);
+  });
+};
+
+const displayWarnings = (warnings: string[]): void => {
+  console.log('\nWarnings:');
+  warnings.forEach((warning) => {
+    console.log(`  - ${warning}`);
+  });
+};
+
 const displayResult = (
   result: ValidationResult,
   filePath: string,
@@ -21,22 +35,16 @@ const displayResult = (
   console.log(`Status: ${result.valid ? 'VALID' : 'INVALID'}`);
 
   if (result.errors.length > 0) {
-    console.log('\nErrors:');
-    result.errors.forEach((error) => {
-      console.log(`  - ${error}`);
-    });
+    displayErrors(result.errors);
   }
 
-  const hasWarnings = result.warnings.length > 0;
   const hasNoIssues = result.valid && result.errors.length === 0;
+  const hasWarnings = result.warnings.length > 0;
 
   if (hasNoIssues && !hasWarnings) {
     console.log('\nNo issues found');
   } else if (verbose && hasWarnings) {
-    console.log('\nWarnings:');
-    result.warnings.forEach((warning) => {
-      console.log(`  - ${warning}`);
-    });
+    displayWarnings(result.warnings);
   }
 };
 
@@ -98,6 +106,17 @@ const validateFile = (filePath: string, verbose: boolean): void => {
   }
 };
 
+const validatePath = (pathArg: string): string => {
+  const fullPath = path.resolve(pathArg);
+
+  if (!fs.existsSync(fullPath)) {
+    console.error(`Error: Path does not exist: ${fullPath}`);
+    process.exit(1);
+  }
+
+  return fullPath;
+};
+
 const main = (): void => {
   const args = process.argv.slice(2);
 
@@ -115,12 +134,7 @@ const main = (): void => {
     process.exit(1);
   }
 
-  const fullPath = path.resolve(pathArg);
-
-  if (!fs.existsSync(fullPath)) {
-    console.error(`Error: Path does not exist: ${fullPath}`);
-    process.exit(1);
-  }
+  const fullPath = validatePath(pathArg);
 
   if (isDirectory) {
     if (!fs.statSync(fullPath).isDirectory()) {

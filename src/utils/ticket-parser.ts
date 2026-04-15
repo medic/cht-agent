@@ -200,7 +200,8 @@ function extractURLs(text: string): string[] {
   const plainUrlRegex = /https?:\/\/[^\s)]+/g;
   const plainUrls = text.match(plainUrlRegex) || [];
   for (const url of plainUrls) {
-    if (!urls.includes(url)) {
+    const isDuplicate = urls.includes(url);
+    if (!isDuplicate) {
       urls.push(url);
     }
   }
@@ -341,7 +342,7 @@ function mapErrorMessage(errorMessage: string): string {
 /**
  * Validate content warnings for parsed ticket
  */
-function validateContentWarnings(ticket: any): string[] {
+function validateContentWarnings(ticket: IssueTemplate): string[] {
   const warnings: string[] = [];
   const description = ticket.issue.description;
 
@@ -374,7 +375,8 @@ export function validateTicketFile(filePath: string): ValidationResult {
   try {
     const ticket = parseTicketFile(filePath);
 
-    if (!ticket.issue.description?.trim()) {
+    const description = ticket.issue.description?.trim();
+    if (description === '' || description === undefined) {
       errors.push('Description cannot be empty');
     } else {
       warnings.push(...validateContentWarnings(ticket));
