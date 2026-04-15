@@ -26,6 +26,14 @@ const displayWarnings = (warnings: string[]): void => {
   });
 };
 
+const shouldShowNoIssues = (result: ValidationResult): boolean => {
+  return result.valid && result.errors.length === 0 && result.warnings.length === 0;
+};
+
+const shouldShowWarnings = (result: ValidationResult, verbose: boolean): boolean => {
+  return verbose && result.warnings.length > 0;
+};
+
 const displayResult = (
   result: ValidationResult,
   filePath: string,
@@ -38,12 +46,9 @@ const displayResult = (
     displayErrors(result.errors);
   }
 
-  const hasNoIssues = result.valid && result.errors.length === 0;
-  const hasWarnings = result.warnings.length > 0;
-
-  if (hasNoIssues && !hasWarnings) {
+  if (shouldShowNoIssues(result)) {
     console.log('\nNo issues found');
-  } else if (verbose && hasWarnings) {
+  } else if (shouldShowWarnings(result, verbose)) {
     displayWarnings(result.warnings);
   }
 };
@@ -117,6 +122,21 @@ const validatePath = (pathArg: string): string => {
   return fullPath;
 };
 
+const parseArgs = (args: string[]): { isDirectory: boolean; verbose: boolean; pathArg: string | null } => {
+  return {
+    isDirectory: args.includes('--dir'),
+    verbose: args.includes('--verbose'),
+    pathArg: getPathArgument(args),
+  };
+};
+
+const validateDirectoryPath = (fullPath: string): void => {
+  if (!fs.statSync(fullPath).isDirectory()) {
+    console.error(`Error: Path is not a directory: ${fullPath}`);
+    process.exit(1);
+  }
+};
+
 const main = (): void => {
   const args = process.argv.slice(2);
 
@@ -125,9 +145,7 @@ const main = (): void => {
     process.exit(1);
   }
 
-  const isDirectory = args.includes('--dir');
-  const verbose = args.includes('--verbose');
-  const pathArg = getPathArgument(args);
+  const { isDirectory, verbose, pathArg } = parseArgs(args);
 
   if (!pathArg) {
     console.error('Error: No file or directory path provided');
@@ -137,10 +155,7 @@ const main = (): void => {
   const fullPath = validatePath(pathArg);
 
   if (isDirectory) {
-    if (!fs.statSync(fullPath).isDirectory()) {
-      console.error(`Error: Path is not a directory: ${fullPath}`);
-      process.exit(1);
-    }
+    validateDirectoryPath(fullPath);
     validateDirectory(fullPath, verbose);
   } else {
     validateFile(fullPath, verbose);
