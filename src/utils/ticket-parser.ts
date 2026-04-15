@@ -315,6 +315,56 @@ export interface ValidationResult {
 }
 
 /**
+ * Map error messages to user-friendly validation errors
+ */
+function mapErrorMessage(errorMessage: string): string {
+  const errorMap: Array<[string, string]> = [
+    ['Ticket file not found', 'Ticket file not found'],
+    ['must have a "title"', 'Title is required in the YAML frontmatter'],
+    ['must have a "type"', 'Type is required in the YAML frontmatter'],
+    ['must have a "priority"', 'Priority is required in the YAML frontmatter'],
+    ['must have a "domain"', 'Domain is required in the YAML frontmatter'],
+    ['Invalid type:', `Type must be one of: ${VALID_TYPES.join(', ')}`],
+    ['Invalid priority:', `Priority must be one of: ${VALID_PRIORITIES.join(', ')}`],
+    ['Invalid domain:', `Domain must be one of: ${VALID_DOMAINS.join(', ')}`],
+  ];
+
+  for (const [pattern, message] of errorMap) {
+    if (errorMessage.includes(pattern)) {
+      return message;
+    }
+  }
+
+  return `Failed to process ticket: ${errorMessage}`;
+}
+
+/**
+ * Validate content warnings for parsed ticket
+ */
+function validateContentWarnings(ticket: any): string[] {
+  const warnings: string[] = [];
+  const description = ticket.issue.description;
+
+  if (description?.trim().length < 20) {
+    warnings.push('Description is brief - consider adding more detail');
+  }
+
+  if (!description?.includes('##')) {
+    warnings.push('Ticket should include markdown sections');
+  }
+
+  if (ticket.issue.requirements.length === 0) {
+    warnings.push('Consider adding requirements');
+  }
+
+  if (ticket.issue.acceptance_criteria.length === 0) {
+    warnings.push('Consider adding acceptance criteria');
+  }
+
+  return warnings;
+}
+
+/**
  * Validate a ticket file
  */
 export function validateTicketFile(filePath: string): ValidationResult {
@@ -324,48 +374,14 @@ export function validateTicketFile(filePath: string): ValidationResult {
   try {
     const ticket = parseTicketFile(filePath);
 
-    // Validate content (metadata already validated by parseTicketFile)
     if (!ticket.issue.description?.trim()) {
       errors.push('Description cannot be empty');
     } else {
-      if (ticket.issue.description.trim().length < 20) {
-        warnings.push('Description is brief - consider adding more detail');
-      }
-
-      if (!ticket.issue.description.includes('##')) {
-        warnings.push('Ticket should include markdown sections');
-      }
-    }
-
-    if (ticket.issue.requirements.length === 0) {
-      warnings.push('Consider adding requirements');
-    }
-
-    if (ticket.issue.acceptance_criteria.length === 0) {
-      warnings.push('Consider adding acceptance criteria');
+      warnings.push(...validateContentWarnings(ticket));
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-
-    if (errorMessage.includes('Ticket file not found')) {
-      errors.push('Ticket file not found');
-    } else if (errorMessage.includes('must have a "title"')) {
-      errors.push('Title is required in the YAML frontmatter');
-    } else if (errorMessage.includes('must have a "type"')) {
-      errors.push('Type is required in the YAML frontmatter');
-    } else if (errorMessage.includes('must have a "priority"')) {
-      errors.push('Priority is required in the YAML frontmatter');
-    } else if (errorMessage.includes('must have a "domain"')) {
-      errors.push('Domain is required in the YAML frontmatter');
-    } else if (errorMessage.includes('Invalid type:')) {
-      errors.push(`Type must be one of: ${VALID_TYPES.join(', ')}`);
-    } else if (errorMessage.includes('Invalid priority:')) {
-      errors.push(`Priority must be one of: ${VALID_PRIORITIES.join(', ')}`);
-    } else if (errorMessage.includes('Invalid domain:')) {
-      errors.push(`Domain must be one of: ${VALID_DOMAINS.join(', ')}`);
-    } else {
-      errors.push(`Failed to process ticket: ${errorMessage}`);
-    }
+    errors.push(mapErrorMessage(errorMessage));
   }
 
   return {

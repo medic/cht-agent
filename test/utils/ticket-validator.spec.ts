@@ -1,7 +1,7 @@
 import { expect } from 'chai';
-import * as path from 'path';
-import * as fs from 'fs';
-import * as os from 'os';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { validateTicketFile } from '../../src/utils/ticket-parser';
 
 describe('Ticket Validation', () => {

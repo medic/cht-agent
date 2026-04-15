@@ -8,8 +8,8 @@
  *   npm run validate-ticket --dir <directory> [--verbose]
  */
 
-import * as path from 'path';
-import * as fs from 'fs';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { validateTicketFile, ValidationResult, findTicketFiles } from '../utils/ticket-parser';
 
 const displayResult = (
@@ -27,9 +27,12 @@ const displayResult = (
     });
   }
 
-  if (result.valid && result.errors.length === 0 && result.warnings.length === 0) {
+  const hasWarnings = result.warnings.length > 0;
+  const hasNoIssues = result.valid && result.errors.length === 0;
+
+  if (hasNoIssues && !hasWarnings) {
     console.log('\nNo issues found');
-  } else if (verbose && result.warnings.length > 0) {
+  } else if (verbose && hasWarnings) {
     console.log('\nWarnings:');
     result.warnings.forEach((warning) => {
       console.log(`  - ${warning}`);
@@ -58,6 +61,43 @@ const displaySummary = (results: ValidationResult[], filePaths: string[]): void 
   }
 };
 
+const getPathArgument = (args: string[]): string | null => {
+  return args.find((arg) => !arg.startsWith('--')) || null;
+};
+
+const validateDirectory = (dirPath: string, verbose: boolean): void => {
+  const ticketFiles = findTicketFiles(dirPath);
+
+  if (ticketFiles.length === 0) {
+    console.log(`No ticket files found in directory: ${dirPath}`);
+    return;
+  }
+
+  const results = ticketFiles.map((file) => validateTicketFile(file));
+
+  if (verbose) {
+    results.forEach((result, index) => {
+      displayResult(result, ticketFiles[index], true);
+      console.log();
+    });
+  }
+
+  displaySummary(results, ticketFiles);
+
+  if (results.some((r) => !r.valid)) {
+    process.exit(1);
+  }
+};
+
+const validateFile = (filePath: string, verbose: boolean): void => {
+  const result = validateTicketFile(filePath);
+  displayResult(result, filePath, verbose);
+
+  if (!result.valid) {
+    process.exit(1);
+  }
+};
+
 const main = (): void => {
   const args = process.argv.slice(2);
 
@@ -68,9 +108,8 @@ const main = (): void => {
 
   const isDirectory = args.includes('--dir');
   const verbose = args.includes('--verbose');
+  const pathArg = getPathArgument(args);
 
-  // Get path argument (first non-flag argument)
-  const pathArg = args.find((arg) => !arg.startsWith('--'));
   if (!pathArg) {
     console.error('Error: No file or directory path provided');
     process.exit(1);
@@ -88,35 +127,9 @@ const main = (): void => {
       console.error(`Error: Path is not a directory: ${fullPath}`);
       process.exit(1);
     }
-
-    const ticketFiles = findTicketFiles(fullPath);
-
-    if (ticketFiles.length === 0) {
-      console.log(`No ticket files found in directory: ${fullPath}`);
-      return;
-    }
-
-    const results = ticketFiles.map((file: string) => validateTicketFile(file));
-
-    if (verbose) {
-      results.forEach((result: ValidationResult, index: number) => {
-        displayResult(result, ticketFiles[index], true);
-        console.log();
-      });
-    }
-
-    displaySummary(results, ticketFiles);
-
-    if (results.some((r: ValidationResult) => !r.valid)) {
-      process.exit(1);
-    }
+    validateDirectory(fullPath, verbose);
   } else {
-    const result = validateTicketFile(fullPath);
-    displayResult(result, fullPath, verbose);
-
-    if (!result.valid) {
-      process.exit(1);
-    }
+    validateFile(fullPath, verbose);
   }
 };
 
