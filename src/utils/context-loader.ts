@@ -19,9 +19,9 @@ const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
 /**
  * Parse YAML frontmatter from markdown files
  */
-export function parseFrontmatter(content: string): { metadata: any; body: string } {
+export const parseFrontmatter = (content: string): { metadata: Record<string, unknown>; body: string } => {
   const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
+  const match = frontmatterRegex.exec(content);
 
   if (!match) {
     return { metadata: {}, body: content };
@@ -29,12 +29,11 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
 
   const [, frontmatter, body] = match;
 
-  // Parse YAML using js-yaml with JSON_SCHEMA to prevent auto date conversion
-  let metadata: any = {};
+  let metadata: Record<string, unknown> = {};
   try {
     const parsed = yaml.load(frontmatter, { schema: yaml.JSON_SCHEMA });
     if (parsed && typeof parsed === 'object') {
-      metadata = parsed;
+      metadata = parsed as Record<string, unknown>;
     }
   } catch (error) {
     // If YAML parsing fails, return empty metadata
@@ -42,14 +41,14 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
   }
 
   return { metadata, body };
-}
+};
 
 /**
  * Load domain overview
  */
-export function loadDomainOverview(
+export const loadDomainOverview = (
   domain: CHTDomain
-): { metadata: DomainOverviewMetadata; content: string } | null {
+): { metadata: DomainOverviewMetadata; content: string } | null => {
   const overviewPath = path.join(AGENT_MEMORY_PATH, 'domains', domain, 'overview.md');
 
   if (!fs.existsSync(overviewPath)) {
@@ -60,15 +59,15 @@ export function loadDomainOverview(
   const { metadata, body } = parseFrontmatter(content);
 
   return {
-    metadata: metadata as DomainOverviewMetadata,
+    metadata: metadata as unknown as DomainOverviewMetadata,
     content: body,
   };
-}
+};
 
 /**
  * Load domain components
  */
-export function loadDomainComponents(domain: CHTDomain): DomainComponents | null {
+export const loadDomainComponents = (domain: CHTDomain): DomainComponents | null => {
   const componentsPath = path.join(AGENT_MEMORY_PATH, 'domains', domain, 'components.json');
 
   if (!fs.existsSync(componentsPath)) {
@@ -77,12 +76,12 @@ export function loadDomainComponents(domain: CHTDomain): DomainComponents | null
 
   const content = fs.readFileSync(componentsPath, 'utf-8');
   return JSON.parse(content) as DomainComponents;
-}
+};
 
 /**
  * Load workflow components
  */
-export function loadWorkflowComponents(workflow: string): WorkflowComponents | null {
+export const loadWorkflowComponents = (workflow: string): WorkflowComponents | null => {
   const workflowPath = path.join(
     AGENT_MEMORY_PATH,
     'workflows',
@@ -96,12 +95,14 @@ export function loadWorkflowComponents(workflow: string): WorkflowComponents | n
 
   const content = fs.readFileSync(workflowPath, 'utf-8');
   return JSON.parse(content) as WorkflowComponents;
-}
+};
 
 /**
  * Load workflow flow documentation
  */
-export function loadWorkflowFlow(workflow: string): { metadata: any; content: string } | null {
+export const loadWorkflowFlow = (
+  workflow: string
+): { metadata: Record<string, unknown>; content: string } | null => {
   const flowPath = path.join(AGENT_MEMORY_PATH, 'workflows', workflow, 'flow.md');
 
   if (!fs.existsSync(flowPath)) {
@@ -112,12 +113,12 @@ export function loadWorkflowFlow(workflow: string): { metadata: any; content: st
   const { metadata, body } = parseFrontmatter(content);
 
   return { metadata, content: body };
-}
+};
 
 /**
  * Find resolved issues by domain
  */
-export function findResolvedIssuesByDomain(domain: CHTDomain): ResolvedIssueContext[] {
+export const findResolvedIssuesByDomain = (domain: CHTDomain): ResolvedIssueContext[] => {
   const domainPath = path.join(
     AGENT_MEMORY_PATH,
     'knowledge-base',
@@ -130,36 +131,35 @@ export function findResolvedIssuesByDomain(domain: CHTDomain): ResolvedIssueCont
     return [];
   }
 
-  const issues: ResolvedIssueContext[] = [];
+  return scanDirectoryForIssues(domainPath);
+};
 
-  // Recursively find all .md files
-  function scanDirectory(dirPath: string) {
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+function parseCompletedIssue(filePath: string): ResolvedIssueContext | null {
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const { metadata } = parseFrontmatter(content);
+  return metadata.phase === 'completed'
+    ? metadata as unknown as ResolvedIssueContext
+    : null;
+}
 
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
+function processEntry(dirPath: string, entry: fs.Dirent): ResolvedIssueContext[] {
+  const fullPath = path.join(dirPath, entry.name);
+  if (entry.isDirectory()) return scanDirectoryForIssues(fullPath);
+  if (!entry.name.endsWith('.md')) return [];
+  const issue = parseCompletedIssue(fullPath);
+  return issue ? [issue] : [];
+}
 
-      if (entry.isDirectory()) {
-        scanDirectory(fullPath);
-      } else if (entry.name.endsWith('.md')) {
-        const content = fs.readFileSync(fullPath, 'utf-8');
-        const { metadata } = parseFrontmatter(content);
-
-        if (metadata.phase === 'completed') {
-          issues.push(metadata as ResolvedIssueContext);
-        }
-      }
-    }
-  }
-
-  scanDirectory(domainPath);
-  return issues;
+function scanDirectoryForIssues(dirPath: string): ResolvedIssueContext[] {
+  return fs
+    .readdirSync(dirPath, { withFileTypes: true })
+    .flatMap(entry => processEntry(dirPath, entry));
 }
 
 /**
  * Load index file
  */
-export function loadIndex(indexName: string): any {
+export const loadIndex = (indexName: string): Record<string, unknown> | null => {
   const indexPath = path.join(AGENT_MEMORY_PATH, 'indices', `${indexName}.json`);
 
   if (!fs.existsSync(indexPath)) {
@@ -168,24 +168,24 @@ export function loadIndex(indexName: string): any {
 
   const content = fs.readFileSync(indexPath, 'utf-8');
   return JSON.parse(content);
-}
+};
 
 /**
  * Get related domains for a given domain
  */
-export function getRelatedDomains(domain: CHTDomain): CHTDomain[] {
+export const getRelatedDomains = (domain: CHTDomain): CHTDomain[] => {
   const overview = loadDomainOverview(domain);
-  if (!overview || !overview.metadata.related_domains) {
+  if (!overview?.metadata.related_domains) {
     return [];
   }
 
   return overview.metadata.related_domains as CHTDomain[];
-}
+};
 
 /**
  * Check if agent-memory directory exists, create if not
  */
-export function ensureAgentMemoryExists(): void {
+export const ensureAgentMemoryExists = () => {
   const dirs = [
     'domains',
     'workflows',
@@ -205,4 +205,4 @@ export function ensureAgentMemoryExists(): void {
       fs.mkdirSync(fullPath, { recursive: true });
     }
   });
-}
+};

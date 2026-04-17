@@ -14,7 +14,7 @@ import {
 } from '../types';
 
 export class DocumentationSearchAgent {
-  private useMockMCP: boolean;
+  private readonly useMockMCP: boolean;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     // Model will be used when MCP integration is complete
