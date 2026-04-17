@@ -215,6 +215,7 @@ Respond in this exact JSON format:
     'messaging',
     'data-sync',
     'configuration',
+    'interoperability',
   ];
 
   if (!validDomains.includes(result.domain as CHTDomain)) {

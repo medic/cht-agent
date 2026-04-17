@@ -64,10 +64,10 @@ function extractFrontmatter(content: string): {
 /**
  * Validate that type is a valid ticket type
  */
-type TicketType = 'feature' | 'bug' | 'enhancement';
+type TicketType = 'feature' | 'bug' | 'improvement';
 
 function validateType(type: string): TicketType {
-  const validTypes: TicketType[] = ['feature', 'bug', 'enhancement'];
+  const validTypes: TicketType[] = ['feature', 'bug', 'improvement'];
 
   if (validTypes.includes(type as TicketType)) {
     return type as TicketType;
@@ -103,6 +103,7 @@ function validateDomain(domain: string): CHTDomain {
     'messaging',
     'data-sync',
     'configuration',
+    'interoperability',
   ];
 
   if (validDomains.includes(domain as CHTDomain)) {
@@ -214,7 +215,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   }
 
   if (!metadata.type) {
-    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|enhancement)');
+    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|improvement)');
   }
 
   if (!metadata.priority) {
@@ -223,7 +224,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
 
   if (!metadata.domain) {
     throw new Error(
-      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration)'
+      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration|interoperability)'
     );
   }
 

@@ -361,8 +361,13 @@ export class ContextAnalysisAgent {
     if (recommendations.length < 2) {
       if (issue.issue.type === 'feature') {
         recommendations.push('Ensure comprehensive test coverage for new feature');
+        recommendations.push('Update documentation and configuration examples');
       } else if (issue.issue.type === 'bug') {
         recommendations.push('Add regression tests to prevent recurrence');
+        recommendations.push('Check for similar issues in related components');
+      } else if (issue.issue.type === 'improvement') {
+        recommendations.push('Add or extend tests around the improved behavior');
+        recommendations.push('Confirm no regressions in related workflows');
       }
     }
 

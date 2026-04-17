@@ -1,6 +1,6 @@
 ---
 title: Ticket with asterisk bullets
-type: enhancement
+type: improvement
 priority: medium
 domain: messaging
 ---

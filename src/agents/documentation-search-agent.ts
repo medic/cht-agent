@@ -380,6 +380,7 @@ export class DocumentationSearchAgent {
       messaging: ['sms', 'message', 'notification', 'alert'],
       'data-sync': ['sync', 'replication', 'offline', 'couchdb', 'purge'],
       configuration: ['config', 'settings', 'cht-conf'],
+      interoperability: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability', 'mediator'],
     };
 
     const relatedDomains: CHTDomain[] = [];
@@ -501,6 +502,15 @@ export class DocumentationSearchAgent {
           title: 'App Settings',
           topics: ['configuration', 'app-settings', 'cht-conf'],
           relevantSections: ['Base Settings', 'Configuration Options'],
+        },
+      ],
+      interoperability: [
+        {
+          url: 'https://docs.communityhealthtoolkit.org/apps/guides/interoperability/',
+          title: 'Interoperability Overview',
+          topics: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability'],
+          relevantSections: ['Outbound Push', 'FHIR Resources', 'OpenHIM Mediators'],
+          codeExamples: ['outbound push configuration', 'FHIR resource mapping'],
         },
       ],
     };
