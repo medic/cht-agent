@@ -12,6 +12,7 @@ import {
   MCPResponse,
 } from '../types';
 import { MCPClient } from '../mcp';
+import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 export class DocumentationSearchAgent {
   private useMockMCP: boolean;
@@ -23,7 +24,7 @@ export class DocumentationSearchAgent {
     this.mcpServerUrl =
       options.mcpServerUrl ??
       process.env.MCP_SERVER_URL ??
-      'https://mcp-docs.dev.medicmobile.org/mcp';
+      DEFAULT_MCP_SERVER_URL;
     this.mcpClient = new MCPClient({ serverUrl: this.mcpServerUrl });
   }
 
@@ -85,7 +86,7 @@ export class DocumentationSearchAgent {
       const references: DocumentationReference[] = parsedDocs.map((doc) => ({
         url: doc.sourceUrl,
         title: doc.title || doc.section,
-        topics: [],
+        topics: this.extractTopics(doc.content),
         relevantSections: [doc.section].filter(Boolean),
       }));
 
@@ -103,6 +104,24 @@ export class DocumentationSearchAgent {
       return { success: false, error: message };
     }
   }
+
+/**
+ * Extract topics from documentation content
+ */
+private extractTopics(content: string): string[] {
+  if (!content) return [];
+
+  const keywords = [
+    'contact', 'hierarchy', 'form', 'report', 'task', 'target',
+    'permission', 'role', 'sync', 'replication', 'offline',
+    'sentinel', 'transition', 'workflow', 'validation',
+  ];
+
+  const lowerContent = content.toLowerCase();
+  const topics = keywords.filter(keyword => lowerContent.includes(keyword));
+
+  return [...new Set(topics)];
+}
 
   /**
    * Mock Kapa.AI response for testing

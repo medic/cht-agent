@@ -8,24 +8,35 @@ describe('MCPClient', () => {
   });
 
   describe('fromEnv()', () => {
+    let originalEnv: string | undefined;
+
+    beforeEach(() => {
+      originalEnv = process.env.MCP_SERVER_URL;
+    });
+
+    afterEach(() => {
+      // Restore regardless of test outcome to avoid env pollution
+      if (originalEnv === undefined) {
+        delete process.env.MCP_SERVER_URL;
+      } else {
+        process.env.MCP_SERVER_URL = originalEnv;
+      }
+    });
+
     it('should use MCP_SERVER_URL from environment', () => {
-      const originalEnv = process.env.MCP_SERVER_URL;
       process.env.MCP_SERVER_URL = 'https://custom-mcp.example.com/mcp';
 
       const client = MCPClient.fromEnv();
 
       expect(client.getServerUrl()).to.equal('https://custom-mcp.example.com/mcp');
-      process.env.MCP_SERVER_URL = originalEnv;
     });
 
     it('should use the default server URL when MCP_SERVER_URL is not set', () => {
-      const originalEnv = process.env.MCP_SERVER_URL;
       delete process.env.MCP_SERVER_URL;
 
       const client = MCPClient.fromEnv();
 
       expect(client.getServerUrl()).to.equal('https://mcp-docs.dev.medicmobile.org/mcp');
-      process.env.MCP_SERVER_URL = originalEnv;
     });
   });
 
@@ -114,6 +125,8 @@ describe('MCPClient', () => {
 
     beforeEach(() => {
       client = new MCPClient({ serverUrl: 'https://mcp-test.example.com/mcp', timeout: 5000 });
+      // `fetch` is not on the sinon type stubs for globalThis; `as any` is
+      // required to stub it without a custom type declaration.
       fetchStub = sinon.stub(globalThis, 'fetch' as any);
     });
 

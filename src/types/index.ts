@@ -158,7 +158,7 @@ export interface ResearchFindings {
   suggestedApproaches: string[];
   relatedDomains: CHTDomain[];
   confidence: number; // 0-1
-  source: 'kapa-ai' | 'local-docs' | 'cached' | 'mock' | 'error';
+  source: 'kapa-ai' | 'local-docs' | 'cached';
 }
 
 /**
@@ -290,11 +290,6 @@ export interface AgentMessage {
 // ============================================================================
 // MCP (Model Context Protocol) Types for CHT Documentation Server
 // ============================================================================
-
-/**
- * Available MCP tools for CHT documentation
- */
-export type MCPToolName = 'search_docs';
 
 /**
  * Parameters for search_docs MCP tool

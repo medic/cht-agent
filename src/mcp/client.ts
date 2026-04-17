@@ -2,7 +2,6 @@
  * MCP Client for CHT Documentation Server
  *
  * Provides access to CHT documentation via the Kapa.AI MCP server.
- * Supports search_docs, ask_question, and get_sources tools.
  */
 
 import {
@@ -11,12 +10,13 @@ import {
   MCPSearchDocsResponse,
   MCPParsedDocument,
 } from '../types';
+import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 /**
  * Default configuration values
  */
 const DEFAULT_CONFIG: MCPClientConfig = {
-  serverUrl: 'https://mcp-docs.dev.medicmobile.org/mcp',
+  serverUrl: DEFAULT_MCP_SERVER_URL,
   timeout: 30000, // 30 seconds
 };
 
