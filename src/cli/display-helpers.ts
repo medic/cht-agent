@@ -1,4 +1,6 @@
+import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
+import { parseTicketFile } from '../utils/ticket-parser';
 
 export const validateEnvironment = () => {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -123,6 +125,56 @@ export const displayOrchestrationPlan = (result: ResearchState) => {
 
   displayPlanPhases(result.orchestrationPlan);
   console.log();
+};
+
+export const loadTicket = (ticketPath: string, helpHints: string[]): IssueTemplate => {
+  try {
+    const ticket = parseTicketFile(ticketPath);
+    console.log('✅ Ticket parsed successfully!\n');
+    return ticket;
+  } catch (error) {
+    console.error('❌ Error parsing ticket file:');
+    if (error instanceof Error) {
+      console.error(`   ${error.message}`);
+    }
+    console.log('\n💡 Ticket file format:');
+    helpHints.forEach(hint => console.log(`   - ${hint}`));
+    console.log('   - See tickets/contact-search-feature.md for an example');
+    console.log('   - See tickets/README.md for complete documentation\n');
+    process.exit(1);
+  }
+};
+
+export const runResearchWorkflow = async (
+  bannerTitle: string,
+  getTicketPath: () => string,
+  helpHints: string[],
+) => {
+  console.log('╔════════════════════════════════════════════════════════════════╗');
+  console.log(`║${bannerTitle.padStart(34 + bannerTitle.length / 2).padEnd(64)}║`);
+  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+
+  validateEnvironment();
+
+  const ticketPath = getTicketPath();
+  console.log(`📄 Loading ticket from: ${ticketPath}\n`);
+
+  const ticket = loadTicket(ticketPath, helpHints);
+
+  console.log('🤖 Initializing Research Supervisor...\n');
+  const supervisor = new ResearchSupervisor({
+    modelName: 'claude-sonnet-4-20250514',
+    useMockMCP: true,
+  });
+
+  displayIssueDetails(ticket);
+
+  console.log('🔍 Running Research Phase...\n');
+  const startTime = Date.now();
+  const result = await supervisor.research(ticket);
+  const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
+  displayResults(result, duration);
 };
 
 export const displayResults = (result: ResearchState, duration: string) => {
