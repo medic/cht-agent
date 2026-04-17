@@ -9,8 +9,8 @@
  * 2. Claude LLM reasoning as fallback
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
 

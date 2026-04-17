@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import * as path from 'path';
+import * as path from 'node:path';
 import { parseTicketFile, findTicketFiles } from '../../src/utils/ticket-parser';
 
 describe('ticket-parser', () => {

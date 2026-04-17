@@ -13,7 +13,7 @@
  */
 
 import * as dotenv from 'dotenv';
-import * as path from 'path';
+import * as path from 'node:path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
