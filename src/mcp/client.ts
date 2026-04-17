@@ -174,29 +174,24 @@ export class MCPClient {
    * Parse a single document section from search results
    */
   private parseDocumentSection(section: string): MCPParsedDocument | null {
-    // Extract title (first bold line like **Title|Title**)
-    const titleMatch = section.match(/\*\*([^|*]+)\|([^*]+)\*\*/);
-    const title = titleMatch ? titleMatch[1].trim() : '';
+    const extract = (regex: RegExp, index = 1) => {
+    const match = section.match(regex);
+    return match ? match[index].trim() : '';
+  };
 
-    // Extract section path (like # Section > Subsection)
-    const sectionMatch = section.match(/^#\s*([^\n]+)/m);
-    const sectionPath = sectionMatch ? sectionMatch[1].trim() : '';
+  const title = extract(/\*\*([^|*]+)\|([^*]+)\*\*/);
+  const sectionPath = extract(/^#\s*([^\n]+)/m);
+  const sourceUrl = extract(/Source:\s*(https?:\/\/[^\s]+)/);
 
-    // Extract source URL
-    const sourceMatch = section.match(/Source:\s*(https?:\/\/[^\s]+)/);
-    const sourceUrl = sourceMatch ? sourceMatch[1].trim() : '';
+  if (!sourceUrl) return null;
 
-    if (!sourceUrl) {
-      return null;
-    }
+  const contentStart = section.indexOf('##');
+  const contentEnd = section.lastIndexOf('Source:');
 
-    // Content is everything between title/section and source
-    const contentStart = section.indexOf('##');
-    const contentEnd = section.lastIndexOf('Source:');
-    const content =
-      contentStart !== -1 && contentEnd !== -1
-        ? section.substring(contentStart, contentEnd).trim()
-        : section;
+  let content = section;
+  if (contentStart !== -1 && contentEnd !== -1) {
+    content = section.substring(contentStart, contentEnd).trim();
+  }
 
     return {
       title,
