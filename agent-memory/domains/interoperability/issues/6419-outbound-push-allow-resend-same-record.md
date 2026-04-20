@@ -45,7 +45,7 @@ The chosen solution (option 2 from the issue discussion, selected after discussi
 
 - shared-libs/outbound/src/outbound.js
 - sentinel/src/schedule/outbound.js
-- sentinel/tests/mocha/schedule/outbound.spec.js
+- sentinel/tests/unit/schedule/outbound.spec.js
 
 ## Testing
 

@@ -52,7 +52,7 @@ Additionally, this PR introduced the **send-once per record/config** semantic: o
 
 - sentinel/src/schedule/outbound.js
 - shared-libs/transitions/src/transitions/mark_for_outbound.js
-- sentinel/tests/mocha/schedule/outbound.spec.js
+- sentinel/tests/unit/schedule/outbound.spec.js
 
 ## Testing
 

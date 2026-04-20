@@ -58,7 +58,6 @@ This was a **breaking change**: existing deployments had to migrate credentials 
 ## Related Files
 
 - api/src/controllers/credentials.js
-- api/src/services/credentials.js
 - api/tests/mocha/controllers/credentials.spec.js
 
 ## Testing

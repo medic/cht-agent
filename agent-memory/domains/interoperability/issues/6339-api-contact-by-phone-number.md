@@ -55,9 +55,9 @@ External integrations get everything they need in one request instead of two.
 
 ## Related Files
 
-- api/src/controllers/
-- api/src/services/contacts.js
-- shared-libs/phone-number/
+- api/src/controllers/contacts-by-phone.js
+- api/tests/mocha/controllers/contacts-by-phone.spec.js
+- shared-libs/phone-number/src/phone-number.js
 
 ## Testing
 

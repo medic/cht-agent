@@ -64,7 +64,7 @@ When `cron` is set, the `execute()` function in the outbound scheduler filters c
 ## Related Files
 
 - sentinel/src/schedule/outbound.js
-- sentinel/tests/mocha/schedule/outbound.spec.js
+- sentinel/tests/unit/schedule/outbound.spec.js
 - shared-libs/transitions/src/transitions/mark_for_outbound.js
 
 ## Testing
