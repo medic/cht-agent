@@ -45,6 +45,10 @@ Aliases are supported for backward compatibility:
 - `anthropic` -> `claude-api`
 - `claude-cli` -> `claude-code-cli`
 
+## Note on Examples
+
+The examples in this guide use `cht-core`'s project structure (e.g. `api/controllers/`, `webapp/services/`, `sentinel/`). If you are generating code for a different repository (e.g. `cht-conf`, `cht-interoperability`), adapt the component paths and scaffold templates to match the target repo's layout.
+
 ## Testing Guidance
 
 - Use unit tests for deterministic logic (registry selection, file assembly, validation checks).

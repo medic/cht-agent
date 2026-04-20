@@ -110,6 +110,15 @@ describe('CodeGenModuleRegistry', () => {
     );
   });
 
+  it('should throw when registering a module with a duplicate name', () => {
+    const registry = new CodeGenModuleRegistry();
+    registry.register(makeModule('mod-a'));
+
+    expect(() => registry.register(makeModule('mod-a'))).to.throw(
+      'Code generation module "mod-a" is already registered'
+    );
+  });
+
   it('should include registered module names in error message', () => {
     const registry = new CodeGenModuleRegistry();
     registry.register(makeModule('mod-a'));

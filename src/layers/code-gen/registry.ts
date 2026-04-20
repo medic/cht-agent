@@ -11,6 +11,11 @@ export class CodeGenModuleRegistry {
   private readonly modules = new Map<string, CodeGenModule>();
 
   register(module: CodeGenModule): void {
+    if (this.modules.has(module.name)) {
+      throw new Error(
+        `Code generation module "${module.name}" is already registered. Use a unique name for each module.`
+      );
+    }
     this.modules.set(module.name, module);
   }
 

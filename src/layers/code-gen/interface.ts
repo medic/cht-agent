@@ -26,6 +26,7 @@ export interface CodeGenModuleOutput {
   explanation: string;
   tokensUsed?: number;
   modelUsed?: string;
+  warnings?: string[];
 }
 
 export interface CodeGenModule {
