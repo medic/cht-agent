@@ -29,29 +29,17 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   }
 
   private buildScaffoldFiles(input: CodeGenModuleInput, targetDir: string): GeneratedFile[] {
-    const files: GeneratedFile[] = [];
     const { ticket, orchestrationPlan } = input;
     const domain = ticket.issue.technical_context.domain;
-    const components = ticket.issue.technical_context.components;
+    const title = ticket.issue.title;
 
-    for (const phase of orchestrationPlan.phases) {
-      for (const component of phase.suggestedComponents) {
-        const file = this.buildComponentFile(component, ticket.issue.title, domain, targetDir);
-        if (file) {
-          files.push(file);
-        }
-      }
-    }
+    const phaseComponents = orchestrationPlan.phases.flatMap((phase) => phase.suggestedComponents);
+    const components =
+      phaseComponents.length > 0 ? phaseComponents : ticket.issue.technical_context.components.slice(0, 1);
 
-    // If no phases produced files, generate one from the first listed component
-    if (files.length === 0 && components.length > 0) {
-      const file = this.buildComponentFile(components[0], ticket.issue.title, domain, targetDir);
-      if (file) {
-        files.push(file);
-      }
-    }
-
-    return files;
+    return components
+      .map((component) => this.buildComponentFile(component, title, domain, targetDir))
+      .filter((file): file is GeneratedFile => file !== null);
   }
 
   private buildComponentFile(
@@ -168,12 +156,11 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   }
 
   private extractModuleName(component: string): string | null {
-    const parts = component.split('/');
-    const last = parts[parts.length - 1];
+    const last = component.split('/').at(-1);
     if (!last || last.length === 0) {
       return null;
     }
-    return last.replace(/\s+/g, '-').toLowerCase();
+    return last.replaceAll(/\s+/g, '-').toLowerCase();
   }
 
   private toPascalCase(str: string): string {
