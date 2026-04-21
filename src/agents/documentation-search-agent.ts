@@ -9,7 +9,7 @@ import {
   DocumentationReference,
   CHTDomain,
   IssueTemplate,
-  MCPResponse,
+  MCPParsedDocument,
 } from '../types';
 import { MCPClient } from '../mcp';
 import { DEFAULT_MCP_SERVER_URL } from '../constants';
@@ -43,11 +43,10 @@ export class DocumentationSearchAgent {
     const searchQuery = this.buildSearchQuery(issue);
     console.log(`[Documentation Search Agent] Search query: ${searchQuery}`);
 
-    // Call MCP (mocked for now)
-    const mcpResponse = await this.callKapaAI(searchQuery, domain);
-
-    // Process and structure findings
-    const findings = this.processMCPResponse(mcpResponse, issue);
+    // Call Kapa.AI via MCP and process findings
+    try {
+      const parsedDocs = await this.callKapaAI(searchQuery, domain);
+      const findings = this.buildFindings(parsedDocs, issue);
 
       console.log(
         `[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`
@@ -55,6 +54,18 @@ export class DocumentationSearchAgent {
       console.log(`[Documentation Search Agent] Confidence: ${findings.confidence}`);
 
       return findings;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Documentation Search Agent] MCP call failed: ${message}`);
+      return {
+        documentationReferences: [],
+        relevantExamples: [],
+        suggestedApproaches: [],
+        relatedDomains: [],
+        confidence: 0,
+        source: 'kapa-ai',
+      };
+    }
   }
 
   /**
@@ -70,39 +81,18 @@ export class DocumentationSearchAgent {
   }
 
   /**
-   * Call Kapa.AI via MCP
+   * Call Kapa.AI via MCP and return parsed documents.
+   * Throws on failure so the caller can handle the error uniformly.
    */
-  private async callKapaAI(query: string, domain: CHTDomain): Promise<MCPResponse> {
+  private async callKapaAI(query: string, _domain: CHTDomain): Promise<MCPParsedDocument[]> {
     if (this.useMockMCP) {
-      return this.mockKapaAIResponse(query, domain);
+      return this.mockKapaAIResponse(_domain);
     }
 
     console.log(`[Documentation Search Agent] Calling MCP server: ${this.mcpServerUrl}`);
 
-    try {
-      const searchResponse = await this.mcpClient.searchDocs({ query, maxResults: 5 });
-      const parsedDocs = this.mcpClient.parseSearchDocsResponse(searchResponse);
-
-      const references: DocumentationReference[] = parsedDocs.map((doc) => ({
-        url: doc.sourceUrl,
-        title: doc.title || doc.section,
-        topics: this.extractTopics(doc.content),
-        relevantSections: [doc.section].filter(Boolean),
-      }));
-
-      return {
-        success: true,
-        data: {
-          references,
-          summary: `Found ${references.length} relevant documentation pages`,
-          relatedTopics: references.flatMap((r) => r.topics),
-        },
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[Documentation Search Agent] MCP call failed: ${message}`);
-      return { success: false, error: message };
-    }
+    const searchResponse = await this.mcpClient.searchDocs({ query, maxResults: 5 });
+    return this.mcpClient.parseSearchDocsResponse(searchResponse);
   }
 
   /**
@@ -124,9 +114,9 @@ export class DocumentationSearchAgent {
   }
 
   /**
-   * Mock Kapa.AI response for testing
+   * Mock Kapa.AI response for testing — returns MCPParsedDocument[] directly.
    */
-  private mockKapaAIResponse(_query: string, domain: CHTDomain): MCPResponse {
+  private mockKapaAIResponse(domain: CHTDomain): MCPParsedDocument[] {
     console.log('[Documentation Search Agent] Using MOCKED Kapa.AI response');
 
     // Domain-specific mock responses
@@ -220,34 +210,29 @@ export class DocumentationSearchAgent {
       ],
     };
 
-    const references = mockData[domain] || [];
+    const domainRefs = mockData[domain] || [];
 
-    return {
-      success: true,
-      data: {
-        references,
-        summary: `Found ${references.length} relevant documentation pages for ${domain}`,
-        relatedTopics: references.flatMap((r) => r.topics),
-      },
-    };
+    // Convert DocumentationReference mock data into MCPParsedDocument shape
+    return domainRefs.map((ref) => ({
+      title: ref.title,
+      section: ref.relevantSections?.[0] ?? '',
+      content: ref.topics.join(', '),
+      sourceUrl: ref.url,
+    }));
   }
 
   /**
-   * Process MCP response and structure findings
+   * Build ResearchFindings from parsed MCP documents.
    */
-  private processMCPResponse(mcpResponse: MCPResponse, issue: IssueTemplate): ResearchFindings {
-    if (!mcpResponse.success || !mcpResponse.data) {
-      return {
-        documentationReferences: [],
-        relevantExamples: [],
-        suggestedApproaches: [],
-        relatedDomains: [],
-        confidence: 0,
-        source: 'kapa-ai',
-      };
-    }
+  private buildFindings(parsedDocs: MCPParsedDocument[], issue: IssueTemplate): ResearchFindings {
+    const references: DocumentationReference[] = parsedDocs.map((doc) => ({
+      url: doc.sourceUrl,
+      title: doc.title || doc.section,
+      topics: this.extractTopics(doc.content),
+      relevantSections: [doc.section].filter(Boolean),
+    }));
 
-    const { references, relatedTopics } = mcpResponse.data;
+    const relatedTopics = references.flatMap((r) => r.topics);
 
     // Extract code examples
     const relevantExamples = references
