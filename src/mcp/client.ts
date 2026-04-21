@@ -53,7 +53,7 @@ interface MCPRPCResponse {
  * MCP Client for CHT documentation
  */
 export class MCPClient {
-  private config: MCPClientConfig;
+  private readonly config: MCPClientConfig;
   private requestId: number = 0;
 
   constructor(config?: Partial<MCPClientConfig>) {
@@ -69,7 +69,7 @@ export class MCPClient {
   static fromEnv(): MCPClient {
     const serverUrl = process.env.MCP_SERVER_URL || DEFAULT_CONFIG.serverUrl;
     const timeout = process.env.MCP_TIMEOUT
-      ? parseInt(process.env.MCP_TIMEOUT, 10)
+      ? Number.parseInt(process.env.MCP_TIMEOUT, 10)
       : DEFAULT_CONFIG.timeout;
 
     return new MCPClient({ serverUrl, timeout });
@@ -175,9 +175,9 @@ export class MCPClient {
    */
   private parseDocumentSection(section: string): MCPParsedDocument | null {
     const extract = (regex: RegExp, index = 1) => {
-    const match = section.match(regex);
-    return match ? match[index].trim() : '';
-  };
+      const match = regex.exec(section);
+      return match ? match[index].trim() : '';
+    };
 
   const title = extract(/\*\*([^|*]+)\|([^*]+)\*\*/);
   const sectionPath = extract(/^#\s*([^\n]+)/m);

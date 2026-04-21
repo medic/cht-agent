@@ -16,8 +16,8 @@ import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 export class DocumentationSearchAgent {
   private useMockMCP: boolean;
-  private mcpServerUrl: string;
-  private mcpClient: MCPClient;
+  private readonly mcpServerUrl: string;
+  private readonly mcpClient: MCPClient;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean; mcpServerUrl?: string } = {}) {
     this.useMockMCP = options.useMockMCP === true; // Default to false
@@ -49,12 +49,12 @@ export class DocumentationSearchAgent {
     // Process and structure findings
     const findings = this.processMCPResponse(mcpResponse, issue);
 
-    console.log(
-      `[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`
-    );
-    console.log(`[Documentation Search Agent] Confidence: ${findings.confidence}`);
+      console.log(
+        `[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`
+      );
+      console.log(`[Documentation Search Agent] Confidence: ${findings.confidence}`);
 
-    return findings;
+      return findings;
   }
 
   /**
@@ -105,23 +105,23 @@ export class DocumentationSearchAgent {
     }
   }
 
-/**
- * Extract topics from documentation content
- */
-private extractTopics(content: string): string[] {
-  if (!content) return [];
+  /**
+   * Extract topics from documentation content
+   */
+  private extractTopics(content: string): string[] {
+    if (!content) return [];
 
-  const keywords = [
-    'contact', 'hierarchy', 'form', 'report', 'task', 'target',
-    'permission', 'role', 'sync', 'replication', 'offline',
-    'sentinel', 'transition', 'workflow', 'validation',
-  ];
+    const keywords = [
+      'contact', 'hierarchy', 'form', 'report', 'task', 'target',
+      'permission', 'role', 'sync', 'replication', 'offline',
+      'sentinel', 'transition', 'workflow', 'validation',
+    ];
 
-  const lowerContent = content.toLowerCase();
-  const topics = keywords.filter(keyword => lowerContent.includes(keyword));
+    const lowerContent = content.toLowerCase();
+    const topics = keywords.filter((keyword) => lowerContent.includes(keyword));
 
-  return [...new Set(topics)];
-}
+    return [...new Set(topics)];
+  }
 
   /**
    * Mock Kapa.AI response for testing
