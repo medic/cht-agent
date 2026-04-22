@@ -40,10 +40,11 @@ function extractFrontmatter(content: string): {
   const yamlContent = lines.slice(1, endIndex).join('\n');
   const markdown = lines.slice(endIndex + 1).join('\n');
 
-  // Parse YAML using js-yaml
+  // Parse YAML using js-yaml with JSON_SCHEMA for security (prevents code execution)
   let metadata: Record<string, string> = {};
   try {
-    const parsed = yaml.load(yamlContent);
+    // Using JSON_SCHEMA to safely parse YAML without executing arbitrary code
+    const parsed = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
     if (parsed && typeof parsed === 'object') {
       // Convert all values to strings for consistency
       const stringifyValue = (val: unknown): string => {
@@ -57,7 +58,7 @@ function extractFrontmatter(content: string): {
         return String(val as string | number | boolean | symbol | bigint);
       };
       metadata = Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+        Object.entries(parsed).map(([key, value]) => [
           key,
           stringifyValue(value),
         ])

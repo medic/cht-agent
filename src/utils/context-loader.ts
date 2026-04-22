@@ -3,8 +3,8 @@
  * Handles loading domain contexts, workflow contexts, and resolved issues
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import {
   DomainComponents,
@@ -21,7 +21,7 @@ const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
  */
 export function parseFrontmatter(content: string): { metadata: any; body: string } {
   const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = content.match(frontmatterRegex);
+  const match = new RegExp(frontmatterRegex).exec(content);
 
   if (!match) {
     return { metadata: {}, body: content };
@@ -29,9 +29,10 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
 
   const [, frontmatter, body] = match;
 
-  // Parse YAML using js-yaml with JSON_SCHEMA to prevent auto date conversion
+  // Parse YAML using js-yaml with JSON_SCHEMA for security (prevents code execution)
   let metadata: any = {};
   try {
+    // Using JSON_SCHEMA to safely parse YAML without executing arbitrary code
     const parsed = yaml.load(frontmatter, { schema: yaml.JSON_SCHEMA });
     if (parsed && typeof parsed === 'object') {
       metadata = parsed;
@@ -175,7 +176,7 @@ export function loadIndex(indexName: string): any {
  */
 export function getRelatedDomains(domain: CHTDomain): CHTDomain[] {
   const overview = loadDomainOverview(domain);
-  if (!overview || !overview.metadata.related_domains) {
+  if (!overview?.metadata.related_domains) {
     return [];
   }
 
