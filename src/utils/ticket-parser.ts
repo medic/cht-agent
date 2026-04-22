@@ -140,9 +140,23 @@ function validateDomain(domain: string): CHTDomain {
  * Returns all text until the next heading or end of content
  */
 function extractSection(markdown: string, sectionTitle: string): string {
-  const regex = new RegExp(String.raw`##\s+${sectionTitle}\s*\n([\s\S]*?)(?=\n##|$)`, 'i');
-  const match = new RegExp(regex).exec(markdown);
-  return match ? match[1].trim() : '';
+  // Use string manipulation instead of regex to prevent ReDoS
+  const escapedTitle = sectionTitle.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const titlePattern = new RegExp(String.raw`##\s+${escapedTitle}\s*\n`, 'i');
+  const titleMatch = titlePattern.exec(markdown);
+  
+  if (!titleMatch) {
+    return '';
+  }
+  
+  const startIndex = titleMatch.index + titleMatch[0].length;
+  const remainingContent = markdown.substring(startIndex);
+  
+  // Find the next ## heading
+  const nextHeadingMatch = /\n##\s+/.exec(remainingContent);
+  const endIndex = nextHeadingMatch ? nextHeadingMatch.index : remainingContent.length;
+  
+  return remainingContent.substring(0, endIndex).trim();
 }
 
 /**
@@ -262,7 +276,8 @@ export function parseTicketFile(filePath: string): IssueTemplate {
 
   // Parse technical context
   const components = extractCodeItems(technicalContextSection);
-  const existingReferencesMatch = new RegExp(/\*\*Existing References:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i).exec(technicalContextSection);
+  // Use safer regex pattern with negated character class to prevent ReDoS
+  const existingReferencesMatch = new RegExp(/\*\*Existing References:\*\*([^*]*(?:\*(?!\*)[^*]*)*)/i).exec(technicalContextSection);
   const existingReferences = existingReferencesMatch
     ? extractBulletList(existingReferencesMatch[1])
     : [];
@@ -273,8 +288,9 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   const constraints = extractBulletList(constraintsSection);
 
   // Parse references
-  const similarImplementationsMatch = new RegExp(/\*\*Similar Implementations:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i).exec(referencesSection);
-  const documentationMatch = new RegExp(/\*\*Documentation:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i).exec(referencesSection);
+  // Use safer regex pattern with negated character class to prevent ReDoS
+  const similarImplementationsMatch = new RegExp(/\*\*Similar Implementations:\*\*([^*]*(?:\*(?!\*)[^*]*)*)/i).exec(referencesSection);
+  const documentationMatch = new RegExp(/\*\*Documentation:\*\*([^*]*(?:\*(?!\*)[^*]*)*)/i).exec(referencesSection);
 
   const similarImplementations = similarImplementationsMatch
     ? extractURLs(similarImplementationsMatch[1])

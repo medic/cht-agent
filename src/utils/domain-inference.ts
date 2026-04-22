@@ -263,8 +263,17 @@ Respond in this exact JSON format:
       return '';
     }).join('');
 
-  // Extract JSON from response
-  const jsonMatch = new RegExp(/\{[\s\S]*\}/).exec(content);
+  // Extract JSON from response using safer pattern
+  // Find the first opening brace and last closing brace
+  const firstBrace = content.indexOf('{');
+  const lastBrace = content.lastIndexOf('}');
+  
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    throw new Error('LLM did not return valid JSON response');
+  }
+
+  const jsonString = content.substring(firstBrace, lastBrace + 1);
+  const jsonMatch = [jsonString];
   if (!jsonMatch) {
     throw new Error('LLM did not return valid JSON response');
   }

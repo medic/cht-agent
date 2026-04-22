@@ -20,14 +20,21 @@ const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
  * Parse YAML frontmatter from markdown files
  */
 export function parseFrontmatter(content: string): { metadata: any; body: string } {
-  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
-  const match = new RegExp(frontmatterRegex).exec(content);
-
-  if (!match) {
+  // Use safer string manipulation instead of regex with [\s\S]*? to prevent ReDoS
+  const startMarker = '---\n';
+  const endMarker = '\n---\n';
+  
+  if (!content.startsWith(startMarker)) {
     return { metadata: {}, body: content };
   }
-
-  const [, frontmatter, body] = match;
+  
+  const endIndex = content.indexOf(endMarker, startMarker.length);
+  if (endIndex === -1) {
+    return { metadata: {}, body: content };
+  }
+  
+  const frontmatter = content.substring(startMarker.length, endIndex);
+  const body = content.substring(endIndex + endMarker.length);
 
   // Parse YAML using js-yaml with JSON_SCHEMA for security (prevents code execution)
   let metadata: any = {};
