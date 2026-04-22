@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { DocumentationSearchAgent } from '../../src/agents/documentation-search-agent';
-import { createTestIssue } from '../helpers';
+import { IssueTemplate } from '../../src/types';
 
 describe('DocumentationSearchAgent', () => {
   let agent: DocumentationSearchAgent;
@@ -9,33 +9,97 @@ describe('DocumentationSearchAgent', () => {
     agent = new DocumentationSearchAgent({ useMockMCP: true });
   });
 
+  // Helper to create test issue template
+  const createTestIssue = (overrides: Partial<IssueTemplate['issue']> = {}): IssueTemplate => ({
+    issue: {
+      title: 'Test Issue',
+      type: 'feature',
+      priority: 'medium',
+      description: 'Test description for the issue',
+      technical_context: {
+        domain: 'contacts',
+        components: ['api/controllers/contacts', 'webapp/modules/contacts'],
+      },
+      requirements: ['Requirement 1'],
+      acceptance_criteria: ['Criterion 1'],
+      constraints: ['Constraint 1'],
+      ...overrides,
+    },
+  });
+
   describe('search', () => {
-    // Test all domains with a single parameterized test
-    const domains = [
-      { name: 'contacts', expectedTopic: 'contacts' },
-      { name: 'forms-and-reports', expectedTopic: 'forms' },
-      { name: 'tasks-and-targets', expectedTopic: null },
-      { name: 'authentication', expectedTopic: null },
-      { name: 'messaging', expectedTopic: null },
-      { name: 'data-sync', expectedTopic: null },
-      { name: 'configuration', expectedTopic: null },
-    ];
-
-    domains.forEach(({ name, expectedTopic }) => {
-      it(`should return research findings for ${name} domain`, async () => {
-        const issue = createTestIssue({
-          technical_context: { domain: name as any, components: [] },
-        });
-
-        const result = await agent.search(issue);
-
-        expect(result.documentationReferences).to.be.an('array');
-        expect(result.documentationReferences.length).to.be.greaterThan(0);
-        
-        if (expectedTopic) {
-          expect(result.documentationReferences[0].topics).to.include(expectedTopic);
-        }
+    it('should return research findings for contacts domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'contacts', components: ['api/contacts'] },
       });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences).to.be.an('array');
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
+      expect(result.source).to.equal('cached');
+      expect(result.confidence).to.be.greaterThan(0);
+    });
+
+    it('should return research findings for forms-and-reports domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'forms-and-reports', components: ['webapp/forms'] },
+      });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
+      expect(result.documentationReferences[0].topics).to.include('forms');
+    });
+
+    it('should return research findings for tasks-and-targets domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'tasks-and-targets', components: [] },
+      });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
+    });
+
+    it('should return research findings for authentication domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'authentication', components: [] },
+      });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
+    });
+
+    it('should return research findings for messaging domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'messaging', components: [] },
+      });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
+    });
+
+    it('should return research findings for data-sync domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'data-sync', components: [] },
+      });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
+    });
+
+    it('should return research findings for configuration domain', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'configuration', components: [] },
+      });
+
+      const result = await agent.search(issue);
+
+      expect(result.documentationReferences.length).to.be.greaterThan(0);
     });
 
     it('should use configuration as default domain when domain is undefined', async () => {

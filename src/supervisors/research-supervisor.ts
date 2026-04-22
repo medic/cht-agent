@@ -52,10 +52,10 @@ const ResearchStateAnnotation = Annotation.Root({
 });
 
 export class ResearchSupervisor {
-  private readonly graph: ReturnType<typeof this.buildGraph>;
-  private readonly docSearchAgent: DocumentationSearchAgent;
-  private readonly contextAgent: ContextAnalysisAgent;
-  private readonly plannerModel: ChatAnthropic;
+  private graph: ReturnType<typeof this.buildGraph>;
+  private docSearchAgent: DocumentationSearchAgent;
+  private contextAgent: ContextAnalysisAgent;
+  private plannerModel: ChatAnthropic;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
@@ -219,13 +219,7 @@ export class ResearchSupervisor {
     const prompt = this.buildPlanPrompt(issue, findings, analysis);
 
     const response = await this.plannerModel.invoke(prompt);
-    const content = typeof response.content === 'string' 
-      ? response.content 
-      : response.content.map(block => {
-        if (typeof block === 'string') return block;
-        if ('text' in block) return block.text ?? '';
-        return '';
-      }).join('');
+    const content = response.content.toString();
 
     // Parse the response into structured plan
     const plan = this.parsePlanResponse(content, issue, findings, analysis);

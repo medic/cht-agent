@@ -14,7 +14,7 @@ import {
 } from '../types';
 
 export class DocumentationSearchAgent {
-  private readonly useMockMCP: boolean;
+  private useMockMCP: boolean;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     // Model will be used when MCP integration is complete
@@ -71,9 +71,18 @@ export class DocumentationSearchAgent {
       return this.mockKapaAIResponse(query, domain);
     }
 
-    // MCP integration will be implemented when the server is ready
-    // For now, throw a clear error indicating the feature is not yet available
-    throw new Error('MCP integration not yet implemented - use mock mode for POC');
+    // TODO: Actual MCP implementation when server is ready
+    // const mcpCall: MCPToolCall = {
+    //   tool: 'search_docs',
+    //   parameters: {
+    //     query,
+    //     domain,
+    //     max_results: 5
+    //   }
+    // };
+    // return await mcp.call(mcpCall);
+
+    throw new Error('MCP integration not yet implemented');
   }
 
   /**

@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import * as path from 'path';
 import {
   parseFrontmatter,
   loadDomainOverview,
@@ -175,6 +176,7 @@ Body`;
     const createContextLoader = (mockFs: any) => {
       return proxyquire('../../src/utils/context-loader', {
         fs: mockFs,
+        path: path,
       });
     };
 

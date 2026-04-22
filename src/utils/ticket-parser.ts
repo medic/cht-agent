@@ -5,8 +5,8 @@
  * All detailed content is extracted from markdown body sections
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain } from '../types';
 
@@ -239,11 +239,11 @@ function extractURLs(text: string): string[] {
  */
 export function parseTicketFile(filePath: string): IssueTemplate {
   // Read file
-  if (!fs.existsSync(filePath)) {
+  if (!existsSync(filePath)) {
     throw new Error(`Ticket file not found: ${filePath}`);
   }
 
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = readFileSync(filePath, 'utf-8');
   const { metadata, markdown } = extractFrontmatter(content);
 
   // Validate required metadata
@@ -338,6 +338,11 @@ export interface ValidationResult {
 
 /**
  * Map error messages to user-friendly validation errors
+ * 
+ * NOTE: This uses substring matching on parseTicketFile error messages.
+ * If those error messages change, this will silently fall back to the generic
+ * "Failed to process ticket" branch. Keep parseTicketFile error messages in sync
+ * with the patterns in errorMap, or add tests to catch breaks.
  */
 function mapErrorMessage(errorMessage: string): string {
   const errorMap: Array<[string, string]> = [
@@ -418,12 +423,12 @@ export function validateTicketFile(filePath: string): ValidationResult {
  * Find all ticket files in a directory
  */
 export function findTicketFiles(dirPath: string): string[] {
-  if (!fs.existsSync(dirPath)) {
+  if (!existsSync(dirPath)) {
     return [];
   }
 
-  const files = fs.readdirSync(dirPath);
+  const files = readdirSync(dirPath);
   return files
     .filter((file) => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
-    .map((file) => path.join(dirPath, file));
+    .map((file) => join(dirPath, file));
 }

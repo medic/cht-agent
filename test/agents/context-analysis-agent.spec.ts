@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import * as sinon from 'sinon';
 import * as contextLoader from '../../src/utils/context-loader';
 import { ContextAnalysisAgent } from '../../src/agents/context-analysis-agent';
-import { createTestIssue, createResolvedContext } from '../helpers';
+import { IssueTemplate, ResolvedIssueContext } from '../../src/types';
 
 describe('ContextAnalysisAgent', () => {
   let agent: ContextAnalysisAgent;
@@ -15,6 +15,43 @@ describe('ContextAnalysisAgent', () => {
 
   afterEach(() => {
     sinon.restore();
+  });
+
+  // Helper to create test issue template
+  const createTestIssue = (overrides: Partial<IssueTemplate['issue']> = {}): IssueTemplate => ({
+    issue: {
+      title: 'Test Issue',
+      type: 'feature',
+      priority: 'medium',
+      description: 'Test description',
+      technical_context: {
+        domain: 'contacts',
+        components: ['api/controllers/contacts', 'webapp/modules/contacts'],
+      },
+      requirements: ['Requirement 1'],
+      acceptance_criteria: ['Criterion 1'],
+      constraints: ['Constraint 1'],
+      ...overrides,
+    },
+  });
+
+  // Helper to create test resolved issue context
+  const createResolvedContext = (
+    overrides: Partial<ResolvedIssueContext> = {}
+  ): ResolvedIssueContext => ({
+    id: 'resolved-001',
+    timestamp: '2024-01-15',
+    category: 'feature',
+    domains: ['contacts'],
+    phase: 'completed',
+    task_id: 'TASK-001',
+    summary: 'Test resolved issue',
+    tech_stack: ['typescript'],
+    components: {
+      api: ['contacts-controller'],
+      webapp: ['contacts-module'],
+    },
+    ...overrides,
   });
 
   describe('calculateSimilarityScore', () => {

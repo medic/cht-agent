@@ -9,115 +9,44 @@
  * 2. Claude LLM reasoning as fallback
  */
 
-
+// import * as fs from 'fs';
+// import * as path from 'path';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
-/**
- * Load a JSON file if it exists, returning null on failure
- */
-function loadJsonFile(filePath: string): Record<string, any> | null {
-  try {
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch (error) {
-    console.warn(`[Domain Inference] Failed to load ${path.basename(filePath)}:`, error instanceof Error ? error.message : 'Unknown error');
-    return null;
-  }
-}
 
 /**
  * Load domain mapping indices if they exist
+ * TODO: Use this function when implementing index-based inference
  */
-function loadDomainIndices(): {
-    domainToComponents: Record<string, any> | null;
-    componentToDomains: Record<string, string[]> | null;
-    } {
-  const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
-
-  const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
-  const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
-
-  return {
-    domainToComponents: loadJsonFile(domainToComponentsPath),
-    componentToDomains: loadJsonFile(componentToDomainsPath),
-  };
-}
-
-/**
- * Count keyword matches in text
- */
-function countKeywordMatches(text: string, keywords: string[]): number {
-  return keywords.reduce((count, keyword) => {
-    return text.includes(keyword.toLowerCase()) ? count + 1 : count;
-  }, 0);
-}
-
-/**
- * Extract keywords from a component entry
- */
-function extractKeywords(component: any): string[] {
-  if (typeof component === 'string') {
-    return [component];
-  }
-  return component.keywords || [];
-}
-
-/**
- * Calculate score for a single domain based on keyword matches
- */
-function calculateDomainScore(
-  text: string,
-  domain: string,
-  components: any
-): number {
-  let score = text.includes(domain.toLowerCase()) ? 2 : 0;
-
-  if (!Array.isArray(components)) {
-    return score;
-  }
-
-  const keywordMatches = components.reduce((total, component) => {
-    const keywords = extractKeywords(component);
-    return total + countKeywordMatches(text, keywords);
-  }, 0);
-
-  return score + keywordMatches;
-}
-
-/**
- * Infer domain from indices based on keywords in the issue
- */
-function inferDomainFromIndices(
-  issue: IssueTemplate,
-  domainToComponents: Record<string, any>
-): CHTDomain | null {
-  const text = `${issue.issue.title} ${issue.issue.description}`.toLowerCase();
-
-  // Calculate scores for all domains
-  const domainScores = Object.entries(domainToComponents)
-    .map(([domain, components]) => ({
-      domain,
-      score: calculateDomainScore(text, domain, components),
-    }))
-    .filter(item => item.score > 0);
-
-  // Return domain with highest score if any matches found
-  if (domainScores.length === 0) {
-    return null;
-  }
-
-  const bestMatch = domainScores.reduce((best, current) =>
-    current.score > best.score ? current : best,
-  domainScores[0]);
-
-  return bestMatch.domain as CHTDomain;
-}
-
+// function loadDomainIndices(): {
+//   domainToComponents: Record<string, any> | null;
+//   componentToDomains: Record<string, string[]> | null;
+// } {
+//   const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
+//
+//   let domainToComponents = null;
+//   let componentToDomains = null;
+//
+//   try {
+//     const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
+//     if (fs.existsSync(domainToComponentsPath)) {
+//       domainToComponents = JSON.parse(fs.readFileSync(domainToComponentsPath, 'utf-8'));
+//     }
+//   } catch (error) {
+//     // Indices not available yet
+//   }
+//
+//   try {
+//     const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
+//     if (fs.existsSync(componentToDomainsPath)) {
+//       componentToDomains = JSON.parse(fs.readFileSync(componentToDomainsPath, 'utf-8'));
+//     }
+//   } catch (error) {
+//     // Indices not available yet
+//   }
+//
+//   return { domainToComponents, componentToDomains };
+// }
 
 /**
  * Format array items for prompt, handling empty arrays gracefully
@@ -255,25 +184,10 @@ Respond in this exact JSON format:
 }`;
 
   const response = await model.invoke(prompt);
-  const content = typeof response.content === 'string' 
-    ? response.content 
-    : response.content.map(block => {
-      if (typeof block === 'string') return block;
-      if ('text' in block) return block.text ?? '';
-      return '';
-    }).join('');
+  const content = response.content.toString();
 
-  // Extract JSON from response using safer pattern
-  // Find the first opening brace and last closing brace
-  const firstBrace = content.indexOf('{');
-  const lastBrace = content.lastIndexOf('}');
-  
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    throw new Error('LLM did not return valid JSON response');
-  }
-
-  const jsonString = content.substring(firstBrace, lastBrace + 1);
-  const jsonMatch = [jsonString];
+  // Extract JSON from response
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error('LLM did not return valid JSON response');
   }
@@ -320,46 +234,6 @@ Respond in this exact JSON format:
 }
 
 /**
- * Extract components for a domain from indices
- */
-function extractComponentsForDomain(
-  domainToComponents: Record<string, any>,
-  domain: string
-): string[] {
-  const components = domainToComponents[domain];
-  if (!components) {
-    return [];
-  }
-  
-  return components
-    .filter((c: any) => typeof c === 'string')
-    .slice(0, 5); // Limit to top 5 components
-}
-
-/**
- * Try to infer domain from indices
- */
-function tryInferFromIndices(
-  issue: IssueTemplate,
-  domainToComponents: Record<string, any>
-): { domain: CHTDomain; components: string[] } | null {
-  const domainFromIndices = inferDomainFromIndices(issue, domainToComponents);
-  
-  if (!domainFromIndices) {
-    return null;
-  }
-  
-  console.log(`[Domain Inference] Using index-based inference. Domain: ${domainFromIndices}`);
-  
-  const components = extractComponentsForDomain(domainToComponents, domainFromIndices);
-  
-  return {
-    domain: domainFromIndices,
-    components,
-  };
-}
-
-/**
  * Main function: Infer domain and components for an issue
  */
 export async function inferDomainAndComponents(
@@ -373,26 +247,18 @@ export async function inferDomainAndComponents(
   if (hasExistingDomain && hasExistingComponents) {
     console.log('[Domain Inference] Using domain and components from ticket');
     return {
-      domain: issue.issue.technical_context.domain,
+      domain: issue.issue.technical_context.domain!,
       components: issue.issue.technical_context.components,
     };
   }
 
   console.log('[Domain Inference] Inferring domain and components...');
 
-  // Try to use indices first
-  const indices = loadDomainIndices();
-  
-  if (indices.domainToComponents) {
-    const resultFromIndices = tryInferFromIndices(issue, indices.domainToComponents);
-    
-    if (resultFromIndices) {
-      return resultFromIndices;
-    }
-  }
+  // Try to use indices first (when implemented)
+  // const indices = loadDomainIndices();
+  // TODO: Implement index-based inference when indices are populated
 
-  // Fall back to LLM inference
-  console.log('[Domain Inference] Indices unavailable, using LLM inference...');
+  // For now, use LLM inference
   const inferred = await inferUsingLLM(issue, modelName);
 
   console.log(`[Domain Inference] Inferred domain: ${inferred.domain}`);

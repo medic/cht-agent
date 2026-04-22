@@ -3,8 +3,8 @@
  * Handles loading domain contexts, workflow contexts, and resolved issues
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as yaml from 'js-yaml';
 import {
   DomainComponents,
@@ -20,26 +20,18 @@ const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
  * Parse YAML frontmatter from markdown files
  */
 export function parseFrontmatter(content: string): { metadata: any; body: string } {
-  // Use safer string manipulation instead of regex with [\s\S]*? to prevent ReDoS
-  const startMarker = '---\n';
-  const endMarker = '\n---\n';
-  
-  if (!content.startsWith(startMarker)) {
-    return { metadata: {}, body: content };
-  }
-  
-  const endIndex = content.indexOf(endMarker, startMarker.length);
-  if (endIndex === -1) {
-    return { metadata: {}, body: content };
-  }
-  
-  const frontmatter = content.substring(startMarker.length, endIndex);
-  const body = content.substring(endIndex + endMarker.length);
+  const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
+  const match = content.match(frontmatterRegex);
 
-  // Parse YAML using js-yaml with JSON_SCHEMA for security (prevents code execution)
+  if (!match) {
+    return { metadata: {}, body: content };
+  }
+
+  const [, frontmatter, body] = match;
+
+  // Parse YAML using js-yaml with JSON_SCHEMA to prevent auto date conversion
   let metadata: any = {};
   try {
-    // Using JSON_SCHEMA to safely parse YAML without executing arbitrary code
     const parsed = yaml.load(frontmatter, { schema: yaml.JSON_SCHEMA });
     if (parsed && typeof parsed === 'object') {
       metadata = parsed;
@@ -183,7 +175,7 @@ export function loadIndex(indexName: string): any {
  */
 export function getRelatedDomains(domain: CHTDomain): CHTDomain[] {
   const overview = loadDomainOverview(domain);
-  if (!overview?.metadata.related_domains) {
+  if (!overview || !overview.metadata.related_domains) {
     return [];
   }
 

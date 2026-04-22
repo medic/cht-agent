@@ -118,7 +118,7 @@ export class ContextAnalysisAgent {
     }));
 
     // Sort by score and return top 5
-    return [...scoredIssues]
+    return scoredIssues
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
       .filter((item) => item.score > 0.3) // Minimum similarity threshold
@@ -165,7 +165,7 @@ export class ContextAnalysisAgent {
       score += 0.3 * (componentOverlap / currentComponents.length);
     }
 
-    return Math.min(score, 1);
+    return Math.min(score, 1.0);
   }
 
   /**
@@ -266,7 +266,7 @@ export class ContextAnalysisAgent {
 
     // Pattern-based recommendations
     if (patterns.length > 0) {
-      const topPattern = [...patterns].sort((a, b) => b.frequency - a.frequency)[0];
+      const topPattern = patterns.sort((a, b) => b.frequency - a.frequency)[0];
       recommendations.push(
         `Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`
       );
@@ -279,9 +279,11 @@ export class ContextAnalysisAgent {
 
     // Issue type recommendations
     if (issue.issue.type === 'feature') {
-      recommendations.push('Ensure comprehensive test coverage for new feature', 'Update documentation and configuration examples');
+      recommendations.push('Ensure comprehensive test coverage for new feature');
+      recommendations.push('Update documentation and configuration examples');
     } else if (issue.issue.type === 'bug') {
-      recommendations.push('Add regression tests to prevent recurrence', 'Check for similar issues in related components');
+      recommendations.push('Add regression tests to prevent recurrence');
+      recommendations.push('Check for similar issues in related components');
     } else if (issue.issue.type === 'improvement') {
       recommendations.push('Add or extend tests around the improved behavior');
       recommendations.push('Confirm no regressions in related workflows');

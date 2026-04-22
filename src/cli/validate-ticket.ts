@@ -8,8 +8,8 @@
  *   npm run validate-ticket --dir <directory> [--verbose]
  */
 
-import * as path from 'node:path';
-import * as fs from 'node:fs';
+import { resolve } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
 import { validateTicketFile, ValidationResult, findTicketFiles } from '../utils/ticket-parser';
 
 const displayErrors = (errors: string[]): void => {
@@ -27,7 +27,7 @@ const displayWarnings = (warnings: string[]): void => {
 };
 
 const shouldShowNoIssues = (result: ValidationResult): boolean => {
-  return result.valid && result.errors.length === 0 && result.warnings.length === 0;
+  return result.valid && result.warnings.length === 0;
 };
 
 const shouldShowWarnings = (result: ValidationResult, verbose: boolean): boolean => {
@@ -112,9 +112,9 @@ const validateFile = (filePath: string, verbose: boolean): void => {
 };
 
 const validatePath = (pathArg: string): string => {
-  const fullPath = path.resolve(pathArg);
+  const fullPath = resolve(pathArg);
 
-  if (!fs.existsSync(fullPath)) {
+  if (!existsSync(fullPath)) {
     console.error(`Error: Path does not exist: ${fullPath}`);
     process.exit(1);
   }
@@ -131,7 +131,7 @@ const parseArgs = (args: string[]): { isDirectory: boolean; verbose: boolean; pa
 };
 
 const validateDirectoryPath = (fullPath: string): void => {
-  if (!fs.statSync(fullPath).isDirectory()) {
+  if (!statSync(fullPath).isDirectory()) {
     console.error(`Error: Path is not a directory: ${fullPath}`);
     process.exit(1);
   }
