@@ -4,6 +4,22 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { validateTicketFile } from '../../src/utils/ticket-parser';
 
+/**
+ * Helper function to validate a ticket string and clean up temp file
+ */
+function validateTicketString(ticketContent: string): ReturnType<typeof validateTicketFile> {
+  const tempFile = path.join(os.tmpdir(), `temp-${Date.now()}.md`);
+  fs.writeFileSync(tempFile, ticketContent);
+
+  try {
+    return validateTicketFile(tempFile);
+  } finally {
+    if (fs.existsSync(tempFile)) {
+      fs.unlinkSync(tempFile);
+    }
+  }
+}
+
 describe('Ticket Validation', () => {
   const fixturesPath = path.join(__dirname, '../fixtures');
 
@@ -109,19 +125,10 @@ Short text
 - Requirement 1
 `;
 
-      const tempFile = path.join(os.tmpdir(), 'temp-brief.md');
-      fs.writeFileSync(tempFile, briefTicket);
+      const result = validateTicketString(briefTicket);
 
-      try {
-        const result = validateTicketFile(tempFile);
-
-        expect(result.valid).to.be.true;
-        expect(result.warnings).to.include('Description is brief - consider adding more detail');
-      } finally {
-        if (fs.existsSync(tempFile)) {
-          fs.unlinkSync(tempFile);
-        }
-      }
+      expect(result.valid).to.be.true;
+      expect(result.warnings).to.include('Description is brief - consider adding more detail');
     });
 
     it('should recommend markdown sections', () => {
@@ -135,19 +142,10 @@ domain: contacts
 Plain text without sections.
 `;
 
-      const tempFile = path.join(os.tmpdir(), 'temp-no-sections.md');
-      fs.writeFileSync(tempFile, noSections);
+      const result = validateTicketString(noSections);
 
-      try {
-        const result = validateTicketFile(tempFile);
-
-        expect(result.valid).to.be.true;
-        expect(result.warnings).to.include('Ticket should include markdown sections');
-      } finally {
-        if (fs.existsSync(tempFile)) {
-          fs.unlinkSync(tempFile);
-        }
-      }
+      expect(result.valid).to.be.true;
+      expect(result.warnings).to.include('Ticket should include markdown sections');
     });
 
     it('should recommend requirements and criteria', () => {
@@ -162,20 +160,11 @@ domain: configuration
 A minimal ticket.
 `;
 
-      const tempFile = path.join(os.tmpdir(), 'temp-minimal.md');
-      fs.writeFileSync(tempFile, minimal);
+      const result = validateTicketString(minimal);
 
-      try {
-        const result = validateTicketFile(tempFile);
-
-        expect(result.valid).to.be.true;
-        expect(result.warnings).to.include('Consider adding requirements');
-        expect(result.warnings).to.include('Consider adding acceptance criteria');
-      } finally {
-        if (fs.existsSync(tempFile)) {
-          fs.unlinkSync(tempFile);
-        }
-      }
+      expect(result.valid).to.be.true;
+      expect(result.warnings).to.include('Consider adding requirements');
+      expect(result.warnings).to.include('Consider adding acceptance criteria');
     });
   });
 });

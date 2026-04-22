@@ -16,6 +16,21 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 /**
+ * Load a JSON file if it exists, returning null on failure
+ */
+function loadJsonFile(filePath: string): Record<string, any> | null {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (error) {
+    console.warn(`[Domain Inference] Failed to load ${path.basename(filePath)}:`, error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
+
+/**
  * Load domain mapping indices if they exist
  */
 function loadDomainIndices(): {
@@ -24,30 +39,32 @@ function loadDomainIndices(): {
     } {
   const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
 
-  let domainToComponents = null;
-  let componentToDomains = null;
+  const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
+  const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
 
-  try {
-    const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
-    if (fs.existsSync(domainToComponentsPath)) {
-      domainToComponents = JSON.parse(fs.readFileSync(domainToComponentsPath, 'utf-8'));
-    }
-  } catch (error) {
-    // Indices not available yet - gracefully fallback
-    console.warn('[Domain Inference] Failed to load domain-to-components.json:', error instanceof Error ? error.message : 'Unknown error');
+  return {
+    domainToComponents: loadJsonFile(domainToComponentsPath),
+    componentToDomains: loadJsonFile(componentToDomainsPath),
+  };
+}
+
+/**
+ * Count keyword matches in text
+ */
+function countKeywordMatches(text: string, keywords: string[]): number {
+  return keywords.reduce((count, keyword) => {
+    return text.includes(keyword.toLowerCase()) ? count + 1 : count;
+  }, 0);
+}
+
+/**
+ * Extract keywords from a component entry
+ */
+function extractKeywords(component: any): string[] {
+  if (typeof component === 'string') {
+    return [component];
   }
-
-  try {
-    const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
-    if (fs.existsSync(componentToDomainsPath)) {
-      componentToDomains = JSON.parse(fs.readFileSync(componentToDomainsPath, 'utf-8'));
-    }
-  } catch (error) {
-    // Indices not available yet - gracefully fallback
-    console.warn('[Domain Inference] Failed to load component-to-domains.json:', error instanceof Error ? error.message : 'Unknown error');
-  }
-
-  return { domainToComponents, componentToDomains };
+  return component.keywords || [];
 }
 
 /**
@@ -58,31 +75,18 @@ function calculateDomainScore(
   domain: string,
   components: any
 ): number {
-  let score = 0;
+  let score = text.includes(domain.toLowerCase()) ? 2 : 0;
 
-  // Check if domain name appears in text
-  if (text.includes(domain.toLowerCase())) {
-    score += 2;
-  }
-
-  // Check component keywords
   if (!Array.isArray(components)) {
     return score;
   }
 
-  for (const component of components) {
-    const keywords = typeof component === 'string'
-      ? [component]
-      : component.keywords || [];
+  const keywordMatches = components.reduce((total, component) => {
+    const keywords = extractKeywords(component);
+    return total + countKeywordMatches(text, keywords);
+  }, 0);
 
-    for (const keyword of keywords) {
-      if (text.includes(keyword.toLowerCase())) {
-        score += 1;
-      }
-    }
-  }
-
-  return score;
+  return score + keywordMatches;
 }
 
 /**
@@ -307,6 +311,46 @@ Respond in this exact JSON format:
 }
 
 /**
+ * Extract components for a domain from indices
+ */
+function extractComponentsForDomain(
+  domainToComponents: Record<string, any>,
+  domain: string
+): string[] {
+  const components = domainToComponents[domain];
+  if (!components) {
+    return [];
+  }
+  
+  return components
+    .filter((c: any) => typeof c === 'string')
+    .slice(0, 5); // Limit to top 5 components
+}
+
+/**
+ * Try to infer domain from indices
+ */
+function tryInferFromIndices(
+  issue: IssueTemplate,
+  domainToComponents: Record<string, any>
+): { domain: CHTDomain; components: string[] } | null {
+  const domainFromIndices = inferDomainFromIndices(issue, domainToComponents);
+  
+  if (!domainFromIndices) {
+    return null;
+  }
+  
+  console.log(`[Domain Inference] Using index-based inference. Domain: ${domainFromIndices}`);
+  
+  const components = extractComponentsForDomain(domainToComponents, domainFromIndices);
+  
+  return {
+    domain: domainFromIndices,
+    components,
+  };
+}
+
+/**
  * Main function: Infer domain and components for an issue
  */
 export async function inferDomainAndComponents(
@@ -331,22 +375,10 @@ export async function inferDomainAndComponents(
   const indices = loadDomainIndices();
   
   if (indices.domainToComponents) {
-    const domainFromIndices = inferDomainFromIndices(issue, indices.domainToComponents);
+    const resultFromIndices = tryInferFromIndices(issue, indices.domainToComponents);
     
-    if (domainFromIndices) {
-      console.log(`[Domain Inference] Using index-based inference. Domain: ${domainFromIndices}`);
-      
-      // Get components for this domain from indices
-      const components = indices.domainToComponents[domainFromIndices]
-        ? indices.domainToComponents[domainFromIndices]
-          .filter((c: any) => typeof c === 'string')
-          .slice(0, 5) // Limit to top 5 components
-        : [];
-      
-      return {
-        domain: domainFromIndices,
-        components,
-      };
+    if (resultFromIndices) {
+      return resultFromIndices;
     }
   }
 
