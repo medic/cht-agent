@@ -22,13 +22,58 @@ export type CHTDomain =
 export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 
 /**
+ * Issue type classification
+ */
+export type IssueType = 'feature' | 'bug' | 'improvement';
+
+/**
+ * Priority level classification
+ */
+export type PriorityLevel = 'high' | 'medium' | 'low';
+
+/**
+ * Complexity level classification
+ */
+export type ComplexityLevel = 'low' | 'medium' | 'high';
+
+/**
+ * Message role types
+ */
+export type MessageRole = 'user' | 'assistant' | 'system';
+
+/**
+ * Research phase types
+ */
+export type ResearchPhase = 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
+
+/**
+ * Research source types
+ */
+export type ResearchSource = 'kapa-ai' | 'local-docs' | 'cached';
+
+/**
+ * Issue phase types
+ */
+export type IssuePhase = 'research' | 'implementation' | 'validation' | 'completed';
+
+/**
+ * Agent type classification
+ */
+export type AgentType = 'supervisor' | 'worker';
+
+/**
+ * MCP tool types
+ */
+export type MCPTool = 'search_docs' | 'get_context';
+
+/**
  * Issue template structure
  */
 export interface IssueTemplate {
   issue: {
     title: string;
-    type: 'feature' | 'bug' | 'improvement';
-    priority: 'high' | 'medium' | 'low';
+    type: IssueType;
+    priority: PriorityLevel;
     description: string;
     technical_context: {
       domain: CHTDomain; // Required - must be specified in ticket frontmatter
@@ -158,7 +203,7 @@ export interface ResearchFindings {
   suggestedApproaches: string[];
   relatedDomains: CHTDomain[];
   confidence: number; // 0-1
-  source: 'kapa-ai' | 'local-docs' | 'cached';
+  source: ResearchSource;
 }
 
 /**
@@ -170,7 +215,7 @@ export interface ResolvedIssueContext {
   timestamp: string;
   category: string;
   domains: CHTDomain[];
-  phase: 'research' | 'implementation' | 'validation' | 'completed';
+  phase: IssuePhase;
   task_id: string;
   summary: string;
   tech_stack: string[];
@@ -225,11 +270,11 @@ export interface OrchestrationPlan {
   summary: string;
   keyFindings: string[];
   proposedApproach: string;
-  estimatedComplexity: 'low' | 'medium' | 'high';
+  estimatedComplexity: ComplexityLevel;
   phases: Array<{
     name: string;
     description: string;
-    estimatedComplexity: 'low' | 'medium' | 'high';
+    estimatedComplexity: ComplexityLevel;
     suggestedComponents: string[];
     dependencies: string[];
   }>;
@@ -242,7 +287,7 @@ export interface OrchestrationPlan {
  */
 export interface ResearchState {
   messages: Array<{
-    role: 'user' | 'assistant' | 'system';
+    role: MessageRole;
     content: string;
     timestamp: string;
   }>;
@@ -250,7 +295,7 @@ export interface ResearchState {
   researchFindings?: ResearchFindings;
   contextAnalysis?: ContextAnalysisResult;
   orchestrationPlan?: OrchestrationPlan;
-  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
+  currentPhase: ResearchPhase;
   errors: string[];
 }
 
@@ -267,7 +312,7 @@ export interface AgentMessage {
   timestamp: string;
   source: {
     agent_id: string;
-    type: 'supervisor' | 'worker';
+    type: AgentType;
   };
   target: {
     agent_id: string;
@@ -291,7 +336,7 @@ export interface AgentMessage {
  * MCP (Model Context Protocol) tool call for Kapa.AI
  */
 export interface MCPToolCall {
-  tool: 'search_docs' | 'get_context';
+  tool: MCPTool;
   parameters: {
     query: string;
     domain?: CHTDomain;

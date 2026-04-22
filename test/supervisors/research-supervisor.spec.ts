@@ -5,51 +5,13 @@ import {
   ContextAnalysisResult,
   ResolvedIssueContext,
 } from '../../src/types';
+import { createTestIssue, createResearchFindings, createContextAnalysis } from '../helpers';
 
 // Since ResearchSupervisor has LLM dependencies, we test the pure functions
 // by extracting the logic. These functions are private methods but we can
 // test the logic patterns.
 
 describe('ResearchSupervisor - Pure Functions', () => {
-  // Helper to create test issue template
-  const createTestIssue = (overrides: Partial<IssueTemplate['issue']> = {}): IssueTemplate => ({
-    issue: {
-      title: 'Test Issue',
-      type: 'feature',
-      priority: 'medium',
-      description: 'Test description',
-      technical_context: {
-        domain: 'contacts',
-        components: ['api/controllers/contacts', 'webapp/modules/contacts'],
-      },
-      requirements: ['Req 1', 'Req 2'],
-      acceptance_criteria: ['Criterion 1'],
-      constraints: ['Constraint 1'],
-      ...overrides,
-    },
-  });
-
-  const createResearchFindings = (overrides: Partial<ResearchFindings> = {}): ResearchFindings => ({
-    documentationReferences: [],
-    relevantExamples: [],
-    suggestedApproaches: ['Approach 1'],
-    relatedDomains: ['contacts'],
-    confidence: 0.8,
-    source: 'kapa-ai',
-    ...overrides,
-  });
-
-  const createContextAnalysis = (
-    overrides: Partial<ContextAnalysisResult> = {}
-  ): ContextAnalysisResult => ({
-    similarContexts: [],
-    reusablePatterns: [],
-    relevantDesignDecisions: [],
-    recommendations: ['Recommendation 1'],
-    historicalSuccessRate: 0.8,
-    relatedDomains: ['contacts'],
-    ...overrides,
-  });
 
   describe('estimateComplexity logic', () => {
     // Testing the complexity estimation algorithm

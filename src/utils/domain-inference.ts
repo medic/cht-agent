@@ -9,44 +9,111 @@
  * 2. Claude LLM reasoning as fallback
  */
 
-// import * as fs from 'fs';
-// import * as path from 'path';
+
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /**
  * Load domain mapping indices if they exist
- * TODO: Use this function when implementing index-based inference
  */
-// function loadDomainIndices(): {
-//   domainToComponents: Record<string, any> | null;
-//   componentToDomains: Record<string, string[]> | null;
-// } {
-//   const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
-//
-//   let domainToComponents = null;
-//   let componentToDomains = null;
-//
-//   try {
-//     const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
-//     if (fs.existsSync(domainToComponentsPath)) {
-//       domainToComponents = JSON.parse(fs.readFileSync(domainToComponentsPath, 'utf-8'));
-//     }
-//   } catch (error) {
-//     // Indices not available yet
-//   }
-//
-//   try {
-//     const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
-//     if (fs.existsSync(componentToDomainsPath)) {
-//       componentToDomains = JSON.parse(fs.readFileSync(componentToDomainsPath, 'utf-8'));
-//     }
-//   } catch (error) {
-//     // Indices not available yet
-//   }
-//
-//   return { domainToComponents, componentToDomains };
-// }
+function loadDomainIndices(): {
+    domainToComponents: Record<string, any> | null;
+    componentToDomains: Record<string, string[]> | null;
+    } {
+  const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
+
+  let domainToComponents = null;
+  let componentToDomains = null;
+
+  try {
+    const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
+    if (fs.existsSync(domainToComponentsPath)) {
+      domainToComponents = JSON.parse(fs.readFileSync(domainToComponentsPath, 'utf-8'));
+    }
+  } catch (error) {
+    // Indices not available yet - gracefully fallback
+    console.warn('[Domain Inference] Failed to load domain-to-components.json:', error instanceof Error ? error.message : 'Unknown error');
+  }
+
+  try {
+    const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
+    if (fs.existsSync(componentToDomainsPath)) {
+      componentToDomains = JSON.parse(fs.readFileSync(componentToDomainsPath, 'utf-8'));
+    }
+  } catch (error) {
+    // Indices not available yet - gracefully fallback
+    console.warn('[Domain Inference] Failed to load component-to-domains.json:', error instanceof Error ? error.message : 'Unknown error');
+  }
+
+  return { domainToComponents, componentToDomains };
+}
+
+/**
+ * Calculate score for a single domain based on keyword matches
+ */
+function calculateDomainScore(
+  text: string,
+  domain: string,
+  components: any
+): number {
+  let score = 0;
+
+  // Check if domain name appears in text
+  if (text.includes(domain.toLowerCase())) {
+    score += 2;
+  }
+
+  // Check component keywords
+  if (!Array.isArray(components)) {
+    return score;
+  }
+
+  for (const component of components) {
+    const keywords = typeof component === 'string'
+      ? [component]
+      : component.keywords || [];
+
+    for (const keyword of keywords) {
+      if (text.includes(keyword.toLowerCase())) {
+        score += 1;
+      }
+    }
+  }
+
+  return score;
+}
+
+/**
+ * Infer domain from indices based on keywords in the issue
+ */
+function inferDomainFromIndices(
+  issue: IssueTemplate,
+  domainToComponents: Record<string, any>
+): CHTDomain | null {
+  const text = `${issue.issue.title} ${issue.issue.description}`.toLowerCase();
+
+  // Calculate scores for all domains
+  const domainScores = Object.entries(domainToComponents)
+    .map(([domain, components]) => ({
+      domain,
+      score: calculateDomainScore(text, domain, components),
+    }))
+    .filter(item => item.score > 0);
+
+  // Return domain with highest score if any matches found
+  if (domainScores.length === 0) {
+    return null;
+  }
+
+  const bestMatch = domainScores.reduce((best, current) =>
+    current.score > best.score ? current : best,
+  domainScores[0]);
+
+  return bestMatch.domain as CHTDomain;
+}
+
 
 /**
  * Format array items for prompt, handling empty arrays gracefully
@@ -184,10 +251,16 @@ Respond in this exact JSON format:
 }`;
 
   const response = await model.invoke(prompt);
-  const content = response.content.toString();
+  const content = typeof response.content === 'string' 
+    ? response.content 
+    : response.content.map(block => {
+      if (typeof block === 'string') return block;
+      if ('text' in block) return block.text ?? '';
+      return '';
+    }).join('');
 
   // Extract JSON from response
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  const jsonMatch = new RegExp(/\{[\s\S]*\}/).exec(content);
   if (!jsonMatch) {
     throw new Error('LLM did not return valid JSON response');
   }
@@ -247,18 +320,38 @@ export async function inferDomainAndComponents(
   if (hasExistingDomain && hasExistingComponents) {
     console.log('[Domain Inference] Using domain and components from ticket');
     return {
-      domain: issue.issue.technical_context.domain!,
+      domain: issue.issue.technical_context.domain,
       components: issue.issue.technical_context.components,
     };
   }
 
   console.log('[Domain Inference] Inferring domain and components...');
 
-  // Try to use indices first (when implemented)
-  // const indices = loadDomainIndices();
-  // TODO: Implement index-based inference when indices are populated
+  // Try to use indices first
+  const indices = loadDomainIndices();
+  
+  if (indices.domainToComponents) {
+    const domainFromIndices = inferDomainFromIndices(issue, indices.domainToComponents);
+    
+    if (domainFromIndices) {
+      console.log(`[Domain Inference] Using index-based inference. Domain: ${domainFromIndices}`);
+      
+      // Get components for this domain from indices
+      const components = indices.domainToComponents[domainFromIndices]
+        ? indices.domainToComponents[domainFromIndices]
+          .filter((c: any) => typeof c === 'string')
+          .slice(0, 5) // Limit to top 5 components
+        : [];
+      
+      return {
+        domain: domainFromIndices,
+        components,
+      };
+    }
+  }
 
-  // For now, use LLM inference
+  // Fall back to LLM inference
+  console.log('[Domain Inference] Indices unavailable, using LLM inference...');
   const inferred = await inferUsingLLM(issue, modelName);
 
   console.log(`[Domain Inference] Inferred domain: ${inferred.domain}`);

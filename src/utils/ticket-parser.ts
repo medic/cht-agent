@@ -5,8 +5,8 @@
  * All detailed content is extracted from markdown body sections
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain } from '../types';
 
@@ -46,10 +46,20 @@ function extractFrontmatter(content: string): {
     const parsed = yaml.load(yamlContent);
     if (parsed && typeof parsed === 'object') {
       // Convert all values to strings for consistency
+      const stringifyValue = (val: unknown): string => {
+        if (val === null || val === undefined) {
+          return '';
+        }
+        if (typeof val === 'object') {
+          return JSON.stringify(val);
+        }
+        // At this point, val is a primitive (string, number, boolean, symbol, bigint)
+        return String(val as string | number | boolean | symbol | bigint);
+      };
       metadata = Object.fromEntries(
         Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
           key,
-          String(value ?? ''),
+          stringifyValue(value),
         ])
       );
     }
@@ -129,8 +139,8 @@ function validateDomain(domain: string): CHTDomain {
  * Returns all text until the next heading or end of content
  */
 function extractSection(markdown: string, sectionTitle: string): string {
-  const regex = new RegExp(`##\\s+${sectionTitle}\\s*\\n([\\s\\S]*?)(?=\\n##|$)`, 'i');
-  const match = markdown.match(regex);
+  const regex = new RegExp(String.raw`##\s+${sectionTitle}\s*\n([\s\S]*?)(?=\n##|$)`, 'i');
+  const match = new RegExp(regex).exec(markdown);
   return match ? match[1].trim() : '';
 }
 
@@ -167,7 +177,7 @@ function extractCodeItems(text: string): string[] {
     const trimmed = line.trim();
     // Match lines like "- `component/path`"
     if (trimmed.startsWith('- `') || trimmed.startsWith('* `')) {
-      const match = trimmed.match(/[`]([^`]+)[`]/);
+      const match = new RegExp(/`([^`]+)`/).exec(trimmed);
       if (match) {
         items.push(match[1]);
       }
@@ -251,9 +261,7 @@ export function parseTicketFile(filePath: string): IssueTemplate {
 
   // Parse technical context
   const components = extractCodeItems(technicalContextSection);
-  const existingReferencesMatch = technicalContextSection.match(
-    /\*\*Existing References:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
-  );
+  const existingReferencesMatch = new RegExp(/\*\*Existing References:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i).exec(technicalContextSection);
   const existingReferences = existingReferencesMatch
     ? extractBulletList(existingReferencesMatch[1])
     : [];
@@ -264,12 +272,8 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   const constraints = extractBulletList(constraintsSection);
 
   // Parse references
-  const similarImplementationsMatch = referencesSection.match(
-    /\*\*Similar Implementations:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
-  );
-  const documentationMatch = referencesSection.match(
-    /\*\*Documentation:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
-  );
+  const similarImplementationsMatch = new RegExp(/\*\*Similar Implementations:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i).exec(referencesSection);
+  const documentationMatch = new RegExp(/\*\*Documentation:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i).exec(referencesSection);
 
   const similarImplementations = similarImplementationsMatch
     ? extractURLs(similarImplementationsMatch[1])
