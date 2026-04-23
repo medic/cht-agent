@@ -179,19 +179,19 @@ export class MCPClient {
       return match ? match[index].trim() : '';
     };
 
-  const title = extract(/\*\*([^|*]+)\|([^*]+)\*\*/);
-  const sectionPath = extract(/^#\s*([^\n]+)/m);
-  const sourceUrl = extract(/Source:\s*(https?:\/\/[^\s]+)/);
+    const title = extract(/\*\*([^|*]+)\|([^*]+)\*\*/);
+    const sectionPath = extract(/^#\s*([^\n]+)/m);
+    const sourceUrl = extract(/Source:\s*(https?:\/\/[^\s]+)/);
 
-  if (!sourceUrl) return null;
+    if (!sourceUrl) return null;
 
-  const contentStart = section.indexOf('##');
-  const contentEnd = section.lastIndexOf('Source:');
+    const contentStart = section.indexOf('##');
+    const contentEnd = section.lastIndexOf('Source:');
 
-  let content = section;
-  if (contentStart !== -1 && contentEnd !== -1) {
-    content = section.substring(contentStart, contentEnd).trim();
-  }
+    let content = section;
+    if (contentStart !== -1 && contentEnd !== -1) {
+      content = section.substring(contentStart, contentEnd).trim();
+    }
 
     return {
       title,

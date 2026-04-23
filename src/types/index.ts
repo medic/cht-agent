@@ -327,30 +327,3 @@ export interface MCPClientConfig {
   /** Request timeout in milliseconds */
   timeout?: number;
 }
-
-/**
- * Legacy MCP types (kept for backward compatibility)
- * @deprecated Use the new MCP* types instead
- */
-export interface MCPToolCall {
-  tool: 'search_docs' | 'get_context';
-  parameters: {
-    query: string;
-    domain?: CHTDomain;
-    max_results?: number;
-  };
-}
-
-/**
- * Legacy MCP Response (kept for backward compatibility)
- * @deprecated Use MCPSearchDocsResponse or MCPAskQuestionResponse instead
- */
-export interface MCPResponse {
-  success: boolean;
-  data?: {
-    references: DocumentationReference[];
-    summary: string;
-    relatedTopics: string[];
-  };
-  error?: string;
-}

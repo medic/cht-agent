@@ -102,7 +102,7 @@ export class DocumentationSearchAgent {
     if (!content) return [];
 
     const keywords = [
-      'contact', 'hierarchy', 'form', 'report', 'task', 'target',
+      'contact', 'hierarchy', 'forms', 'report', 'task', 'target',
       'permission', 'role', 'sync', 'replication', 'offline',
       'sentinel', 'transition', 'workflow', 'validation',
     ];
@@ -119,7 +119,9 @@ export class DocumentationSearchAgent {
   private mockKapaAIResponse(domain: CHTDomain): MCPParsedDocument[] {
     console.log('[Documentation Search Agent] Using MOCKED Kapa.AI response');
 
-    // Domain-specific mock responses
+    // Domain-specific mock responses.
+    // Note: codeExamples are intentionally absent for now as extractCodeExamples() from markdown
+    // content is deferred to PR #86. relevantExamples will always be [] until then.
     const mockData: Record<CHTDomain, DocumentationReference[]> = {
       contacts: [
         {
@@ -235,6 +237,10 @@ export class DocumentationSearchAgent {
     const relatedTopics = references.flatMap((r) => r.topics);
 
     // Extract code examples
+
+    // TODO(#86): extractCodeExamples() from markdown content will be wired in here.
+    // Until then relevantExamples is always [] (empty)
+
     const relevantExamples = references
       .flatMap((ref) => ref.codeExamples || [])
       .filter((example, index, self) => self.indexOf(example) === index);
@@ -311,4 +317,5 @@ export class DocumentationSearchAgent {
 
     return relatedDomains;
   }
+
 }
