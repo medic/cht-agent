@@ -348,51 +348,38 @@ describe('DocumentationSearchAgent', () => {
     });
   });
 
-  describe('processMCPResponse', () => {
-    it('should return empty findings for unsuccessful response', () => {
+  describe('buildFindings', () => {
+    it('should return empty references and low confidence for empty doc list', () => {
       const issue = createTestIssue();
-      const mcpResponse = { success: false, data: null };
 
-      const findings = (agent as any).processMCPResponse(mcpResponse, issue);
+      const findings = (agent as any).buildFindings([], issue);
 
       expect(findings.documentationReferences).to.deep.equal([]);
-      expect(findings.confidence).to.equal(0);
-    });
-
-    it('should extract unique code examples', () => {
-      const issue = createTestIssue();
-      const mcpResponse = {
-        success: true,
-        data: {
-          references: [
-            { url: 'https://1.com', title: 'T1', topics: [], codeExamples: ['example1', 'example2'] },
-            { url: 'https://2.com', title: 'T2', topics: [], codeExamples: ['example1', 'example3'] },
-          ],
-          summary: 'Test',
-          relatedTopics: [],
-        },
-      };
-
-      const findings = (agent as any).processMCPResponse(mcpResponse, issue);
-
-      // Should deduplicate 'example1'
-      expect(findings.relevantExamples).to.have.lengthOf(3);
+      expect(findings.confidence).to.equal(0.3);
     });
 
     it('should use "cached" source when using mock MCP', () => {
+      const docs = [
+        { title: 'T1', section: 'S1', content: 'contact hierarchy', sourceUrl: 'https://1.com' },
+      ];
       const issue = createTestIssue();
-      const mcpResponse = {
-        success: true,
-        data: {
-          references: [{ url: 'https://1.com', title: 'T1', topics: [] }],
-          summary: 'Test',
-          relatedTopics: [],
-        },
-      };
 
-      const findings = (agent as any).processMCPResponse(mcpResponse, issue);
+      const findings = (agent as any).buildFindings(docs, issue);
 
       expect(findings.source).to.equal('cached');
+    });
+
+    it('should build references from parsed documents', () => {
+      const docs = [
+        { title: 'T1', section: 'S1', content: 'form validation', sourceUrl: 'https://1.com' },
+        { title: 'T2', section: 'S2', content: 'task target',     sourceUrl: 'https://2.com' },
+      ];
+      const issue = createTestIssue();
+
+      const findings = (agent as any).buildFindings(docs, issue);
+
+      expect(findings.documentationReferences).to.have.lengthOf(2);
+      expect(findings.confidence).to.equal(0.85);
     });
   });
 
