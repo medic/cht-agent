@@ -65,4 +65,3 @@ Issue #141 was resolved by removing reliance on the workaround and strengthening
 
 - #116: Allow mediators to update resources with PUT requests
 - #54: Make mediator endpoints FHIR compliant
-- #138: allow OpenMRS sync to be configureable

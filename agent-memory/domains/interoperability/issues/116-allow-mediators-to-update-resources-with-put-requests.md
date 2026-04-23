@@ -72,4 +72,3 @@ Issue #116 was repurposed as a tracking item for validating update semantics und
 
 - #141: OpenMRS sync creates duplicate resources
 - #54: Make mediator endpoints FHIR compliant
-- #138: allow OpenMRS sync to be configureable
