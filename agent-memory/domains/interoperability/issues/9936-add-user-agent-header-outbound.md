@@ -29,7 +29,7 @@ Added a `getUserAgent` function to `shared-libs/couch-request/src/couch-request.
 
 The existing `getUserAgent` code and `CHT_AGENT` constant were simultaneously **removed** from `shared-libs/outbound/src/outbound.js`, as this responsibility was now centralized in `couch-request`.
 
-A circular dependency existed between `couch-request` and `environment` (because `environment.getVersion` called `couch-request` to read the version from CouchDB, and `couch-request` was now calling `environment.getVersion` for the User-Agent). This was resolved by adding lazy loading (requiring `couch-request` inside the function body) inside `getDeployInfo` in `shared-libs/environment/src/index.js`.
+A circular dependency existed between `couch-request` and `server-info` (because `server-info` called `couch-request` to read the version from CouchDB, and `couch-request` was now calling `server-info` for the User-Agent). This was resolved by adding lazy loading (requiring `couch-request` inside the function body) inside `getDeployInfo` in `shared-libs/server-info/src/index.js`.
 
 ## Code Patterns
 
@@ -42,7 +42,7 @@ A circular dependency existed between `couch-request` and `environment` (because
 ## Design Choices
 
 - Moved User-Agent to `couch-request` (not just the outbound lib) so ALL outgoing CHT HTTP requests carry the header, making the fix future-proof
-- Made the version dynamic from `@medic/environment` rather than hardcoded, so the header stays accurate across CHT upgrades
+- Made the version dynamic from `@medic/server-info` rather than hardcoded, so the header stays accurate across CHT upgrades
 - Chose lazy loading to resolve the circular dependency rather than removing the version from the User-Agent, so that external services get useful version information
 - Per-request `headers` config can still override the default User-Agent for deployments with specific requirements
 
@@ -51,8 +51,8 @@ A circular dependency existed between `couch-request` and `environment` (because
 - shared-libs/couch-request/src/couch-request.js
 - shared-libs/couch-request/test/couch-request.js
 - shared-libs/outbound/src/outbound.js
-- shared-libs/environment/src/index.js
-- shared-libs/environment/test/index.spec.js
+- shared-libs/server-info/src/index.js
+- shared-libs/server-info/test/index.spec.js
 
 ## Testing
 

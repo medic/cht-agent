@@ -21,15 +21,15 @@ Prior to CHT 3.9.0, every time a document changed and passed the `relevant_to` f
 
 ## Root Cause
 
-The 3.9.0 change added a `hasPushed` flag per `(document, outbound-config-key)` pair in the CouchDB info doc. Once set, the outbound scheduler unconditionally skipped re-sending that document for that config key. The design assumed send-once was universally correct, which was not true for sync-style integrations.
+The 3.9.0 change added a tracking entry to the `completed_tasks` array in the CouchDB info doc per `(document, outbound-config-key)` pair. Once set, the outbound scheduler's `alreadySent` function returned truthy, unconditionally skipping re-sending that document for that config key. The design assumed send-once was universally correct, which was not true for sync-style integrations.
 
 ## Solution
 
-The chosen solution (option 2 from the issue discussion, selected after discussion with @mhawila) was **internal hashing of the REST output**: the resolved outbound payload is hashed and the hash is stored in the info doc alongside the `hasPushed` flag. On each subsequent scheduler run, the current payload is hashed and compared against the stored hash. If the hash differs, the document is re-sent and the new hash is stored. If the hash is the same, the send is skipped. This requires no new configurer-facing configuration — the behavior is automatic for all outbound configs, shipped in PR #6469.
+The chosen solution (option 2 from the issue discussion, selected after discussion with @mhawila) was **internal hashing of the REST output**: the resolved outbound payload is hashed and the hash is stored as a property on the `completed_tasks` entry. On each subsequent scheduler run, the current payload is hashed and compared against the stored hash by the `alreadySent` function. If the hash differs, the document is re-sent and the new hash is stored. If the hash is the same, the send is skipped. This requires no new configurer-facing configuration — the behavior is automatic for all outbound configs, shipped in PR #6469.
 
 ## Code Patterns
 
-- The hash of the resolved REST payload is stored in the info doc under the outbound config key, alongside the existing sent-state tracking
+- The hash of the resolved REST payload is stored as a property on each `completed_tasks` entry in the info doc
 - On each scheduler run, the outbound push module (`shared-libs/outbound/src/outbound.js` or `sentinel/src/schedule/outbound.js`) resolves the mapping to get the current payload, hashes it (e.g. using `JSON.stringify` + a hash function), and compares to the stored hash
 - If the hashes differ (payload changed since last send), the push is attempted and the new hash is saved on success
 - If the hashes match (no meaningful change), the send is skipped — this handles the case where sentinel re-processes a doc without the user changing anything relevant
@@ -39,7 +39,7 @@ The chosen solution (option 2 from the issue discussion, selected after discussi
 
 - Chose hashing (option 2) over `sync: true` flag (option 1) because `sync: true` would re-send on every sentinel write regardless of whether the external-facing data actually changed, leading to unnecessary API calls
 - Chose hashing over `uniqueness: [...]` fields (option 3) because it requires zero extra configuration and is transparent to configurers; the trade-off is that non-deterministic mappings (e.g. including a timestamp in the payload) will cause continuous re-sends, which is documented as a known limitation
-- No new top-level config key was added; the behavior change is backward-compatible because the hash check replaces the simple `hasPushed` boolean
+- No new top-level config key was added; the behavior change is backward-compatible because the hash check was added alongside the existing `completed_tasks` entry shape
 
 ## Related Files
 

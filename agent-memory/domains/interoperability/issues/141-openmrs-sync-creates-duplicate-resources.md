@@ -41,8 +41,6 @@ Issue #141 was resolved by removing reliance on the workaround and strengthening
   - `mediator/src/utils/fhir.ts` (resource retrieval helpers)
 - Service-request/controller orchestration for create/update decisions:
   - `mediator/src/controllers/service-request.ts`
-- Sync logic evolution references:
-  - `mediator/src/utils/openmrs_sync.ts` (as referenced in issue discussion)
 
 ## Design Choices
 
@@ -54,7 +52,6 @@ Issue #141 was resolved by removing reliance on the workaround and strengthening
 
 - mediator/src/utils/fhir.ts
 - mediator/src/controllers/service-request.ts
-- mediator/src/utils/openmrs_sync.ts
 - mediator/test/ltfu-flow.spec.ts
 
 ## Testing
@@ -66,6 +63,6 @@ Issue #141 was resolved by removing reliance on the workaround and strengthening
 
 ## Related Issues
 
-- #124: Decouple OpenMRS and CHT Endpoints
 - #116: Allow mediators to update resources with PUT requests
 - #54: Make mediator endpoints FHIR compliant
+- #138: allow OpenMRS sync to be configureable

@@ -6,8 +6,8 @@ subDomain: credentials
 issueNumber: 5904
 issueUrl: https://github.com/medic/cht-core/issues/5904
 title: Cluster safe credentials
-lastUpdated: 2022-07-22
-summary: Integration secrets (API keys, passwords for Africa's Talking, SIH outbound push, etc.) were stored in the CouchDB node configuration (medic-credentials section) which is node-local and not replicated across cluster nodes. Shipped in CHT 4.0.0 (Jul 22, 2022) as a breaking change, credentials are now stored via a new PUT /api/v1/credentials/<key> API endpoint and kept in a cluster-replicated CouchDB location (medic-vault).
+lastUpdated: 2022-11-08
+summary: Integration secrets (API keys, passwords for Africa's Talking, SIH outbound push, etc.) were stored in the CouchDB node configuration (medic-credentials section) which is node-local and not replicated across cluster nodes. Shipped in CHT 4.0.0 (Nov 08, 2022) as a breaking change, credentials are now stored via a new PUT /api/v1/credentials/<key> API endpoint and kept in a cluster-replicated CouchDB location (medic-vault).
 services:
   - api
   - sentinel
@@ -27,7 +27,7 @@ CouchDB's node configuration (`local.ini`) is intentionally not replicated — i
 
 ## Solution
 
-Introduced a dedicated `PUT /api/v1/credentials/<key>` API endpoint (merged Jul 22, 2022, shipped CHT 4.0.0). Credentials are now stored in a CouchDB document in the `medic-vault` database (or equivalent admin-only location) that replicates across cluster nodes automatically. The API endpoint accepts a plaintext credential value in the request body (`Content-Type: text/plain`) and stores it under the given key.
+Introduced a dedicated `PUT /api/v1/credentials/<key>` API endpoint (implemented in PR #7577, merged Jul 22, 2022, shipped CHT 4.0.0). Credentials are now stored in a CouchDB document in the `medic-vault` database (or equivalent admin-only location) that replicates across cluster nodes automatically. The API endpoint accepts a plaintext credential value in the request body (`Content-Type: text/plain`) and stores it securely encrypted at rest under the given key.
 
 Example usage:
 ```bash
@@ -43,7 +43,7 @@ This was a **breaking change**: existing deployments had to migrate credentials 
 
 - Use `PUT /api/v1/credentials/<key>` to write a credential (admin auth required)
 - Use `GET /api/v1/credentials/<key>` to read a credential from application code (sentinel, API services) — never read directly from CouchDB node config after 4.0.0
-- The credential value is stored as plaintext in the `medic-vault` CouchDB document but protected by admin-only access control at the CouchDB layer
+- The credential value is AES-256-CBC encrypted with a random 16-byte IV per write, rather than stored as plaintext. The storage format in the `medic-vault` document is `<iv_hex>:<ciphertext_hex>`.
 - Pattern: credentials must never appear in logs at any level (debug, info, error). The haproxy config already had a password-masking regex; ensure any new credential API path also matches that regex
 - Outbound push configs reference credentials by key in `password_key`; the sentinel outbound module calls the credentials API at push time, not at startup
 

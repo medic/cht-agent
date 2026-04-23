@@ -25,11 +25,11 @@ Initial mediator assumptions and earlier flow design favored `POST` behavior bro
 
 ## Solution
 
-Issue #116 became a tracking item for validating update semantics under the newer mediator architecture:
+Issue #116 was repurposed as a tracking item for validating update semantics under the newer mediator architecture. It is important to note that this issue did not result in a specific, discrete code change or pull request.
 
-- Clarified expected behavior: existing resources should be handled with update semantics.
-- Evaluated where this decision should live (mediator-side state/logic vs upstream assumptions).
-- Closed after confirming behavior in the updated architecture and related implementation work.
+- It served to clarify expected behavior: existing resources should ideally be handled with update semantics.
+- It evaluated where this decision should live (mediator-side state/logic vs upstream assumptions).
+- It was ultimately closed as a tracking-item confirmation after reviewing the behavior in the updated architecture. There is no specific PR to look at for this issue.
 
 ## Code Patterns
 
@@ -71,5 +71,5 @@ Issue #116 became a tracking item for validating update semantics under the newe
 ## Related Issues
 
 - #141: OpenMRS sync creates duplicate resources
-- #124: Decouple OpenMRS and CHT Endpoints
 - #54: Make mediator endpoints FHIR compliant
+- #138: allow OpenMRS sync to be configureable
