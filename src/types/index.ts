@@ -158,7 +158,7 @@ export interface ResearchFindings {
   suggestedApproaches: string[];
   relatedDomains: CHTDomain[];
   confidence: number; // 0-1
-  source: 'kapa-ai' | 'local-docs' | 'cached';
+  source: 'kapa-ai' | 'local-docs' | 'cached' | 'mock' | 'error';
 }
 
 /**
@@ -207,6 +207,27 @@ export interface DesignDecision {
 }
 
 /**
+ * Code snippet from cht-core codebase
+ */
+export interface CodeSnippet {
+  filePath: string;
+  content: string;
+  language: string;
+  relevance: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Code context gathered from cht-core codebase
+ */
+export interface CodeContext {
+  domain: CHTDomain;
+  description: string;
+  codeSnippets: CodeSnippet[];
+  availableFiles: string[];
+  missingFiles: string[];
+}
+
+/**
  * Context analysis results from Context Analysis Agent
  */
 export interface ContextAnalysisResult {
@@ -214,8 +235,11 @@ export interface ContextAnalysisResult {
   reusablePatterns: CodePattern[];
   relevantDesignDecisions: DesignDecision[];
   recommendations: string[];
-  historicalSuccessRate: number; // 0-1
+  /** Historical success rate (0-1), null if no historical data available */
+  historicalSuccessRate: number | null;
   relatedDomains: CHTDomain[];
+  /** Code context gathered from cht-core codebase */
+  codeContext: CodeContext | null;
 }
 
 /**
@@ -224,7 +248,8 @@ export interface ContextAnalysisResult {
 export interface OrchestrationPlan {
   summary: string;
   keyFindings: string[];
-  proposedApproach: string;
+  /** Synthesized recommendation based on all research findings */
+  recommendedApproach: string;
   estimatedComplexity: 'low' | 'medium' | 'high';
   phases: Array<{
     name: string;
@@ -287,8 +312,101 @@ export interface AgentMessage {
   };
 }
 
+// ============================================================================
+// MCP (Model Context Protocol) Types for CHT Documentation Server
+// ============================================================================
+
 /**
- * MCP (Model Context Protocol) tool call for Kapa.AI
+ * Available MCP tools for CHT documentation
+ */
+export type MCPToolName = 'search_docs' | 'ask_question' | 'get_sources';
+
+/**
+ * Parameters for search_docs MCP tool
+ */
+export interface MCPSearchDocsParams {
+  query: string;
+  maxResults?: number;
+}
+
+/**
+ * Parameters for ask_question MCP tool
+ */
+export interface MCPAskQuestionParams {
+  question: string;
+  threadId?: string; // For conversation continuity
+}
+
+/**
+ * Raw response from search_docs MCP tool
+ * Returns markdown-formatted document snippets
+ */
+export interface MCPSearchDocsResponse {
+  /** Markdown content with document snippets, titles, and source URLs */
+  content: string;
+}
+
+/**
+ * Raw response from ask_question MCP tool
+ * Returns markdown-formatted answer with sources
+ */
+export interface MCPAskQuestionResponse {
+  /** Markdown content with answer, sources, thread ID, and question ID */
+  content: string;
+}
+
+/**
+ * Raw response from get_sources MCP tool
+ */
+export interface MCPGetSourcesResponse {
+  /** Markdown list of available documentation sources */
+  content: string;
+}
+
+/**
+ * Parsed document from search_docs response
+ */
+export interface MCPParsedDocument {
+  title: string;
+  section: string;
+  content: string;
+  sourceUrl: string;
+}
+
+/**
+ * Parsed answer from ask_question response
+ */
+export interface MCPParsedAnswer {
+  answer: string;
+  sources: Array<{
+    title: string;
+    url: string;
+  }>;
+  threadId?: string;
+  questionAnswerId?: string;
+}
+
+/**
+ * Parsed source from get_sources response
+ */
+export interface MCPParsedSource {
+  type: string;
+  description: string;
+}
+
+/**
+ * MCP Client configuration
+ */
+export interface MCPClientConfig {
+  /** MCP server URL */
+  serverUrl: string;
+  /** Request timeout in milliseconds */
+  timeout?: number;
+}
+
+/**
+ * Legacy MCP types (kept for backward compatibility)
+ * @deprecated Use the new MCP* types instead
  */
 export interface MCPToolCall {
   tool: 'search_docs' | 'get_context';
@@ -300,7 +418,8 @@ export interface MCPToolCall {
 }
 
 /**
- * MCP Response from Kapa.AI
+ * Legacy MCP Response (kept for backward compatibility)
+ * @deprecated Use MCPSearchDocsResponse or MCPAskQuestionResponse instead
  */
 export interface MCPResponse {
   success: boolean;
@@ -310,4 +429,242 @@ export interface MCPResponse {
     relatedTopics: string[];
   };
   error?: string;
+}
+
+/**
+ * Human feedback for validation checkpoints
+ */
+export interface HumanFeedback {
+  approved: boolean;
+  feedback?: string;
+  additionalContext?: string;
+  timestamp: string;
+}
+
+/**
+ * Validation checkpoint types
+ */
+export type ValidationCheckpoint = 'research' | 'implementation';
+
+/**
+ * Research state with human feedback support
+ */
+export interface ResearchStateWithFeedback extends ResearchState {
+  humanFeedback?: HumanFeedback;
+  iterationCount: number;
+}
+
+// ============================================================================
+// DEVELOPMENT SUPERVISOR TYPES
+// ============================================================================
+
+/**
+ * Development workflow options
+ */
+export interface DevelopmentOptions {
+  chtCorePath: string;
+  previewMode: boolean; // true = staging + diff, false = direct write
+  stagingPath?: string; // OS temp directory when previewMode=true
+}
+
+/**
+ * File language types supported
+ */
+export type FileLanguage =
+  | 'typescript'
+  | 'javascript'
+  | 'json'
+  | 'xml'
+  | 'yaml'
+  | 'markdown'
+  | 'html'
+  | 'css'
+  | 'shell';
+
+/**
+ * File type classification
+ */
+export type FileType = 'source' | 'test' | 'config' | 'documentation' | 'fixture';
+
+/**
+ * Generated file representation
+ */
+export interface GeneratedFile {
+  relativePath: string; // Path relative to cht-core root
+  content: string;
+  language: FileLanguage;
+  type: FileType;
+  description: string;
+  action: 'create' | 'modify'; // New file or modifying existing
+  originalContent?: string; // For diff generation when modifying
+}
+
+/**
+ * Code Generation Agent input
+ */
+export interface CodeGenerationInput {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  chtCorePath: string;
+  additionalContext?: string; // Feedback from previous iteration
+  /** Files from previous iteration that passed validation — carry forward unchanged */
+  passingFiles?: GeneratedFile[];
+  /** Files that the validator flagged — only regenerate these (preserves original action) */
+  failingFiles?: FailingFileRef[];
+}
+
+export type FailingFileRef = { path: string; action: 'create' | 'modify' };
+
+/**
+ * Code Generation Agent output
+ */
+export interface CodeGenerationResult {
+  files: GeneratedFile[];
+  summary: string;
+  implementedRequirements: string[];
+  pendingRequirements: string[];
+  notes: string[];
+  confidence: number; // 0-1
+  beadsSessionId?: string;
+}
+
+/**
+ * Test environment configuration
+ */
+export interface TestEnvironmentConfig {
+  type: 'unit' | 'integration' | 'e2e';
+  framework: string;
+  setupCommands: string[];
+  teardownCommands: string[];
+  dependencies: string[];
+}
+
+/**
+ * Test Environment Agent input
+ */
+export interface TestEnvironmentInput {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  codeGeneration: CodeGenerationResult;
+  chtCorePath: string;
+  additionalContext?: string;
+}
+
+/**
+ * Test Environment Agent output
+ */
+export interface TestEnvironmentResult {
+  configs: TestEnvironmentConfig[];
+  testFiles: GeneratedFile[];
+  testDataFiles: GeneratedFile[];
+  setupInstructions: string[];
+  estimatedCoverage: number; // 0-100
+}
+
+/**
+ * Requirement validation status
+ */
+export interface RequirementValidation {
+  requirement: string;
+  met: boolean;
+  notes?: string;
+}
+
+/**
+ * Acceptance criteria validation status
+ */
+export interface AcceptanceCriteriaValidation {
+  criteria: string;
+  passed: boolean;
+  notes?: string;
+}
+
+/**
+ * Per-file validation feedback for selective regeneration
+ */
+export interface FileValidationFeedback {
+  filePath: string;
+  passed: boolean;
+  issues: string[];
+}
+
+/**
+ * Implementation validation result
+ */
+export interface ImplementationValidation {
+  requirementsMet: RequirementValidation[];
+  acceptanceCriteriaPassed: AcceptanceCriteriaValidation[];
+  overallScore: number; // 0-100
+  recommendations: string[];
+  feedbackForCodeGen?: string; // Actionable feedback for refinement loop retry
+  perFileFeedback?: FileValidationFeedback[]; // Per-file pass/fail for selective regeneration
+}
+
+/**
+ * Development phase types
+ */
+export type DevelopmentPhase =
+  | 'init'
+  | 'code-generation'
+  | 'test-setup'
+  | 'validation'
+  | 'complete';
+
+/**
+ * Development Supervisor State
+ */
+export interface DevelopmentState {
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    timestamp: string;
+  }>;
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  options: DevelopmentOptions;
+  codeGeneration?: CodeGenerationResult;
+  testEnvironment?: TestEnvironmentResult;
+  validationResult?: ImplementationValidation;
+  currentPhase: DevelopmentPhase;
+  errors: string[];
+  iterationCount?: number;
+  validationFeedback?: string;
+  perFileFeedback?: FileValidationFeedback[];
+}
+
+/**
+ * Development Supervisor input (from Research phase)
+ */
+export interface DevelopmentInput {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  options: DevelopmentOptions;
+  additionalContext?: string;
+}
+
+/**
+ * Diff result for a single file
+ */
+export interface FileDiff {
+  relativePath: string;
+  action: 'create' | 'modify' | 'delete';
+  additions: number;
+  deletions: number;
+  diff: string; // Unified diff format
+}
+
+/**
+ * Development workflow result
+ */
+export interface DevelopmentWorkflowResult {
+  approved: boolean;
+  result: DevelopmentState | undefined;
+  iterationCount: number;
+  filesWritten: string[];
 }

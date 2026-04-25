@@ -10,3 +10,4 @@ dist/
 # Test coverage
 .nyc_output/
 coverage/
+log

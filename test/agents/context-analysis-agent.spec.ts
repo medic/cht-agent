@@ -127,10 +127,10 @@ describe('ContextAnalysisAgent', () => {
   });
 
   describe('calculateSuccessRate', () => {
-    it('should return 0.5 for empty contexts', () => {
+    it('should return null for empty contexts', () => {
       const rate = (agent as any).calculateSuccessRate([]);
 
-      expect(rate).to.equal(0.5);
+      expect(rate).to.be.null;
     });
 
     it('should return 1.0 when all contexts are completed', () => {
@@ -273,7 +273,7 @@ describe('ContextAnalysisAgent', () => {
 
       expect(result.similarContexts).to.deep.equal([]);
       expect(result.recommendations).to.include('Domain not specified - unable to analyze context');
-      expect(result.historicalSuccessRate).to.equal(0.5);
+      expect(result.historicalSuccessRate).to.be.null;
     });
 
     it('should return related domains when domain overview exists', async () => {

@@ -13,6 +13,7 @@ import * as path from 'path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { IssueTemplate } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
+import { getConfiguredModel } from '../llm/types';
 
 // Load environment variables
 dotenv.config();
@@ -57,9 +58,10 @@ async function runExample() {
     }
 
     // Create Research Supervisor instance
-    console.log('🤖 Initializing Research Supervisor...\n');
+    const modelName = getConfiguredModel();
+    console.log(`🤖 Initializing Research Supervisor with model: ${modelName}\n`);
     const supervisor = new ResearchSupervisor({
-      modelName: 'claude-sonnet-4-20250514',
+      modelName,
       useMockMCP: true, // Using mocked MCP for demo
     });
 
@@ -134,8 +136,9 @@ async function runExample() {
       console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
       console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
       console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
+      const successRate = result.contextAnalysis.historicalSuccessRate;
       console.log(
-        `Historical Success Rate: ${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%`
+        `Historical Success Rate: ${successRate !== null ? `${(successRate * 100).toFixed(0)}%` : 'N/A (no historical data)'}`
       );
 
       if (result.contextAnalysis.recommendations.length > 0) {
@@ -164,8 +167,8 @@ async function runExample() {
         `Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`
       );
       console.log(`Estimated Effort: ${result.orchestrationPlan.estimatedEffort}`);
-      console.log(`\nProposed Approach:`);
-      console.log(`   ${result.orchestrationPlan.proposedApproach}`);
+      console.log(`\nRecommended Approach:`);
+      console.log(`   ${result.orchestrationPlan.recommendedApproach}`);
 
       console.log(`\nKey Findings:`);
       result.orchestrationPlan.keyFindings.forEach((finding, i) => {
@@ -196,11 +199,8 @@ async function runExample() {
     console.log('║                  Research Phase Complete! ✅                   ║');
     console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
-    console.log('💡 Next Steps:');
-    console.log('   1. Review the orchestration plan');
-    console.log('   2. Validate research findings');
-    console.log('   3. Proceed to Development Phase');
-    console.log();
+    console.log('💡 To run the full workflow (research + development):');
+    console.log('   npm run full <ticket-file>\n');
   } catch (error) {
     console.error('\n❌ Error running example:', error);
     if (error instanceof Error) {

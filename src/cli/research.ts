@@ -16,6 +16,8 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { parseTicketFile } from '../utils/ticket-parser';
+import { getConfiguredModel } from '../llm/types';
+import { isUsingCLIProvider } from '../llm';
 
 // Load environment variables
 dotenv.config();
@@ -25,12 +27,19 @@ async function main() {
   console.log('║              CHT Multi-Agent System - Research CLI             ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
-  // Check for API key
-  if (!process.env.ANTHROPIC_API_KEY) {
+  // Check for API key (not required in CLI mode)
+  const usingCLI = isUsingCLIProvider();
+  if (!usingCLI && !process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
     console.log('\nPlease create a .env file with your Anthropic API key:');
-    console.log('ANTHROPIC_API_KEY=your_api_key_here\n');
+    console.log('ANTHROPIC_API_KEY=your_api_key_here');
+    console.log('\nOr use Claude Code CLI mode:');
+    console.log('LLM_PROVIDER=claude-cli\n');
     process.exit(1);
+  }
+
+  if (usingCLI) {
+    console.log('🔧 Using Claude Code CLI provider (no API key required)\n');
   }
 
   try {
@@ -70,10 +79,11 @@ async function main() {
     }
 
     // Create Research Supervisor instance
-    console.log('🤖 Initializing Research Supervisor...\n');
+    const modelName = getConfiguredModel();
+    console.log(`🤖 Initializing Research Supervisor with model: ${modelName}\n`);
     const supervisor = new ResearchSupervisor({
-      modelName: 'claude-sonnet-4-20250514',
-      useMockMCP: true, // Using mocked MCP for now
+      modelName,
+      useMockMCP: false, // Use real MCP server (configured via MCP_SERVER_URL)
     });
 
     // Display issue details
@@ -151,8 +161,9 @@ async function main() {
       console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
       console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
       console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
+      const successRate = result.contextAnalysis.historicalSuccessRate;
       console.log(
-        `Historical Success Rate: ${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%`
+        `Historical Success Rate: ${successRate !== null ? `${(successRate * 100).toFixed(0)}%` : 'N/A (no historical data)'}`
       );
 
       if (result.contextAnalysis.recommendations.length > 0) {
@@ -181,8 +192,8 @@ async function main() {
         `Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`
       );
       console.log(`Estimated Effort: ${result.orchestrationPlan.estimatedEffort}`);
-      console.log(`\nProposed Approach:`);
-      console.log(`   ${result.orchestrationPlan.proposedApproach}`);
+      console.log(`\nRecommended Approach:`);
+      console.log(`   ${result.orchestrationPlan.recommendedApproach}`);
 
       console.log(`\nKey Findings:`);
       result.orchestrationPlan.keyFindings.forEach((finding, i) => {
@@ -213,11 +224,8 @@ async function main() {
     console.log('║                  Research Phase Complete! ✅                   ║');
     console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
-    console.log('💡 Next Steps:');
-    console.log('   1. Review the orchestration plan');
-    console.log('   2. Validate research findings');
-    console.log('   3. Proceed to Development Phase (coming soon)');
-    console.log();
+    console.log('💡 To run the full workflow (research + development):');
+    console.log('   npm run full <ticket-file>\n');
   } catch (error) {
     console.error('\n❌ Error running research workflow:', error);
     if (error instanceof Error) {
