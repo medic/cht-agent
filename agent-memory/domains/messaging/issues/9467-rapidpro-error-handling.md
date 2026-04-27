@@ -6,7 +6,7 @@ subDomain: rapidpro
 issueNumber: 9467
 issueUrl: https://github.com/medic/cht-core/issues/9467
 title: RapidPro API changes result in mishandling of errors
-lastUpdated: 2024-10-15
+lastUpdated: 2024-10-25
 summary: Fixed error handling for RapidPro SMS gateway when it returns 400 errors for invalid phone numbers, preventing infinite message retry loops.
 services:
   - api
@@ -76,5 +76,5 @@ Chose to mark messages as failed rather than retrying because:
 ## Related Issues
 
 - #10428: Send message state clearing improvement
-- #6532: Add RapidPro as SMS Gateway (original RapidPro integration)
+- #9559: fix(#9467): better handling of RapidPro error codes
 - Forum discussion: https://forum.communityhealthtoolkit.org/t/duplication-of-messages-in-text-it/4047/6
