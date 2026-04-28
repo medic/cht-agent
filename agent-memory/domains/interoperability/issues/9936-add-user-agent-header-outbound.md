@@ -25,24 +25,24 @@ The `shared-libs/outbound/src/outbound.js` had added a `User-Agent` header only 
 
 ## Solution
 
-Added a `getUserAgent` function to `shared-libs/couch-request/src/couch-request.js` that dynamically generates a User-Agent string using the CHT version, OS platform, and architecture (e.g. `CommunityHealthToolkit/4.x linux x64`). The `setRequestOptions` function was updated to include this header on every request if a User-Agent is not already set by the caller.
+Added a `getUserAgent` function to `shared-libs/couch-request/src/couch-request.js` that dynamically generates a User-Agent string using the CHT version, OS platform, and architecture (e.g. `Community Health Toolkit/4.x (linux,x64)`). The `setRequestOptions` function was updated to include this header on every request if a User-Agent is not already set by the caller.
 
 The existing `getUserAgent` code and `CHT_AGENT` constant were simultaneously **removed** from `shared-libs/outbound/src/outbound.js`, as this responsibility was now centralized in `couch-request`.
 
-A circular dependency existed between `couch-request` and `server-info` (because `server-info` called `couch-request` to read the version from CouchDB, and `couch-request` was now calling `server-info` for the User-Agent). This was resolved by adding lazy loading (requiring `couch-request` inside the function body) inside `getDeployInfo` in `shared-libs/server-info/src/index.js`.
+A circular dependency existed between `couch-request` and `environment` (because `environment` called `couch-request` to read the version from CouchDB, and `couch-request` was now calling `environment` for the User-Agent). This was resolved by adding lazy loading (`require('@medic/couch-request')` inside the function body) inside `getDeployInfo` in `shared-libs/environment/src/index.js`.
 
 ## Code Patterns
 
 - `getUserAgent` is defined in `shared-libs/couch-request/src/couch-request.js` and called inside `setRequestOptions` before every HTTP request
 - The header is only set if the caller has not already set their own `User-Agent` — custom headers are never overridden
-- Format: `CommunityHealthToolkit/<version> <platform> <arch>` where version, platform and arch are read at runtime
-- The lazy load pattern in `getDeployInfo` (`require('./couch-request')` inside the function body rather than at the top) was used to break the circular dependency — this is an intentional, documented exception; `getDeployInfo` caches its result so the `require` only executes once
+- Format: `Community Health Toolkit/<version> (<platform>,<arch>)` where version comes from `environment.getVersion()` and platform/arch from Node's `os` module
+- The lazy load pattern in `getDeployInfo` (`require('@medic/couch-request')` inside the function body rather than at the top) was used to break the circular dependency. This is an intentional, documented exception; Node's module cache makes subsequent calls effectively free
 - Pattern: always centralize cross-cutting HTTP headers (User-Agent, auth) in the lowest-level request library, not in individual consumers
 
 ## Design Choices
 
 - Moved User-Agent to `couch-request` (not just the outbound lib) so ALL outgoing CHT HTTP requests carry the header, making the fix future-proof
-- Made the version dynamic from `@medic/server-info` rather than hardcoded, so the header stays accurate across CHT upgrades
+- Made the version dynamic via `environment.getVersion()` rather than hardcoded, so the header stays accurate across CHT upgrades
 - Chose lazy loading to resolve the circular dependency rather than removing the version from the User-Agent, so that external services get useful version information
 - Per-request `headers` config can still override the default User-Agent for deployments with specific requirements
 
@@ -51,8 +51,8 @@ A circular dependency existed between `couch-request` and `server-info` (because
 - shared-libs/couch-request/src/couch-request.js
 - shared-libs/couch-request/test/couch-request.js
 - shared-libs/outbound/src/outbound.js
-- shared-libs/server-info/src/index.js
-- shared-libs/server-info/test/index.spec.js
+- shared-libs/environment/src/index.js
+- shared-libs/environment/test/index.spec.js
 
 ## Testing
 
