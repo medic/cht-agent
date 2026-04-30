@@ -276,7 +276,7 @@ export interface AgentMessage {
   message_type: AgentMessageType;
   payload: {
     task_id?: string;
-    content: any;
+    content: Record<string, unknown>;
     priority: number; // 1-10
     requires_response: boolean;
   };
