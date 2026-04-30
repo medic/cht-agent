@@ -171,6 +171,36 @@ describe('ticket-parser', () => {
 
         expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "domain"');
       });
+
+      it('should throw error when type is missing', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-missing-type.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "type"');
+      });
+
+      it('should throw error when priority is missing', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-missing-priority.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "priority"');
+      });
+
+      it('should treat malformed YAML as empty metadata and throw on missing title', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-malformed-yaml.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "title"');
+      });
+
+      it('should treat a file with no frontmatter as empty metadata', () => {
+        const ticketPath = path.join(fixturesPath, 'no-frontmatter.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "title"');
+      });
+
+      it('should treat unclosed frontmatter as empty metadata', () => {
+        const ticketPath = path.join(fixturesPath, 'unclosed-frontmatter.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "title"');
+      });
     });
   });
 

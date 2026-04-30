@@ -256,6 +256,15 @@ describe('DocumentationSearchAgent', () => {
       expect(approaches.some((a: string) => a.includes('Debug'))).to.be.true;
     });
 
+    it('should add refinement recommendation for improvements', () => {
+      const references: any[] = [];
+      const issue = createTestIssue({ type: 'improvement' });
+
+      const approaches = (agent as any).generateApproaches(references, issue);
+
+      expect(approaches.some((a: string) => a.includes('Refine'))).to.be.true;
+    });
+
     it('should limit approaches to 5', () => {
       const references = [
         {
