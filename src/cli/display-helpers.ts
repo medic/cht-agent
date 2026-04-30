@@ -164,7 +164,7 @@ export const runResearchWorkflow = async (
   console.log('🤖 Initializing Research Supervisor...\n');
   const supervisor = new ResearchSupervisor({
     modelName: 'claude-sonnet-4-20250514',
-    useMockMCP: true,
+    useMockMCP: false,
   });
 
   displayIssueDetails(ticket);

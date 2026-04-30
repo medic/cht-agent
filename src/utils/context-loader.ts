@@ -29,6 +29,7 @@ export const parseFrontmatter = (content: string): { metadata: Record<string, un
 
   const [, frontmatter, body] = match;
 
+  // Parse YAML using js-yaml with JSON_SCHEMA to prevent auto date conversion
   let metadata: Record<string, unknown> = {};
   try {
     const parsed = yaml.load(frontmatter, { schema: yaml.JSON_SCHEMA });
