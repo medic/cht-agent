@@ -428,6 +428,106 @@ export class CodeContextAgent {
     B --> D[CouchDB/app_settings]`,
         ],
       },
+      interoperability: {
+        insights: [
+          {
+            component: 'mediator/src/routes',
+            description:
+              'cht-interoperability mediator FHIR routes (patient, encounter, endpoint, organization, service-request) that bridge CHT and external FHIR systems via OpenHIM',
+            patterns: [
+              'route-level FHIR validation',
+              'shared request wrapper for consistent responses',
+              'resource-specific Joi schemas',
+            ],
+            dependencies: [
+              'mediator/src/utils/fhir.ts',
+              'mediator/src/utils/request.ts',
+              'mediator/src/middlewares/index.ts',
+            ],
+          },
+          {
+            component: 'mediator/src/controllers/service-request.ts',
+            description:
+              'Mediator controller orchestrating create vs update behavior for FHIR resources, with identifier-based lookup before create to avoid OpenMRS sync duplicates',
+            patterns: ['identifier-based existence checks', 'create/update method semantics'],
+            dependencies: ['mediator/src/utils/fhir.ts'],
+          },
+          {
+            component: 'sentinel/src/schedule/outbound.js',
+            description:
+              'Sentinel outbound push scheduler that retries queued tasks; runs alongside the mark_for_outbound transition for immediate delivery',
+            patterns: [
+              'dual transition + scheduler delivery',
+              'send-once/hash-of-payload deduplication',
+              'recursive infodoc retries on CouchDB 409',
+            ],
+            dependencies: [
+              'shared-libs/transitions/src/transitions/mark_for_outbound.js',
+              'shared-libs/outbound/src/outbound.js',
+              'shared-libs/infodoc/src/infodoc.js',
+            ],
+          },
+          {
+            component: 'api/src/controllers/contacts-by-phone.js',
+            description:
+              'Public GET /api/v1/contacts-by-phone endpoint used by inbound RapidPro flows to resolve a hydrated contact from a normalized phone number',
+            patterns: ['versioned external API', 'phone normalization', 'hydration of ancestor hierarchy'],
+            dependencies: ['shared-libs/phone-number/src/phone-number.js'],
+          },
+        ],
+        relationships: [
+          {
+            source: 'mediator/src/routes',
+            target: 'mediator/src/utils/fhir.ts',
+            relationship: 'depends-on',
+            description: 'Routes apply validateFhirResource and resource helpers from the shared FHIR utility',
+          },
+          {
+            source: 'mediator/src/routes',
+            target: 'mediator/src/utils/request.ts',
+            relationship: 'depends-on',
+            description: 'Routes pass through requestHandler for consistent response shaping',
+          },
+          {
+            source: 'shared-libs/transitions/src/transitions/mark_for_outbound.js',
+            target: 'shared-libs/outbound/src/outbound.js',
+            relationship: 'calls',
+            description:
+              'Immediate-push transition reuses the extracted send logic shared with the scheduler',
+          },
+          {
+            source: 'sentinel/src/schedule/outbound.js',
+            target: 'shared-libs/outbound/src/outbound.js',
+            relationship: 'calls',
+            description: 'Scheduler retries failed pushes via the same shared outbound send logic',
+          },
+          {
+            source: 'sentinel/src/schedule/outbound.js',
+            target: 'shared-libs/infodoc/src/infodoc.js',
+            relationship: 'depends-on',
+            description:
+              'Outbound delegates infodoc completed_tasks updates to infodocLib.saveCompletedTasks for recursive 409 retries',
+          },
+          {
+            source: 'api/src/controllers/contacts-by-phone.js',
+            target: 'shared-libs/phone-number/src/phone-number.js',
+            relationship: 'depends-on',
+            description: 'Endpoint normalizes the phone parameter via the shared phone-number library',
+          },
+        ],
+        diagrams: [
+          `graph TD
+    A[shared-libs/transitions/mark_for_outbound] -->|immediate| C[shared-libs/outbound]
+    B[sentinel/schedule/outbound] -->|retry| C
+    C --> D[shared-libs/infodoc]
+    C -->|HTTP| E[OpenHIM]
+    E --> F[mediator/src/routes]
+    F --> G[mediator/src/utils/fhir]
+    F --> H[FHIR Server / OpenMRS]
+    I[RapidPro] -->|inbound SMS| J[api/contacts-by-phone]
+    J --> K[shared-libs/phone-number]`,
+        ],
+      },
     };
 
     const domainData = mockData[domain] || { insights: [], relationships: [], diagrams: [] };
