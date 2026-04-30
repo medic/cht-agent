@@ -13,7 +13,8 @@ export type CHTDomain =
   | 'tasks-and-targets'
   | 'messaging'
   | 'data-sync'
-  | 'configuration';
+  | 'configuration'
+  | 'interoperability';
 
 /**
  * CHT Services
@@ -26,7 +27,7 @@ export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 export interface IssueTemplate {
   issue: {
     title: string;
-    type: 'feature' | 'bug' | 'enhancement';
+    type: 'feature' | 'bug' | 'improvement';
     priority: 'high' | 'medium' | 'low';
     description: string;
     technical_context: {
@@ -348,7 +349,7 @@ export interface AgentMessage {
   message_type: AgentMessageType;
   payload: {
     task_id?: string;
-    content: any;
+    content: Record<string, unknown>;
     priority: number; // 1-10
     requires_response: boolean;
   };
@@ -359,27 +360,43 @@ export interface AgentMessage {
   };
 }
 
+// ============================================================================
+// MCP (Model Context Protocol) Types for CHT Documentation Server
+// ============================================================================
+
 /**
- * MCP (Model Context Protocol) tool call for Kapa.AI
+ * Parameters for search_docs MCP tool
  */
-export interface MCPToolCall {
-  tool: 'search_docs' | 'get_context';
-  parameters: {
-    query: string;
-    domain?: CHTDomain;
-    max_results?: number;
-  };
+export interface MCPSearchDocsParams {
+  query: string;
+  maxResults?: number;
 }
 
 /**
- * MCP Response from Kapa.AI
+ * Raw response from search_docs MCP tool
+ * Returns markdown-formatted document snippets
  */
-export interface MCPResponse {
-  success: boolean;
-  data?: {
-    references: DocumentationReference[];
-    summary: string;
-    relatedTopics: string[];
-  };
-  error?: string;
+export interface MCPSearchDocsResponse {
+  /** Markdown content with document snippets, titles, and source URLs */
+  content: string;
+}
+
+/**
+ * Parsed document from search_docs response
+ */
+export interface MCPParsedDocument {
+  title: string;
+  section: string;
+  content: string;
+  sourceUrl: string;
+}
+
+/**
+ * MCP Client configuration
+ */
+export interface MCPClientConfig {
+  /** MCP server URL */
+  serverUrl: string;
+  /** Request timeout in milliseconds */
+  timeout?: number;
 }

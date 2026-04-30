@@ -284,6 +284,9 @@ export class ContextAnalysisAgent {
     } else if (issue.issue.type === 'bug') {
       recommendations.push('Add regression tests to prevent recurrence');
       recommendations.push('Check for similar issues in related components');
+    } else if (issue.issue.type === 'improvement') {
+      recommendations.push('Add or extend tests around the improved behavior');
+      recommendations.push('Confirm no regressions in related workflows');
     }
 
     // Priority-based recommendations

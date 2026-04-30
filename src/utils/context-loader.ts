@@ -19,7 +19,7 @@ const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
 /**
  * Parse YAML frontmatter from markdown files
  */
-export function parseFrontmatter(content: string): { metadata: any; body: string } {
+export function parseFrontmatter(content: string): { metadata: Record<string, unknown>; body: string } {
   const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
   const match = content.match(frontmatterRegex);
 
@@ -30,11 +30,11 @@ export function parseFrontmatter(content: string): { metadata: any; body: string
   const [, frontmatter, body] = match;
 
   // Parse YAML using js-yaml with JSON_SCHEMA to prevent auto date conversion
-  let metadata: any = {};
+  let metadata: Record<string, unknown> = {};
   try {
     const parsed = yaml.load(frontmatter, { schema: yaml.JSON_SCHEMA });
     if (parsed && typeof parsed === 'object') {
-      metadata = parsed;
+      metadata = parsed as Record<string, unknown>;
     }
   } catch (error) {
     // If YAML parsing fails, return empty metadata
@@ -60,7 +60,7 @@ export function loadDomainOverview(
   const { metadata, body } = parseFrontmatter(content);
 
   return {
-    metadata: metadata as DomainOverviewMetadata,
+    metadata: metadata as unknown as DomainOverviewMetadata,
     content: body,
   };
 }
@@ -101,7 +101,7 @@ export function loadWorkflowComponents(workflow: string): WorkflowComponents | n
 /**
  * Load workflow flow documentation
  */
-export function loadWorkflowFlow(workflow: string): { metadata: any; content: string } | null {
+export function loadWorkflowFlow(workflow: string): { metadata: Record<string, unknown>; content: string } | null {
   const flowPath = path.join(AGENT_MEMORY_PATH, 'workflows', workflow, 'flow.md');
 
   if (!fs.existsSync(flowPath)) {
@@ -146,7 +146,7 @@ export function findResolvedIssuesByDomain(domain: CHTDomain): ResolvedIssueCont
         const { metadata } = parseFrontmatter(content);
 
         if (metadata.phase === 'completed') {
-          issues.push(metadata as ResolvedIssueContext);
+          issues.push(metadata as unknown as ResolvedIssueContext);
         }
       }
     }
@@ -159,7 +159,7 @@ export function findResolvedIssuesByDomain(domain: CHTDomain): ResolvedIssueCont
 /**
  * Load index file
  */
-export function loadIndex(indexName: string): any {
+export function loadIndex(indexName: string): Record<string, unknown> | null {
   const indexPath = path.join(AGENT_MEMORY_PATH, 'indices', `${indexName}.json`);
 
   if (!fs.existsSync(indexPath)) {
