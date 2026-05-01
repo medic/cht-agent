@@ -1,6 +1,6 @@
 ---
 title: Refactor contact service to improve maintainability
-type: refactor
+type: improvement
 priority: low
 domain: contacts
 ---

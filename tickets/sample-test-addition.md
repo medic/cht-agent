@@ -1,6 +1,6 @@
 ---
 title: Add tests for contact validation logic
-type: test
+type: improvement
 priority: high
 domain: contacts
 ---

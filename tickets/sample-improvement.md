@@ -1,6 +1,6 @@
 ---
 title: Improve contact search performance
-type: enhancement
+type: improvement
 priority: medium
 domain: contacts
 ---
