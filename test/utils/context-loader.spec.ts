@@ -1,5 +1,4 @@
 import { expect } from 'chai';
-import * as path from 'path';
 import {
   parseFrontmatter,
   loadDomainOverview,
@@ -8,11 +7,9 @@ import {
   getRelatedDomains,
   ensureAgentMemoryExists,
 } from '../../src/utils/context-loader';
-import { createMockFs } from '../helpers';
-import proxyquireStatic from 'proxyquire';
 
-// Use proxyquire to avoid ESM conflicts
-const proxyquire = proxyquireStatic.noCallThru();
+// Use require for proxyquire to avoid ESM conflicts
+const proxyquire = require('proxyquire').noCallThru();
 
 describe('context-loader', () => {
   describe('parseFrontmatter', () => {
@@ -172,18 +169,15 @@ Body`;
 
   // Tests using proxyquire to mock fs module
   describe('with mocked fs (proxyquire)', () => {
-    // Helper to create context loader with mocked fs
-    const createContextLoader = (mockFs: any) => {
-      return proxyquire('../../src/utils/context-loader', {
-        fs: mockFs,
-        path: path,
-      });
-    };
-
     describe('loadDomainOverview', () => {
       it('should return null when file does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.loadDomainOverview('contacts');
         expect(result).to.be.null;
@@ -200,11 +194,14 @@ related_domains: [forms-and-reports]
 
 Overview content here.`;
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => mockContent,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.loadDomainOverview('contacts');
 
@@ -216,8 +213,13 @@ Overview content here.`;
 
     describe('loadDomainComponents', () => {
       it('should return null when file does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.loadDomainComponents('contacts');
         expect(result).to.be.null;
@@ -232,11 +234,14 @@ Overview content here.`;
           },
         };
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => JSON.stringify(mockComponents),
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.loadDomainComponents('contacts');
 
@@ -248,8 +253,13 @@ Overview content here.`;
 
     describe('loadWorkflowComponents', () => {
       it('should return null when file does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.loadWorkflowComponents('contact-creation');
         expect(result).to.be.null;
@@ -262,11 +272,14 @@ Overview content here.`;
           components: { api: ['contacts-controller'] },
         };
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => JSON.stringify(mockWorkflow),
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.loadWorkflowComponents('contact-creation');
 
@@ -277,8 +290,13 @@ Overview content here.`;
 
     describe('loadWorkflowFlow', () => {
       it('should return null when file does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.loadWorkflowFlow('contact-creation');
         expect(result).to.be.null;
@@ -294,11 +312,14 @@ version: 1.0
 
 Step-by-step workflow.`;
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => mockContent,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.loadWorkflowFlow('contact-creation');
 
@@ -310,8 +331,13 @@ Step-by-step workflow.`;
 
     describe('loadIndex', () => {
       it('should return null when index file does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.loadIndex('domain-to-components');
         expect(result).to.be.null;
@@ -323,11 +349,14 @@ Step-by-step workflow.`;
           authentication: ['api/auth'],
         };
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => JSON.stringify(mockIndex),
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.loadIndex('domain-to-components');
 
@@ -338,8 +367,13 @@ Step-by-step workflow.`;
 
     describe('findResolvedIssuesByDomain', () => {
       it('should return empty array when domain directory does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
         expect(result).to.deep.equal([]);
@@ -376,7 +410,10 @@ Another issue.`;
             return readCallCount === 1 ? completedIssue : inProgressIssue;
           },
         };
-        const contextLoader = createContextLoader(mockFs);
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
 
@@ -421,7 +458,10 @@ Content.`;
             return readFileCallCount === 1 ? issue1 : issue2;
           },
         };
-        const contextLoader = createContextLoader(mockFs);
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
 
@@ -431,15 +471,18 @@ Content.`;
       });
 
       it('should skip non-markdown files', () => {
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readdirSync: () => [
             { name: 'readme.txt', isDirectory: () => false },
             { name: 'data.json', isDirectory: () => false },
           ],
           readFileSync: () => '',
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
         expect(result).to.deep.equal([]);
@@ -448,8 +491,13 @@ Content.`;
 
     describe('getRelatedDomains', () => {
       it('should return empty array when domain overview does not exist', () => {
-        const mockFs = createMockFs({ existsSync: () => false });
-        const contextLoader = createContextLoader(mockFs);
+        const mockFs = {
+          existsSync: () => false,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
+        });
 
         const result = contextLoader.getRelatedDomains('contacts');
         expect(result).to.deep.equal([]);
@@ -462,11 +510,14 @@ domain: contacts
 
 Domain overview.`;
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => mockContent,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.getRelatedDomains('contacts');
         expect(result).to.deep.equal([]);
@@ -480,11 +531,14 @@ related_domains: [forms-and-reports, tasks-and-targets]
 
 Domain overview.`;
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           readFileSync: () => mockContent,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         const result = contextLoader.getRelatedDomains('contacts');
         expect(result).to.deep.equal(['forms-and-reports', 'tasks-and-targets']);
@@ -495,13 +549,16 @@ Domain overview.`;
       it('should create directories that do not exist', () => {
         const createdDirs: string[] = [];
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => false,
           mkdirSync: (dirPath: string) => {
             createdDirs.push(dirPath);
           },
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         contextLoader.ensureAgentMemoryExists();
 
@@ -514,13 +571,16 @@ Domain overview.`;
       it('should not create directories that already exist', () => {
         const createdDirs: string[] = [];
 
-        const mockFs = createMockFs({
+        const mockFs = {
           existsSync: () => true,
           mkdirSync: (dirPath: string) => {
             createdDirs.push(dirPath);
           },
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          fs: mockFs,
         });
-        const contextLoader = createContextLoader(mockFs);
 
         contextLoader.ensureAgentMemoryExists();
 

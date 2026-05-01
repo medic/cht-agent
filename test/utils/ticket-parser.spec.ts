@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import * as path from 'node:path';
+import * as path from 'path';
 import { parseTicketFile, findTicketFiles } from '../../src/utils/ticket-parser';
 
 describe('ticket-parser', () => {
@@ -7,120 +7,169 @@ describe('ticket-parser', () => {
 
   describe('parseTicketFile', () => {
     describe('valid tickets', () => {
-      let validTicketResult: ReturnType<typeof parseTicketFile>;
-      let asteriskTicketResult: ReturnType<typeof parseTicketFile>;
-
-      before(() => {
-        validTicketResult = parseTicketFile(path.join(fixturesPath, 'valid-ticket.md'));
-        asteriskTicketResult = parseTicketFile(path.join(fixturesPath, 'valid-ticket-asterisk.md'));
-      });
-
       it('should parse a fully populated ticket', () => {
-        expect(validTicketResult.issue.title).to.equal('Test feature implementation');
-        expect(validTicketResult.issue.type).to.equal('feature');
-        expect(validTicketResult.issue.priority).to.equal('high');
-        expect(validTicketResult.issue.technical_context.domain).to.equal('contacts');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.title).to.equal('Test feature implementation');
+        expect(result.issue.type).to.equal('feature');
+        expect(result.issue.priority).to.equal('high');
+        expect(result.issue.technical_context.domain).to.equal('contacts');
       });
 
       it('should extract components from technical context', () => {
-        expect(validTicketResult.issue.technical_context.components).to.deep.equal([
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.technical_context.components).to.deep.equal([
           'webapp/modules/contacts',
           'api/controllers/contacts',
         ]);
       });
 
       it('should extract requirements as array', () => {
-        expect(validTicketResult.issue.requirements).to.have.lengthOf(3);
-        expect(validTicketResult.issue.requirements[0]).to.equal('First requirement');
-        expect(validTicketResult.issue.requirements[1]).to.equal('Second requirement');
-        expect(validTicketResult.issue.requirements[2]).to.equal('Third requirement');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.requirements).to.have.lengthOf(3);
+        expect(result.issue.requirements[0]).to.equal('First requirement');
+        expect(result.issue.requirements[1]).to.equal('Second requirement');
+        expect(result.issue.requirements[2]).to.equal('Third requirement');
       });
 
       it('should extract acceptance criteria from numbered list', () => {
-        expect(validTicketResult.issue.acceptance_criteria).to.have.lengthOf(2);
-        expect(validTicketResult.issue.acceptance_criteria[0]).to.equal('First acceptance criterion');
-        expect(validTicketResult.issue.acceptance_criteria[1]).to.equal('Second acceptance criterion');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.acceptance_criteria).to.have.lengthOf(2);
+        expect(result.issue.acceptance_criteria[0]).to.equal('First acceptance criterion');
+        expect(result.issue.acceptance_criteria[1]).to.equal('Second acceptance criterion');
       });
 
       it('should extract constraints', () => {
-        expect(validTicketResult.issue.constraints).to.have.lengthOf(2);
-        expect(validTicketResult.issue.constraints).to.include('Must work offline');
-        expect(validTicketResult.issue.constraints).to.include('Compatible with CHT 4.x');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.constraints).to.have.lengthOf(2);
+        expect(result.issue.constraints).to.include('Must work offline');
+        expect(result.issue.constraints).to.include('Compatible with CHT 4.x');
       });
 
       it('should extract reference URLs', () => {
-        expect(validTicketResult.issue.reference_data?.similar_implementations).to.include(
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.reference_data?.similar_implementations).to.include(
           'https://github.com/medic/cht-core/pull/1234'
         );
-        expect(validTicketResult.issue.reference_data?.documentation).to.include(
+        expect(result.issue.reference_data?.documentation).to.include(
           'https://docs.communityhealthtoolkit.org/apps/reference/contact-page/'
         );
       });
 
       it('should extract description from Description section', () => {
-        expect(validTicketResult.issue.description).to.include('test feature for unit testing');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.description).to.include('test feature for unit testing');
       });
 
       it('should parse a minimal ticket with only required fields', () => {
-        const minimalResult = parseTicketFile(path.join(fixturesPath, 'minimal-ticket.md'));
+        const ticketPath = path.join(fixturesPath, 'minimal-ticket.md');
+        const result = parseTicketFile(ticketPath);
 
-        expect(minimalResult.issue.title).to.equal('Minimal ticket');
-        expect(minimalResult.issue.type).to.equal('bug');
-        expect(minimalResult.issue.priority).to.equal('low');
-        expect(minimalResult.issue.technical_context.domain).to.equal('configuration');
-        expect(minimalResult.issue.technical_context.components).to.deep.equal([]);
-        expect(minimalResult.issue.requirements).to.deep.equal([]);
-        expect(minimalResult.issue.acceptance_criteria).to.deep.equal([]);
-        expect(minimalResult.issue.constraints).to.deep.equal([]);
+        expect(result.issue.title).to.equal('Minimal ticket');
+        expect(result.issue.type).to.equal('bug');
+        expect(result.issue.priority).to.equal('low');
+        expect(result.issue.technical_context.domain).to.equal('configuration');
+        expect(result.issue.technical_context.components).to.deep.equal([]);
+        expect(result.issue.requirements).to.deep.equal([]);
+        expect(result.issue.acceptance_criteria).to.deep.equal([]);
+        expect(result.issue.constraints).to.deep.equal([]);
       });
 
       it('should parse asterisk bullet lists', () => {
-        expect(asteriskTicketResult.issue.requirements).to.include('First requirement with asterisk');
-        expect(asteriskTicketResult.issue.requirements).to.include('Second requirement with asterisk');
-        expect(asteriskTicketResult.issue.constraints).to.include('Constraint using asterisk');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket-asterisk.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.requirements).to.include('First requirement with asterisk');
+        expect(result.issue.requirements).to.include('Second requirement with asterisk');
+        expect(result.issue.constraints).to.include('Constraint using asterisk');
       });
 
       it('should extract URLs from markdown links [text](url)', () => {
-        expect(asteriskTicketResult.issue.reference_data?.similar_implementations).to.include(
+        const ticketPath = path.join(fixturesPath, 'valid-ticket-asterisk.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.reference_data?.similar_implementations).to.include(
           'https://github.com/medic/cht-core/pull/5678'
         );
-        expect(asteriskTicketResult.issue.reference_data?.documentation).to.include(
+        expect(result.issue.reference_data?.documentation).to.include(
           'https://docs.communityhealthtoolkit.org/apps/guides/messaging/'
         );
       });
 
       it('should extract both markdown link URLs and plain URLs', () => {
+        const ticketPath = path.join(fixturesPath, 'valid-ticket-asterisk.md');
+        const result = parseTicketFile(ticketPath);
+
         // Should have both the markdown link URL and the plain URL
-        expect(asteriskTicketResult.issue.reference_data?.similar_implementations).to.have.lengthOf(2);
+        expect(result.issue.reference_data?.similar_implementations).to.have.lengthOf(2);
       });
 
       it('should extract non-backtick components from technical context', () => {
+        const ticketPath = path.join(fixturesPath, 'valid-ticket-asterisk.md');
+        const result = parseTicketFile(ticketPath);
+
         // Should include both backtick-wrapped and non-backtick items
-        expect(asteriskTicketResult.issue.technical_context.components).to.include('api/messaging');
-        expect(asteriskTicketResult.issue.technical_context.components).to.include('webapp/sms-gateway');
+        expect(result.issue.technical_context.components).to.include('api/messaging');
+        expect(result.issue.technical_context.components).to.include('webapp/sms-gateway');
       });
 
       it('should extract existing references from technical context', () => {
-        expect(asteriskTicketResult.issue.technical_context.existing_references).to.include('existing-ref-1');
-        expect(asteriskTicketResult.issue.technical_context.existing_references).to.include('existing-ref-2');
+        const ticketPath = path.join(fixturesPath, 'valid-ticket-asterisk.md');
+        const result = parseTicketFile(ticketPath);
+
+        expect(result.issue.technical_context.existing_references).to.include('existing-ref-1');
+        expect(result.issue.technical_context.existing_references).to.include('existing-ref-2');
       });
     });
 
     describe('invalid tickets', () => {
-      const invalidCases = [
-        { file: 'non-existent.md', error: 'Ticket file not found' },
-        { file: 'invalid-missing-title.md', error: 'Ticket must have a "title"' },
-        { file: 'invalid-domain.md', error: 'Invalid domain' },
-        { file: 'invalid-type.md', error: 'Invalid type' },
-        { file: 'invalid-priority.md', error: 'Invalid priority' },
-        { file: 'invalid-missing-domain.md', error: 'Ticket must have a "domain"' },
-      ];
+      it('should throw error when file does not exist', () => {
+        const ticketPath = path.join(fixturesPath, 'non-existent.md');
 
-      invalidCases.forEach(({ file, error }) => {
-        it(`should throw error when ${file.replace('.md', '').replaceAll('-', ' ').replace('invalid ', '')}`, () => {
-          const ticketPath = path.join(fixturesPath, file);
-          expect(() => parseTicketFile(ticketPath)).to.throw(error);
-        });
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket file not found');
+      });
+
+      it('should throw error when title is missing', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-missing-title.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "title"');
+      });
+
+      it('should throw error for invalid domain', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-domain.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Invalid domain');
+      });
+
+      it('should throw error for invalid type', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-type.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Invalid type');
+      });
+
+      it('should throw error for invalid priority', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-priority.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Invalid priority');
+      });
+
+      it('should throw error when domain is missing', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-missing-domain.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "domain"');
       });
     });
   });
