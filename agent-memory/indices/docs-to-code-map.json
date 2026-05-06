@@ -1,0 +1,210 @@
+{
+  "https://docs.communityhealthtoolkit.org/building/forms/": [
+    "webapp/src/ts/services/form.service.ts",
+    "webapp/src/ts/services/enketo.service.ts",
+    "webapp/src/ts/services/xml-forms.service.ts",
+    "api/src/controllers/forms.js",
+    "api/src/services/forms.js",
+    "api/src/services/generate-xform.js",
+    "api/src/enketo-transformer/",
+    "config/default/forms/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/forms/app/": [
+    "webapp/src/ts/services/form.service.ts",
+    "webapp/src/ts/services/enketo.service.ts",
+    "webapp/src/ts/services/xml-forms.service.ts",
+    "api/src/services/generate-xform.js",
+    "config/default/forms/app/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/forms/contact/": [
+    "webapp/src/ts/modules/contacts/contacts-edit.component.ts",
+    "webapp/src/ts/services/contact-save.service.ts",
+    "config/default/forms/contact/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/forms/collect/": [
+    "api/src/controllers/records.js",
+    "api/src/services/records.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/tasks/": [
+    "webapp/src/ts/modules/tasks/",
+    "webapp/src/ts/services/tasks-for-contact.service.ts",
+    "webapp/src/ts/services/task-notifications.service.ts",
+    "shared-libs/rules-engine/",
+    "shared-libs/task-utils/",
+    "config/default/tasks.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/targets/": [
+    "webapp/src/ts/modules/analytics/",
+    "webapp/src/ts/services/target-aggregates.service.ts",
+    "api/src/controllers/target.js",
+    "shared-libs/rules-engine/",
+    "config/default/targets.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/contact-summary/": [
+    "webapp/src/ts/services/contact-summary.service.ts",
+    "webapp/src/ts/services/user-contact-summary.service.ts",
+    "config/default/contact-summary.templated.js",
+    "config/default/contact-summary-extras.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/contact-management/": [
+    "webapp/src/ts/modules/contacts/",
+    "webapp/src/ts/services/contacts.service.ts",
+    "webapp/src/ts/services/contact-types.service.ts",
+    "webapp/src/ts/services/contact-save.service.ts",
+    "webapp/src/ts/services/contact-view-model-generator.service.ts",
+    "shared-libs/contacts/",
+    "shared-libs/contact-types-utils/",
+    "shared-libs/lineage/",
+    "api/src/controllers/person.js",
+    "api/src/controllers/place.js",
+    "api/src/controllers/contact.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/messaging/": [
+    "webapp/src/ts/modules/messages/",
+    "webapp/src/ts/services/send-message.service.ts",
+    "webapp/src/ts/services/count-message.service.ts",
+    "api/src/controllers/sms-gateway.js",
+    "api/src/controllers/africas-talking.js",
+    "api/src/controllers/rapidpro.js",
+    "api/src/services/messaging.js",
+    "api/src/services/rapidpro.js",
+    "api/src/services/nepal-doit-sms.js",
+    "shared-libs/message-utils/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/care-guides/": [
+    "webapp/src/ts/services/enketo.service.ts",
+    "webapp/src/ts/services/form.service.ts",
+    "webapp/src/ts/services/xml-forms.service.ts",
+    "config/default/forms/app/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/users/": [
+    "api/src/controllers/users.js",
+    "api/src/auth.js",
+    "webapp/src/ts/services/auth.service.ts",
+    "shared-libs/user-management/",
+    "admin/src/js/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/": [
+    "api/src/controllers/settings.js",
+    "api/src/services/settings.js",
+    "shared-libs/settings/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/user-permissions/": [
+    "api/src/auth.js",
+    "webapp/src/ts/services/auth.service.ts",
+    "shared-libs/user-management/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/user-roles/": [
+    "api/src/auth.js",
+    "shared-libs/user-management/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/transitions/": [
+    "sentinel/src/transitions.js",
+    "shared-libs/transitions/src/transitions/",
+    "shared-libs/transitions/src/lib/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/hierarchy/": [
+    "shared-libs/contact-types-utils/",
+    "webapp/src/ts/services/contact-types.service.ts",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/schedules/": [
+    "shared-libs/transitions/src/lib/schedules.js",
+    "shared-libs/transitions/src/schedule/due_tasks.js",
+    "sentinel/src/schedule/reminders.js",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/outbound/": [
+    "sentinel/src/schedule/outbound.js",
+    "shared-libs/transitions/src/transitions/mark_for_outbound.js",
+    "shared-libs/outbound/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/registrations/": [
+    "shared-libs/transitions/src/transitions/registration.js",
+    "shared-libs/registration-utils/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/api/": [
+    "api/src/routing.js",
+    "api/src/controllers/",
+    "api/src/services/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/training/": [
+    "webapp/src/ts/modules/trainings/",
+    "api/src/services/forms.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/translations/": [
+    "shared-libs/translation-utils/",
+    "api/src/translations.js",
+    "config/default/translations/"
+  ],
+  "https://docs.communityhealthtoolkit.org/technical-overview/architecture/cht-core/": [
+    "api/",
+    "sentinel/",
+    "webapp/",
+    "admin/",
+    "shared-libs/"
+  ],
+  "https://docs.communityhealthtoolkit.org/technical-overview/data/": [
+    "api/src/db.js",
+    "api/src/db-batch.js",
+    "shared-libs/cht-datasource/",
+    "couchdb/"
+  ],
+  "https://docs.communityhealthtoolkit.org/technical-overview/data/performance/replication/": [
+    "api/src/controllers/replication.js",
+    "api/src/services/replication.js",
+    "api/src/services/replication-limit-log.js",
+    "webapp/src/ts/services/db-sync.service.ts",
+    "webapp/src/ts/services/db-sync-retry.service.ts"
+  ],
+  "https://docs.communityhealthtoolkit.org/technical-overview/data/performance/purging/": [
+    "api/src/services/purged-docs.js",
+    "api/src/services/purged-docs-cache.js",
+    "shared-libs/purging-utils/",
+    "sentinel/src/lib/purging.js",
+    "sentinel/src/schedule/purging.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/technical-overview/data/performance/telemetry/": [
+    "webapp/src/ts/services/performance.service.ts",
+    "api/src/controllers/monitoring.js",
+    "api/src/services/monitoring.js"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/forms/": [
+    "api/src/controllers/records.js",
+    "api/src/services/records.js",
+    "shared-libs/validation/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/sms/": [
+    "api/src/controllers/sms-gateway.js",
+    "api/src/services/messaging.js",
+    "shared-libs/message-utils/",
+    "config/default/app_settings.json"
+  ],
+  "https://docs.communityhealthtoolkit.org/hosting/cht/": [
+    "docker-compose.yml",
+    "Dockerfile",
+    "haproxy/",
+    "nginx/",
+    "couchdb/",
+    "scripts/"
+  ],
+  "https://docs.communityhealthtoolkit.org/community/contributing/code/core/automated-tests/": [
+    "tests/",
+    "webapp/tests/",
+    "api/tests/",
+    "sentinel/tests/",
+    "shared-libs/*/test/"
+  ],
+  "https://docs.communityhealthtoolkit.org/building/reference/app-settings/dhis2/": [
+    "sentinel/src/schedule/outbound.js",
+    "shared-libs/outbound/",
+    "config/default/app_settings.json"
+  ]
+}
