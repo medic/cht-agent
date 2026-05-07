@@ -14,10 +14,10 @@ import {
 } from '../types';
 
 export class CodeContextAgent {
-  private useMockMCP: boolean;
+  private readonly useMockMCP: boolean;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
-    this.useMockMCP = options.useMockMCP !== false; // TODO: Remove mockMCP after OpenDeepWiki is live
+    this.useMockMCP = options.useMockMCP !== false;
   }
 
   /**
@@ -44,14 +44,19 @@ export class CodeContextAgent {
     const allDiagrams: string[] = [];
     const warnings: string[] = [];
 
-    for (const repo of repos) {
-      const response = await this.callOpenDeepWiki(searchQuery, domain, repo);
-      const processed = this.processMCPResponse(response, repo);
+    const results = await Promise.all(
+      repos.map(async repo => {
+        const response = await this.callOpenDeepWiki(searchQuery, domain, repo);
+        return this.processMCPResponse(response, repo);
+      })
+    );
+
+    results.forEach(processed => {
       allInsights.push(...processed.insights);
       allRelationships.push(...processed.relationships);
       allDiagrams.push(...processed.diagrams);
       warnings.push(...processed.warnings);
-    }
+    });
 
     const confidence = allInsights.length > 0 ? 0.8 : 0.3;
 
@@ -111,7 +116,6 @@ export class CodeContextAgent {
       return this.mockOpenDeepWikiResponse(domain, repo);
     }
 
-    // TODO: Actual MCP implementation when OpenDeepWiki is deployed
     throw new Error('OpenDeepWiki MCP integration not yet implemented');
   }
 
@@ -123,68 +127,68 @@ export class CodeContextAgent {
   private mockOpenDeepWikiResponse(domain: CHTDomain, repo: string): OpenDeepWikiMCPResponse {
     console.log(`[Code Context Agent] Using MOCKED OpenDeepWiki response for ${repo}`);
 
-    // Secondary repos return repo-specific data (not duplicates of cht-core)
-    if (repo === 'cht-conf') {
-      return {
-        success: true,
-        data: {
-          architectureInsights: [
-            {
-              component: 'cht-conf/src/lib/compile-app-settings',
-              description: 'Compiles app_settings.json from declarative config files',
-              patterns: ['compilation pipeline', 'JSON schema validation'],
-              dependencies: ['cht-conf/src/nools', 'cht-conf/src/contact-summary'],
-            },
-          ],
-          moduleRelationships: [
-            {
-              source: 'cht-conf/src/lib',
-              target: 'api/controllers/settings',
-              relationship: 'calls',
-              description: 'cht-conf uploads compiled config via settings API',
-            },
-          ],
-          diagrams: [
-            `graph TD
+    const secondaryRepoData: Record<
+      string,
+      {
+        insights: ArchitectureInsight[];
+        relationships: ModuleRelationship[];
+        diagrams: string[];
+      }
+    > = {
+      'cht-conf': {
+        insights: [
+          {
+            component: 'cht-conf/src/lib/compile-app-settings',
+            description: 'Compiles app_settings.json from declarative config files',
+            patterns: ['compilation pipeline', 'JSON schema validation'],
+            dependencies: ['cht-conf/src/nools', 'cht-conf/src/contact-summary'],
+          },
+        ],
+        relationships: [
+          {
+            source: 'cht-conf/src/lib',
+            target: 'api/controllers/settings',
+            relationship: 'calls',
+            description: 'cht-conf uploads compiled config via settings API',
+          },
+        ],
+        diagrams: [
+          `graph TD
     A[cht-conf CLI] --> B[compile-app-settings]
     B --> C[nools compiler]
     B --> D[contact-summary compiler]
     A -->|upload| E[api/settings]`,
-          ],
-          structure: [],
-        },
-      };
-    }
-
-    if (repo === 'cht-watchdog') {
-      return {
-        success: true,
-        data: {
-          architectureInsights: [
-            {
-              component: 'cht-watchdog/src/monitor',
-              description: 'Monitors CHT instance health, connectivity, and sync status',
-              patterns: ['health polling', 'alerting', 'metric collection'],
-              dependencies: ['cht-watchdog/src/config', 'cht-watchdog/src/notifier'],
-            },
-          ],
-          moduleRelationships: [
-            {
-              source: 'cht-watchdog/src/monitor',
-              target: 'api/services/monitoring',
-              relationship: 'calls',
-              description: 'Watchdog polls API monitoring endpoints for health checks',
-            },
-          ],
-          diagrams: [
-            `graph TD
+        ],
+      },
+      'cht-watchdog': {
+        insights: [
+          {
+            component: 'cht-watchdog/src/monitor',
+            description: 'Monitors CHT instance health, connectivity, and sync status',
+            patterns: ['health polling', 'alerting', 'metric collection'],
+            dependencies: ['cht-watchdog/src/config', 'cht-watchdog/src/notifier'],
+          },
+        ],
+        relationships: [
+          {
+            source: 'cht-watchdog/src/monitor',
+            target: 'api/services/monitoring',
+            relationship: 'calls',
+            description: 'Watchdog polls API monitoring endpoints for health checks',
+          },
+        ],
+        diagrams: [
+          `graph TD
     A[cht-watchdog] --> B[api/monitoring]
     A --> C[alerting/notifier]
     B --> D[CouchDB/_active_tasks]`,
-          ],
-          structure: [],
-        },
-      };
+        ],
+      },
+    };
+
+    const repoData = secondaryRepoData[repo];
+    if (repoData) {
+      return this.buildMockResponse(repoData.insights, repoData.relationships, repoData.diagrams);
     }
 
     // cht-core: domain-specific mock data
@@ -532,12 +536,27 @@ export class CodeContextAgent {
 
     const domainData = mockData[domain] || { insights: [], relationships: [], diagrams: [] };
 
+    return this.buildMockResponse(
+      domainData.insights,
+      domainData.relationships,
+      domainData.diagrams
+    );
+  }
+
+  /**
+   * Wrap raw mock arrays into the OpenDeepWiki response envelope
+   */
+  private buildMockResponse(
+    insights: ArchitectureInsight[],
+    relationships: ModuleRelationship[],
+    diagrams: string[]
+  ): OpenDeepWikiMCPResponse {
     return {
       success: true,
       data: {
-        architectureInsights: domainData.insights,
-        moduleRelationships: domainData.relationships,
-        diagrams: domainData.diagrams,
+        architectureInsights: insights,
+        moduleRelationships: relationships,
+        diagrams,
         structure: [],
       },
     };

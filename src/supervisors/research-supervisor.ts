@@ -291,7 +291,7 @@ export class ResearchSupervisor {
       : JSON.stringify(response.content);
 
     // Parse the response into structured plan
-    const plan = this.parsePlanResponse(content, issue, findings, analysis, codeContext);
+    const plan = this.parsePlanResponse(content, issue, { findings, analysis, codeContext });
 
     console.log('[Research Supervisor] Plan generated successfully');
     return plan;
@@ -375,10 +375,13 @@ Format your response as a structured plan that will guide the development team.`
   private parsePlanResponse(
     content: string,
     issue: IssueTemplate,
-    findings: ResearchFindings,
-    analysis: ContextAnalysisResult,
-    codeContext?: CodeContextFindings
+    context: {
+      findings: ResearchFindings;
+      analysis: ContextAnalysisResult;
+      codeContext?: CodeContextFindings;
+    }
   ): OrchestrationPlan {
+    const { findings, analysis, codeContext } = context;
     // Extract key information from the response
     // Lines will be used for more detailed parsing in future iterations
 
@@ -490,45 +493,52 @@ Format your response as a structured plan that will guide the development team.`
     analysis: ContextAnalysisResult,
     codeContext?: CodeContextFindings
   ): string[] {
-    const risks: string[] = [];
+    return [
+      ...this.getResearchRisks(findings, analysis),
+      ...this.getIssueRisks(issue),
+      ...this.getCodeContextRisks(codeContext),
+    ];
+  }
 
-    // Low confidence from research
+  private getResearchRisks(
+    findings: ResearchFindings,
+    analysis: ContextAnalysisResult
+  ): string[] {
+    const risks: string[] = [];
     if (findings.confidence < 0.5) {
       risks.push('Low confidence in documentation findings - may require additional research');
     }
-
-    // No similar past implementations
     if (analysis.similarContexts.length === 0) {
       risks.push('No similar past implementations found - breaking new ground');
     }
+    return risks;
+  }
 
-    // Complex constraints
+  private getIssueRisks(issue: IssueTemplate): string[] {
+    const risks: string[] = [];
     if (issue.issue.constraints.length > 2) {
       risks.push(`Multiple constraints to satisfy: ${issue.issue.constraints.join(', ')}`);
     }
-
-    // High priority
     if (issue.issue.priority === 'high') {
       risks.push('High priority issue - requires careful attention and thorough testing');
     }
-
-    // Multiple components
     if (issue.issue.technical_context.components.length > 3) {
       risks.push(
         'Changes span multiple components - requires coordination and integration testing'
       );
     }
+    return risks;
+  }
 
-    // Code context warnings
-    if (codeContext) {
-      if (codeContext.warnings.length > 0) {
-        risks.push(`Code context warnings: ${codeContext.warnings.join('; ')}`);
-      }
-      if (codeContext.confidence < 0.5) {
-        risks.push('Low confidence in code architecture analysis - manual review recommended');
-      }
+  private getCodeContextRisks(codeContext?: CodeContextFindings): string[] {
+    if (!codeContext) return [];
+    const risks: string[] = [];
+    if (codeContext.warnings.length > 0) {
+      risks.push(`Code context warnings: ${codeContext.warnings.join('; ')}`);
     }
-
+    if (codeContext.confidence < 0.5) {
+      risks.push('Low confidence in code architecture analysis - manual review recommended');
+    }
     return risks;
   }
 

@@ -14,7 +14,7 @@ describe('research-results', () => {
     mkdirSyncStub = sinon.stub();
     writeFileSyncStub = sinon.stub();
     outputSaver = proxyquire('../../src/utils/research-results', {
-      fs: {
+      'node:fs': {
         mkdirSync: mkdirSyncStub,
         writeFileSync: writeFileSyncStub,
       },

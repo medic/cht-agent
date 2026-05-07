@@ -4,8 +4,8 @@
  * Saves research results to disk for review and debugging
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { ResearchState } from '../types';
 
 const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), 'outputs', 'context-results');
@@ -24,7 +24,7 @@ export function saveResearchResults(state: ResearchState, outputDir: string = DE
   ensureOutputDirExists(outputDir);
 
   const domain = state.issue?.issue.technical_context.domain || 'unknown';
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const timestamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
   const filename = `${domain}-${timestamp}.json`;
   const filePath = path.join(outputDir, filename);
 
