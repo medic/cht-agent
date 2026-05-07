@@ -176,7 +176,7 @@ Body`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadDomainOverview('contacts');
@@ -200,7 +200,7 @@ Overview content here.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadDomainOverview('contacts');
@@ -218,7 +218,7 @@ Overview content here.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadDomainComponents('contacts');
@@ -240,7 +240,7 @@ Overview content here.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadDomainComponents('contacts');
@@ -258,7 +258,7 @@ Overview content here.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadWorkflowComponents('contact-creation');
@@ -278,7 +278,7 @@ Overview content here.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadWorkflowComponents('contact-creation');
@@ -295,7 +295,7 @@ Overview content here.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadWorkflowFlow('contact-creation');
@@ -318,7 +318,7 @@ Step-by-step workflow.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadWorkflowFlow('contact-creation');
@@ -336,7 +336,7 @@ Step-by-step workflow.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadIndex('domain-to-components');
@@ -355,7 +355,7 @@ Step-by-step workflow.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.loadIndex('domain-to-components');
@@ -372,7 +372,7 @@ Step-by-step workflow.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
@@ -412,7 +412,7 @@ Another issue.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
@@ -460,7 +460,7 @@ Content.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
@@ -481,7 +481,7 @@ Content.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
@@ -496,7 +496,7 @@ Content.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.getRelatedDomains('contacts');
@@ -516,7 +516,7 @@ Domain overview.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.getRelatedDomains('contacts');
@@ -537,7 +537,7 @@ Domain overview.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         const result = contextLoader.getRelatedDomains('contacts');
@@ -557,7 +557,7 @@ Domain overview.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         contextLoader.ensureAgentMemoryExists();
@@ -579,7 +579,7 @@ Domain overview.`;
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
-          fs: mockFs,
+          'node:fs': mockFs,
         });
 
         contextLoader.ensureAgentMemoryExists();

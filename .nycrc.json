@@ -1,0 +1,8 @@
+{
+  "check-coverage": true,
+  "branches": 85,
+  "lines": 95,
+  "functions": 95,
+  "statements": 95,
+  "reporter": ["text", "text-summary", "html"]
+}
