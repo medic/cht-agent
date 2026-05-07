@@ -13,6 +13,456 @@ import {
   OpenDeepWikiMCPResponse,
 } from '../types';
 
+type MockCodeContextData = {
+  insights: ArchitectureInsight[];
+  relationships: ModuleRelationship[];
+  diagrams: string[];
+};
+
+const createArchitectureInsight = (
+  component: string,
+  description: string,
+  patterns: string[],
+  dependencies: string[]
+): ArchitectureInsight => ({
+  component,
+  description,
+  patterns,
+  dependencies,
+});
+
+const createModuleRelationship = (
+  source: string,
+  target: string,
+  relationship: ModuleRelationship['relationship'],
+  description: string
+): ModuleRelationship => ({
+  source,
+  target,
+  relationship,
+  description,
+});
+
+type MockCodeContextSeed = {
+  insights: Array<Parameters<typeof createArchitectureInsight>>;
+  relationships: Array<Parameters<typeof createModuleRelationship>>;
+  diagrams: string[];
+};
+
+const buildDiagram = (...lines: string[]): string =>
+  ['graph TD', ...lines.map(line => `    ${line}`)].join('\n');
+
+const createMockCodeContextData = (seed: MockCodeContextSeed): MockCodeContextData => ({
+  insights: seed.insights.map(args => createArchitectureInsight(...args)),
+  relationships: seed.relationships.map(args => createModuleRelationship(...args)),
+  diagrams: seed.diagrams,
+});
+
+const EMPTY_MOCK_CODE_CONTEXT_DATA: MockCodeContextData = {
+  insights: [],
+  relationships: [],
+  diagrams: [],
+};
+
+const SECONDARY_REPO_MOCK_DATA: Record<string, MockCodeContextData> = {
+  'cht-conf': createMockCodeContextData({
+    insights: [
+      [
+        'cht-conf/src/lib/compile-app-settings',
+        'Compiles app_settings.json from declarative config files',
+        ['compilation pipeline', 'JSON schema validation'],
+        ['cht-conf/src/nools', 'cht-conf/src/contact-summary'],
+      ],
+    ],
+    relationships: [
+      [
+        'cht-conf/src/lib',
+        'api/controllers/settings',
+        'calls',
+        'cht-conf uploads compiled config via settings API',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[cht-conf CLI] --> B[compile-app-settings]',
+        'B --> C[nools compiler]',
+        'B --> D[contact-summary compiler]',
+        'A -->|upload| E[api/settings]'
+      ),
+    ],
+  }),
+  'cht-watchdog': createMockCodeContextData({
+    insights: [
+      [
+        'cht-watchdog/src/monitor',
+        'Monitors CHT instance health, connectivity, and sync status',
+        ['health polling', 'alerting', 'metric collection'],
+        ['cht-watchdog/src/config', 'cht-watchdog/src/notifier'],
+      ],
+    ],
+    relationships: [
+      [
+        'cht-watchdog/src/monitor',
+        'api/services/monitoring',
+        'calls',
+        'Watchdog polls API monitoring endpoints for health checks',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[cht-watchdog] --> B[api/monitoring]',
+        'A --> C[alerting/notifier]',
+        'B --> D[CouchDB/_active_tasks]'
+      ),
+    ],
+  }),
+};
+
+const DOMAIN_MOCK_DATA: Record<CHTDomain, MockCodeContextData> = {
+  contacts: createMockCodeContextData({
+    insights: [
+      [
+        'api/controllers/people',
+        'REST controller handling contact CRUD operations and search',
+        ['RESTful endpoints', 'CouchDB views', 'lineage validation'],
+        ['shared-libs/lineage', 'shared-libs/contacts'],
+      ],
+      [
+        'webapp/modules/contacts',
+        'Angular module for contact display, search, and hierarchy navigation',
+        [
+          'Angular module pattern',
+          'service-controller separation',
+          'search indexing',
+        ],
+        ['webapp/services/db', 'webapp/services/search'],
+      ],
+    ],
+    relationships: [
+      [
+        'webapp/modules/contacts',
+        'api/controllers/people',
+        'calls',
+        'Webapp contacts module calls people API for CRUD operations',
+      ],
+      [
+        'api/controllers/people',
+        'shared-libs/lineage',
+        'depends-on',
+        'People controller uses lineage lib for hierarchy validation',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[webapp/contacts] -->|HTTP| B[api/people]',
+        'B --> C[shared-libs/lineage]',
+        'B --> D[CouchDB]',
+        'A --> E[webapp/search-service]'
+      ),
+    ],
+  }),
+  'forms-and-reports': createMockCodeContextData({
+    insights: [
+      [
+        'api/controllers/forms',
+        'Handles form submission, validation, and XForm processing',
+        ['XForm parsing', 'validation pipeline', 'Enketo integration'],
+        ['shared-libs/rules-engine', 'sentinel/transitions'],
+      ],
+      [
+        'sentinel/transitions',
+        'Background processing pipeline triggered after form submission',
+        ['event-driven transitions', 'sequential processing', 'error recovery'],
+        ['shared-libs/infodoc', 'api/services/db'],
+      ],
+    ],
+    relationships: [
+      [
+        'webapp/modules/reports',
+        'api/controllers/forms',
+        'calls',
+        'Reports module submits forms via API',
+      ],
+      [
+        'api/controllers/forms',
+        'sentinel/transitions',
+        'depends-on',
+        'Form submissions trigger sentinel transitions',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[webapp/reports] -->|submit| B[api/forms]',
+        'B --> C[sentinel/transitions]',
+        'C --> D[shared-libs/rules-engine]',
+        'B --> E[Enketo]'
+      ),
+    ],
+  }),
+  'tasks-and-targets': createMockCodeContextData({
+    insights: [
+      [
+        'shared-libs/rules-engine',
+        'Core rules engine that evaluates task and target rules',
+        ['rule evaluation', 'emission pipeline', 'caching'],
+        ['shared-libs/calendar-interval', 'shared-libs/contact-types-utils'],
+      ],
+      [
+        'webapp/modules/tasks',
+        'UI module for displaying and managing tasks',
+        ['Angular module pattern', 'lazy loading', 'task prioritization'],
+        ['shared-libs/rules-engine', 'webapp/services/db'],
+      ],
+    ],
+    relationships: [
+      [
+        'webapp/modules/tasks',
+        'shared-libs/rules-engine',
+        'depends-on',
+        'Tasks module uses rules engine for task evaluation',
+      ],
+      [
+        'shared-libs/rules-engine',
+        'shared-libs/calendar-interval',
+        'imports',
+        'Rules engine uses calendar-interval for date calculations',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[webapp/tasks] --> B[shared-libs/rules-engine]',
+        'A[webapp/targets] --> B',
+        'B --> C[shared-libs/calendar-interval]',
+        'B --> D[contact-types-utils]'
+      ),
+    ],
+  }),
+  authentication: createMockCodeContextData({
+    insights: [
+      [
+        'api/auth',
+        'Authentication middleware handling session management and permissions',
+        ['session-based auth', 'role-based access', 'cookie management'],
+        ['api/services/cookie', 'CouchDB/_users'],
+      ],
+    ],
+    relationships: [
+      [
+        'webapp/services/auth',
+        'api/auth',
+        'calls',
+        'Webapp auth service calls API auth endpoints',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[webapp/auth-service] -->|login/logout| B[api/auth]',
+        'B --> C[CouchDB/_users]',
+        'B --> D[api/cookie-service]'
+      ),
+    ],
+  }),
+  messaging: createMockCodeContextData({
+    insights: [
+      [
+        'sentinel/schedule/outbound',
+        'Outbound message scheduling and gateway integration',
+        ['scheduled processing', 'gateway abstraction', 'retry logic'],
+        ['api/services/messaging', 'shared-libs/message-utils'],
+      ],
+    ],
+    relationships: [
+      [
+        'sentinel/schedule/outbound',
+        'api/services/messaging',
+        'calls',
+        'Outbound scheduler uses messaging service for delivery',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[sentinel/outbound] --> B[api/messaging]',
+        'B --> C[SMS Gateway]',
+        'A --> D[shared-libs/message-utils]'
+      ),
+    ],
+  }),
+  'data-sync': createMockCodeContextData({
+    insights: [
+      [
+        'api/services/replication',
+        'CouchDB replication management for offline-first sync',
+        ['filtered replication', 'purging', 'conflict resolution'],
+        ['api/services/db', 'shared-libs/purging-utils'],
+      ],
+      [
+        'webapp/services/db-sync',
+        'Client-side sync coordination between PouchDB and CouchDB',
+        ['PouchDB sync', 'offline detection', 'retry backoff'],
+        ['webapp/services/db', 'api/services/replication'],
+      ],
+    ],
+    relationships: [
+      [
+        'webapp/services/db-sync',
+        'api/services/replication',
+        'calls',
+        'Client sync service coordinates with server replication',
+      ],
+      [
+        'api/services/replication',
+        'shared-libs/purging-utils',
+        'depends-on',
+        'Replication service uses purging utils for data management',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[webapp/db-sync] -->|replicate| B[api/replication]',
+        'B --> C[CouchDB]',
+        'B --> D[shared-libs/purging-utils]',
+        'A --> E[PouchDB]'
+      ),
+    ],
+  }),
+  configuration: createMockCodeContextData({
+    insights: [
+      [
+        'cht-conf/src/lib',
+        'Configuration compilation and upload tooling',
+        ['declarative config', 'compilation pipeline', 'validation'],
+        ['cht-conf/src/nools', 'cht-conf/src/contact-summary'],
+      ],
+      [
+        'api/controllers/settings',
+        'App settings management and validation API',
+        ['settings CRUD', 'validation middleware', 'defaults merging'],
+        ['api/services/config', 'shared-libs/settings'],
+      ],
+    ],
+    relationships: [
+      [
+        'cht-conf/src/lib',
+        'api/controllers/settings',
+        'calls',
+        'cht-conf uploads compiled config via settings API',
+      ],
+      [
+        'api/controllers/settings',
+        'shared-libs/settings',
+        'depends-on',
+        'Settings controller uses shared settings library',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[cht-conf] -->|upload| B[api/settings]',
+        'B --> C[shared-libs/settings]',
+        'B --> D[CouchDB/app_settings]'
+      ),
+    ],
+  }),
+  interoperability: createMockCodeContextData({
+    insights: [
+      [
+        'mediator/src/routes',
+        'cht-interoperability mediator FHIR routes (patient, encounter, endpoint, organization, service-request) that bridge CHT and external FHIR systems via OpenHIM',
+        [
+          'route-level FHIR validation',
+          'shared request wrapper for consistent responses',
+          'resource-specific Joi schemas',
+        ],
+        [
+          'mediator/src/utils/fhir.ts',
+          'mediator/src/utils/request.ts',
+          'mediator/src/middlewares/index.ts',
+        ],
+      ],
+      [
+        'mediator/src/controllers/service-request.ts',
+        'Mediator controller orchestrating create vs update behavior for FHIR resources, with identifier-based lookup before create to avoid OpenMRS sync duplicates',
+        ['identifier-based existence checks', 'create/update method semantics'],
+        ['mediator/src/utils/fhir.ts'],
+      ],
+      [
+        'sentinel/src/schedule/outbound.js',
+        'Sentinel outbound push scheduler that retries queued tasks; runs alongside the mark_for_outbound transition for immediate delivery',
+        [
+          'dual transition + scheduler delivery',
+          'send-once/hash-of-payload deduplication',
+          'recursive infodoc retries on CouchDB 409',
+        ],
+        [
+          'shared-libs/transitions/src/transitions/mark_for_outbound.js',
+          'shared-libs/outbound/src/outbound.js',
+          'shared-libs/infodoc/src/infodoc.js',
+        ],
+      ],
+      [
+        'api/src/controllers/contacts-by-phone.js',
+        'Public GET /api/v1/contacts-by-phone endpoint used by inbound RapidPro flows to resolve a hydrated contact from a normalized phone number',
+        [
+          'versioned external API',
+          'phone normalization',
+          'hydration of ancestor hierarchy',
+        ],
+        ['shared-libs/phone-number/src/phone-number.js'],
+      ],
+    ],
+    relationships: [
+      [
+        'mediator/src/routes',
+        'mediator/src/utils/fhir.ts',
+        'depends-on',
+        'Routes apply validateFhirResource and resource helpers from the shared FHIR utility',
+      ],
+      [
+        'mediator/src/routes',
+        'mediator/src/utils/request.ts',
+        'depends-on',
+        'Routes pass through requestHandler for consistent response shaping',
+      ],
+      [
+        'shared-libs/transitions/src/transitions/mark_for_outbound.js',
+        'shared-libs/outbound/src/outbound.js',
+        'calls',
+        'Immediate-push transition reuses the extracted send logic shared with the scheduler',
+      ],
+      [
+        'sentinel/src/schedule/outbound.js',
+        'shared-libs/outbound/src/outbound.js',
+        'calls',
+        'Scheduler retries failed pushes via the same shared outbound send logic',
+      ],
+      [
+        'sentinel/src/schedule/outbound.js',
+        'shared-libs/infodoc/src/infodoc.js',
+        'depends-on',
+        'Outbound delegates infodoc completed_tasks updates to infodocLib.saveCompletedTasks for recursive 409 retries',
+      ],
+      [
+        'api/src/controllers/contacts-by-phone.js',
+        'shared-libs/phone-number/src/phone-number.js',
+        'depends-on',
+        'Endpoint normalizes the phone parameter via the shared phone-number library',
+      ],
+    ],
+    diagrams: [
+      buildDiagram(
+        'A[shared-libs/transitions/mark_for_outbound] -->|immediate| C[shared-libs/outbound]',
+        'B[sentinel/schedule/outbound] -->|retry| C',
+        'C --> D[shared-libs/infodoc]',
+        'C -->|HTTP| E[OpenHIM]',
+        'E --> F[mediator/src/routes]',
+        'F --> G[mediator/src/utils/fhir]',
+        'F --> H[FHIR Server / OpenMRS]',
+        'I[RapidPro] -->|inbound SMS| J[api/contacts-by-phone]',
+        'J --> K[shared-libs/phone-number]'
+      ),
+    ],
+  }),
+};
+
 export class CodeContextAgent {
   private readonly useMockMCP: boolean;
 
@@ -127,436 +577,22 @@ export class CodeContextAgent {
   private mockOpenDeepWikiResponse(domain: CHTDomain, repo: string): OpenDeepWikiMCPResponse {
     console.log(`[Code Context Agent] Using MOCKED OpenDeepWiki response for ${repo}`);
 
-    const secondaryRepoData: Record<
-      string,
-      {
-        insights: ArchitectureInsight[];
-        relationships: ModuleRelationship[];
-        diagrams: string[];
-      }
-    > = {
-      'cht-conf': {
-        insights: [
-          {
-            component: 'cht-conf/src/lib/compile-app-settings',
-            description: 'Compiles app_settings.json from declarative config files',
-            patterns: ['compilation pipeline', 'JSON schema validation'],
-            dependencies: ['cht-conf/src/nools', 'cht-conf/src/contact-summary'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'cht-conf/src/lib',
-            target: 'api/controllers/settings',
-            relationship: 'calls',
-            description: 'cht-conf uploads compiled config via settings API',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[cht-conf CLI] --> B[compile-app-settings]
-    B --> C[nools compiler]
-    B --> D[contact-summary compiler]
-    A -->|upload| E[api/settings]`,
-        ],
-      },
-      'cht-watchdog': {
-        insights: [
-          {
-            component: 'cht-watchdog/src/monitor',
-            description: 'Monitors CHT instance health, connectivity, and sync status',
-            patterns: ['health polling', 'alerting', 'metric collection'],
-            dependencies: ['cht-watchdog/src/config', 'cht-watchdog/src/notifier'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'cht-watchdog/src/monitor',
-            target: 'api/services/monitoring',
-            relationship: 'calls',
-            description: 'Watchdog polls API monitoring endpoints for health checks',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[cht-watchdog] --> B[api/monitoring]
-    A --> C[alerting/notifier]
-    B --> D[CouchDB/_active_tasks]`,
-        ],
-      },
-    };
+    const mockData =
+      SECONDARY_REPO_MOCK_DATA[repo] || DOMAIN_MOCK_DATA[domain] || EMPTY_MOCK_CODE_CONTEXT_DATA;
 
-    const repoData = secondaryRepoData[repo];
-    if (repoData) {
-      return this.buildMockResponse(repoData.insights, repoData.relationships, repoData.diagrams);
-    }
-
-    // cht-core: domain-specific mock data
-    const mockData: Record<
-      CHTDomain,
-      {
-        insights: ArchitectureInsight[];
-        relationships: ModuleRelationship[];
-        diagrams: string[];
-      }
-    > = {
-      contacts: {
-        insights: [
-          {
-            component: 'api/controllers/people',
-            description: 'REST controller handling contact CRUD operations and search',
-            patterns: ['RESTful endpoints', 'CouchDB views', 'lineage validation'],
-            dependencies: ['shared-libs/lineage', 'shared-libs/contacts'],
-          },
-          {
-            component: 'webapp/modules/contacts',
-            description: 'Angular module for contact display, search, and hierarchy navigation',
-            patterns: ['Angular module pattern', 'service-controller separation', 'search indexing'],
-            dependencies: ['webapp/services/db', 'webapp/services/search'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'webapp/modules/contacts',
-            target: 'api/controllers/people',
-            relationship: 'calls',
-            description: 'Webapp contacts module calls people API for CRUD operations',
-          },
-          {
-            source: 'api/controllers/people',
-            target: 'shared-libs/lineage',
-            relationship: 'depends-on',
-            description: 'People controller uses lineage lib for hierarchy validation',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[webapp/contacts] -->|HTTP| B[api/people]
-    B --> C[shared-libs/lineage]
-    B --> D[CouchDB]
-    A --> E[webapp/search-service]`,
-        ],
-      },
-      'forms-and-reports': {
-        insights: [
-          {
-            component: 'api/controllers/forms',
-            description: 'Handles form submission, validation, and XForm processing',
-            patterns: ['XForm parsing', 'validation pipeline', 'Enketo integration'],
-            dependencies: ['shared-libs/rules-engine', 'sentinel/transitions'],
-          },
-          {
-            component: 'sentinel/transitions',
-            description: 'Background processing pipeline triggered after form submission',
-            patterns: ['event-driven transitions', 'sequential processing', 'error recovery'],
-            dependencies: ['shared-libs/infodoc', 'api/services/db'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'webapp/modules/reports',
-            target: 'api/controllers/forms',
-            relationship: 'calls',
-            description: 'Reports module submits forms via API',
-          },
-          {
-            source: 'api/controllers/forms',
-            target: 'sentinel/transitions',
-            relationship: 'depends-on',
-            description: 'Form submissions trigger sentinel transitions',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[webapp/reports] -->|submit| B[api/forms]
-    B --> C[sentinel/transitions]
-    C --> D[shared-libs/rules-engine]
-    B --> E[Enketo]`,
-        ],
-      },
-      'tasks-and-targets': {
-        insights: [
-          {
-            component: 'shared-libs/rules-engine',
-            description: 'Core rules engine that evaluates task and target rules',
-            patterns: ['rule evaluation', 'emission pipeline', 'caching'],
-            dependencies: ['shared-libs/calendar-interval', 'shared-libs/contact-types-utils'],
-          },
-          {
-            component: 'webapp/modules/tasks',
-            description: 'UI module for displaying and managing tasks',
-            patterns: ['Angular module pattern', 'lazy loading', 'task prioritization'],
-            dependencies: ['shared-libs/rules-engine', 'webapp/services/db'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'webapp/modules/tasks',
-            target: 'shared-libs/rules-engine',
-            relationship: 'depends-on',
-            description: 'Tasks module uses rules engine for task evaluation',
-          },
-          {
-            source: 'shared-libs/rules-engine',
-            target: 'shared-libs/calendar-interval',
-            relationship: 'imports',
-            description: 'Rules engine uses calendar-interval for date calculations',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[webapp/tasks] --> B[shared-libs/rules-engine]
-    A[webapp/targets] --> B
-    B --> C[shared-libs/calendar-interval]
-    B --> D[contact-types-utils]`,
-        ],
-      },
-      authentication: {
-        insights: [
-          {
-            component: 'api/auth',
-            description: 'Authentication middleware handling session management and permissions',
-            patterns: ['session-based auth', 'role-based access', 'cookie management'],
-            dependencies: ['api/services/cookie', 'CouchDB/_users'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'webapp/services/auth',
-            target: 'api/auth',
-            relationship: 'calls',
-            description: 'Webapp auth service calls API auth endpoints',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[webapp/auth-service] -->|login/logout| B[api/auth]
-    B --> C[CouchDB/_users]
-    B --> D[api/cookie-service]`,
-        ],
-      },
-      messaging: {
-        insights: [
-          {
-            component: 'sentinel/schedule/outbound',
-            description: 'Outbound message scheduling and gateway integration',
-            patterns: ['scheduled processing', 'gateway abstraction', 'retry logic'],
-            dependencies: ['api/services/messaging', 'shared-libs/message-utils'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'sentinel/schedule/outbound',
-            target: 'api/services/messaging',
-            relationship: 'calls',
-            description: 'Outbound scheduler uses messaging service for delivery',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[sentinel/outbound] --> B[api/messaging]
-    B --> C[SMS Gateway]
-    A --> D[shared-libs/message-utils]`,
-        ],
-      },
-      'data-sync': {
-        insights: [
-          {
-            component: 'api/services/replication',
-            description: 'CouchDB replication management for offline-first sync',
-            patterns: ['filtered replication', 'purging', 'conflict resolution'],
-            dependencies: ['api/services/db', 'shared-libs/purging-utils'],
-          },
-          {
-            component: 'webapp/services/db-sync',
-            description: 'Client-side sync coordination between PouchDB and CouchDB',
-            patterns: ['PouchDB sync', 'offline detection', 'retry backoff'],
-            dependencies: ['webapp/services/db', 'api/services/replication'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'webapp/services/db-sync',
-            target: 'api/services/replication',
-            relationship: 'calls',
-            description: 'Client sync service coordinates with server replication',
-          },
-          {
-            source: 'api/services/replication',
-            target: 'shared-libs/purging-utils',
-            relationship: 'depends-on',
-            description: 'Replication service uses purging utils for data management',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[webapp/db-sync] -->|replicate| B[api/replication]
-    B --> C[CouchDB]
-    B --> D[shared-libs/purging-utils]
-    A --> E[PouchDB]`,
-        ],
-      },
-      configuration: {
-        insights: [
-          {
-            component: 'cht-conf/src/lib',
-            description: 'Configuration compilation and upload tooling',
-            patterns: ['declarative config', 'compilation pipeline', 'validation'],
-            dependencies: ['cht-conf/src/nools', 'cht-conf/src/contact-summary'],
-          },
-          {
-            component: 'api/controllers/settings',
-            description: 'App settings management and validation API',
-            patterns: ['settings CRUD', 'validation middleware', 'defaults merging'],
-            dependencies: ['api/services/config', 'shared-libs/settings'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'cht-conf/src/lib',
-            target: 'api/controllers/settings',
-            relationship: 'calls',
-            description: 'cht-conf uploads compiled config via settings API',
-          },
-          {
-            source: 'api/controllers/settings',
-            target: 'shared-libs/settings',
-            relationship: 'depends-on',
-            description: 'Settings controller uses shared settings library',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[cht-conf] -->|upload| B[api/settings]
-    B --> C[shared-libs/settings]
-    B --> D[CouchDB/app_settings]`,
-        ],
-      },
-      interoperability: {
-        insights: [
-          {
-            component: 'mediator/src/routes',
-            description:
-              'cht-interoperability mediator FHIR routes (patient, encounter, endpoint, organization, service-request) that bridge CHT and external FHIR systems via OpenHIM',
-            patterns: [
-              'route-level FHIR validation',
-              'shared request wrapper for consistent responses',
-              'resource-specific Joi schemas',
-            ],
-            dependencies: [
-              'mediator/src/utils/fhir.ts',
-              'mediator/src/utils/request.ts',
-              'mediator/src/middlewares/index.ts',
-            ],
-          },
-          {
-            component: 'mediator/src/controllers/service-request.ts',
-            description:
-              'Mediator controller orchestrating create vs update behavior for FHIR resources, with identifier-based lookup before create to avoid OpenMRS sync duplicates',
-            patterns: ['identifier-based existence checks', 'create/update method semantics'],
-            dependencies: ['mediator/src/utils/fhir.ts'],
-          },
-          {
-            component: 'sentinel/src/schedule/outbound.js',
-            description:
-              'Sentinel outbound push scheduler that retries queued tasks; runs alongside the mark_for_outbound transition for immediate delivery',
-            patterns: [
-              'dual transition + scheduler delivery',
-              'send-once/hash-of-payload deduplication',
-              'recursive infodoc retries on CouchDB 409',
-            ],
-            dependencies: [
-              'shared-libs/transitions/src/transitions/mark_for_outbound.js',
-              'shared-libs/outbound/src/outbound.js',
-              'shared-libs/infodoc/src/infodoc.js',
-            ],
-          },
-          {
-            component: 'api/src/controllers/contacts-by-phone.js',
-            description:
-              'Public GET /api/v1/contacts-by-phone endpoint used by inbound RapidPro flows to resolve a hydrated contact from a normalized phone number',
-            patterns: ['versioned external API', 'phone normalization', 'hydration of ancestor hierarchy'],
-            dependencies: ['shared-libs/phone-number/src/phone-number.js'],
-          },
-        ],
-        relationships: [
-          {
-            source: 'mediator/src/routes',
-            target: 'mediator/src/utils/fhir.ts',
-            relationship: 'depends-on',
-            description: 'Routes apply validateFhirResource and resource helpers from the shared FHIR utility',
-          },
-          {
-            source: 'mediator/src/routes',
-            target: 'mediator/src/utils/request.ts',
-            relationship: 'depends-on',
-            description: 'Routes pass through requestHandler for consistent response shaping',
-          },
-          {
-            source: 'shared-libs/transitions/src/transitions/mark_for_outbound.js',
-            target: 'shared-libs/outbound/src/outbound.js',
-            relationship: 'calls',
-            description:
-              'Immediate-push transition reuses the extracted send logic shared with the scheduler',
-          },
-          {
-            source: 'sentinel/src/schedule/outbound.js',
-            target: 'shared-libs/outbound/src/outbound.js',
-            relationship: 'calls',
-            description: 'Scheduler retries failed pushes via the same shared outbound send logic',
-          },
-          {
-            source: 'sentinel/src/schedule/outbound.js',
-            target: 'shared-libs/infodoc/src/infodoc.js',
-            relationship: 'depends-on',
-            description:
-              'Outbound delegates infodoc completed_tasks updates to infodocLib.saveCompletedTasks for recursive 409 retries',
-          },
-          {
-            source: 'api/src/controllers/contacts-by-phone.js',
-            target: 'shared-libs/phone-number/src/phone-number.js',
-            relationship: 'depends-on',
-            description: 'Endpoint normalizes the phone parameter via the shared phone-number library',
-          },
-        ],
-        diagrams: [
-          `graph TD
-    A[shared-libs/transitions/mark_for_outbound] -->|immediate| C[shared-libs/outbound]
-    B[sentinel/schedule/outbound] -->|retry| C
-    C --> D[shared-libs/infodoc]
-    C -->|HTTP| E[OpenHIM]
-    E --> F[mediator/src/routes]
-    F --> G[mediator/src/utils/fhir]
-    F --> H[FHIR Server / OpenMRS]
-    I[RapidPro] -->|inbound SMS| J[api/contacts-by-phone]
-    J --> K[shared-libs/phone-number]`,
-        ],
-      },
-    };
-
-    const domainData = mockData[domain] || { insights: [], relationships: [], diagrams: [] };
-
-    return this.buildMockResponse(
-      domainData.insights,
-      domainData.relationships,
-      domainData.diagrams
-    );
+    return this.buildMockResponse(mockData);
   }
 
   /**
    * Wrap raw mock arrays into the OpenDeepWiki response envelope
    */
-  private buildMockResponse(
-    insights: ArchitectureInsight[],
-    relationships: ModuleRelationship[],
-    diagrams: string[]
-  ): OpenDeepWikiMCPResponse {
+  private buildMockResponse(mockData: MockCodeContextData): OpenDeepWikiMCPResponse {
     return {
       success: true,
       data: {
-        architectureInsights: insights,
-        moduleRelationships: relationships,
-        diagrams,
+        architectureInsights: mockData.insights,
+        moduleRelationships: mockData.relationships,
+        diagrams: mockData.diagrams,
         structure: [],
       },
     };
