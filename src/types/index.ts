@@ -17,9 +17,19 @@ export type CHTDomain =
   | 'interoperability';
 
 /**
- * CHT Services
+ * Issue type classification
  */
-export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+export type IssueType = 'feature' | 'bug' | 'improvement';
+
+/**
+ * Priority level
+ */
+export type Priority = 'high' | 'medium' | 'low';
+
+/**
+ * Complexity level
+ */
+export type Complexity = 'low' | 'medium' | 'high';
 
 /**
  * Issue template structure
@@ -27,8 +37,8 @@ export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 export interface IssueTemplate {
   issue: {
     title: string;
-    type: 'feature' | 'bug' | 'improvement';
-    priority: 'high' | 'medium' | 'low';
+    type: IssueType;
+    priority: Priority;
     description: string;
     technical_context: {
       domain: CHTDomain; // Required - must be specified in ticket frontmatter
@@ -94,6 +104,11 @@ export interface DomainOverviewMetadata {
   last_updated: string;
   related_domains: string[];
 }
+
+/**
+ * CHT Services
+ */
+export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 
 /**
  * Workflow step
@@ -297,11 +312,11 @@ export interface OrchestrationPlan {
   summary: string;
   keyFindings: string[];
   proposedApproach: string;
-  estimatedComplexity: 'low' | 'medium' | 'high';
+  estimatedComplexity: Complexity;
   phases: Array<{
     name: string;
     description: string;
-    estimatedComplexity: 'low' | 'medium' | 'high';
+    estimatedComplexity: Complexity;
     suggestedComponents: string[];
     dependencies: string[];
   }>;
