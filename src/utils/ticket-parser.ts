@@ -5,8 +5,8 @@
  * All detailed content is extracted from markdown body sections
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain, IssueType, Priority } from '../types';
 
@@ -22,7 +22,7 @@ const parseFrontmatterYaml = (yamlContent: string): Record<string, string> => {
     const parsed = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
     if (parsed && typeof parsed === 'object') {
       return Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+        Object.entries(parsed).map(([key, value]) => [
           key,
           typeof value === 'string' ? value : JSON.stringify(value ?? ''),
         ])
@@ -267,6 +267,33 @@ const isEmptyDescription = (description: string): boolean => {
   return /^#+\s*\w+\s*$/.test(trimmed);
 };
 
+const runContentChecks = (
+  description: string,
+  requirementsLength: number,
+  acceptanceCriteriaLength: number,
+  hasDescriptionSection: boolean
+): string[] => {
+  const warnings: string[] = [];
+
+  if (description.length < DESCRIPTION_BRIEF_THRESHOLD) {
+    warnings.push('Description is brief - consider adding more detail');
+  }
+
+  if (requirementsLength === 0) {
+    warnings.push('Consider adding requirements');
+  }
+
+  if (acceptanceCriteriaLength === 0) {
+    warnings.push('Consider adding acceptance criteria');
+  }
+
+  if (!hasDescriptionSection) {
+    warnings.push('Ticket should include markdown sections');
+  }
+
+  return warnings;
+};
+
 export const validateTicketFile = (filePath: string): ValidationResult => {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -283,21 +310,13 @@ export const validateTicketFile = (filePath: string): ValidationResult => {
     if (isEmptyDescription(ticket.issue.description)) {
       errors.push('Description cannot be empty');
     } else {
-      if (ticket.issue.description.length < DESCRIPTION_BRIEF_THRESHOLD) {
-        warnings.push('Description is brief - consider adding more detail');
-      }
-    }
-
-    if (ticket.issue.requirements.length === 0) {
-      warnings.push('Consider adding requirements');
-    }
-
-    if (ticket.issue.acceptance_criteria.length === 0) {
-      warnings.push('Consider adding acceptance criteria');
-    }
-
-    if (!/##\s*Description/i.test(content)) {
-      warnings.push('Ticket should include markdown sections');
+      const contentWarnings = runContentChecks(
+        ticket.issue.description,
+        ticket.issue.requirements.length,
+        ticket.issue.acceptance_criteria.length,
+        /##\s*Description/i.test(content)
+      );
+      warnings.push(...contentWarnings);
     }
   } catch (error) {
     errors.push(mapErrorMessage(error));

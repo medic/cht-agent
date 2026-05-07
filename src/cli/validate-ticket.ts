@@ -8,8 +8,8 @@
  *   npm run validate-ticket --dir <directory> [--verbose]
  */
 
-import { resolve } from 'path';
-import { existsSync, statSync } from 'fs';
+import { resolve } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
 import { validateTicketFile, ValidationResult, findTicketFiles } from '../utils/ticket-parser';
 
 const displayErrors = (errors: string[]): void => {
