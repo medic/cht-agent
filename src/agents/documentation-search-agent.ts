@@ -15,7 +15,7 @@ import { MCPClient } from '../mcp';
 import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 export class DocumentationSearchAgent {
-  private useMockMCP: boolean;
+  private readonly useMockMCP: boolean;
   private readonly mcpServerUrl: string;
   private readonly mcpClient: MCPClient;
 
