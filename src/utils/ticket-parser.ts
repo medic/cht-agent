@@ -10,12 +10,19 @@ import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain, IssueType, Priority } from '../types';
 
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
 const parseFrontmatterYaml = (yamlContent: string): Record<string, string> => {
   try {
-    const parsed = yaml.load(yamlContent);
+    // Using JSON_SCHEMA to safely parse YAML without executing arbitrary code
+    const parsed = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
     if (parsed && typeof parsed === 'object') {
       return Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+        Object.entries(parsed).map(([key, value]) => [
           key,
           typeof value === 'string' ? value : JSON.stringify(value ?? ''),
         ])
@@ -221,4 +228,103 @@ export const findTicketFiles = (dirPath: string): string[] => {
     .readdirSync(dirPath)
     .filter(file => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
     .map(file => path.join(dirPath, file));
+};
+
+// NOTE: This function maps parseTicketFile error messages to validation-friendly messages.
+// It relies on substring matching of the error messages, which is fragile.
+// If parseTicketFile error messages change, this mapping may silently fail.
+const mapErrorMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error);
+
+  const errorPatterns: [RegExp, string][] = [
+    [/Ticket must have a "title" in frontmatter/, 'Title is required in the YAML frontmatter'],
+    [/Ticket must have a "type" in frontmatter/, 'Type is required in the YAML frontmatter (feature, bug, or improvement)'],
+    [/Ticket must have a "priority" in frontmatter/, 'Priority is required in the YAML frontmatter (high, medium, or low)'],
+    [/Ticket must have a "domain" in frontmatter/, 'Domain is required in the YAML frontmatter'],
+    [/Invalid type:/, 'Type must be one of: feature, bug, improvement'],
+    [/Invalid priority:/, 'Priority must be one of: high, medium, low'],
+    [/Invalid domain:/, `Domain must be one of: ${VALID_DOMAINS.join(', ')}`],
+    [/Ticket file not found:/, 'Ticket file not found'],
+  ];
+
+  for (const [pattern, friendlyMessage] of errorPatterns) {
+    if (pattern.test(message)) {
+      return friendlyMessage;
+    }
+  }
+
+  return `Failed to process ticket: ${message}`;
+};
+
+const DESCRIPTION_BRIEF_THRESHOLD = 100;
+
+const isEmptyDescription = (description: string): boolean => {
+  if (!description || description.trim() === '') {
+    return true;
+  }
+  // Check if description is only markdown headers (e.g., "## Description")
+  const trimmed = description.trim();
+  return /^#+\s*\w+\s*$/.test(trimmed);
+};
+
+const runContentChecks = (
+  description: string,
+  requirementsLength: number,
+  acceptanceCriteriaLength: number,
+  hasDescriptionSection: boolean
+): string[] => {
+  const warnings: string[] = [];
+
+  if (description.length < DESCRIPTION_BRIEF_THRESHOLD) {
+    warnings.push('Description is brief - consider adding more detail');
+  }
+
+  if (requirementsLength === 0) {
+    warnings.push('Consider adding requirements');
+  }
+
+  if (acceptanceCriteriaLength === 0) {
+    warnings.push('Consider adding acceptance criteria');
+  }
+
+  if (!hasDescriptionSection) {
+    warnings.push('Ticket should include markdown sections');
+  }
+
+  return warnings;
+};
+
+export const validateTicketFile = (filePath: string): ValidationResult => {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!fs.existsSync(filePath)) {
+    return { valid: false, errors: ['Ticket file not found'], warnings: [] };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+
+  try {
+    const ticket = parseTicketFile(filePath);
+
+    if (isEmptyDescription(ticket.issue.description)) {
+      errors.push('Description cannot be empty');
+    } else {
+      const contentWarnings = runContentChecks(
+        ticket.issue.description,
+        ticket.issue.requirements.length,
+        ticket.issue.acceptance_criteria.length,
+        /##\s*Description/i.test(content)
+      );
+      warnings.push(...contentWarnings);
+    }
+  } catch (error) {
+    errors.push(mapErrorMessage(error));
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
 };
