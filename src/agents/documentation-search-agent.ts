@@ -2,7 +2,6 @@
  * Documentation Search Agent
  *
  * Searches CHT documentation using MCP integration with Kapa.AI
- * For POC, this uses mocked responses until MCP server is ready
  */
 
 import {
@@ -10,16 +9,23 @@ import {
   DocumentationReference,
   CHTDomain,
   IssueTemplate,
-  MCPResponse,
+  MCPParsedDocument,
 } from '../types';
+import { MCPClient } from '../mcp';
+import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 export class DocumentationSearchAgent {
-  private useMockMCP: boolean;
+  private readonly useMockMCP: boolean;
+  private readonly mcpServerUrl: string;
+  private readonly mcpClient: MCPClient;
 
-  constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
-    // Model will be used when MCP integration is complete
-    // For now, we use mocked responses
-    this.useMockMCP = options.useMockMCP ?? !process.env.MCP_SERVER_URL
+  constructor(options: { modelName?: string; useMockMCP?: boolean; mcpServerUrl?: string } = {}) {
+    this.useMockMCP = options.useMockMCP === true; // Default to false
+    this.mcpServerUrl =
+      options.mcpServerUrl ??
+      process.env.MCP_SERVER_URL ??
+      DEFAULT_MCP_SERVER_URL;
+    this.mcpClient = new MCPClient({ serverUrl: this.mcpServerUrl });
   }
 
   /**
@@ -37,18 +43,29 @@ export class DocumentationSearchAgent {
     const searchQuery = this.buildSearchQuery(issue);
     console.log(`[Documentation Search Agent] Search query: ${searchQuery}`);
 
-    // Call MCP (mocked for now)
-    const mcpResponse = await this.callKapaAI(searchQuery, domain);
+    // Call Kapa.AI via MCP and process findings
+    try {
+      const parsedDocs = await this.callKapaAI(searchQuery, domain);
+      const findings = this.buildFindings(parsedDocs, issue);
 
-    // Process and structure findings
-    const findings = this.processMCPResponse(mcpResponse, issue);
+      console.log(
+        `[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`
+      );
+      console.log(`[Documentation Search Agent] Confidence: ${findings.confidence}`);
 
-    console.log(
-      `[Documentation Search Agent] Found ${findings.documentationReferences.length} documentation references`
-    );
-    console.log(`[Documentation Search Agent] Confidence: ${findings.confidence}`);
-
-    return findings;
+      return findings;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[Documentation Search Agent] MCP call failed: ${message}`);
+      return {
+        documentationReferences: [],
+        relevantExamples: [],
+        suggestedApproaches: [],
+        relatedDomains: [],
+        confidence: 0,
+        source: 'kapa-ai',
+      };
+    }
   }
 
   /**
@@ -64,91 +81,47 @@ export class DocumentationSearchAgent {
   }
 
   /**
-   * Call Kapa.AI via MCP
+   * Call Kapa.AI via MCP and return parsed documents.
+   * Throws on failure so the caller can handle the error uniformly.
    */
-  private async callKapaAI(query: string, domain: CHTDomain): Promise<MCPResponse> {
+  private async callKapaAI(query: string, _domain: CHTDomain): Promise<MCPParsedDocument[]> {
     if (this.useMockMCP) {
-      return this.mockKapaAIResponse(query, domain);
+      return this.mockKapaAIResponse(_domain);
     }
 
-    const mcpServerUrl = process.env.MCP_SERVER_URL;
-    if (!mcpServerUrl) {
-      throw new Error('MCP_SERVER_URL is not set in environment');
-    }
+    console.log(`[Documentation Search Agent] Calling MCP server: ${this.mcpServerUrl}`);
 
-    const response = await fetch(mcpServerUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'search_docs',
-          arguments: { query, maxResults: 5 },
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`MCP server responded with status ${response.status}`);
-    }
-
-    const json = (await response.json()) as {
-      result?: { content?: Array<{ type: string; text?: string }> };
-      error?: { message: string };
-    };
-
-    if (json.error) {
-      throw new Error(`MCP error: ${json.error.message}`);
-    }
-
-    const textContent = json.result?.content
-      ?.filter((c) => c.type === 'text')
-      .map((c) => c.text ?? '')
-      .join('\n');
-
-    return this.parseMCPTextResponse(textContent ?? '', domain);
+    const searchResponse = await this.mcpClient.searchDocs({ query, maxResults: 5 });
+    return this.mcpClient.parseSearchDocsResponse(searchResponse);
   }
 
   /**
-   * Parse free-form MCP text response into structured MCPResponse
+   * Extract topics from documentation content
    */
-  private parseMCPTextResponse(text: string, domain: CHTDomain): MCPResponse {
-    if (!text) {
-      return { success: false, error: 'Empty response from MCP server' };
-    }
+  private extractTopics(content: string): string[] {
+    if (!content) return [];
 
-    const urlRegex = /https?:\/\/[^\s),"]+/g;
-    const urls = [...new Set(text.match(urlRegex) ?? [])];
+    const keywords = [
+      'contact', 'hierarchy', 'forms', 'report', 'task', 'target',
+      'permission', 'role', 'sync', 'replication', 'offline',
+      'sentinel', 'transition', 'workflow', 'validation',
+    ];
 
-    const references = urls.map((url) => {
-      const slug = url.match(/\/([^/]+)\/?$/)?.[1]?.replace(/-/g, ' ') ?? url;
-      return {
-        url,
-        title: slug.charAt(0).toUpperCase() + slug.slice(1),
-        topics: [domain],
-        relevantSections: [] as string[],
-      };
-    });
+    const lowerContent = content.toLowerCase();
+    const topics = keywords.filter((keyword) => lowerContent.includes(keyword));
 
-    return {
-      success: true,
-      data: {
-        references,
-        summary: text.substring(0, 300),
-        relatedTopics: [domain],
-      },
-    };
+    return [...new Set(topics)];
   }
 
   /**
-   * Mock Kapa.AI response for POC/testing
+   * Mock Kapa.AI response for testing — returns MCPParsedDocument[] directly.
    */
-  private mockKapaAIResponse(_query: string, domain: CHTDomain): MCPResponse {
+  private mockKapaAIResponse(domain: CHTDomain): MCPParsedDocument[] {
     console.log('[Documentation Search Agent] Using MOCKED Kapa.AI response');
 
-    // Domain-specific mock responses
+    // Domain-specific mock responses.
+    // Note: codeExamples are intentionally absent for now as extractCodeExamples() from markdown
+    // content is deferred to PR #86. relevantExamples will always be [] until then.
     const mockData: Record<CHTDomain, DocumentationReference[]> = {
       contacts: [
         {
@@ -228,38 +201,46 @@ export class DocumentationSearchAgent {
           relevantSections: ['Base Settings', 'Configuration Options'],
         },
       ],
+      interoperability: [
+        {
+          url: 'https://docs.communityhealthtoolkit.org/apps/guides/interoperability/',
+          title: 'Interoperability Overview',
+          topics: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability'],
+          relevantSections: ['Outbound Push', 'FHIR Resources', 'OpenHIM Mediators'],
+          codeExamples: ['outbound push configuration', 'FHIR resource mapping'],
+        },
+      ],
     };
 
-    const references = mockData[domain] || [];
+    const domainRefs = mockData[domain] || [];
 
-    return {
-      success: true,
-      data: {
-        references,
-        summary: `Found ${references.length} relevant documentation pages for ${domain}`,
-        relatedTopics: references.flatMap((r) => r.topics),
-      },
-    };
+    // Convert DocumentationReference mock data into MCPParsedDocument shape
+    return domainRefs.map((ref) => ({
+      title: ref.title,
+      section: ref.relevantSections?.[0] ?? '',
+      content: ref.topics.join(', '),
+      sourceUrl: ref.url,
+    }));
   }
 
   /**
-   * Process MCP response and structure findings
+   * Build ResearchFindings from parsed MCP documents.
    */
-  private processMCPResponse(mcpResponse: MCPResponse, issue: IssueTemplate): ResearchFindings {
-    if (!mcpResponse.success || !mcpResponse.data) {
-      return {
-        documentationReferences: [],
-        relevantExamples: [],
-        suggestedApproaches: [],
-        relatedDomains: [],
-        confidence: 0,
-        source: 'kapa-ai',
-      };
-    }
+  private buildFindings(parsedDocs: MCPParsedDocument[], issue: IssueTemplate): ResearchFindings {
+    const references: DocumentationReference[] = parsedDocs.map((doc) => ({
+      url: doc.sourceUrl,
+      title: doc.title || doc.section,
+      topics: this.extractTopics(doc.content),
+      relevantSections: [doc.section].filter(Boolean),
+    }));
 
-    const { references, relatedTopics } = mcpResponse.data;
+    const relatedTopics = references.flatMap((r) => r.topics);
 
     // Extract code examples
+
+    // TODO(#86): extractCodeExamples() from markdown content will be wired in here.
+    // Until then relevantExamples is always [] (empty)
+
     const relevantExamples = references
       .flatMap((ref) => ref.codeExamples || [])
       .filter((example, index, self) => self.indexOf(example) === index);
@@ -300,6 +281,8 @@ export class DocumentationSearchAgent {
       approaches.push('Implement following CHT best practices and existing patterns');
     } else if (issue.issue.type === 'bug') {
       approaches.push('Debug using CHT debugging guidelines and common issue patterns');
+    } else if (issue.issue.type === 'improvement') {
+      approaches.push('Refine existing behavior using CHT patterns and regression-safe changes');
     }
 
     return approaches.slice(0, 5); // Limit to top 5
@@ -317,6 +300,7 @@ export class DocumentationSearchAgent {
       messaging: ['sms', 'message', 'notification', 'alert'],
       'data-sync': ['sync', 'replication', 'offline', 'couchdb', 'purge'],
       configuration: ['config', 'settings', 'cht-conf'],
+      interoperability: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability', 'mediator'],
     };
 
     const relatedDomains: CHTDomain[] = [];
@@ -333,4 +317,5 @@ export class DocumentationSearchAgent {
 
     return relatedDomains;
   }
+
 }
