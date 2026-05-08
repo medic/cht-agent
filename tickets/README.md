@@ -167,10 +167,13 @@ What needs to be done...
   - `feature` = new functionality
   - `bug` = something is broken
   - `improvement` = improve existing functionality (same idea as GitHub **Type: Improvement**)
+  - `documentation` = document a functionality
+  
 - **Priority**:
   - `high` = urgent or critical
   - `medium` = important but not urgent
   - `low` = nice to have
+  
 - **Domain**: Pick the area that best matches the work; see the list above.
 - **Description**: Explain what you need and why in plain language.
 - **Requirements**: List what the solution should do.
