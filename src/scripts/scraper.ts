@@ -78,7 +78,9 @@ function checkOrgMembership(username: string): boolean {
  * ```
  */
 function fetchLinkedIssues(prBody: string, repo: string): LinkedIssue[] {
-  const pattern = /(?:fixes|closes|resolves)\s+#(\d+)/gi;
+  // Matches both bare keywords ("Fixes #123") and full GitHub issue URLs
+  // ("Fixes https://github.com/org/repo/issues/123")
+  const pattern = /(?:fixes|closes|resolves)\s+(?:https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/|#)(\d+)/gi;
   const seen = new Set<number>();
   let match: RegExpExecArray | null;
 

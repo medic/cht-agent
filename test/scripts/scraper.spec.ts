@@ -289,6 +289,60 @@ describe('scrapePR', () => {
     });
   });
 
+  describe('full GitHub URL linked issues', () => {
+    it('should extract issue numbers from full GitHub issue URLs', () => {
+      const urlBody = 'Fixes https://github.com/medic/cht-core/issues/11019\nCloses https://github.com/medic/cht-core/issues/11020';
+      const urlMeta = JSON.stringify({
+        number: 5,
+        title: 'URL test',
+        body: urlBody,
+        labels: [],
+        mergeCommit: { oid: 'sha3' },
+        mergedAt: '2024-04-01T00:00:00Z',
+        files: [],
+      });
+
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return urlMeta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return '[]';
+        if (args[0] === 'issue' && args[1] === 'view')
+          return JSON.stringify({ body: 'issue body', comments: [] });
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      const result = scrapePR(5);
+      expect(result.linkedIssues).to.have.lengthOf(2);
+      expect(result.linkedIssues.map((i: { number: number }) => i.number)).to.include.members([11019, 11020]);
+    });
+
+    it('should deduplicate when bare #NNN and URL form reference the same issue', () => {
+      const mixedBody = 'Fixes #11019\nAlso fixes https://github.com/medic/cht-core/issues/11019';
+      const mixedMeta = JSON.stringify({
+        number: 6,
+        title: 'Dedup test',
+        body: mixedBody,
+        labels: [],
+        mergeCommit: { oid: 'sha4' },
+        mergedAt: '2024-04-01T00:00:00Z',
+        files: [],
+      });
+
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return mixedMeta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return '[]';
+        if (args[0] === 'issue' && args[1] === 'view')
+          return JSON.stringify({ body: 'issue body', comments: [] });
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      const result = scrapePR(6);
+      expect(result.linkedIssues).to.have.lengthOf(1);
+      expect(result.linkedIssues[0].number).to.equal(11019);
+    });
+  });
+
   describe('org membership', () => {
     it('should set isOrgMember: true when org API returns 204 (no throw)', () => {
       const singleReview = JSON.stringify([
