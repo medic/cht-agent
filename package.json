@@ -14,7 +14,8 @@
     "postinstall": "husky install",
     "research": "node dist/cli/research.js",
     "example:research": "node dist/examples/research-supervisor-example.js",
-    "validate-ticket": "node dist/cli/validate-ticket.js"
+    "validate-ticket": "node dist/cli/validate-ticket.js",
+    "validate-schema": "ts-node src/scripts/validate-schema.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",
@@ -37,12 +38,14 @@
     "@types/sinon": "^21.0.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
+    "ajv-formats": "^3.0.1",
     "chai": "^6.2.1",
     "eslint": "^8.31.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-n": "^17.24.0",
     "eslint-plugin-no-only-tests": "^3.3.0",
     "eslint-plugin-promise": "^7.2.1",
+    "gray-matter": "^4.0.3",
     "husky": "^8.0.3",
     "mocha": "^11.7.5",
     "mock-fs": "^5.5.0",
