@@ -16,12 +16,13 @@ import {
   MCPParsedAnswer,
   MCPParsedSource,
 } from '../types';
+import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 /**
  * Default configuration values
  */
 const DEFAULT_CONFIG: MCPClientConfig = {
-  serverUrl: 'https://mcp-docs.dev.medicmobile.org/mcp',
+  serverUrl: DEFAULT_MCP_SERVER_URL,
   timeout: 30000, // 30 seconds
 };
 
@@ -58,7 +59,7 @@ interface MCPRPCResponse {
  * MCP Client for CHT documentation
  */
 export class MCPClient {
-  private config: MCPClientConfig;
+  private readonly config: MCPClientConfig;
   private requestId: number = 0;
 
   constructor(config?: Partial<MCPClientConfig>) {
@@ -74,7 +75,7 @@ export class MCPClient {
   static fromEnv(): MCPClient {
     const serverUrl = process.env.MCP_SERVER_URL || DEFAULT_CONFIG.serverUrl;
     const timeout = process.env.MCP_TIMEOUT
-      ? parseInt(process.env.MCP_TIMEOUT, 10)
+      ? Number.parseInt(process.env.MCP_TIMEOUT, 10)
       : DEFAULT_CONFIG.timeout;
 
     return new MCPClient({ serverUrl, timeout });

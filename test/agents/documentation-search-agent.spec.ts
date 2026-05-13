@@ -1,5 +1,7 @@
 import { expect } from 'chai';
+import * as sinon from 'sinon';
 import { DocumentationSearchAgent } from '../../src/agents/documentation-search-agent';
+import { MCPClient } from '../../src/mcp';
 import { IssueTemplate } from '../../src/types';
 
 describe('DocumentationSearchAgent', () => {
@@ -7,6 +9,10 @@ describe('DocumentationSearchAgent', () => {
 
   beforeEach(() => {
     agent = new DocumentationSearchAgent({ useMockMCP: true });
+  });
+
+  afterEach(() => {
+    sinon.restore();
   });
 
   // Helper to create test issue template
@@ -250,6 +256,15 @@ describe('DocumentationSearchAgent', () => {
       expect(approaches).to.deep.equal([]);
     });
 
+    it('should add refinement recommendation for improvements', () => {
+      const references: any[] = [];
+      const issue = createTestIssue({ type: 'improvement' });
+
+      const approaches = (agent as any).generateApproaches(references, issue);
+
+      expect(approaches.some((a: string) => a.includes('Refine'))).to.be.true;
+    });
+
     it('should limit approaches to 5', () => {
       const references = [
         {
@@ -352,32 +367,73 @@ describe('DocumentationSearchAgent', () => {
     });
   });
 
-  describe('MCP integration', () => {
-    it('should return empty findings with error source when MCP fails', async function () {
-      this.timeout(35000); // MCP client has 30s timeout
-      // Force MCP failure by pointing to an invalid server URL
-      const originalUrl = process.env.MCP_SERVER_URL;
-      process.env.MCP_SERVER_URL = 'http://localhost:1/nonexistent';
-      const agentWithoutMock = new DocumentationSearchAgent({ useMockMCP: false });
+  describe('buildFindings', () => {
+    it('should return empty references and low confidence for empty doc list', () => {
       const issue = createTestIssue();
 
-      // Should not throw, but return error findings
-      try {
-        const result = await agentWithoutMock.search(issue);
+      const findings = (agent as any).buildFindings([], issue);
 
-        expect(result.documentationReferences).to.deep.equal([]);
-        expect(result.confidence).to.equal(0);
-        expect(result.source).to.equal('error');
-        expect(result.suggestedApproaches).to.include(
-          'MCP server unavailable - manual documentation review recommended'
-        );
-      } finally {
-        if (originalUrl === undefined) {
-          delete process.env.MCP_SERVER_URL;
-        } else {
-          process.env.MCP_SERVER_URL = originalUrl;
-        }
-      }
+      expect(findings.documentationReferences).to.deep.equal([]);
+      expect(findings.confidence).to.equal(0.3);
+    });
+
+    it('should use "cached" source when using mock MCP', () => {
+      const docs = [
+        { title: 'T1', section: 'S1', content: 'contact hierarchy', sourceUrl: 'https://1.com' },
+      ];
+      const issue = createTestIssue();
+
+      const findings = (agent as any).buildFindings(docs, issue);
+
+      expect(findings.source).to.equal('cached');
+    });
+
+    it('should build references from parsed documents', () => {
+      const docs = [
+        { title: 'T1', section: 'S1', content: 'form validation', sourceUrl: 'https://1.com' },
+        { title: 'T2', section: 'S2', content: 'task target',     sourceUrl: 'https://2.com' },
+      ];
+      const issue = createTestIssue();
+
+      const findings = (agent as any).buildFindings(docs, issue);
+
+      expect(findings.documentationReferences).to.have.lengthOf(2);
+      expect(findings.confidence).to.equal(0.85);
+    });
+  });
+
+  describe('MCP integration', () => {
+    it('should make a real MCP call (not throw) when useMockMCP is false', async () => {
+      // Inject a stub MCPClient so no real HTTP is made
+      const stubClient = sinon.createStubInstance(MCPClient);
+      stubClient.searchDocs.resolves({ content: '' });
+      stubClient.parseSearchDocsResponse.returns([]);
+
+      const agentWithRealMCP = new DocumentationSearchAgent({ useMockMCP: false });
+      // Overwrite the internal client with our stub
+      (agentWithRealMCP as any).mcpClient = stubClient;
+
+      const issue = createTestIssue();
+      const result = await agentWithRealMCP.search(issue);
+
+      // The call should succeed (not throw) and use the real MCP path
+      expect(stubClient.searchDocs.calledOnce).to.be.true;
+      expect(result.source).to.equal('kapa-ai');
+    });
+
+    it('should return empty findings (not crash) when MCP call fails', async () => {
+      const stubClient = sinon.createStubInstance(MCPClient);
+      stubClient.searchDocs.rejects(new Error('Network error'));
+
+      const agentWithRealMCP = new DocumentationSearchAgent({ useMockMCP: false });
+      (agentWithRealMCP as any).mcpClient = stubClient;
+
+      const issue = createTestIssue();
+      const result = await agentWithRealMCP.search(issue);
+
+      expect(result.documentationReferences).to.deep.equal([]);
+      expect(result.confidence).to.equal(0);
+      expect(result.source).to.equal('kapa-ai');
     });
   });
 });

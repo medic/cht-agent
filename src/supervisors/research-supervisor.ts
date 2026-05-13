@@ -54,11 +54,11 @@ const ResearchStateAnnotation = Annotation.Root({
 });
 
 export class ResearchSupervisor {
-  private graph: ReturnType<typeof this.buildGraph>;
-  private docSearchAgent: DocumentationSearchAgent;
-  private contextAgent: ContextAnalysisAgent;
-  private llm: LLMProvider;
-  private todos: TodoTracker;
+  private readonly graph: ReturnType<typeof this.buildGraph>;
+  private readonly docSearchAgent: DocumentationSearchAgent;
+  private readonly contextAgent: ContextAnalysisAgent;
+  private readonly llm: LLMProvider;
+  private readonly todos: TodoTracker;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean; llmProvider?: LLMProvider } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
@@ -512,26 +512,22 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     issue: IssueTemplate,
     analysis: ContextAnalysisResult
   ): 'low' | 'medium' | 'high' {
-    let score = 0;
-
-    // Priority factor
-    if (issue.issue.priority === 'high') score += 2;
-    else if (issue.issue.priority === 'medium') score += 1;
-
-    // Requirements count
-    if (issue.issue.requirements.length > 5) score += 2;
-    else if (issue.issue.requirements.length > 2) score += 1;
-
-    // Constraints
-    if (issue.issue.constraints.length > 2) score += 1;
-
-    // Lack of similar context increases complexity
-    if (analysis.similarContexts.length === 0) score += 2;
-    else if (analysis.similarContexts.length < 2) score += 1;
+    const priorityScores: Record<string, number> = { high: 2, medium: 1, low: 0 };
+    const score =
+      (priorityScores[issue.issue.priority] || 0) +
+      this.rangeScore(issue.issue.requirements.length, 2, 5) +
+      (issue.issue.constraints.length > 2 ? 1 : 0) +
+      this.rangeScore(2 - analysis.similarContexts.length, 1, 2);
 
     if (score >= 5) return 'high';
     if (score >= 3) return 'medium';
     return 'low';
+  }
+
+  private rangeScore(value: number, lowThreshold: number, highThreshold: number): number {
+    if (value > highThreshold) return 2;
+    if (value > lowThreshold) return 1;
+    return 0;
   }
 
   /**
@@ -542,7 +538,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     _findings: ResearchFindings,
     analysis: ContextAnalysisResult
   ) {
-    const phases = [
+    return [
       {
         name: 'Setup and Configuration',
         description: 'Set up development environment and review documentation',
@@ -572,8 +568,6 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
         dependencies: ['Testing'],
       },
     ];
-
-    return phases;
   }
 
   /**
@@ -620,21 +614,17 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    * Estimate effort based on complexity and phases
    */
   private estimateEffort(complexity: 'low' | 'medium' | 'high', phaseCount: number): string {
-    const baseHours = {
-      low: 4,
-      medium: 16,
-      high: 40,
-    };
-
+    const baseHours: Record<string, number> = { low: 4, medium: 16, high: 40 };
     const hours = baseHours[complexity] * (phaseCount / 4);
+    return this.formatDuration(hours);
+  }
 
-    if (hours < 8) return `${hours} hour${hours === 1 ? '' : 's'}`;
-    if (hours < 40) {
-      const days = Math.round(hours / 8);
-      return `${days} day${days === 1 ? '' : 's'}`;
-    }
-    const weeks = Math.round(hours / 40);
-    return `${weeks} week${weeks === 1 ? '' : 's'}`;
+  private formatDuration(hours: number): string {
+    const pluralize = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+
+    if (hours < 8) return pluralize(hours, 'hour');
+    if (hours < 40) return pluralize(Math.round(hours / 8), 'day');
+    return pluralize(Math.round(hours / 40), 'week');
   }
 
   /**

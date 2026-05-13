@@ -26,9 +26,9 @@ export interface DocumentationSearchAgentOptions {
 }
 
 export class DocumentationSearchAgent {
-  private mcpClient: MCPClient;
-  private useMockMCP: boolean;
-  private todos: TodoTracker;
+  private readonly mcpClient: MCPClient;
+  private readonly useMockMCP: boolean;
+  private readonly todos: TodoTracker;
 
   constructor(options: DocumentationSearchAgentOptions = {}) {
     this.useMockMCP = options.useMockMCP === true; // Default to false (use real MCP)
