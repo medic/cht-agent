@@ -38,6 +38,7 @@ const VALID_META = JSON.stringify({
   mergeCommit: { oid: 'abc123sha' },
   mergedAt: '2024-01-15T12:00:00Z',
   files: [{ path: 'src/foo.ts' }, { path: 'src/bar.ts' }],
+  author: { login: 'testuser' },
 });
 
 const VALID_DIFF = 'diff --git a/src/foo.ts b/src/foo.ts\n+added line\n';

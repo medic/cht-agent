@@ -54,6 +54,8 @@ export interface ScrapedPR {
   linkedIssues: LinkedIssue[];
   /** Review summaries (not inline comments) left on the PR */
   reviewComments: ReviewComment[];
+  /** GitHub login of the PR author */
+  author: string;
 }
 
 /**
@@ -77,6 +79,22 @@ export interface SkipLogEntry {
   reason: string;
   /** ISO-8601 timestamp when the decision was recorded */
   timestamp: string;
+}
+
+/** The outcome of the filter stage for a single PR */
+export interface FilterResult {
+  decision: FilterDecision;
+  reason: string;
+}
+
+/** Options for filterPR — used to inject test doubles and override defaults */
+export interface FilterOptions {
+  /** Override default _skipped.ndjson path */
+  logPath?: string;
+  /** Skip LLM triage and return flag-for-human immediately */
+  skipLlm?: boolean;
+  /** Inject a triage function replacing the real LLM call (for testing) */
+  triageFn?: (pr: ScrapedPR) => Promise<FilterResult>;
 }
 
 /**

@@ -1,0 +1,255 @@
+/**
+ * Filter stage for the memory distillation pipeline.
+ *
+ * Applies deterministic rules first (skip/distill), then falls back to LLM
+ * triage for gray-area PRs. Appends audit entries to _skipped.ndjson for
+ * skip and flag-for-human decisions.
+ *
+ * Known limitation: the Feature distill rule treats "substantive" as
+ * "has a linked issue" — deeper judgment is deferred to the distiller.
+ */
+
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { ChatAnthropic } from '@langchain/anthropic';
+import { z } from 'zod';
+import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
+
+const DEFAULT_LOG_PATH = path.join(
+  __dirname, '..', '..', 'agent-memory', '_skipped.ndjson'
+);
+
+// CHT service directory prefixes — a PR touching ≥2 of these is "multi-service"
+const SERVICE_PREFIXES = ['api/', 'webapp/', 'sentinel/', 'admin/', 'shared-libs/'];
+
+// Files matching these patterns are lockfiles
+const LOCKFILE_PATTERN = /(?:^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|.*\.lock)$/;
+
+// Files matching these patterns are translation files
+const TRANSLATION_PATTERN = /(?:^|\/)translations\/.*|\.properties$|\.po$|\.pot$/;
+
+// Body length limit sent to LLM (prevent prompt bloat)
+const LLM_BODY_LIMIT = 2000;
+
+/**
+ * Returns true if fileList touches ≥2 distinct CHT service prefixes.
+ *
+ * @example
+ * ```typescript
+ * touchesMultipleServices(['api/foo.ts', 'webapp/bar.ts']); // true
+ * touchesMultipleServices(['api/foo.ts', 'api/bar.ts']); // false
+ * ```
+ */
+function touchesMultipleServices(fileList: string[]): boolean {
+  const touched = new Set(
+    fileList
+      .map(f => SERVICE_PREFIXES.find(prefix => f.startsWith(prefix)))
+      .filter((prefix): prefix is string => prefix !== undefined)
+  );
+  return touched.size >= 2;
+}
+
+/**
+ * Append a skip/flag entry to the audit log.
+ *
+ * @example
+ * ```typescript
+ * writeSkipLog({ prNumber: 1, decision: 'skip', reason: 'Bot PR', timestamp: new Date().toISOString() }, '/tmp/test.ndjson');
+ * ```
+ */
+function writeSkipLog(entry: SkipLogEntry, logPath: string): void {
+  fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
+}
+
+/**
+ * Stage 1: deterministic SKIP rules.
+ * Returns a reason string if the PR should be skipped, null otherwise.
+ *
+ * @example
+ * ```typescript
+ * checkSkipRules({ author: 'dependabot[bot]', prTitle: 'bump deps', fileList: [], labels: [] } as any); // 'Bot PR: dependabot[bot]'
+ * ```
+ */
+function checkSkipRules(pr: ScrapedPR): string | null {
+  // Bot author
+  if (/\[bot\]$/.test(pr.author)) return `Bot PR: ${pr.author}`;
+  // Revert
+  if (/^revert[\s(:]/i.test(pr.prTitle)) return 'Revert PR';
+  // Chore/docs/ci/build conventional commit
+  if (/^(chore|docs|ci|build)(\(.+\))?(!)?\s*:/i.test(pr.prTitle)) {
+    const type = pr.prTitle.match(/^(\w+)/)?.[1] ?? 'chore';
+    return `Conventional commit type: ${type}`;
+  }
+  // Lockfile-only
+  if (pr.fileList.length > 0 && pr.fileList.every(f => LOCKFILE_PATTERN.test(f))) {
+    return 'Lockfile-only changes';
+  }
+  // Translation-only
+  if (pr.fileList.length > 0 && pr.fileList.every(f => TRANSLATION_PATTERN.test(f))) {
+    return 'Translation-only changes';
+  }
+  return null;
+}
+
+/**
+ * Stage 2: deterministic DISTILL rules.
+ * Returns a reason string if the PR should be distilled, null otherwise.
+ *
+ * @example
+ * ```typescript
+ * checkDistillRules({ labels: ['type: bug'], linkedIssues: [{}], fileList: ['api/a.ts', 'webapp/b.ts'] } as any);
+ * // 'Bug with linked issue affecting multiple services'
+ * ```
+ */
+function checkDistillRules(pr: ScrapedPR): string | null {
+  const labels = pr.labels.map(l => l.toLowerCase());
+  // Bug + linked issue + multi-service
+  if (
+    labels.includes('type: bug') &&
+    pr.linkedIssues.length > 0 &&
+    touchesMultipleServices(pr.fileList)
+  ) {
+    return 'Bug with linked issue affecting multiple services';
+  }
+  // Feature + linked issue (substantive = has linked issue)
+  if (labels.includes('type: feature') && pr.linkedIssues.length > 0) {
+    return 'Feature with linked issue';
+  }
+  // shared-libs change touching ≥2 services
+  const hasSharedLibs = pr.fileList.some(f => f.startsWith('shared-libs/'));
+  if (hasSharedLibs && touchesMultipleServices(pr.fileList)) {
+    return 'Shared library change affecting multiple consumers';
+  }
+  return null;
+}
+
+interface TriageOutput {
+  decision: string;
+  reason: string;
+}
+
+const triageSchema: z.ZodType<TriageOutput> = z.object({
+  decision: z.enum(['distill', 'skip', 'flag-for-human']),
+  reason: z.string().min(1),
+});
+
+/**
+ * Call the Anthropic LLM to triage a PR that didn't match deterministic rules.
+ * Returns flag-for-human if the API key is absent or the call fails.
+ *
+ * @example
+ * ```typescript
+ * // Not called directly in tests — injected via opts.triageFn or exercised via filterPR
+ * ```
+ */
+async function llmTriage(pr: ScrapedPR): Promise<FilterResult> {
+  const apiKey = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey) {
+    return { decision: 'flag-for-human', reason: 'LLM triage unavailable: ANTHROPIC_API_KEY not set' };
+  }
+
+  const body = (pr.prBody ?? '').slice(0, LLM_BODY_LIMIT);
+  const prompt = `You are a code change classifier for a health worker software project (CHT).
+
+Classify this pull request as one of:
+- "distill" — substantive change worth capturing in the knowledge base
+- "skip" — trivial, administrative, or low-value (tests-only, minor refactor, etc.)
+- "flag-for-human" — ambiguous; needs human review
+
+PR title: ${pr.prTitle}
+Labels: ${pr.labels.join(', ') || 'none'}
+Files changed: ${pr.fileList.slice(0, 20).join(', ')}${pr.fileList.length > 20 ? '...' : ''}
+Linked issues: ${pr.linkedIssues.length}
+PR body (truncated):
+${body}
+
+Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<one sentence>" }`;
+
+  try {
+    const llm = new ChatAnthropic({
+      model: 'claude-haiku-4-5-20251001',
+      apiKey,
+      maxTokens: 200,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const structured = (llm as any).withStructuredOutput(triageSchema);
+    const result = await structured.invoke(prompt) as TriageOutput;
+    return { decision: result.decision as FilterDecision, reason: result.reason };
+  } catch (err) {
+    return {
+      decision: 'flag-for-human',
+      reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * Filter a scraped PR through deterministic rules, then LLM triage.
+ * Writes to _skipped.ndjson for skip and flag-for-human decisions.
+ *
+ * @example
+ * ```typescript
+ * const result = await filterPR(scrapedPR, { skipLlm: true });
+ * // { decision: 'flag-for-human', reason: 'LLM triage skipped' }
+ * ```
+ */
+export async function filterPR(
+  pr: ScrapedPR,
+  opts: FilterOptions = {}
+): Promise<FilterResult> {
+  const logPath = opts.logPath ?? DEFAULT_LOG_PATH;
+
+  // Stage 1: deterministic skip
+  const skipReason = checkSkipRules(pr);
+  if (skipReason !== null) {
+    const entry: SkipLogEntry = {
+      prNumber: pr.prNumber,
+      decision: 'skip',
+      reason: skipReason,
+      timestamp: new Date().toISOString(),
+    };
+    writeSkipLog(entry, logPath);
+    return { decision: 'skip', reason: skipReason };
+  }
+
+  // Stage 2: deterministic distill
+  const distillReason = checkDistillRules(pr);
+  if (distillReason !== null) {
+    return { decision: 'distill', reason: distillReason };
+  }
+
+  // Stage 3: LLM triage
+  if (opts.skipLlm) {
+    const entry: SkipLogEntry = {
+      prNumber: pr.prNumber,
+      decision: 'flag-for-human',
+      reason: 'LLM triage skipped',
+      timestamp: new Date().toISOString(),
+    };
+    writeSkipLog(entry, logPath);
+    return { decision: 'flag-for-human', reason: 'LLM triage skipped' };
+  }
+
+  const triageFn = opts.triageFn ?? llmTriage;
+  let result: FilterResult;
+  try {
+    result = await triageFn(pr);
+  } catch (err) {
+    result = {
+      decision: 'flag-for-human',
+      reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  if (result.decision !== 'distill') {
+    const entry: SkipLogEntry = {
+      prNumber: pr.prNumber,
+      decision: result.decision,
+      reason: result.reason,
+      timestamp: new Date().toISOString(),
+    };
+    writeSkipLog(entry, logPath);
+  }
+
+  return result;
+}

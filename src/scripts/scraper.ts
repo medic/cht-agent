@@ -147,7 +147,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
         '--repo',
         repo,
         '--json',
-        'number,title,body,labels,mergeCommit,mergedAt,files',
+        'number,title,body,labels,mergeCommit,mergedAt,files,author',
       ],
       EXEC_OPTS
     );
@@ -171,6 +171,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   const mergeSha: string = meta.mergeCommit?.oid ?? '';
   const mergedAt: string = meta.mergedAt;
   const fileList: string[] = (meta.files ?? []).map((f: { path: string }) => f.path);
+  const author: string = meta.author?.login ?? '';
 
   // --- Step 2: Fetch diff ---
   let diff: string;
@@ -243,6 +244,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
     diff,
     linkedIssues,
     reviewComments,
+    author,
   };
 }
 
