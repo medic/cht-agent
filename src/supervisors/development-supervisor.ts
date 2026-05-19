@@ -32,6 +32,7 @@ import {
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { TestEnvironmentAgent } from '../agents/test-environment-agent';
+import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
   createStagingDirectory,
@@ -40,15 +41,73 @@ import {
   clearStaging,
 } from '../utils/staging';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
+import { isShutdownRequested } from '../utils/shutdown';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 
 const MAX_ITERATIONS = 3;
 const REFINEMENT_THRESHOLD = 75;
 
+/**
+ * Shape the validateImpl resolver reads. Narrow on purpose so unit tests can
+ * exercise the decision logic without instantiating a full langgraph state.
+ */
+export interface ValidateImplEdgeState {
+  validationResult?: { overallScore?: number };
+  iterationCount?: number;
+  codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
+}
+
+/**
+ * Decide what edge the validateImpl node should take next. Pure function so
+ * it can be unit-tested without spinning up the workflow.
+ *
+ *  - Shutdown requested → '__end__'
+ *  - execute-no-op present → '__end__' (R17 v7: looping cannot help)
+ *  - Score below threshold OR any cross-file issue → 'generateCode' (refine) if iterations left
+ *  - Otherwise → '__end__'
+ */
+export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generateCode' | '__end__' {
+  if (isShutdownRequested()) {
+    console.log('[Development Supervisor] Shutdown requested; ending workflow');
+    return '__end__';
+  }
+  const score = state.validationResult?.overallScore ?? 0;
+  const iterations = state.iterationCount ?? 0;
+  const issues = state.codeGeneration?.crossFileIssues ?? [];
+  const hasExecuteNoOp = issues.some(i => i.issueType === 'execute-no-op');
+  const hasCrossFileIssues = issues.length > 0;
+
+  // R17 (v7): when the CLI abstained even after the relaxed retry, looping
+  // cannot help — it would just repeat the same abstain pattern with the
+  // same plan. End cleanly so the user sees the HC2 banner.
+  if (hasExecuteNoOp) {
+    console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
+    return '__end__';
+  }
+
+  // D2: loop back when either the LLM-judge score is below threshold OR the
+  // deterministic cross-file validator found identifier mismatches. Without
+  // the second condition, a high-scoring run that nonetheless has dangling
+  // Selectors.X references ends without ever retrying.
+  if ((score < REFINEMENT_THRESHOLD || hasCrossFileIssues) && iterations < MAX_ITERATIONS) {
+    const reason = score < REFINEMENT_THRESHOLD
+      ? `Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold`
+      : `${issues.length} cross-file issue(s)`;
+    console.log(`[Development Supervisor] ${reason}, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
+    return 'generateCode';
+  }
+
+  if (score < REFINEMENT_THRESHOLD || hasCrossFileIssues) {
+    console.log(`[Development Supervisor] Below quality bar but max iterations (${MAX_ITERATIONS}) reached — proceeding to END`);
+  }
+
+  return '__end__';
+}
+
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
-  useMock?: boolean;
   skipTestEnvironment?: boolean;
+  codeGenRegistry?: CodeGenModuleRegistry;
 }
 
 // Define the state annotation for type safety
@@ -118,23 +177,20 @@ export class DevelopmentSupervisor {
   private codeGenAgent: CodeGenerationAgent;
   private testEnvAgent: TestEnvironmentAgent;
   private llm: LLMProvider;
-  private useMock: boolean;
   private skipTestEnvironment: boolean;
   private todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
-    this.useMock = options.useMock ?? false;
     this.skipTestEnvironment = options.skipTestEnvironment ?? false;
 
     this.codeGenAgent = new CodeGenerationAgent({
       llmProvider: this.llm,
-      useMock: this.useMock,
+      codeGenRegistry: options.codeGenRegistry,
     });
 
     this.testEnvAgent = new TestEnvironmentAgent({
       llmProvider: this.llm,
-      useMock: this.useMock,
     });
 
     this.todos = createSupervisorTodoTracker('Development');
@@ -156,21 +212,7 @@ export class DevelopmentSupervisor {
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'setupTests')
       .addEdge('setupTests', 'validateImpl')
-      .addConditionalEdges('validateImpl', (state) => {
-        const score = state.validationResult?.overallScore ?? 0;
-        const iterations = state.iterationCount ?? 0;
-
-        if (score < REFINEMENT_THRESHOLD && iterations < MAX_ITERATIONS) {
-          console.log(`[Development Supervisor] Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
-          return 'generateCode';
-        }
-
-        if (score < REFINEMENT_THRESHOLD) {
-          console.log(`[Development Supervisor] Score ${score}% < ${REFINEMENT_THRESHOLD}% but max iterations (${MAX_ITERATIONS}) reached — proceeding to END`);
-        }
-
-        return '__end__';
-      });
+      .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
 
     return workflow.compile();
   }
@@ -179,6 +221,11 @@ export class DevelopmentSupervisor {
    * Node: Code Generation
    */
   private async codeGenerationNode(state: typeof DevelopmentStateAnnotation.State) {
+    if (isShutdownRequested()) {
+      console.log('[Development Supervisor] Shutdown requested; skipping code generation node');
+      return { currentPhase: 'complete' as const };
+    }
+
     const iteration = (state.iterationCount ?? 0) + 1;
     console.log(`\n=== CODE GENERATION NODE (iteration ${iteration}) ===`);
 
@@ -308,6 +355,11 @@ export class DevelopmentSupervisor {
    * Node: Validation
    */
   private async validationNode(state: typeof DevelopmentStateAnnotation.State) {
+    if (isShutdownRequested()) {
+      console.log('[Development Supervisor] Shutdown requested; skipping validation node');
+      return { currentPhase: 'complete' as const };
+    }
+
     console.log('\n=== VALIDATION NODE ===');
 
     const todoId = 'development-3'; // Third todo
@@ -361,6 +413,19 @@ export class DevelopmentSupervisor {
       } else if (validation.overallScore < REFINEMENT_THRESHOLD) {
         // Synthesize feedback from recommendations if none was explicitly provided
         feedbackUpdate.validationFeedback = this.synthesizeFeedback(validation);
+      }
+
+      // Fold cross-file consistency issues into the feedback so the next iteration
+      // sees the specific identifier mismatches.
+      const crossFileIssues = state.codeGeneration?.crossFileIssues;
+      if (crossFileIssues && crossFileIssues.length > 0) {
+        const crossFileText = crossFileIssues
+          .map(i => `- ${i.filePath}: ${i.reason ?? i.description ?? '(no detail)'}`)
+          .join('\n');
+        const existing = feedbackUpdate.validationFeedback as string | undefined;
+        feedbackUpdate.validationFeedback = existing
+          ? `${existing}\n\nCross-file consistency issues:\n${crossFileText}`
+          : `Cross-file consistency issues found. The following identifiers do not have matching declarations:\n${crossFileText}\n\nFix each mismatch by either (a) using the correct identifier name from the declaring file, or (b) adding the missing declaration to the appropriate file.`;
       }
 
       // Store per-file feedback for selective regeneration

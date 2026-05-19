@@ -160,10 +160,10 @@ export class ContextAnalysisAgent {
         availableFiles: context.availableFiles,
         missingFiles: context.missingFiles,
       };
-    } else {
-      console.log('[Context Analysis Agent] No code context available (CHT_CORE_PATH not set?)');
-      return null;
-    }
+    } 
+    console.log('[Context Analysis Agent] No code context available (CHT_CORE_PATH not set?)');
+    return null;
+    
   }
 
   /**

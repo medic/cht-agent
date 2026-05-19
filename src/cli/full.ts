@@ -15,8 +15,15 @@
  *   npm run full <ticket-file>
  *
  * Environment Variables:
- *   ANTHROPIC_API_KEY - Required for Claude API access
- *   CHT_CORE_PATH - Path to cht-core codebase (required for development)
+ *   ANTHROPIC_API_KEY - Required when CODE_GEN_MODULE=claude-api
+ *   CHT_CORE_PATH     - Path to cht-core codebase (required for development)
+ *   CODE_GEN_MODULE   - Optional: 'claude-code-cli' (default; uses Claude Code CLI as a tool-using agent;
+ *                                 requires Claude MAX subscription + claude binary on PATH)
+ *                                 or 'claude-api' (uses Anthropic API directly; requires ANTHROPIC_API_KEY).
+ *                                 'claude-cli' is an alias for 'claude-code-cli'.
+ *   LLM_PROVIDER      - Optional: 'anthropic' (default) or 'claude-cli'. Affects research,
+ *                                 validation, test-env, and domain inference only. Does NOT
+ *                                 affect code-gen module selection (use CODE_GEN_MODULE for that).
  *
  * Examples:
  *   npm run full tickets/my-ticket.md
@@ -101,8 +108,7 @@ const main = async (): Promise<void> => {
     });
 
     const developmentSupervisor = new DevelopmentSupervisor({
-      useMock: false, // Use real LLM for code generation
-      skipTestEnvironment: true, // TODO(#62): re-enable once test gen layer is integrated
+      skipTestEnvironment: true, // TODO(#63): re-enable once test gen layer is integrated
     });
 
     // Display issue details

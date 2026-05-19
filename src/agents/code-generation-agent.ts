@@ -22,6 +22,14 @@ import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import { readFromChtCore, listChtCoreDirectory } from '../utils/staging';
 import { loadIndex } from '../utils/context-loader';
 import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
+import { BeadsCodeGenSession } from '../utils/beads-client';
+import { readEnv } from '../utils/env';
+import { installShutdownHandlers } from '../utils/shutdown';
+import { crossFileValidate } from './cross-file-validator';
+import { astValidate } from './ast-validator';
+import { propagateNewLocaleKeys } from './locale-propagator';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   ContextFile,
   CodeGenModuleInput,
@@ -29,23 +37,29 @@ import {
 } from '../layers/code-gen/interface';
 import { CodeGenModuleRegistry, createDefaultCodeGenRegistry } from '../layers/code-gen/registry';
 
+/** Shape of the loaded `agent-memory/indices/domain-to-components.json`. */
+type DomainIndex = { domains?: Record<string, Record<string, unknown>> };
+
 interface CodeGenerationAgentOptions {
   llmProvider?: LLMProvider;
-  useMock?: boolean;
   codeGenRegistry?: CodeGenModuleRegistry;
 }
 
 export class CodeGenerationAgent {
   private llm: LLMProvider;
-  private useMock: boolean;
   private todos: TodoTracker;
   private registry: CodeGenModuleRegistry;
 
   constructor(options: CodeGenerationAgentOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
-    this.useMock = options.useMock ?? false;
     this.todos = createAgentTodoTracker('Code Gen');
-    this.registry = options.codeGenRegistry || createDefaultCodeGenRegistry(this.llm);
+    this.registry = options.codeGenRegistry || createDefaultCodeGenRegistry();
+    installShutdownHandlers();
+  }
+
+  /** Read-only accessor for the active LLM provider. Primarily for tests. */
+  getLLMProvider(): LLMProvider {
+    return this.llm;
   }
 
   /**
@@ -71,10 +85,6 @@ export class CodeGenerationAgent {
       if (input.failingFiles) {
         console.log(`[Code Generation Agent] Files to regenerate: ${input.failingFiles.map(f => f.path).join(', ')}`);
       }
-    }
-
-    if (this.useMock) {
-      return this.generateMockResult(input);
     }
 
     // Gather context from cht-core
@@ -107,6 +117,44 @@ export class CodeGenerationAgent {
       console.log(`[Code Generation Agent] Merged: ${keptFiles.length} kept + ${validatedFiles.length} regenerated = ${allFiles.length} total`);
     }
 
+    // Cross-file validation: identifier consistency across the MERGED batch.
+    // Per D1: must run on `allFiles` (not `validatedFiles`) so iteration 2+ of
+    // selective regen sees both the kept and regenerated files together.
+    const regexIssues = crossFileValidate(allFiles);
+    // AST-driven semantic checks (signature drift, permission literals). v5 Batch C.
+    const astIssues = astValidate(allFiles);
+    // Module-level signals (plan adherence, etc.) come up alongside the static
+    // checks. Order is purely cosmetic; the supervisor treats them uniformly.
+    const moduleIssues = llmResult.moduleCrossFileIssues ?? [];
+    const crossFileIssues = [...regexIssues, ...astIssues, ...moduleIssues];
+
+    // v6 A.9: surface module-level partial-completion as a cross-file issue so
+    // the supervisor's refinement loop triggers consistently with static checks.
+    if (llmResult.partialGeneration) {
+      const reason = llmResult.partialGenerationReason ?? 'execute phase did not complete cleanly';
+      crossFileIssues.push({
+        filePath: '(generation)',
+        issueType: 'partial-completion',
+        description: reason,
+        reason,
+      });
+    }
+
+    if (crossFileIssues.length > 0) {
+      console.warn(
+        `[Code Generation Agent] Found ${crossFileIssues.length} cross-file issue(s) ` +
+        `(${regexIssues.length} regex + ${astIssues.length} AST + ${moduleIssues.length} module):`
+      );
+      for (const issue of crossFileIssues) {
+        const detail = issue.reason ?? issue.description ?? '(no detail)';
+        console.warn(`[Code Generation Agent]   ${issue.filePath}: ${detail}`);
+      }
+    }
+
+    // Locale auto-propagation: when messages-en.properties has new keys, append
+    // English-value placeholders to the 9 other locale files. Deterministic, no LLM.
+    allFiles = await propagateNewLocaleKeys(allFiles, input.chtCorePath);
+
     // Determine which requirements were implemented
     const { implemented, pending } = this.analyzeRequirements(
       input.issue.issue.requirements,
@@ -121,6 +169,9 @@ export class CodeGenerationAgent {
       notes: this.generateNotes(validatedFiles, input),
       confidence: this.calculateConfidence(validatedFiles, input, implemented, pending),
       beadsSessionId: llmResult.beadsSessionId,
+      crossFileIssues: crossFileIssues.length > 0 ? crossFileIssues : undefined,
+      compileGateSkipped: llmResult.compileGateSkipped,
+      compileGateSkipReason: llmResult.compileGateSkipReason,
     };
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
@@ -144,8 +195,8 @@ export class CodeGenerationAgent {
     const domain = issue.issue.technical_context.domain;
 
     // Load domain-to-components index for relevant directories
-    const domainToComponents = loadIndex('domain-to-components');
-    let relevantFiles: string[] = [];
+    const domainToComponents = loadIndex('domain-to-components') as DomainIndex | null;
+    const relevantFiles: string[] = [];
 
     if (domainToComponents?.domains?.[domain]) {
       const domainData = domainToComponents.domains[domain];
@@ -169,6 +220,22 @@ export class CodeGenerationAgent {
         for (const lib of domainData.shared_libs) {
           if (lib?.path) {
             relevantFiles.push(lib.path);
+          }
+        }
+      }
+      // NgRx infrastructure (actions, reducers, effects, selectors) for the domain.
+      // Pulling these surfaces the full NgRx flow to the LLM during planning so it
+      // emits coherent state-management changes (action + reducer + selector + effect).
+      const ngrxData = domainData.ngrx as Record<string, unknown> | undefined;
+      if (ngrxData && typeof ngrxData === 'object') {
+        for (const section of ['actions', 'reducers', 'effects', 'selectors']) {
+          const ngrxSection = ngrxData[section];
+          if (Array.isArray(ngrxSection)) {
+            for (const entry of ngrxSection) {
+              if (typeof entry === 'string') {
+                relevantFiles.push(entry);
+              }
+            }
           }
         }
       }
@@ -240,7 +307,7 @@ export class CodeGenerationAgent {
    */
   private resolveComponentToFiles(
     component: string,
-    domainIndex: any,
+    domainIndex: DomainIndex | null,
   ): string[] {
     if (!domainIndex?.domains) return [];
 
@@ -256,7 +323,7 @@ export class CodeGenerationAgent {
     const matches: string[] = [];
 
     // Search across all domains (primarily the current domain, but check all)
-    for (const [, domainData] of Object.entries(domainIndex.domains) as [string, any][]) {
+    for (const [, domainData] of Object.entries(domainIndex.domains) as [string, Record<string, unknown>][]) {
       for (const section of ['api', 'webapp', 'sentinel']) {
         const sectionData = domainData[section];
         if (!sectionData || typeof sectionData !== 'object') continue;
@@ -281,13 +348,14 @@ export class CodeGenerationAgent {
    * Gather files from related domains based on ticket keywords.
    * E.g., a contacts ticket mentioning "permission" should pull auth domain files.
    */
-  private getCrossDomainFiles(issue: CodeGenerationInput['issue'], domainIndex: any): string[] {
+  private getCrossDomainFiles(issue: CodeGenerationInput['issue'], domainIndex: DomainIndex | null): string[] {
     if (!domainIndex?.domains) return [];
 
     const crossDomainKeywords: Record<string, string[]> = {
       authentication: ['permission', 'auth', 'role', 'login', 'session', 'credential'],
       configuration: ['app_settings', 'settings', 'config', 'branding'],
       'data-sync': ['replication', 'sync', 'purge', 'offline'],
+      'forms-and-reports': ['form', 'xform', 'xml-form', 'report', 'xform_id', 'form_id'],
     };
 
     const ticketText = [
@@ -310,7 +378,7 @@ export class CodeGenerationAgent {
 
       // Pull service files from cross-domain (most likely to be needed)
       for (const section of ['api', 'webapp']) {
-        const sectionData = domainData[section];
+        const sectionData = domainData[section] as Record<string, unknown> | undefined;
         if (!sectionData || typeof sectionData !== 'object') continue;
         const services = sectionData.services;
         if (Array.isArray(services)) {
@@ -355,17 +423,108 @@ export class CodeGenerationAgent {
   }
 
   /**
-   * Generate code by delegating to the active CodeGenModule
+   * Initialise an optional Beads tracking session for this code-gen invocation.
+   * Returns null when Beads is disabled (env flag) or unavailable (no .beads directory),
+   * or when initSession itself fails — caller falls back gracefully in either case.
+   */
+  private async initBeadsSession(
+    input: CodeGenerationInput,
+  ): Promise<BeadsCodeGenSession | null> {
+    if (readEnv('BEADS_CODEGEN_ENABLED') === 'false') return null;
+    const beadsDir = path.join(process.cwd(), '.beads');
+    if (!fs.existsSync(beadsDir)) return null;
+
+    const session = new BeadsCodeGenSession();
+    try {
+      await session.initSession(
+        input.issue.issue.title,
+        input.issue.issue.technical_context.domain,
+      );
+    } catch (err) {
+      console.log(`[Code Generation Agent] Beads init failed (non-fatal): ${err}`);
+      return null;
+    }
+
+    // Install a one-shot signal handler so an interrupted run still records
+    // a session close. Fire-and-forget: BeadsClient.update spawns `bd` via
+    // execFile, which is async; we cannot use process.on('exit') (synchronous).
+    const beadsShutdownHandler = () => {
+      session.closeSession(0, 0, 0).catch(() => undefined);
+    };
+    process.once('SIGINT', beadsShutdownHandler);
+    process.once('SIGTERM', beadsShutdownHandler);
+
+    return session;
+  }
+
+  /**
+   * Generate code by delegating to the active CodeGenModule.
+   * Wraps the call in an optional Beads tracking session and forwards lifecycle
+   * callbacks (plan recorded, file in progress / completed / failed) to it.
    */
   private async generateWithLLM(
     input: CodeGenerationInput,
     context: { existingFiles: Map<string, string>; relatedPatterns: string[]; directoryListing: string }
-  ): Promise<{ files: GeneratedFile[]; beadsSessionId?: string }> {
+  ): Promise<{
+    files: GeneratedFile[];
+    beadsSessionId?: string;
+    partialGeneration?: boolean;
+    partialGenerationReason?: string;
+    moduleCrossFileIssues?: import('../types').CrossFileIssue[];
+    compileGateSkipped?: boolean;
+    compileGateSkipReason?: string;
+  }> {
     const moduleInput = this.buildModuleInput(input, context);
+    const session = await this.initBeadsSession(input);
+
+    let plannedCount = 0;
+    let successCount = 0;
+    let failCount = 0;
+
+    if (session) {
+      moduleInput.onPlan = async (plan) => {
+        plannedCount = plan.length;
+        await session.recordPlan(plan as { action: string; filePath: string; rationale: string }[])
+          .catch(() => undefined);
+      };
+      moduleInput.onFileInProgress = (filePath) =>
+        session.markFileInProgress(filePath).catch(() => undefined);
+      moduleInput.onFileCompleted = (file) => {
+        successCount += 1;
+        return session.recordFileCompleted(file.path, file.content, file.purpose)
+          .catch(() => undefined);
+      };
+      moduleInput.onFileFailed = (filePath, reasons) => {
+        failCount += 1;
+        return session.recordFileFailed(filePath, [...reasons]).catch(() => undefined);
+      };
+      moduleInput.onAttemptFailure = (filePath, attempt, reasons) =>
+        session.recordAttemptFailure(filePath, attempt, [...reasons]).catch(() => undefined);
+    }
+
     const moduleOutput = await this.registry.getActiveModule().generate(moduleInput);
+
+    let beadsSessionId: string | undefined;
+    if (session) {
+      // Some callers may have skipped onPlan if generation aborted early; fall back to
+      // counting from the module's output so the summary is still coherent.
+      if (plannedCount === 0) plannedCount = moduleOutput.files.length;
+      try {
+        await session.closeSession(plannedCount, successCount, failCount);
+      } catch (err) {
+        console.log(`[Code Generation Agent] Beads close failed (non-fatal): ${err}`);
+      }
+      beadsSessionId = session.getSessionId() ?? undefined;
+    }
+
     return {
       files: this.convertModuleFiles(moduleOutput.files, context.existingFiles),
-      beadsSessionId: moduleOutput.beadsSessionId,
+      beadsSessionId,
+      partialGeneration: moduleOutput.partialGeneration,
+      partialGenerationReason: moduleOutput.partialGenerationReason,
+      moduleCrossFileIssues: moduleOutput.crossFileIssues,
+      compileGateSkipped: moduleOutput.compileGateSkipped,
+      compileGateSkipReason: moduleOutput.compileGateSkipReason,
     };
   }
 
@@ -416,7 +575,7 @@ export class CodeGenerationAgent {
    */
   private convertModuleFiles(
     moduleFiles: LayerGeneratedFile[],
-    existingFiles: Map<string, string> = new Map()
+    existingFiles: Map<string, string>
   ): GeneratedFile[] {
     return moduleFiles.map(file => {
       const isModify = existingFiles.has(file.path) || !!file.originalContent;
@@ -449,6 +608,7 @@ export class CodeGenerationAgent {
         'json',
         'xml',
         'yaml',
+        'properties',
         'markdown',
         'html',
         'css',
@@ -485,6 +645,7 @@ export class CodeGenerationAgent {
       xml: 'xml',
       yml: 'yaml',
       yaml: 'yaml',
+      properties: 'properties',
       md: 'markdown',
       html: 'html',
       css: 'css',
@@ -608,147 +769,6 @@ export class CodeGenerationAgent {
     return Math.min(score, 1.0);
   }
 
-  /**
-   * Generate mock result for testing/POC
-   */
-  private generateMockResult(input: CodeGenerationInput): CodeGenerationResult {
-    console.log('[Code Generation Agent] Using MOCK code generation');
-
-    const domain = input.issue.issue.technical_context.domain || 'configuration';
-    const mockFiles = this.getMockFilesForDomain(domain, input.issue.issue.title);
-
-    return {
-      files: mockFiles,
-      summary: `Mock implementation for "${input.issue.issue.title}" in ${domain} domain`,
-      implementedRequirements: input.issue.issue.requirements.slice(
-        0,
-        Math.ceil(input.issue.issue.requirements.length * 0.7)
-      ),
-      pendingRequirements: input.issue.issue.requirements.slice(
-        Math.ceil(input.issue.issue.requirements.length * 0.7)
-      ),
-      notes: [
-        'This is a mock implementation for POC purposes',
-        'Real implementation would generate actual code based on LLM analysis',
-      ],
-      confidence: 0.75,
-    };
-  }
-
-  /**
-   * Get mock files based on domain
-   */
-  private getMockFilesForDomain(domain: string, issueTitle: string): GeneratedFile[] {
-    const sanitizedTitle = issueTitle.toLowerCase().replace(/[^a-z0-9]/g, '-');
-
-    const mockFiles: Record<string, GeneratedFile[]> = {
-      contacts: [
-        {
-          relativePath: `webapp/src/ts/modules/contacts/${sanitizedTitle}.component.ts`,
-          content: `/**
- * ${issueTitle} Component
- * Auto-generated by CHT Agent
- */
-
-import { Component, OnInit } from '@angular/core';
-
-@Component({
-  selector: 'app-${sanitizedTitle}',
-  templateUrl: './${sanitizedTitle}.component.html'
-})
-export class ${this.toPascalCase(sanitizedTitle)}Component implements OnInit {
-  constructor() {}
-
-  ngOnInit(): void {
-    // Implementation here
-  }
-}`,
-          language: 'typescript',
-          type: 'source',
-          description: `Angular component for ${issueTitle}`,
-          action: 'create',
-        },
-        {
-          relativePath: `api/src/controllers/${sanitizedTitle}.js`,
-          content: `/**
- * ${issueTitle} Controller
- * Auto-generated by CHT Agent
- */
-
-const db = require('../db');
-
-module.exports = {
-  async get(req, res) {
-    // Implementation here
-    res.json({ status: 'ok' });
-  }
-};`,
-          language: 'javascript',
-          type: 'source',
-          description: `API controller for ${issueTitle}`,
-          action: 'create',
-        },
-      ],
-      'forms-and-reports': [
-        {
-          relativePath: `webapp/src/ts/modules/reports/${sanitizedTitle}.service.ts`,
-          content: `/**
- * ${issueTitle} Service
- * Auto-generated by CHT Agent
- */
-
-import { Injectable } from '@angular/core';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class ${this.toPascalCase(sanitizedTitle)}Service {
-  constructor() {}
-
-  async process(): Promise<void> {
-    // Implementation here
-  }
-}`,
-          language: 'typescript',
-          type: 'source',
-          description: `Service for ${issueTitle}`,
-          action: 'create',
-        },
-      ],
-      default: [
-        {
-          relativePath: `api/src/services/${sanitizedTitle}.js`,
-          content: `/**
- * ${issueTitle} Service
- * Auto-generated by CHT Agent
- */
-
-module.exports = {
-  async execute() {
-    // Implementation here
-    return { success: true };
-  }
-};`,
-          language: 'javascript',
-          type: 'source',
-          description: `Service implementation for ${issueTitle}`,
-          action: 'create',
-        },
-      ],
-    };
-
-    return mockFiles[domain] || mockFiles.default;
-  }
-
-  /**
-   * Convert string to PascalCase
-   */
-  private toPascalCase(str: string): string {
-    return str
-      .split('-')
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join('');
-  }
 
   /**
    * Check if a string looks like a file path (has extension)

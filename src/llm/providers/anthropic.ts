@@ -9,7 +9,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage } from '@langchain/core/messages';
 import {
   LLMProvider,
-  LLMConfig,
+  APIProviderConfig,
   LLMMessage,
   LLMResponse,
   InvokeOptions,
@@ -22,12 +22,14 @@ import {
  * Extract text content from a LangChain message response.
  * Handles both plain string and array-of-blocks content.
  */
+interface TextBlock { type: string; text?: string }
+
 function extractTextContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
-    return content
-      .filter((block: any) => block.type === 'text')
-      .map((block: any) => block.text)
+    return (content as TextBlock[])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text ?? '')
       .join('');
   }
   return JSON.stringify(content);
@@ -50,7 +52,7 @@ function toLangChainTools(tools: LLMToolDefinition[]) {
 /**
  * Create an Anthropic LLM provider
  */
-export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
+export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider => {
   /** Create a ChatAnthropic instance with optional temperature/maxTokens overrides */
   const createModel = (overrides?: { temperature?: number; maxTokens?: number }) => new ChatAnthropic({
     modelName: config.model,

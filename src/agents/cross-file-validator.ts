@@ -1,0 +1,238 @@
+import { GeneratedFile } from '../types';
+
+export interface CrossFileIssue {
+  filePath: string;
+  referencedIdentifier?: string;
+  expectedSource?: string;
+  reason?: string;
+  /**
+   * Discriminator for non-static-validator issue kinds (compile-error,
+   * partial-completion, plan-adherence-*, plan-discovered-missing).
+   */
+  issueType?: string;
+  description?: string;
+}
+
+/**
+ * Validate that every identifier referenced across the generated batch has a
+ * matching declaration in the batch (or in the file's originalContent for MODIFY).
+ *
+ * Catches:
+ * - Component-template field mismatches.
+ * - Component-selector reference mismatches.
+ * - Effect-action method call mismatches.
+ *
+ * NOTE: assumes the cht-core class-based Actions convention
+ * (`export class FooActions { setX() {} }`). Functional `createAction()` actions
+ * are NOT detected. If cht-core migrates, update buildActionMethodRegistry.
+ * (D7 design risk.)
+ */
+export function crossFileValidate(files: GeneratedFile[]): CrossFileIssue[] {
+  const issues: CrossFileIssue[] = [];
+
+  const componentFields = buildComponentFieldRegistry(files);
+  const selectorExports = buildSelectorExportRegistry(files);
+  const actionMethods = buildActionMethodRegistry(files);
+
+  for (const file of files) {
+    if (file.relativePath.endsWith('.component.html')) {
+      issues.push(...validateTemplate(file, componentFields));
+    } else if (file.relativePath.endsWith('.component.ts')) {
+      issues.push(...validateComponentSelectors(file, selectorExports));
+    } else if (file.relativePath.includes('/effects/')) {
+      issues.push(...validateEffectActions(file, actionMethods));
+    }
+  }
+
+  return issues;
+}
+
+function buildComponentFieldRegistry(files: GeneratedFile[]): Map<string, Set<string>> {
+  const registry = new Map<string, Set<string>>();
+  for (const file of files) {
+    if (!file.relativePath.endsWith('.component.ts')) continue;
+    const base = file.relativePath.replace(/\.component\.ts$/, '');
+    const fields = new Set<string>();
+    // Mirrors the public-surface regex but captures member names directly.
+    const memberRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:readonly\s+)?(?:async\s+)?(\w+)\s*[(:=]/gm;
+    let m: RegExpExecArray | null;
+    while ((m = memberRe.exec(file.content)) !== null) {
+      if (m[1] === 'constructor') continue;
+      fields.add(m[1]);
+    }
+    registry.set(base, fields);
+  }
+  return registry;
+}
+
+function buildSelectorExportRegistry(files: GeneratedFile[]): Set<string> {
+  const names = new Set<string>();
+  for (const file of files) {
+    if (!file.relativePath.includes('/selectors/')) continue;
+    const sources = [file.content];
+    // MODIFY files: also pull unchanged identifiers from the original so existing
+    // selectors don't false-flag.
+    if (file.originalContent) sources.push(file.originalContent);
+    for (const source of sources) {
+      // (a) Top-level: export const X = ... / export function X(...)
+      // Fresh regex per source to avoid /g `lastIndex` carry-over across inputs.
+      const topLevelRe = /(?:export\s+const|export\s+function)\s+(\w+)/g;
+      let m: RegExpExecArray | null;
+      while ((m = topLevelRe.exec(source)) !== null) names.add(m[1]);
+
+      // (b) Namespace properties: export const Selectors = { foo: ..., bar: ... };
+      // The terminator `\n\}` requires the closing brace at column 0, which is the
+      // cht-core convention for the Selectors namespace. Inner braces in arrow
+      // bodies (e.g., (state) => ({ x: state.x })) are always indented, so they
+      // don't terminate the body capture early.
+      // Must stay byte-identical to the namespace regex in lib/public-surface.ts.
+      const namespaceRe = /export\s+const\s+(\w+)\s*=\s*\{([\s\S]*?)\n\}\s*;?/g;
+      while ((m = namespaceRe.exec(source)) !== null) {
+        const body = m[2];
+        const propRe = /^\s+(\w+)\s*[:=]/gm;
+        let p: RegExpExecArray | null;
+        while ((p = propRe.exec(body)) !== null) names.add(p[1]);
+      }
+    }
+  }
+  return names;
+}
+
+function buildActionMethodRegistry(files: GeneratedFile[]): Map<string, Set<string>> {
+  const registry = new Map<string, Set<string>>();
+  for (const file of files) {
+    if (!file.relativePath.includes('/actions/')) continue;
+    const sources = [file.content];
+    if (file.originalContent) sources.push(file.originalContent);
+    for (const source of sources) {
+      const classRe = /export\s+class\s+(\w+Actions)\s*\{([\s\S]*?)\n\}/g;
+      let cm: RegExpExecArray | null;
+      while ((cm = classRe.exec(source)) !== null) {
+        const className = cm[1];
+        const body = cm[2];
+        const set = registry.get(className) ?? new Set<string>();
+        const methodRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:async\s+)?(\w+)\s*\(/gm;
+        let mm: RegExpExecArray | null;
+        while ((mm = methodRe.exec(body)) !== null) {
+          if (mm[1] !== 'constructor') set.add(mm[1]);
+        }
+        registry.set(className, set);
+      }
+    }
+  }
+  return registry;
+}
+
+/**
+ * Extract identifiers referenced in template bindings/interpolation, minus
+ * locals declared by *ngFor / #templateRef (D5 fix).
+ */
+function extractTemplateReferenced(content: string): Set<string> {
+  const declaredLocals = new Set<string>();
+  const ngForLocalRe = /\*ngFor\s*=\s*"\s*let\s+(\w+)(?:\s*,\s*(\w+))?(?:\s+of\s+\w+)?/g;
+  let nf: RegExpExecArray | null;
+  while ((nf = ngForLocalRe.exec(content)) !== null) {
+    declaredLocals.add(nf[1]);
+    if (nf[2]) declaredLocals.add(nf[2]);
+  }
+  const tplRefRe = /#(\w+)(?=[\s>=/])/g;
+  while ((nf = tplRefRe.exec(content)) !== null) {
+    declaredLocals.add(nf[1]);
+  }
+
+  const ids = new Set<string>();
+  const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = bindingRe.exec(content)) !== null) {
+    const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
+    let i: RegExpExecArray | null;
+    while ((i = idRe.exec(m[1])) !== null) ids.add(i[1]);
+  }
+  const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
+  while ((m = interpRe.exec(content)) !== null) {
+    const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
+    let i: RegExpExecArray | null;
+    while ((i = idRe.exec(m[1])) !== null) ids.add(i[1]);
+  }
+
+  const KEYWORDS = new Set(['true','false','null','undefined','let','of','as','then','else','async','await','typeof']);
+  const referenced = new Set<string>();
+  for (const id of ids) {
+    if (KEYWORDS.has(id)) continue;
+    if (declaredLocals.has(id)) continue;
+    referenced.add(id);
+  }
+  return referenced;
+}
+
+function validateTemplate(file: GeneratedFile, fields: Map<string, Set<string>>): CrossFileIssue[] {
+  const issues: CrossFileIssue[] = [];
+  const base = file.relativePath.replace(/\.component\.html$/, '');
+  const componentFields = fields.get(base);
+  if (!componentFields) return issues; // No paired component in this batch; skip
+
+  const BUILTIN = new Set(['$event', '$any', '$implicit']);
+  for (const id of extractTemplateReferenced(file.content)) {
+    if (BUILTIN.has(id)) continue;
+    if (componentFields.has(id)) continue;
+    issues.push({
+      filePath: file.relativePath,
+      referencedIdentifier: id,
+      expectedSource: `${base}.component.ts`,
+      reason: `Template references "${id}" but the component class does not declare it as a public field/method.`,
+    });
+  }
+  return issues;
+}
+
+function validateComponentSelectors(file: GeneratedFile, selectorExports: Set<string>): CrossFileIssue[] {
+  const issues: CrossFileIssue[] = [];
+  const re = /\bSelectors\.(\w+)/g;
+  let m: RegExpExecArray | null;
+  const seen = new Set<string>();
+  while ((m = re.exec(file.content)) !== null) {
+    const name = m[1];
+    if (seen.has(name)) continue;
+    seen.add(name);
+    if (!selectorExports.has(name)) {
+      issues.push({
+        filePath: file.relativePath,
+        referencedIdentifier: `Selectors.${name}`,
+        expectedSource: 'webapp/src/ts/selectors/index.ts',
+        reason: `Component references "Selectors.${name}" but no selector with that name exists in the batch or the existing selectors file.`,
+      });
+    }
+  }
+  return issues;
+}
+
+function validateEffectActions(file: GeneratedFile, actionMethods: Map<string, Set<string>>): CrossFileIssue[] {
+  const issues: CrossFileIssue[] = [];
+  const re = /\bthis\.(\w+Actions)\.(\w+)\s*\(/g;
+  let m: RegExpExecArray | null;
+  const seen = new Set<string>();
+  while ((m = re.exec(file.content)) !== null) {
+    const lowerCaseClassName = m[1];
+    // `this.contactsActions` references a class named ContactsActions
+    const className = lowerCaseClassName.charAt(0).toUpperCase() + lowerCaseClassName.slice(1);
+    const methodName = m[2];
+    const key = `${className}.${methodName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const methods = actionMethods.get(className);
+    if (!methods) {
+      // Foreign action class (not in this batch). Cannot validate; skip.
+      // Mirrors validateTemplate's "no paired component in this batch" pattern.
+      continue;
+    }
+    if (!methods.has(methodName)) {
+      issues.push({
+        filePath: file.relativePath,
+        referencedIdentifier: key,
+        expectedSource: 'webapp/src/ts/actions/<domain>.ts',
+        reason: `Effect calls "this.${lowerCaseClassName}.${methodName}(...)" but the action class does not declare the method.`,
+      });
+    }
+  }
+  return issues;
+}

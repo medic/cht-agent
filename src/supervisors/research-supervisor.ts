@@ -286,13 +286,13 @@ The following code snippets are from the actual cht-core codebase for the "${cod
 Use these to understand the existing patterns and where to make changes.
 
 ${codeContext.codeSnippets
-  .map(
-    (snippet) => `### ${snippet.filePath}
+    .map(
+      (snippet) => `### ${snippet.filePath}
 \`\`\`${snippet.language}
 ${snippet.content}
 \`\`\``
-  )
-  .join('\n\n')}
+    )
+    .join('\n\n')}
 `;
     }
 
@@ -419,7 +419,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
       const bullets = section
         .split('\n')
         .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
-        .map((line) => line.replace(/^[\s\-\*]+/, '').trim())
+        .map((line) => line.replace(/^[\s\-*]+/, '').trim())
         .filter((line) => line.length > 0);
 
       if (bullets.length > 0) {
@@ -439,7 +439,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     if (bulletMatch && bulletMatch.length > 0) {
       return bulletMatch
         .slice(0, 3)
-        .map((b) => b.replace(/^[\s\-\*]+/, '').trim())
+        .map((b) => b.replace(/^[\s\-*]+/, '').trim())
         .join('; ');
     }
 
@@ -496,7 +496,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
       const bullets = section
         .split('\n')
         .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
-        .map((line) => line.replace(/^[\s\-\*]+/, '').trim())
+        .map((line) => line.replace(/^[\s\-*]+/, '').trim())
         .filter((line) => line.length > 0);
 
       risks.push(...bullets);

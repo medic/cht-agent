@@ -10,9 +10,15 @@
  *   npm run dev <ticket-file>
  *
  * Environment Variables:
- *   ANTHROPIC_API_KEY - Required for Claude API access (unless using CLI provider)
- *   CHT_CORE_PATH    - Path to cht-core codebase (required)
- *   LLM_PROVIDER     - Optional: 'anthropic' (default) or 'claude-cli'
+ *   ANTHROPIC_API_KEY - Required when CODE_GEN_MODULE=claude-api
+ *   CHT_CORE_PATH     - Path to cht-core codebase (required)
+ *   CODE_GEN_MODULE   - Optional: 'claude-code-cli' (default; uses Claude Code CLI as a tool-using agent;
+ *                                 requires Claude MAX subscription + claude binary on PATH)
+ *                                 or 'claude-api' (uses Anthropic API directly; requires ANTHROPIC_API_KEY).
+ *                                 'claude-cli' is an alias for 'claude-code-cli'.
+ *   LLM_PROVIDER      - Optional: 'anthropic' (default) or 'claude-cli'. Affects research,
+ *                                 validation, test-env, and domain inference only. Does NOT
+ *                                 affect code-gen module selection (use CODE_GEN_MODULE for that).
  *
  * Examples:
  *   npm run dev tickets/10139.md
@@ -71,7 +77,7 @@ function synthesizeContextAnalysis(ticket: IssueTemplate): ContextAnalysisResult
 
 function synthesizeOrchestrationPlan(ticket: IssueTemplate): OrchestrationPlan {
   // Load domain index to get real file paths instead of generic component strings
-  const domainIndex = loadIndex('domain-to-components');
+  const domainIndex = loadIndex('domain-to-components') as { domains?: Record<string, Record<string, unknown>> } | null;
   const domain = ticket.issue.technical_context.domain;
   let suggestedComponents = ticket.issue.technical_context.components;
 
@@ -181,7 +187,6 @@ const main = async (): Promise<void> => {
 
     // Create development supervisor
     const developmentSupervisor = new DevelopmentSupervisor({
-      useMock: false,
       skipTestEnvironment: true,
     });
 

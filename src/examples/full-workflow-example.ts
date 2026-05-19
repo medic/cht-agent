@@ -19,6 +19,7 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
+import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { displayIssueDetails } from '../workflows/research-workflow';
 import {
@@ -31,18 +32,15 @@ import { getConfiguredModel } from '../llm/types';
 // Load environment variables
 dotenv.config();
 
+// Force the registry to pick the demo mock module instead of claude-api.
+process.env.CODE_GEN_MODULE = 'demo-mock';
+
 const runExample = async (): Promise<void> => {
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║       CHT Multi-Agent System - Full Workflow Demo              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
-  // Check for API key
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
-    console.log('\nPlease create a .env file with your Anthropic API key:');
-    console.log('ANTHROPIC_API_KEY=your_api_key_here\n');
-    process.exit(1);
-  }
+  console.log('📌 Demo runs with zero LLM calls (mocked MCP + mock code-gen module + skipped test-env).\n');
 
   // Check for CHT_CORE_PATH
   const chtCorePath = process.env.CHT_CORE_PATH;
@@ -74,8 +72,28 @@ const runExample = async (): Promise<void> => {
       useMockMCP: true, // Using mocked MCP for demo
     });
 
+    // Build a mock registry so code-gen returns canned files instead of calling an LLM.
+    const mockRegistry = new CodeGenModuleRegistry();
+    mockRegistry.register({
+      name: 'demo-mock',
+      version: '0.0.0',
+      async generate(input) {
+        const title = input.ticket.issue.title;
+        const domain = input.ticket.issue.technical_context.domain;
+        return {
+          files: [{
+            path: `webapp/demo-${domain}-output.ts`,
+            content: `// Mock-generated for: ${title}\n// Domain: ${domain}\nexport const demoOutput = ${JSON.stringify(title)};\n`,
+            purpose: `Demo output for "${title}"`,
+          }],
+          explanation: `Demo mock generation for "${title}".`,
+        };
+      },
+    });
+
     const developmentSupervisor = new DevelopmentSupervisor({
-      useMock: true, // Using mock mode for demo
+      codeGenRegistry: mockRegistry,
+      skipTestEnvironment: true, // Skip test-env in the demo; #63 will provide a registry path here.
     });
 
     // Display issue details

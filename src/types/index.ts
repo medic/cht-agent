@@ -464,6 +464,7 @@ export type FileLanguage =
   | 'json'
   | 'xml'
   | 'yaml'
+  | 'properties'
   | 'markdown'
   | 'html'
   | 'css'
@@ -506,6 +507,32 @@ export interface CodeGenerationInput {
 export type FailingFileRef = { path: string; action: 'create' | 'modify' };
 
 /**
+ * Cross-file issue surfaced by static validators OR runtime signals.
+ *
+ * Static validators (cross-file-validator, ast-validator) fill
+ * referencedIdentifier + expectedSource + reason.
+ *
+ * Runtime signals (partial generation, plan adherence, compile errors,
+ * LLM-flagged discoveries) fill issueType + description.
+ *
+ * Consumers should display the first non-empty of `reason` or `description`.
+ */
+export interface CrossFileIssue {
+  filePath: string;
+  referencedIdentifier?: string;
+  expectedSource?: string;
+  reason?: string;
+  /**
+   * Discriminator for non-static-validator issue kinds. Known values:
+   * 'compile-error', 'partial-completion', 'plan-adherence-missing',
+   * 'plan-adherence-extra', 'plan-discovered-missing'.
+   */
+  issueType?: string;
+  /** Human-readable description for runtime-signal issues. */
+  description?: string;
+}
+
+/**
  * Code Generation Agent output
  */
 export interface CodeGenerationResult {
@@ -516,6 +543,11 @@ export interface CodeGenerationResult {
   notes: string[];
   confidence: number; // 0-1
   beadsSessionId?: string;
+  crossFileIssues?: CrossFileIssue[];
+  /** True when the compile gate did not run (e.g., tsc unavailable). HC2 banner reads this. */
+  compileGateSkipped?: boolean;
+  /** Human-readable reason associated with {@link compileGateSkipped}. */
+  compileGateSkipReason?: string;
 }
 
 /**

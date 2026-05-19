@@ -14,6 +14,9 @@
 export {
   LLMProvider,
   LLMConfig,
+  APIProviderConfig,
+  CLIProviderConfig,
+  APIProviderType,
   LLMProviderType,
   LLMMessage,
   LLMResponse,
@@ -31,6 +34,7 @@ export {
   createLLMProviderFromEnv,
   createLLMProviderWithOptions,
   getLLMConfigFromEnv,
+  getAPIConfigFromEnv,
   getCLIConfigFromEnv,
   isUsingCLIProvider,
   ExtendedProviderType,

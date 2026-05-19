@@ -179,7 +179,7 @@ export class TodoTracker {
     inProgress: number;
     completed: number;
     failed: number;
-  } {
+    } {
     const todos = this.getAll();
     return {
       total: todos.length,

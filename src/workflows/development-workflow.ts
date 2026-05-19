@@ -28,6 +28,10 @@ import {
   copyToTarget,
   clearStaging,
 } from '../utils/staging';
+import {
+  renderCrossFileIssueBanner,
+  renderCompileGateSkipBanner,
+} from '../cli/display-helpers';
 
 const MAX_DEVELOPMENT_ITERATIONS = 3;
 
@@ -199,6 +203,20 @@ export const humanDevelopmentValidationCheckpoint = async (
   console.log('─'.repeat(70));
   displayFileSummary(allFiles);
   console.log();
+
+  // H.4 (v6): surface compile-gate skip + unresolved cross-file issues
+  // BEFORE the diff so the user reads the warnings in context. Both banners
+  // render independently of each other.
+  if (state.codeGeneration?.compileGateSkipped) {
+    const reason = state.codeGeneration.compileGateSkipReason ?? 'reason not provided';
+    console.log(renderCompileGateSkipBanner(reason, chtCorePath));
+    console.log();
+  }
+  const banner = renderCrossFileIssueBanner(state.codeGeneration?.crossFileIssues);
+  if (banner) {
+    console.log(banner);
+    console.log();
+  }
 
   // Generate and display diffs
   console.log('📝 FILE DIFFS');

@@ -153,7 +153,9 @@ describe('ClaudeApiCodeGenModule', () => {
       expect(output.explanation).to.include('failed');
     });
 
-    it('should pass disableTools: true in all invoke calls', async () => {
+    it('should NOT pass disableTools in invoke calls (claude-api is hard-pinned to API)', async () => {
+      // After A.1d (v5), the module no longer sets disableTools — it's hard-pinned
+      // to the Anthropic API where tool use is desired for filesystem access.
       invokeStub.onCall(0).resolves(makePlanResponse([
         { action: 'CREATE', path: 'src/a.ts', rationale: 'File A with feature implementation' },
       ]));
@@ -166,7 +168,7 @@ describe('ClaudeApiCodeGenModule', () => {
 
       for (let i = 0; i < invokeStub.callCount; i++) {
         const options = invokeStub.getCall(i).args[1] as InvokeOptions;
-        expect(options.disableTools).to.be.true;
+        expect(options.disableTools).to.equal(undefined);
         expect(options.temperature).to.equal(0.3);
       }
     });
@@ -377,7 +379,7 @@ describe('ClaudeApiCodeGenModule', () => {
       expect(result).to.have.property('files');
     });
 
-    it('should handle readFile returning null', async () => {
+    it('should downgrade missing-original MODIFY to CREATE', async () => {
       const readFile = sinon.stub();
       readFile.withArgs('src/ghost.ts').resolves(null);
 
@@ -394,12 +396,19 @@ describe('ClaudeApiCodeGenModule', () => {
       ));
 
       const module = new ClaudeApiCodeGenModule(mockProvider);
-      await module.generate(inputWithReadFile);
+      const result = await module.generate(inputWithReadFile);
 
       expect(readFile.calledWith('src/ghost.ts')).to.be.true;
-      // The prompt should NOT include original content (it's null)
       const filePrompt = invokeStub.getCall(1).args[0] as string;
+      // After R2 fix: the prompt action header should read CREATE, not MODIFY.
+      expect(filePrompt).to.include('Action: CREATE');
+      expect(filePrompt).not.to.include('Action: MODIFY');
+      // No original content section (still true; we have no original to show).
       expect(filePrompt).not.to.include('Original File Content');
+      // Prompt should use the CREATE instruction, not the MODIFY one.
+      expect(filePrompt).to.include('Output the full new file content');
+      // The produced file should not carry an originalContent (it never existed).
+      expect(result.files[0]).to.not.have.property('originalContent');
     });
 
     it('should handle per-file generation failure gracefully', async () => {
@@ -604,6 +613,30 @@ describe('ClaudeApiCodeGenModule', () => {
       expect(output.files[0].content).to.include('part1');
       expect(output.files[0].content).to.include('part2');
       expect(output.files[0].content).to.include('part3');
+    });
+
+    it('should not retry when continuation cap is reached', async () => {
+      invokeStub.onCall(0).resolves(makePlanResponse([
+        { action: 'CREATE', path: 'src/big.ts', rationale: 'large file' },
+      ]));
+      // Initial per-file call: code-shaped content, but truncated.
+      invokeStub.onCall(1).resolves(makeSingleFileResponse(
+        'export class Big {\n  method1() { return 1; }',
+        'max_tokens'
+      ));
+      // Every continuation: still truncated (cap will be hit).
+      invokeStub.resolves(makeSingleFileResponse(
+        '\n  method2() { return 2; }',
+        'max_tokens'
+      ));
+
+      const module = new ClaudeApiCodeGenModule(mockProvider);
+      const output = await module.generate(baseInput);
+
+      expect(output.files).to.have.length(0);
+      // Default cap is 5; 1 plan + 1 initial file + 5 continuations = 7 calls.
+      // Without the N16 short-circuit, the retry loop would burn 3 attempts × ~6 calls = ~18 calls.
+      expect(invokeStub.callCount).to.equal(7);
     });
   });
 
@@ -902,136 +935,6 @@ describe('ClaudeApiCodeGenModule', () => {
     });
   });
 
-  describe('parseGeneratedFiles()', () => {
-    it('should parse multiple files from delimiter format', () => {
-      const output = [
-        '=== FILE: api/controllers/contacts.js ===',
-        'PURPOSE: API controller for contacts',
-        '--- CONTENT START ---',
-        'module.exports = {',
-        '  get(req, res) {',
-        '    res.json({ ok: true });',
-        '  }',
-        '};',
-        '--- CONTENT END ---',
-        '',
-        '=== FILE: webapp/src/ts/services/filter.ts ===',
-        'PURPOSE: Filter service',
-        '--- CONTENT START ---',
-        'export class FilterService {',
-        '  filter() { return []; }',
-        '}',
-        '--- CONTENT END ---',
-      ].join('\n');
-
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles(output);
-
-      expect(files).to.have.length(2);
-      expect(files[0].path).to.equal('api/controllers/contacts.js');
-      expect(files[0].purpose).to.equal('API controller for contacts');
-      expect(files[0].content).to.include('module.exports');
-      expect(files[1].path).to.equal('webapp/src/ts/services/filter.ts');
-    });
-
-    it('should handle empty output', () => {
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles('');
-      expect(files).to.have.length(0);
-    });
-
-    it('should skip files with content under 10 chars', () => {
-      const output = [
-        '=== FILE: short.js ===',
-        'PURPOSE: Too short',
-        '--- CONTENT START ---',
-        'x = 1;',
-        '--- CONTENT END ---',
-      ].join('\n');
-
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles(output);
-      expect(files).to.have.length(0);
-    });
-
-    it('should handle content with markdown code blocks', () => {
-      const output = [
-        '=== FILE: src/service.ts ===',
-        'PURPOSE: Service',
-        '--- CONTENT START ---',
-        '```typescript',
-        'export class Service {',
-        '  run() { return true; }',
-        '}',
-        '```',
-        '--- CONTENT END ---',
-      ].join('\n');
-
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles(output);
-
-      expect(files).to.have.length(1);
-      expect(files[0].content).not.to.include('```');
-      expect(files[0].content).to.include('export class Service');
-    });
-
-    it('should strip backticks from file paths in file delimiters', () => {
-      const output = [
-        '=== FILE: `config/default/app_settings.json` ===',
-        'PURPOSE: App config',
-        '--- CONTENT START ---',
-        '{ "key": "value", "enabled": true }',
-        '--- CONTENT END ---',
-      ].join('\n');
-
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles(output);
-
-      expect(files).to.have.length(1);
-      expect(files[0].path).to.equal('config/default/app_settings.json');
-    });
-
-    it('should handle text outside file blocks gracefully', () => {
-      const output = [
-        'Here are the files you need:',
-        '',
-        '=== FILE: src/a.ts ===',
-        'PURPOSE: File A',
-        '--- CONTENT START ---',
-        'export const a = 1;',
-        '--- CONTENT END ---',
-        '',
-        'That should cover everything.',
-      ].join('\n');
-
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles(output);
-
-      expect(files).to.have.length(1);
-      expect(files[0].path).to.equal('src/a.ts');
-    });
-
-    it('should parse files that follow a plan section', () => {
-      const output = [
-        '=== PLAN ===',
-        '1. CREATE src/a.ts - File A',
-        '=== END PLAN ===',
-        '',
-        '=== FILE: src/a.ts ===',
-        'PURPOSE: File A',
-        '--- CONTENT START ---',
-        'export const a = 1;',
-        '--- CONTENT END ---',
-      ].join('\n');
-
-      const module = new ClaudeApiCodeGenModule();
-      const files = module.parseGeneratedFiles(output);
-
-      expect(files).to.have.length(1);
-      expect(files[0].path).to.equal('src/a.ts');
-    });
-  });
-
   describe('buildSingleFilePrompt()', () => {
     it('should include plan summary and current task', () => {
       const plan: PlanItem[] = [
@@ -1104,20 +1007,20 @@ describe('ClaudeApiCodeGenModule', () => {
   });
 
   describe('parseSingleFileContent()', () => {
-    it('should return raw content as-is', () => {
+    it('should return content with a trailing newline appended', () => {
       const module = new ClaudeApiCodeGenModule();
       const result = module.parseSingleFileContent('export class Foo { bar() {} }');
-      expect(result).to.equal('export class Foo { bar() {} }');
+      expect(result).to.equal('export class Foo { bar() {} }\n');
     });
 
-    it('should strip markdown code fences', () => {
+    it('should strip markdown code fences and end with a single newline', () => {
       const module = new ClaudeApiCodeGenModule();
       const result = module.parseSingleFileContent('```typescript\nexport class Foo {}\n```');
-      expect(result).to.equal('export class Foo {}');
+      expect(result).to.equal('export class Foo {}\n');
       expect(result).not.to.include('```');
     });
 
-    it('should strip delimiter format if LLM used it', () => {
+    it('should strip delimiter format and end with a single newline', () => {
       const module = new ClaudeApiCodeGenModule();
       const input = [
         '=== FILE: src/a.ts ===',
@@ -1127,13 +1030,13 @@ describe('ClaudeApiCodeGenModule', () => {
         '--- CONTENT END ---',
       ].join('\n');
       const result = module.parseSingleFileContent(input);
-      expect(result).to.equal('export const a = 1;');
+      expect(result).to.equal('export const a = 1;\n');
     });
 
-    it('should trim whitespace', () => {
+    it('should trim surrounding whitespace and end with a single newline', () => {
       const module = new ClaudeApiCodeGenModule();
       const result = module.parseSingleFileContent('  \n  export const x = 1;\n  ');
-      expect(result).to.equal('export const x = 1;');
+      expect(result).to.equal('export const x = 1;\n');
     });
   });
 
@@ -1441,6 +1344,63 @@ describe('ClaudeApiCodeGenModule', () => {
     });
   });
 
+  describe('A1 hard-pin to Anthropic API (v6: throw at generate() time)', () => {
+    it('does NOT throw at constructor time when LLM_PROVIDER=claude-cli (v6 A.1)', () => {
+      // After v6 A.1 the constructor never throws, so the default registry can
+      // eagerly construct claude-api alongside claude-code-cli even when env
+      // says use the CLI transport.
+      const original = process.env.LLM_PROVIDER;
+      try {
+        process.env.LLM_PROVIDER = 'claude-cli';
+        expect(() => new ClaudeApiCodeGenModule()).to.not.throw();
+      } finally {
+        if (original === undefined) delete process.env.LLM_PROVIDER;
+        else process.env.LLM_PROVIDER = original;
+      }
+    });
+
+    it('throws at generate() time when LLM_PROVIDER=claude-cli and no provider was injected (V14 back-door fix)', async () => {
+      const original = process.env.LLM_PROVIDER;
+      try {
+        process.env.LLM_PROVIDER = 'claude-cli';
+        const module = new ClaudeApiCodeGenModule();
+        let threw = false;
+        try {
+          await module.generate(baseInput);
+        } catch (err) {
+          threw = true;
+          expect((err as Error).message).to.match(/claude-api module requires LLM_PROVIDER=anthropic/);
+        }
+        expect(threw).to.equal(true);
+      } finally {
+        if (original === undefined) delete process.env.LLM_PROVIDER;
+        else process.env.LLM_PROVIDER = original;
+      }
+    });
+
+    it('does NOT throw at generate() time when an explicit provider is injected (test path)', async () => {
+      // Constructor's escape hatch: an explicit provider bypasses the env check
+      // because this.provider is set, so the back-door guard at the top of
+      // generate() does not fire.
+      const original = process.env.LLM_PROVIDER;
+      try {
+        process.env.LLM_PROVIDER = 'claude-cli';
+        invokeStub.onCall(0).resolves({
+          content: '=== PLAN ===\n=== END PLAN ===',
+          model: 'test-model',
+          usage: { inputTokens: 100, outputTokens: 20 },
+        });
+        const module = new ClaudeApiCodeGenModule(mockProvider);
+        const output = await module.generate(baseInput);
+        // Empty plan short-circuits; the point is that no throw fired.
+        expect(output.files).to.have.length(0);
+      } finally {
+        if (original === undefined) delete process.env.LLM_PROVIDER;
+        else process.env.LLM_PROVIDER = original;
+      }
+    });
+  });
+
   describe('validate()', () => {
     it('should return true when ANTHROPIC_API_KEY is set', async () => {
       const original = process.env.ANTHROPIC_API_KEY;
@@ -1472,15 +1432,22 @@ describe('ClaudeApiCodeGenModule', () => {
       }
     });
 
-    it('should return true when LLM_PROVIDER is claude-cli (no API key needed)', async () => {
+    it('does NOT special-case LLM_PROVIDER=claude-cli (claude-api is hard-pinned to Anthropic API)', async () => {
+      // After A.1c (v5), validate() returns true only when ANTHROPIC_API_KEY is set,
+      // regardless of LLM_PROVIDER. Setting LLM_PROVIDER=claude-cli with the binary
+      // available but no API key must return false.
       const originalKey = process.env.ANTHROPIC_API_KEY;
       const originalProvider = process.env.LLM_PROVIDER;
+      const originalPath = process.env.CLAUDE_CLI_PATH;
       try {
         delete process.env.ANTHROPIC_API_KEY;
-        process.env.LLM_PROVIDER = 'claude-cli';
+        // Inject the mock provider so the constructor's claude-cli throw is bypassed.
+        // We are testing validate(), not constructor.
         const module = new ClaudeApiCodeGenModule(mockProvider);
+        process.env.LLM_PROVIDER = 'claude-cli';
+        process.env.CLAUDE_CLI_PATH = '/bin/true';
         const result = await module.validate();
-        expect(result).to.be.true;
+        expect(result).to.equal(false);
       } finally {
         if (originalKey !== undefined) {
           process.env.ANTHROPIC_API_KEY = originalKey;
@@ -1491,6 +1458,11 @@ describe('ClaudeApiCodeGenModule', () => {
           process.env.LLM_PROVIDER = originalProvider;
         } else {
           delete process.env.LLM_PROVIDER;
+        }
+        if (originalPath !== undefined) {
+          process.env.CLAUDE_CLI_PATH = originalPath;
+        } else {
+          delete process.env.CLAUDE_CLI_PATH;
         }
       }
     });
