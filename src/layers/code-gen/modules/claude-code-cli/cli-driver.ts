@@ -62,7 +62,7 @@ export async function spawnClaudeCli(prompt: string, opts: SpawnOptions): Promis
       '--permission-mode', opts.permissionMode,
     ];
 
-    const promptPreview = prompt.substring(0, 80).replace(/\n/g, ' ');
+    const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
     console.log(
       `[claude-code-cli ${opts.phase}] Starting: "${promptPreview}..." ` +
       `(${prompt.length} chars, tools=${opts.allowedTools.join('+')}, maxTurns=${maxTurns})`
@@ -161,7 +161,7 @@ export function parseCliResult(stdout: string): ClaudeCliResult {
   }
 
   // Look for the result-shaped JSON object first (matches the existing claude-cli.ts pattern).
-  const jsonMatch = stdout.match(/\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/);
+  const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
   if (jsonMatch) {
     try {
       const parsed = JSON.parse(jsonMatch[0]) as Partial<{

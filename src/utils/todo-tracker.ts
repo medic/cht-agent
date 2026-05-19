@@ -30,10 +30,10 @@ export interface TodoTrackerOptions {
  * TodoTracker class for managing todos within an agent or supervisor
  */
 export class TodoTracker {
-  private todos: Map<string, Todo> = new Map();
-  private name: string;
-  private verbose: boolean;
-  private prefix: string;
+  private readonly todos: Map<string, Todo> = new Map();
+  private readonly name: string;
+  private readonly verbose: boolean;
+  private readonly prefix: string;
   private idCounter = 0;
 
   constructor(options: TodoTrackerOptions) {
@@ -232,7 +232,8 @@ export class TodoTracker {
     } else if (action === 'completed') {
       console.log(`${this.prefix} ${icon} ${todo.content}`);
     } else if (action === 'failed') {
-      console.log(`${this.prefix} ${icon} ${todo.content} - FAILED${todo.error ? `: ${todo.error}` : ''}`);
+      const errorSuffix = todo.error ? `: ${todo.error}` : '';
+      console.log(`${this.prefix} ${icon} ${todo.content} - FAILED${errorSuffix}`);
     }
     // 'added' is silent to avoid noise
   }

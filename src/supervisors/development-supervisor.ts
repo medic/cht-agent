@@ -173,12 +173,12 @@ const DevelopmentStateAnnotation = Annotation.Root({
 });
 
 export class DevelopmentSupervisor {
-  private graph: ReturnType<typeof this.buildGraph>;
-  private codeGenAgent: CodeGenerationAgent;
-  private testEnvAgent: TestEnvironmentAgent;
-  private llm: LLMProvider;
-  private skipTestEnvironment: boolean;
-  private todos: TodoTracker;
+  private readonly graph: ReturnType<typeof this.buildGraph>;
+  private readonly codeGenAgent: CodeGenerationAgent;
+  private readonly testEnvAgent: TestEnvironmentAgent;
+  private readonly llm: LLMProvider;
+  private readonly skipTestEnvironment: boolean;
+  private readonly todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
@@ -453,29 +453,39 @@ export class DevelopmentSupervisor {
 
     const failedRequirements = validation.requirementsMet
       .filter(r => !r.met)
-      .map(r => `${r.requirement}${r.notes ? ` (${r.notes})` : ''}`);
+      .map(r => {
+        const notesSuffix = r.notes ? ` (${r.notes})` : '';
+        return `${r.requirement}${notesSuffix}`;
+      });
     if (failedRequirements.length > 0) {
-      parts.push(`Unmet requirements:\n${failedRequirements.map(r => `- ${r}`).join('\n')}`);
+      const bulletList = failedRequirements.map(r => `- ${r}`).join('\n');
+      parts.push(`Unmet requirements:\n${bulletList}`);
     }
 
     const failedCriteria = validation.acceptanceCriteriaPassed
       .filter(c => !c.passed)
-      .map(c => `${c.criteria}${c.notes ? ` (${c.notes})` : ''}`);
+      .map(c => {
+        const notesSuffix = c.notes ? ` (${c.notes})` : '';
+        return `${c.criteria}${notesSuffix}`;
+      });
     if (failedCriteria.length > 0) {
-      parts.push(`Failed acceptance criteria:\n${failedCriteria.map(c => `- ${c}`).join('\n')}`);
+      const bulletList = failedCriteria.map(c => `- ${c}`).join('\n');
+      parts.push(`Failed acceptance criteria:\n${bulletList}`);
     }
 
     if (validation.recommendations.length > 0) {
-      parts.push(`Recommendations:\n${validation.recommendations.map(r => `- ${r}`).join('\n')}`);
+      const bulletList = validation.recommendations.map(r => `- ${r}`).join('\n');
+      parts.push(`Recommendations:\n${bulletList}`);
     }
 
     // Include per-file feedback so the code gen module knows which files need fixing
     if (validation.perFileFeedback && validation.perFileFeedback.length > 0) {
       const failedFiles = validation.perFileFeedback.filter(f => !f.passed);
       if (failedFiles.length > 0) {
-        parts.push(`Files that need fixing:\n${failedFiles.map(f =>
-          `- ${f.filePath}: ${f.issues.join('; ')}`
-        ).join('\n')}`);
+        const bulletList = failedFiles
+          .map(f => `- ${f.filePath}: ${f.issues.join('; ')}`)
+          .join('\n');
+        parts.push(`Files that need fixing:\n${bulletList}`);
       }
     }
 
@@ -497,9 +507,12 @@ export class DevelopmentSupervisor {
     const hasModifyFiles = codeGen.files.some(f => f.action === 'modify' && f.originalContent);
 
     // Test coverage section — omit entirely when test generation was skipped
+    const testCoverageBody = testEnv
+      ? `Estimated coverage: ${testEnv.estimatedCoverage}%\nTest files: ${testEnv.testFiles.length}`
+      : 'No test information available';
     const testSection = this.skipTestEnvironment
       ? '' // Tests intentionally skipped — don't include in prompt at all
-      : `\n## Test Coverage\n${testEnv ? `Estimated coverage: ${testEnv.estimatedCoverage}%\nTest files: ${testEnv.testFiles.length}` : 'No test information available'}\n`;
+      : `\n## Test Coverage\n${testCoverageBody}\n`;
 
     const prompt = `You are a code reviewer validating a CHT implementation. You MUST examine the actual code content below, not just infer quality from file names or descriptions.
 

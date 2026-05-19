@@ -13,7 +13,7 @@ export interface PlanItem {
  * LLMs frequently wrap paths in markdown backticks (e.g. `config/file.json`).
  */
 export function sanitizePath(rawPath: string): string {
-  return rawPath.replace(/`/g, '').trim();
+  return rawPath.replaceAll('`', '').trim();
 }
 
 /**

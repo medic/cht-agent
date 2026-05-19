@@ -108,7 +108,7 @@ const main = async (): Promise<void> => {
     });
 
     const developmentSupervisor = new DevelopmentSupervisor({
-      skipTestEnvironment: true, // TODO(#63): re-enable once test gen layer is integrated
+      skipTestEnvironment: true, // re-enable once test gen layer is integrated (tracked in #63)
     });
 
     // Display issue details

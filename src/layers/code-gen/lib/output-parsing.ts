@@ -35,7 +35,7 @@ export function looksLikePythonScript(content: string): boolean {
 export function extractPythonScript(content: string): string {
   let cleaned = content.trim();
 
-  const fenceMatch = cleaned.match(/```(?:python)?\s*\n([\s\S]*?)```/);
+  const fenceMatch = /```(?:python)?\s*\n([\s\S]*?)```/.exec(cleaned);
   if (fenceMatch) {
     cleaned = fenceMatch[1].trim();
   }
@@ -141,7 +141,7 @@ export function applySearchReplace(original: string, blocks: SearchReplaceBlock[
       const normalizedIdx = normalizedResult.indexOf(normalizedSearch);
 
       if (normalizedIdx === -1) {
-        console.log(`[Code Gen Lib]   Search block not found (${block.search.substring(0, 80).replace(/\n/g, '\\n')}...)`);
+        console.log(`[Code Gen Lib]   Search block not found (${block.search.substring(0, 80).replaceAll('\n', '\\n')}...)`);
         return null;
       }
 
@@ -199,14 +199,13 @@ export function stripReasoningPreamble(content: string): string {
 export function parseSingleFileContent(rawOutput: string): string {
   let content = rawOutput.trim();
 
-  const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
+  const codeBlockMatch = /^```(?:\w+)?\n([\s\S]*?)\n```$/.exec(content);
   if (codeBlockMatch) {
     content = codeBlockMatch[1];
   }
 
-  const fileMatch = content.match(
-    /^=== FILE:.*===\n(?:PURPOSE:.*\n)?--- CONTENT START ---\n([\s\S]*?)\n--- CONTENT END ---/
-  );
+  const fileMatch = /^=== FILE:.*===\n(?:PURPOSE:.*\n)?--- CONTENT START ---\n([\s\S]*?)\n--- CONTENT END ---/
+    .exec(content);
   if (fileMatch) {
     content = fileMatch[1];
   }

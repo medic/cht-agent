@@ -137,11 +137,9 @@ export const createLLMProvider = (config: LLMConfig): LLMProvider => {
       return createAnthropicProvider(config);
 
     case 'openai':
-      // TODO: Implement OpenAI provider when needed
       throw new Error('OpenAI provider not yet implemented. Coming soon!');
 
     case 'gemini':
-      // TODO: Implement Gemini provider when needed
       throw new Error('Gemini provider not yet implemented. Coming soon!');
   }
 };

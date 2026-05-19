@@ -46,9 +46,9 @@ interface CodeGenerationAgentOptions {
 }
 
 export class CodeGenerationAgent {
-  private llm: LLMProvider;
-  private todos: TodoTracker;
-  private registry: CodeGenModuleRegistry;
+  private readonly llm: LLMProvider;
+  private readonly todos: TodoTracker;
+  private readonly registry: CodeGenModuleRegistry;
 
   constructor(options: CodeGenerationAgentOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();

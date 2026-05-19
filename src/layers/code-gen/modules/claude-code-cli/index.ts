@@ -359,13 +359,13 @@ interface ExecuteSummaryBlock {
 function extractSummaryBlock(resultText: string): ExecuteSummaryBlock | null {
   if (!resultText) return null;
   // Prefer the fenced JSON code block (the format the execute prompt requires).
-  const fencedMatch = resultText.match(/```json\s*([\s\S]+?)\s*```/);
+  const fencedMatch = /```json\s*([\s\S]+?)\s*```/.exec(resultText);
   if (fencedMatch) {
     try { return JSON.parse(fencedMatch[1]) as ExecuteSummaryBlock; }
     catch { /* fall through */ }
   }
   // Fall back to the last `{...}` block. Greedy-from-the-end via lookahead.
-  const lastBraceMatch = resultText.match(/\{[\s\S]*\}(?![\s\S]*\})/);
+  const lastBraceMatch = /\{[\s\S]*\}(?![\s\S]*\})/.exec(resultText);
   if (lastBraceMatch) {
     try { return JSON.parse(lastBraceMatch[0]) as ExecuteSummaryBlock; }
     catch { /* fall through */ }

@@ -136,9 +136,11 @@ export const displayContextAnalysis = (result: ResearchState) => {
   console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
   console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
   console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
-  console.log(
-    `Historical Success Rate: ${result.contextAnalysis.historicalSuccessRate !== null ? `${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%` : 'N/A (no historical data)'}`
-  );
+  const successRate = result.contextAnalysis.historicalSuccessRate;
+  const successRateLabel = successRate !== null
+    ? `${(successRate * 100).toFixed(0)}%`
+    : 'N/A (no historical data)';
+  console.log(`Historical Success Rate: ${successRateLabel}`);
 
   if (result.contextAnalysis.recommendations.length > 0) {
     console.log('\nRecommendations:');
