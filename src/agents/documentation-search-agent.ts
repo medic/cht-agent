@@ -36,8 +36,8 @@ function findBulletContentRanges(text: string): { start: number; end: number }[]
   const bulletStartRe = /(?:^|\n)([ \t]*)(?:[-*•]|\d+\.)[ \t]+/g;
   const markers: { markerStart: number; contentStart: number }[] = [];
   for (const m of text.matchAll(bulletStartRe)) {
-    const markerStart = m.index! + (m[0].startsWith('\n') ? 1 : 0);
-    markers.push({ markerStart, contentStart: m.index! + m[0].length });
+    const markerStart = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    markers.push({ markerStart, contentStart: m.index + m[0].length });
   }
   return markers.map((mk, i) => ({
     start: mk.contentStart,
