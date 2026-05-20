@@ -85,19 +85,20 @@ export async function fetchMissingModifyFiles(opts: FetchMissingModifyFilesOpts)
     item => item.action === 'MODIFY' && !originalContentMap.has(item.filePath)
   );
   for (const item of missingModifyItems) {
-    await processMissingModifyItem(item, readFile, workingContextFiles, originalContentMap, manifest);
+    await processMissingModifyItem({ item, readFile, workingContextFiles, originalContentMap, manifest });
   }
   expandAllowedDirsForCreates(plan, manifest);
   manifest.allowedDirectories.sort((a, b) => a.localeCompare(b));
 }
 
-async function processMissingModifyItem(
-  item: PlanItem,
-  readFile: (path: string) => Promise<string | null>,
-  workingContextFiles: ContextFile[],
-  originalContentMap: Map<string, string>,
-  manifest: FileManifest,
-): Promise<void> {
+async function processMissingModifyItem(args: {
+  item: PlanItem;
+  readFile: (path: string) => Promise<string | null>;
+  workingContextFiles: ContextFile[];
+  originalContentMap: Map<string, string>;
+  manifest: FileManifest;
+}): Promise<void> {
+  const { item, readFile, workingContextFiles, originalContentMap, manifest } = args;
   console.log(`[Code Gen Lib] Fetching missing MODIFY file: ${item.filePath}`);
   const content = await readFile(item.filePath);
   if (content !== null) {
@@ -109,8 +110,7 @@ async function processMissingModifyItem(
   }
   // MODIFY target does not exist on disk. Downgrade to CREATE so the per-file
   // prompt, the assertion path, the Beads ticket, and the agent's
-  // convertModuleFiles heuristic all agree on the action. Without this
-  // mutation, the action silently disagrees across logs and outputs.
+  // convertModuleFiles heuristic all agree on the action.
   console.log(`[Code Gen Lib]   Downgraded ${item.filePath} from MODIFY to CREATE (no on-disk original)`);
   item.action = 'CREATE';
   const dir = extractParentDir(item.filePath);

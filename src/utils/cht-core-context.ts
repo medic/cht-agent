@@ -131,20 +131,31 @@ function resolveToFiles(basePath: string, relativePath: string): string[] {
 }
 
 function readTopTsJsFiles(dirPath: string, limit: number): string[] {
-  const files: string[] = [];
   try {
-    for (const entry of fs.readdirSync(dirPath)) {
-      const entryPath = path.join(dirPath, entry);
-      const entryStats = fs.statSync(entryPath);
-      if (entryStats.isFile() && /\.(ts|js)$/.test(entry)) {
-        files.push(entryPath);
-        if (files.length >= limit) break;
-      }
-    }
+    return collectTsJsFilesUpTo(fs.readdirSync(dirPath), dirPath, limit);
   } catch {
-    // Ignore read errors
+    return [];
+  }
+}
+
+function collectTsJsFilesUpTo(entries: string[], dirPath: string, limit: number): string[] {
+  const files: string[] = [];
+  for (const entry of entries) {
+    if (isTsJsFile(dirPath, entry)) {
+      files.push(path.join(dirPath, entry));
+      if (files.length >= limit) break;
+    }
   }
   return files;
+}
+
+function isTsJsFile(dirPath: string, entry: string): boolean {
+  if (!/\.(ts|js)$/.test(entry)) return false;
+  try {
+    return fs.statSync(path.join(dirPath, entry)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -193,15 +204,15 @@ interface DomainMapping {
 type RelevancePath = { path: string; relevance: 'high' | 'medium' | 'low' };
 
 function collectMappedPaths(mapping: DomainMapping): RelevancePath[] {
-  const paths: RelevancePath[] = [];
-  for (const p of mapping.webapp.services) paths.push({ path: p, relevance: 'high' });
-  for (const p of mapping.webapp.modules) paths.push({ path: p, relevance: 'high' });
-  for (const p of mapping.api.controllers) paths.push({ path: p, relevance: 'medium' });
-  for (const p of mapping.sentinel.transitions) paths.push({ path: p, relevance: 'medium' });
-  for (const lib of mapping.shared_libs) {
-    if (lib.critical) paths.push({ path: `${lib.path}/src`, relevance: 'low' });
-  }
-  return paths;
+  return [
+    ...mapping.webapp.services.map(p => ({ path: p, relevance: 'high' as const })),
+    ...mapping.webapp.modules.map(p => ({ path: p, relevance: 'high' as const })),
+    ...mapping.api.controllers.map(p => ({ path: p, relevance: 'medium' as const })),
+    ...mapping.sentinel.transitions.map(p => ({ path: p, relevance: 'medium' as const })),
+    ...mapping.shared_libs
+      .filter(lib => lib.critical)
+      .map(lib => ({ path: `${lib.path}/src`, relevance: 'low' as const })),
+  ];
 }
 
 function sortPathsByPrioritization(paths: RelevancePath[], prioritize: string[]): RelevancePath[] {
@@ -224,30 +235,38 @@ function addSnippetsForPath(args: {
   availableFiles: string[];
   missingFiles: string[];
 }): void {
-  const { chtCorePath, relativePath, relevance, maxSnippets, codeSnippets, availableFiles, missingFiles } = args;
-  const files = resolveToFiles(chtCorePath, relativePath);
+  const files = resolveToFiles(args.chtCorePath, args.relativePath);
   if (files.length === 0) {
-    missingFiles.push(relativePath);
+    args.missingFiles.push(args.relativePath);
     return;
   }
   for (const file of files) {
-    if (codeSnippets.length >= maxSnippets) break;
-    const content = readFileWithLimit(file);
-    if (!content) continue;
-    const relPath = path.relative(chtCorePath, file);
-    availableFiles.push(relPath);
-    codeSnippets.push({ filePath: relPath, content, language: getLanguage(file), relevance });
+    if (args.codeSnippets.length >= args.maxSnippets) break;
+    appendSnippetIfReadable(file, args);
   }
+}
+
+function appendSnippetIfReadable(
+  file: string,
+  args: {
+    chtCorePath: string;
+    relevance: 'high' | 'medium' | 'low';
+    codeSnippets: CodeSnippet[];
+    availableFiles: string[];
+  },
+): void {
+  const content = readFileWithLimit(file);
+  if (!content) return;
+  const relPath = path.relative(args.chtCorePath, file);
+  args.availableFiles.push(relPath);
+  args.codeSnippets.push({ filePath: relPath, content, language: getLanguage(file), relevance: args.relevance });
 }
 
 /**
  * Format code context for LLM prompt
  */
 export function formatContextForPrompt(context: CHTCoreContext): string {
-  if (!context || context.codeSnippets.length === 0) {
-    return '';
-  }
-
+  if (!context || context.codeSnippets.length === 0) return '';
   const lines: string[] = [
     `## CHT Core Code Context (${context.domain})`,
     '',
@@ -256,26 +275,26 @@ export function formatContextForPrompt(context: CHTCoreContext): string {
     '### Relevant Code Files:',
     '',
   ];
-
-  for (const snippet of context.codeSnippets) {
-    lines.push(
-      `#### ${snippet.filePath} (${snippet.relevance} relevance)`,
-      '```' + snippet.language,
-      snippet.content,
-      '```',
-      '',
-    );
-  }
-
-  if (context.missingFiles.length > 0) {
-    lines.push('### Files not found (may need verification):');
-    for (const file of context.missingFiles) {
-      lines.push(`- ${file}`);
-    }
-    lines.push('');
-  }
-
+  for (const snippet of context.codeSnippets) appendSnippetLines(lines, snippet);
+  appendMissingFiles(lines, context.missingFiles);
   return lines.join('\n');
+}
+
+function appendSnippetLines(lines: string[], snippet: CodeSnippet): void {
+  lines.push(
+    `#### ${snippet.filePath} (${snippet.relevance} relevance)`,
+    '```' + snippet.language,
+    snippet.content,
+    '```',
+    '',
+  );
+}
+
+function appendMissingFiles(lines: string[], missingFiles: string[]): void {
+  if (missingFiles.length === 0) return;
+  lines.push('### Files not found (may need verification):');
+  for (const file of missingFiles) lines.push(`- ${file}`);
+  lines.push('');
 }
 
 /**

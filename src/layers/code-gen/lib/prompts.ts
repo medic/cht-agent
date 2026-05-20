@@ -81,26 +81,30 @@ function truncateFileContent(content: string): string {
 }
 
 function buildExistingCodeContext(contextFiles: ReadonlyArray<ContextFile>): string {
-  let context = '';
-  let usedBytes = 0;
-  let truncatedFileCount = 0;
-  for (const file of contextFiles) {
-    if (file.source !== 'workspace') continue;
-    const section = `\n--- ${file.path} ---\n${truncateFileContent(file.content)}\n`;
-    if (usedBytes + section.length > MAX_PLAN_CONTEXT_BYTES) {
-      truncatedFileCount++;
-      continue;
-    }
-    context += section;
-    usedBytes += section.length;
+  const acc = { context: '', usedBytes: 0, truncatedFileCount: 0 };
+  for (const file of contextFiles) appendWorkspaceFile(acc, file);
+  if (acc.truncatedFileCount > 0) acc.context += truncationNote(acc.truncatedFileCount);
+  return acc.context;
+}
+
+function appendWorkspaceFile(
+  acc: { context: string; usedBytes: number; truncatedFileCount: number },
+  file: ContextFile,
+): void {
+  if (file.source !== 'workspace') return;
+  const section = `\n--- ${file.path} ---\n${truncateFileContent(file.content)}\n`;
+  if (acc.usedBytes + section.length > MAX_PLAN_CONTEXT_BYTES) {
+    acc.truncatedFileCount++;
+    return;
   }
-  if (truncatedFileCount > 0) {
-    context +=
-      `\n[NOTE: ${truncatedFileCount} file(s) omitted to fit a ` +
-      `${Math.floor(MAX_PLAN_CONTEXT_BYTES / 1024)} KiB context budget. ` +
-      `Files are ranked by relevance; omitted entries are the least relevant.]\n`;
-  }
-  return context;
+  acc.context += section;
+  acc.usedBytes += section.length;
+}
+
+function truncationNote(count: number): string {
+  return `\n[NOTE: ${count} file(s) omitted to fit a ` +
+    `${Math.floor(MAX_PLAN_CONTEXT_BYTES / 1024)} KiB context budget. ` +
+    `Files are ranked by relevance; omitted entries are the least relevant.]\n`;
 }
 
 export function buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifest): string {

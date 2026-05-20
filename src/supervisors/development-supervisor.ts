@@ -404,41 +404,46 @@ export class DevelopmentSupervisor {
       this.todos.fail(todoId, 'Missing required data');
       return { errors: ['Missing required data for validation'], currentPhase: 'validation' as const };
     }
-    if (state.codeGeneration.files.length === 0) {
-      return this.skipValidationForEmptyFiles(state, todoId);
+    const { issue, codeGeneration, testEnvironment } = state;
+    if (codeGeneration.files.length === 0) {
+      return this.skipValidationForEmptyFiles({ issue, codeGeneration, testEnvironment, todoId });
     }
-    return await this.runValidationWithTodo(state, todoId);
+    return await this.runValidationWithTodo({ issue, codeGeneration, testEnvironment, todoId });
   }
 
-  private skipValidationForEmptyFiles(
-    state: typeof DevelopmentStateAnnotation.State,
-    todoId: string,
-  ): { validationResult: ImplementationValidation; currentPhase: 'complete' } {
+  private skipValidationForEmptyFiles(opts: {
+    issue: IssueTemplate;
+    codeGeneration: CodeGenerationResult;
+    testEnvironment?: TestEnvironmentResult;
+    todoId: string;
+  }): { validationResult: ImplementationValidation; currentPhase: 'complete' } {
     console.log('[Development Supervisor] Skipping validation — no files generated');
-    this.todos.complete(todoId);
+    this.todos.complete(opts.todoId);
     this.todos.printSummary();
     return {
-      validationResult: this.heuristicValidation(state.issue!, state.codeGeneration!, state.testEnvironment),
+      validationResult: this.heuristicValidation(opts.issue, opts.codeGeneration, opts.testEnvironment),
       currentPhase: 'complete' as const,
     };
   }
 
-  private async runValidationWithTodo(
-    state: typeof DevelopmentStateAnnotation.State,
-    todoId: string,
-  ) {
+  private async runValidationWithTodo(opts: {
+    issue: IssueTemplate;
+    codeGeneration: CodeGenerationResult;
+    testEnvironment?: TestEnvironmentResult;
+    todoId: string;
+  }) {
     try {
       const validation = await this.validateImplementation(
-        state.issue!,
-        state.codeGeneration!,
-        state.testEnvironment
+        opts.issue,
+        opts.codeGeneration,
+        opts.testEnvironment
       );
-      this.todos.complete(todoId);
+      this.todos.complete(opts.todoId);
       this.todos.printSummary();
-      return this.buildValidationStateUpdate(validation, state.codeGeneration!);
+      return this.buildValidationStateUpdate(validation, opts.codeGeneration);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.todos.fail(todoId, errorMessage);
+      this.todos.fail(opts.todoId, errorMessage);
       this.todos.printSummary();
       return {
         errors: [`Validation failed: ${errorMessage}`],
@@ -742,18 +747,25 @@ Respond with a JSON object:
     const acceptanceCriteriaPassed = checkAcceptanceCriteria(issue, codeGen);
     const metCount = requirementsMet.filter(r => r.met).length;
     const passedCount = acceptanceCriteriaPassed.filter(c => c.passed).length;
-    const overallScore = this.computeOverallScore(metCount, passedCount, requirementsMet.length, acceptanceCriteriaPassed.length, testEnv);
+    const overallScore = this.computeOverallScore({
+      metCount,
+      passedCount,
+      totalRequirements: requirementsMet.length,
+      totalCriteria: acceptanceCriteriaPassed.length,
+      testEnv,
+    });
     const recommendations = this.buildHeuristicRecommendations(metCount, requirementsMet.length, testEnv, overallScore);
     return { requirementsMet, acceptanceCriteriaPassed, overallScore, recommendations };
   }
 
-  private computeOverallScore(
-    metCount: number,
-    passedCount: number,
-    totalRequirements: number,
-    totalCriteria: number,
-    testEnv?: TestEnvironmentResult,
-  ): number {
+  private computeOverallScore(opts: {
+    metCount: number;
+    passedCount: number;
+    totalRequirements: number;
+    totalCriteria: number;
+    testEnv?: TestEnvironmentResult;
+  }): number {
+    const { metCount, passedCount, totalRequirements, totalCriteria, testEnv } = opts;
     const totalChecks = totalRequirements + totalCriteria;
     const passedChecks = metCount + passedCount;
     let score = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;

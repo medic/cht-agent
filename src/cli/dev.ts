@@ -78,16 +78,19 @@ function synthesizeContextAnalysis(ticket: IssueTemplate): ContextAnalysisResult
 function collectRealPathsFromDomain(domainData: Record<string, unknown>): string[] {
   const realPaths: string[] = [];
   for (const section of ['api', 'webapp', 'sentinel']) {
-    const sectionData = domainData[section];
-    if (!sectionData || typeof sectionData !== 'object') continue;
-    for (const [, entries] of Object.entries(sectionData)) {
-      if (!Array.isArray(entries)) continue;
-      for (const entry of entries) {
-        if (typeof entry === 'string') realPaths.push(entry);
-      }
-    }
+    collectSectionStrings(domainData[section], realPaths);
   }
   return realPaths;
+}
+
+function collectSectionStrings(sectionData: unknown, out: string[]): void {
+  if (!sectionData || typeof sectionData !== 'object') return;
+  for (const [, entries] of Object.entries(sectionData)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (typeof entry === 'string') out.push(entry);
+    }
+  }
 }
 
 function synthesizeOrchestrationPlan(ticket: IssueTemplate): OrchestrationPlan {

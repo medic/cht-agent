@@ -283,17 +283,18 @@ function collectModuleIssues(args: {
       reason: 'CLI abstained after relaxed retry; refinement loop cannot help.',
     });
   }
-  logModuleIssues(moduleIssues, adherenceIssues, discoveryIssues, compileIssues, executeNoOp);
+  logModuleIssues({ moduleIssues, adherenceIssues, discoveryIssues, compileIssues, executeNoOp });
   return moduleIssues;
 }
 
-function logModuleIssues(
-  moduleIssues: CrossFileIssue[],
-  adherenceIssues: CrossFileIssue[],
-  discoveryIssues: CrossFileIssue[],
-  compileIssues: CrossFileIssue[],
-  executeNoOp: boolean,
-): void {
+function logModuleIssues(args: {
+  moduleIssues: CrossFileIssue[];
+  adherenceIssues: CrossFileIssue[];
+  discoveryIssues: CrossFileIssue[];
+  compileIssues: CrossFileIssue[];
+  executeNoOp: boolean;
+}): void {
+  const { moduleIssues, adherenceIssues, discoveryIssues, compileIssues, executeNoOp } = args;
   if (moduleIssues.length === 0) return;
   console.warn(
     `[claude-code-cli] Module issues: ${moduleIssues.length} ` +

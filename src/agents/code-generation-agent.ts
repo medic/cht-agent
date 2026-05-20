@@ -75,10 +75,13 @@ function collectFromSections(
 
 function pushStringEntriesFromSubtree(subtree: Record<string, unknown>, out: string[]): void {
   for (const entries of Object.values(subtree)) {
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      if (typeof entry === 'string') out.push(entry);
-    }
+    if (Array.isArray(entries)) pushStringsFromArray(entries, out);
+  }
+}
+
+function pushStringsFromArray(entries: unknown[], out: string[]): void {
+  for (const entry of entries) {
+    if (typeof entry === 'string') out.push(entry);
   }
 }
 
@@ -149,11 +152,14 @@ function collectComponentMatchesFromSection(
   matches: string[],
 ): void {
   for (const entries of Object.values(sectionData)) {
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      if (typeof entry === 'string' && matchesAnyVariant(entry, variants)) {
-        matches.push(entry);
-      }
+    if (Array.isArray(entries)) collectMatchingEntries(entries, variants, matches);
+  }
+}
+
+function collectMatchingEntries(entries: unknown[], variants: string[], matches: string[]): void {
+  for (const entry of entries) {
+    if (typeof entry === 'string' && matchesAnyVariant(entry, variants)) {
+      matches.push(entry);
     }
   }
 }
@@ -184,14 +190,15 @@ function collectServiceFilesFromDomain(
   out: string[],
 ): void {
   for (const section of ['api', 'webapp']) {
-    const sectionData = domainData[section];
-    if (!sectionData || typeof sectionData !== 'object') continue;
-    const services = (sectionData as Record<string, unknown>).services;
-    if (!Array.isArray(services)) continue;
-    for (const entry of services) {
-      if (typeof entry === 'string') out.push(entry);
-    }
+    appendServicesFromSection(domainData[section], out);
   }
+}
+
+function appendServicesFromSection(sectionData: unknown, out: string[]): void {
+  if (!sectionData || typeof sectionData !== 'object') return;
+  const services = (sectionData as Record<string, unknown>).services;
+  if (!Array.isArray(services)) return;
+  pushStringsFromArray(services, out);
 }
 
 const VALID_LANGUAGES: ReadonlySet<FileLanguage> = new Set<FileLanguage>([
@@ -440,13 +447,21 @@ export class CodeGenerationAgent {
   ): Promise<void> {
     const resolvedPaths = this.resolveComponentToFiles(component, domainToComponents);
     if (resolvedPaths.length > 0) {
-      for (const filePath of resolvedPaths) {
-        await readIntoMap(filePath, chtCorePath, existingFiles);
-      }
+      await this.readManyIntoMap(resolvedPaths, chtCorePath, existingFiles);
       return;
     }
     if (this.looksLikeFilePath(component)) {
       await readIntoMap(component, chtCorePath, existingFiles);
+    }
+  }
+
+  private async readManyIntoMap(
+    filePaths: string[],
+    chtCorePath: string,
+    existingFiles: Map<string, string>,
+  ): Promise<void> {
+    for (const filePath of filePaths) {
+      await readIntoMap(filePath, chtCorePath, existingFiles);
     }
   }
 

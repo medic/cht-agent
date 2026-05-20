@@ -434,18 +434,19 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
         codeGenTools,
       });
       totalTokens += result.tokensUsed;
-      await this.handleGenerationResult(result, planItem, input, originalContentMap, generatedFiles);
+      await this.handleGenerationResult({ result, planItem, input, originalContentMap, generatedFiles });
     }
     return { files: generatedFiles, tokensUsed: totalTokens };
   }
 
-  private async handleGenerationResult(
-    result: { file: GeneratedFile | null; tokensUsed: number },
-    planItem: PlanItem,
-    input: CodeGenModuleInput,
-    originalContentMap: Map<string, string>,
-    generatedFiles: GeneratedFile[],
-  ): Promise<void> {
+  private async handleGenerationResult(args: {
+    result: { file: GeneratedFile | null; tokensUsed: number };
+    planItem: PlanItem;
+    input: CodeGenModuleInput;
+    originalContentMap: Map<string, string>;
+    generatedFiles: GeneratedFile[];
+  }): Promise<void> {
+    const { result, planItem, input, originalContentMap, generatedFiles } = args;
     if (!result.file) {
       console.log(`[Code Gen Module]   FAILED ${planItem.filePath} (no usable content after retries)`);
       await this.fireCallback(
@@ -768,7 +769,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   ): Promise<{ continuation: string; tokensUsed: number; stillTruncated: boolean }> {
     const acc = { content: '', tokens: 0, stopReason: undefined as string | undefined };
     for (let i = 0; i < maxContinuations; i++) {
-      const ok = await this.runOneContinuation(partialContent, planItem, input, acc, i);
+      const ok = await this.runOneContinuation({ partialContent, planItem, input, acc, iteration: i });
       if (!ok) break;
       if (acc.stopReason !== 'max_tokens') {
         console.log(`[Code Gen Module]   Continuation complete after ${i + 1} call(s)`);
@@ -786,13 +787,14 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated };
   }
 
-  private async runOneContinuation(
-    partialContent: string,
-    planItem: PlanItem,
-    input: CodeGenModuleInput,
-    acc: { content: string; tokens: number; stopReason: string | undefined },
-    iteration: number,
-  ): Promise<boolean> {
+  private async runOneContinuation(args: {
+    partialContent: string;
+    planItem: PlanItem;
+    input: CodeGenModuleInput;
+    acc: { content: string; tokens: number; stopReason: string | undefined };
+    iteration: number;
+  }): Promise<boolean> {
+    const { partialContent, planItem, input, acc, iteration } = args;
     const lastLines = (partialContent + acc.content).split('\n').slice(-50).join('\n');
     const prompt = this.buildContinuationPrompt(lastLines, planItem, input);
     let response;

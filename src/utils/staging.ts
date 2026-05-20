@@ -58,33 +58,51 @@ function appendNewFileDiff(diffLines: string[], newLines: string[]): DiffResult 
   return { diff: diffLines.join('\n'), additions: newLines.length, deletions: 0 };
 }
 
+interface DiffChunk {
+  start: number;
+  lines: string[];
+}
+
 function appendModifiedFileDiff(
   diffLines: string[],
   originalLines: string[],
   newLines: string[],
 ): DiffResult {
-  let additions = 0;
-  let deletions = 0;
+  const stats = { additions: 0, deletions: 0 };
   const maxLines = Math.max(originalLines.length, newLines.length);
-  let chunkStart = -1;
-  let chunkLines: string[] = [];
+  let chunk: DiffChunk = { start: -1, lines: [] };
   for (let i = 0; i < maxLines; i++) {
-    const origLine = originalLines[i];
-    const newLine = newLines[i];
-    if (origLine !== newLine) {
-      if (chunkStart === -1) chunkStart = i;
-      if (origLine !== undefined) { chunkLines.push(`-${origLine}`); deletions++; }
-      if (newLine !== undefined) { chunkLines.push(`+${newLine}`); additions++; }
-    } else if (chunkStart !== -1) {
-      diffLines.push(`@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`, ...chunkLines);
-      chunkStart = -1;
-      chunkLines = [];
-    }
+    chunk = stepDiff(chunk, originalLines[i], newLines[i], i, stats, diffLines);
   }
-  if (chunkLines.length > 0) {
-    diffLines.push(`@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`, ...chunkLines);
+  flushChunk(chunk, diffLines, stats);
+  return { diff: diffLines.join('\n'), additions: stats.additions, deletions: stats.deletions };
+}
+
+function stepDiff(
+  chunk: DiffChunk,
+  origLine: string | undefined,
+  newLine: string | undefined,
+  i: number,
+  stats: { additions: number; deletions: number },
+  diffLines: string[],
+): DiffChunk {
+  if (origLine === newLine) {
+    flushChunk(chunk, diffLines, stats);
+    return { start: -1, lines: [] };
   }
-  return { diff: diffLines.join('\n'), additions, deletions };
+  const next = chunk.start === -1 ? { start: i, lines: [] } : chunk;
+  if (origLine !== undefined) { next.lines.push(`-${origLine}`); stats.deletions++; }
+  if (newLine !== undefined) { next.lines.push(`+${newLine}`); stats.additions++; }
+  return next;
+}
+
+function flushChunk(
+  chunk: DiffChunk,
+  diffLines: string[],
+  stats: { additions: number; deletions: number },
+): void {
+  if (chunk.start === -1 || chunk.lines.length === 0) return;
+  diffLines.push(`@@ -${chunk.start + 1},${stats.deletions} +${chunk.start + 1},${stats.additions} @@`, ...chunk.lines);
 }
 
 /**
