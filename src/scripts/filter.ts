@@ -12,6 +12,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
+import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
 
@@ -30,6 +31,8 @@ const TRANSLATION_PATTERN = /(?:^|\/)translations\/.*|\.properties$|\.po$|\.pot$
 
 // Body length limit sent to LLM (prevent prompt bloat)
 const LLM_BODY_LIMIT = 2000;
+
+const DEFAULT_TRIAGE_MODEL = 'anthropic/claude-haiku-4';
 
 /**
  * Returns true if fileList touches ≥2 distinct CHT service prefixes.
@@ -133,9 +136,43 @@ const triageSchema: z.ZodType<TriageOutput> = z.object({
   reason: z.string().min(1),
 });
 
+// Cached on first call — avoids recreating the LLM client for each PR in a batch
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _triageChain: any;
+
+function getTriageChain() {
+  if (_triageChain !== undefined) return _triageChain;
+
+  const openrouterKey = process.env['OPENROUTER_API_KEY'];
+  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+
+  if (openrouterKey) {
+    const llm = new ChatOpenAI({
+      openAIApiKey: openrouterKey,
+      modelName: process.env['TRIAGE_MODEL'] ?? DEFAULT_TRIAGE_MODEL,
+      maxTokens: 200,
+      configuration: { baseURL: 'https://openrouter.ai/api/v1' },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    _triageChain = (llm as any).withStructuredOutput(triageSchema);
+  } else if (anthropicKey) {
+    const llm = new ChatAnthropic({
+      model: 'claude-haiku-4-5-20251001',
+      apiKey: anthropicKey,
+      maxTokens: 200,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    _triageChain = (llm as any).withStructuredOutput(triageSchema);
+  } else {
+    _triageChain = null;
+  }
+
+  return _triageChain;
+}
+
 /**
- * Call the Anthropic LLM to triage a PR that didn't match deterministic rules.
- * Returns flag-for-human if the API key is absent or the call fails.
+ * Call the LLM to triage a PR that didn't match deterministic rules.
+ * Returns flag-for-human if no API key is set or the call fails.
  *
  * @example
  * ```typescript
@@ -143,9 +180,10 @@ const triageSchema: z.ZodType<TriageOutput> = z.object({
  * ```
  */
 async function llmTriage(pr: ScrapedPR): Promise<FilterResult> {
-  const apiKey = process.env['ANTHROPIC_API_KEY'];
-  if (!apiKey) {
-    return { decision: 'flag-for-human', reason: 'LLM triage unavailable: ANTHROPIC_API_KEY not set' };
+  const chain = getTriageChain();
+
+  if (!chain) {
+    return { decision: 'flag-for-human', reason: 'LLM triage unavailable: no API key set (OPENROUTER_API_KEY or ANTHROPIC_API_KEY)' };
   }
 
   const body = (pr.prBody ?? '').slice(0, LLM_BODY_LIMIT);
@@ -166,14 +204,7 @@ ${body}
 Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<one sentence>" }`;
 
   try {
-    const llm = new ChatAnthropic({
-      model: 'claude-haiku-4-5-20251001',
-      apiKey,
-      maxTokens: 200,
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const structured = (llm as any).withStructuredOutput(triageSchema);
-    const result = await structured.invoke(prompt) as TriageOutput;
+    const result = await chain.invoke(prompt) as TriageOutput;
     return { decision: result.decision as FilterDecision, reason: result.reason };
   } catch (err) {
     return {
