@@ -32,7 +32,7 @@ const TRANSLATION_PATTERN = /(?:^|\/)translations\/.*|\.properties$|\.po$|\.pot$
 // Body length limit sent to LLM (prevent prompt bloat)
 const LLM_BODY_LIMIT = 2000;
 
-const DEFAULT_TRIAGE_MODEL = 'anthropic/claude-haiku-4';
+const DEFAULT_TRIAGE_MODEL = 'anthropic/claude-haiku-4-5';
 
 /**
  * Returns true if fileList touches ≥2 distinct CHT service prefixes.
@@ -148,10 +148,9 @@ function getTriageChain() {
 
   if (openrouterKey) {
     const llm = new ChatOpenAI({
-      openAIApiKey: openrouterKey,
       modelName: process.env['TRIAGE_MODEL'] ?? DEFAULT_TRIAGE_MODEL,
       maxTokens: 200,
-      configuration: { baseURL: 'https://openrouter.ai/api/v1' },
+      configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     _triageChain = (llm as any).withStructuredOutput(triageSchema);
