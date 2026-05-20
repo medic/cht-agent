@@ -26,7 +26,7 @@
  */
 
 import * as dotenv from 'dotenv';
-import * as path from 'path';
+import * as path from 'node:path';
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { displayIssueDetails } from '../workflows/research-workflow';

@@ -222,13 +222,13 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     }
 
     // Strip markdown code blocks if present
-    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(content);
     if (codeBlockMatch) {
       content = codeBlockMatch[1].trim();
     }
 
     // Try to extract JSON object from the response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonMatch = /\{[\s\S]*\}/.exec(content);
     if (!jsonMatch) {
       throw new Error('LLM response did not contain valid JSON object');
     }

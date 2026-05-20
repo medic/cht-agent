@@ -94,7 +94,7 @@ const loadProvider = (
     return fakeWrap.proc;
   });
   const mod = proxyquire('../../../src/llm/providers/claude-cli', {
-    child_process: { spawn: spawnStub },
+    'node:child_process': { spawn: spawnStub },
   });
   return {
     provider: mod.createClaudeCLIProvider() as LLMProvider,
@@ -291,7 +291,7 @@ describe('validateClaudeCLI (v9a.7)', () => {
   const loadValidate = (events: Array<{ stdout?: string; closeCode?: number | null; errorCode?: string }>) => {
     const spawnStub = sinon.stub().callsFake(() => buildFakeProc(events).proc);
     return proxyquire('../../../src/llm/providers/claude-cli', {
-      child_process: { spawn: spawnStub },
+      'node:child_process': { spawn: spawnStub },
     });
   };
 

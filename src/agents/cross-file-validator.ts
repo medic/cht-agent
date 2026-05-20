@@ -69,65 +69,98 @@ function buildSelectorExportRegistry(files: GeneratedFile[]): Set<string> {
   const names = new Set<string>();
   for (const file of files) {
     if (!file.relativePath.includes('/selectors/')) continue;
-    const sources = [file.content];
-    // MODIFY files: also pull unchanged identifiers from the original so existing
-    // selectors don't false-flag.
-    if (file.originalContent) sources.push(file.originalContent);
-    for (const source of sources) {
-      // (a) Top-level: export const X = ... / export function X(...)
-      // Fresh regex per source to avoid /g `lastIndex` carry-over across inputs.
-      const topLevelRe = /(?:export\s+const|export\s+function)\s+(\w+)/g;
-      let m: RegExpExecArray | null;
-      while ((m = topLevelRe.exec(source)) !== null) names.add(m[1]);
-
-      // (b) Namespace properties: export const Selectors = { foo: ..., bar: ... };
-      // The terminator `\n\}` requires the closing brace at column 0, which is the
-      // cht-core convention for the Selectors namespace. Inner braces in arrow
-      // bodies (e.g., (state) => ({ x: state.x })) are always indented, so they
-      // don't terminate the body capture early.
-      // Must stay byte-identical to the namespace regex in lib/public-surface.ts.
-      const namespaceRe = /export\s+const\s+(\w+)\s*=\s*\{([\s\S]*?)\n\}\s*;?/g;
-      while ((m = namespaceRe.exec(source)) !== null) {
-        const body = m[2];
-        const propRe = /^\s+(\w+)\s*[:=]/gm;
-        let p: RegExpExecArray | null;
-        while ((p = propRe.exec(body)) !== null) names.add(p[1]);
-      }
-    }
+    extractSelectorNamesFromFile(file, names);
   }
   return names;
+}
+
+/**
+ * MODIFY files contribute both their new content and their original content
+ * so existing selectors aren't false-flagged as missing.
+ */
+function extractSelectorNamesFromFile(file: GeneratedFile, names: Set<string>): void {
+  extractSelectorNamesFromSource(file.content, names);
+  if (file.originalContent) extractSelectorNamesFromSource(file.originalContent, names);
+}
+
+function extractSelectorNamesFromSource(source: string, names: Set<string>): void {
+  // (a) Top-level: export const X = ... / export function X(...)
+  // Fresh regex per source to avoid /g `lastIndex` carry-over across inputs.
+  const topLevelRe = /(?:export\s+const|export\s+function)\s+(\w+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = topLevelRe.exec(source)) !== null) names.add(m[1]);
+
+  // (b) Namespace properties: export const Selectors = { foo: ..., bar: ... };
+  // The terminator `\n\}` requires the closing brace at column 0, which is the
+  // cht-core convention for the Selectors namespace. Inner braces in arrow
+  // bodies (e.g., (state) => ({ x: state.x })) are always indented, so they
+  // don't terminate the body capture early.
+  // Must stay byte-identical to the namespace regex in lib/public-surface.ts.
+  const namespaceRe = /export\s+const\s+(\w+)\s*=\s*\{([\s\S]*?)\n\}\s*;?/g;
+  while ((m = namespaceRe.exec(source)) !== null) {
+    const propRe = /^\s+(\w+)\s*[:=]/gm;
+    let p: RegExpExecArray | null;
+    while ((p = propRe.exec(m[2])) !== null) names.add(p[1]);
+  }
 }
 
 function buildActionMethodRegistry(files: GeneratedFile[]): Map<string, Set<string>> {
   const registry = new Map<string, Set<string>>();
   for (const file of files) {
     if (!file.relativePath.includes('/actions/')) continue;
-    const sources = [file.content];
-    if (file.originalContent) sources.push(file.originalContent);
-    for (const source of sources) {
-      const classRe = /export\s+class\s+(\w+Actions)\s*\{([\s\S]*?)\n\}/g;
-      let cm: RegExpExecArray | null;
-      while ((cm = classRe.exec(source)) !== null) {
-        const className = cm[1];
-        const body = cm[2];
-        const set = registry.get(className) ?? new Set<string>();
-        const methodRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:async\s+)?(\w+)\s*\(/gm;
-        let mm: RegExpExecArray | null;
-        while ((mm = methodRe.exec(body)) !== null) {
-          if (mm[1] !== 'constructor') set.add(mm[1]);
-        }
-        registry.set(className, set);
-      }
-    }
+    extractActionMethodsFromFile(file, registry);
   }
   return registry;
 }
+
+function extractActionMethodsFromFile(file: GeneratedFile, registry: Map<string, Set<string>>): void {
+  extractActionClassesFromSource(file.content, registry);
+  if (file.originalContent) extractActionClassesFromSource(file.originalContent, registry);
+}
+
+function extractActionClassesFromSource(source: string, registry: Map<string, Set<string>>): void {
+  const classRe = /export\s+class\s+(\w+Actions)\s*\{([\s\S]*?)\n\}/g;
+  let cm: RegExpExecArray | null;
+  while ((cm = classRe.exec(source)) !== null) {
+    const className = cm[1];
+    const set = registry.get(className) ?? new Set<string>();
+    addPublicMethodsToSet(cm[2], set);
+    registry.set(className, set);
+  }
+}
+
+function addPublicMethodsToSet(classBody: string, set: Set<string>): void {
+  const methodRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:async\s+)?(\w+)\s*\(/gm;
+  let mm: RegExpExecArray | null;
+  while ((mm = methodRe.exec(classBody)) !== null) {
+    if (mm[1] !== 'constructor') set.add(mm[1]);
+  }
+}
+
+const TEMPLATE_KEYWORDS = new Set(
+  ['true','false','null','undefined','let','of','as','then','else','async','await','typeof'],
+);
 
 /**
  * Extract identifiers referenced in template bindings/interpolation, minus
  * locals declared by *ngFor / #templateRef (D5 fix).
  */
 function extractTemplateReferenced(content: string): Set<string> {
+  const declaredLocals = collectTemplateDeclaredLocals(content);
+  const ids = new Set<string>();
+  collectIdsFromBindings(content, ids);
+  collectIdsFromInterpolations(content, ids);
+
+  const referenced = new Set<string>();
+  for (const id of ids) {
+    if (TEMPLATE_KEYWORDS.has(id)) continue;
+    if (declaredLocals.has(id)) continue;
+    referenced.add(id);
+  }
+  return referenced;
+}
+
+function collectTemplateDeclaredLocals(content: string): Set<string> {
   const declaredLocals = new Set<string>();
   const ngForLocalRe = /\*ngFor\s*=\s*"\s*let\s+(\w+)(?:\s*,\s*(\w+))?(?:\s+of\s+\w+)?/g;
   let nf: RegExpExecArray | null;
@@ -139,30 +172,25 @@ function extractTemplateReferenced(content: string): Set<string> {
   while ((nf = tplRefRe.exec(content)) !== null) {
     declaredLocals.add(nf[1]);
   }
+  return declaredLocals;
+}
 
-  const ids = new Set<string>();
+function collectIdsFromExpression(expression: string, ids: Set<string>): void {
+  const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
+  let i: RegExpExecArray | null;
+  while ((i = idRe.exec(expression)) !== null) ids.add(i[1]);
+}
+
+function collectIdsFromBindings(content: string, ids: Set<string>): void {
   const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
   let m: RegExpExecArray | null;
-  while ((m = bindingRe.exec(content)) !== null) {
-    const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
-    let i: RegExpExecArray | null;
-    while ((i = idRe.exec(m[1])) !== null) ids.add(i[1]);
-  }
-  const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
-  while ((m = interpRe.exec(content)) !== null) {
-    const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
-    let i: RegExpExecArray | null;
-    while ((i = idRe.exec(m[1])) !== null) ids.add(i[1]);
-  }
+  while ((m = bindingRe.exec(content)) !== null) collectIdsFromExpression(m[1], ids);
+}
 
-  const KEYWORDS = new Set(['true','false','null','undefined','let','of','as','then','else','async','await','typeof']);
-  const referenced = new Set<string>();
-  for (const id of ids) {
-    if (KEYWORDS.has(id)) continue;
-    if (declaredLocals.has(id)) continue;
-    referenced.add(id);
-  }
-  return referenced;
+function collectIdsFromInterpolations(content: string, ids: Set<string>): void {
+  const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = interpRe.exec(content)) !== null) collectIdsFromExpression(m[1], ids);
 }
 
 function validateTemplate(file: GeneratedFile, fields: Map<string, Set<string>>): CrossFileIssue[] {

@@ -48,6 +48,16 @@ const MAX_ITERATIONS = 3;
 const REFINEMENT_THRESHOLD = 75;
 
 /**
+ * Render a "Heading:\n- bullet\n- bullet" section if `items` is non-empty.
+ * Returns `undefined` so the caller can skip empty sections without an `if`.
+ */
+function renderBulletSection<T>(heading: string, items: T[], format: (item: T) => string): string | undefined {
+  if (items.length === 0) return undefined;
+  const bulletList = items.map(item => `- ${format(item)}`).join('\n');
+  return `${heading}:\n${bulletList}`;
+}
+
+/**
  * Shape the validateImpl resolver reads. Narrow on purpose so unit tests can
  * exercise the decision logic without instantiating a full langgraph state.
  */
@@ -242,35 +252,16 @@ export class DevelopmentSupervisor {
     }
 
     try {
-      // On retry: pass validation feedback as additionalContext
-      const additionalContext = state.validationFeedback || undefined;
-
-      // Selective regeneration: if we have per-file feedback, only regenerate failing files
-      let passingFiles: GeneratedFile[] | undefined;
-      let failingFiles: FailingFileRef[] | undefined;
-      if (state.perFileFeedback && state.codeGeneration && iteration > 1) {
-        const passing = state.perFileFeedback.filter(f => f.passed);
-        const failing = state.perFileFeedback.filter(f => !f.passed);
-        passingFiles = state.codeGeneration.files.filter(
-          f => passing.some(p => p.filePath === f.relativePath)
-        );
-        failingFiles = failing.map(fb => {
-          const genFile = state.codeGeneration!.files.find(f => f.relativePath === fb.filePath);
-          return { path: fb.filePath, action: genFile?.action ?? 'modify' as const };
-        });
-
-        console.log(`[Development Supervisor] Selective regeneration: keeping ${passingFiles.length} passing file(s), regenerating ${failingFiles.length} failing file(s)`);
-      }
-
+      const selective = this.buildSelectiveRegenInput(state, iteration);
       const result = await this.codeGenAgent.generate({
         issue: state.issue,
         orchestrationPlan: state.orchestrationPlan,
         researchFindings: state.researchFindings,
         contextAnalysis: state.contextAnalysis,
         chtCorePath: state.options.chtCorePath,
-        additionalContext,
-        passingFiles,
-        failingFiles,
+        additionalContext: state.validationFeedback || undefined,
+        passingFiles: selective.passingFiles,
+        failingFiles: selective.failingFiles,
       });
 
       this.todos.complete(todoId);
@@ -296,6 +287,32 @@ export class DevelopmentSupervisor {
         iterationCount: iteration,
       };
     }
+  }
+
+  /**
+   * Selective regeneration helper: when we have per-file feedback from a
+   * prior iteration, partition files into "carry forward (passing)" and
+   * "regenerate (failing)". Returns empty when this is iter 1 or there is
+   * no per-file feedback yet.
+   */
+  private buildSelectiveRegenInput(
+    state: typeof DevelopmentStateAnnotation.State,
+    iteration: number,
+  ): { passingFiles?: GeneratedFile[]; failingFiles?: FailingFileRef[] } {
+    if (!state.perFileFeedback || !state.codeGeneration || iteration <= 1) {
+      return {};
+    }
+    const passing = state.perFileFeedback.filter(f => f.passed);
+    const failing = state.perFileFeedback.filter(f => !f.passed);
+    const passingFiles = state.codeGeneration.files.filter(
+      f => passing.some(p => p.filePath === f.relativePath),
+    );
+    const failingFiles: FailingFileRef[] = failing.map(fb => {
+      const genFile = state.codeGeneration!.files.find(f => f.relativePath === fb.filePath);
+      return { path: fb.filePath, action: genFile?.action ?? 'modify' as const };
+    });
+    console.log(`[Development Supervisor] Selective regeneration: keeping ${passingFiles.length} passing file(s), regenerating ${failingFiles.length} failing file(s)`);
+    return { passingFiles, failingFiles };
   }
 
   /**
@@ -394,46 +411,7 @@ export class DevelopmentSupervisor {
       this.todos.complete(todoId);
       this.todos.printSummary();
 
-      // Extract feedback for potential retry
-      const feedbackUpdate: Record<string, unknown> = {
-        validationResult: validation,
-        currentPhase: 'complete' as const,
-        messages: [
-          {
-            role: 'assistant' as const,
-            content: `Validation completed. Overall score: ${validation.overallScore}%`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      };
-
-      // Store feedback for refinement loop
-      if (validation.feedbackForCodeGen) {
-        feedbackUpdate.validationFeedback = validation.feedbackForCodeGen;
-      } else if (validation.overallScore < REFINEMENT_THRESHOLD) {
-        // Synthesize feedback from recommendations if none was explicitly provided
-        feedbackUpdate.validationFeedback = this.synthesizeFeedback(validation);
-      }
-
-      // Fold cross-file consistency issues into the feedback so the next iteration
-      // sees the specific identifier mismatches.
-      const crossFileIssues = state.codeGeneration?.crossFileIssues;
-      if (crossFileIssues && crossFileIssues.length > 0) {
-        const crossFileText = crossFileIssues
-          .map(i => `- ${i.filePath}: ${i.reason ?? i.description ?? '(no detail)'}`)
-          .join('\n');
-        const existing = feedbackUpdate.validationFeedback as string | undefined;
-        feedbackUpdate.validationFeedback = existing
-          ? `${existing}\n\nCross-file consistency issues:\n${crossFileText}`
-          : `Cross-file consistency issues found. The following identifiers do not have matching declarations:\n${crossFileText}\n\nFix each mismatch by either (a) using the correct identifier name from the declaring file, or (b) adding the missing declaration to the appropriate file.`;
-      }
-
-      // Store per-file feedback for selective regeneration
-      if (validation.perFileFeedback) {
-        feedbackUpdate.perFileFeedback = validation.perFileFeedback;
-      }
-
-      return feedbackUpdate;
+      return this.buildValidationStateUpdate(validation, state.codeGeneration);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.todos.fail(todoId, errorMessage);
@@ -446,48 +424,102 @@ export class DevelopmentSupervisor {
   }
 
   /**
+   * Build the state-update object after a successful validation pass.
+   * Combines the validation result with refinement feedback (if score is
+   * below threshold), folded cross-file issues, and per-file feedback for
+   * selective regeneration. Extracted from validationNode to keep that
+   * method's branching shallow.
+   */
+  private buildValidationStateUpdate(
+    validation: ImplementationValidation,
+    codeGeneration: CodeGenerationResult,
+  ): Record<string, unknown> {
+    const feedbackUpdate: Record<string, unknown> = {
+      validationResult: validation,
+      currentPhase: 'complete' as const,
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: `Validation completed. Overall score: ${validation.overallScore}%`,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+
+    feedbackUpdate.validationFeedback = this.deriveValidationFeedback(validation, codeGeneration);
+
+    if (validation.perFileFeedback) {
+      feedbackUpdate.perFileFeedback = validation.perFileFeedback;
+    }
+
+    return feedbackUpdate;
+  }
+
+  /**
+   * Decide what `validationFeedback` (if any) to attach to the state for the
+   * next refinement iteration. Returns undefined when there's nothing to
+   * feed back (high score and no cross-file issues).
+   */
+  private deriveValidationFeedback(
+    validation: ImplementationValidation,
+    codeGeneration: CodeGenerationResult,
+  ): string | undefined {
+    const base = this.baseFeedbackForRetry(validation);
+    const crossFileText = this.formatCrossFileIssues(codeGeneration.crossFileIssues);
+    if (!crossFileText) return base;
+    return base
+      ? `${base}\n\nCross-file consistency issues:\n${crossFileText}`
+      : `Cross-file consistency issues found. The following identifiers do not have matching declarations:\n${crossFileText}\n\nFix each mismatch by either (a) using the correct identifier name from the declaring file, or (b) adding the missing declaration to the appropriate file.`;
+  }
+
+  private baseFeedbackForRetry(validation: ImplementationValidation): string | undefined {
+    if (validation.feedbackForCodeGen) return validation.feedbackForCodeGen;
+    if (validation.overallScore < REFINEMENT_THRESHOLD) return this.synthesizeFeedback(validation);
+    return undefined;
+  }
+
+  private formatCrossFileIssues(crossFileIssues?: CodeGenerationResult['crossFileIssues']): string | undefined {
+    if (!crossFileIssues || crossFileIssues.length === 0) return undefined;
+    return crossFileIssues
+      .map(i => `- ${i.filePath}: ${i.reason ?? i.description ?? '(no detail)'}`)
+      .join('\n');
+  }
+
+  /**
    * Synthesize actionable feedback from validation result when feedbackForCodeGen is not provided
    */
   private synthesizeFeedback(validation: ImplementationValidation): string {
     const parts: string[] = [];
 
-    const failedRequirements = validation.requirementsMet
-      .filter(r => !r.met)
-      .map(r => {
-        const notesSuffix = r.notes ? ` (${r.notes})` : '';
-        return `${r.requirement}${notesSuffix}`;
-      });
-    if (failedRequirements.length > 0) {
-      const bulletList = failedRequirements.map(r => `- ${r}`).join('\n');
-      parts.push(`Unmet requirements:\n${bulletList}`);
-    }
+    const unmet = renderBulletSection(
+      'Unmet requirements',
+      validation.requirementsMet.filter(r => !r.met),
+      r => `${r.requirement}${r.notes ? ` (${r.notes})` : ''}`,
+    );
+    if (unmet) parts.push(unmet);
 
-    const failedCriteria = validation.acceptanceCriteriaPassed
-      .filter(c => !c.passed)
-      .map(c => {
-        const notesSuffix = c.notes ? ` (${c.notes})` : '';
-        return `${c.criteria}${notesSuffix}`;
-      });
-    if (failedCriteria.length > 0) {
-      const bulletList = failedCriteria.map(c => `- ${c}`).join('\n');
-      parts.push(`Failed acceptance criteria:\n${bulletList}`);
-    }
+    const failed = renderBulletSection(
+      'Failed acceptance criteria',
+      validation.acceptanceCriteriaPassed.filter(c => !c.passed),
+      c => `${c.criteria}${c.notes ? ` (${c.notes})` : ''}`,
+    );
+    if (failed) parts.push(failed);
 
-    if (validation.recommendations.length > 0) {
-      const bulletList = validation.recommendations.map(r => `- ${r}`).join('\n');
-      parts.push(`Recommendations:\n${bulletList}`);
-    }
+    const recs = renderBulletSection(
+      'Recommendations',
+      validation.recommendations,
+      r => r,
+    );
+    if (recs) parts.push(recs);
 
     // Include per-file feedback so the code gen module knows which files need fixing
-    if (validation.perFileFeedback && validation.perFileFeedback.length > 0) {
-      const failedFiles = validation.perFileFeedback.filter(f => !f.passed);
-      if (failedFiles.length > 0) {
-        const bulletList = failedFiles
-          .map(f => `- ${f.filePath}: ${f.issues.join('; ')}`)
-          .join('\n');
-        parts.push(`Files that need fixing:\n${bulletList}`);
-      }
-    }
+    const failedFiles = (validation.perFileFeedback ?? []).filter(f => !f.passed);
+    const filesSection = renderBulletSection(
+      'Files that need fixing',
+      failedFiles,
+      f => `${f.filePath}: ${f.issues.join('; ')}`,
+    );
+    if (filesSection) parts.push(filesSection);
 
     return parts.join('\n\n');
   }
@@ -600,34 +632,41 @@ Respond with a JSON object:
 
     for (const file of files) {
       if (remaining < 100) break;
-
-      let section: string;
-
-      if (file.action === 'modify' && file.originalContent) {
-        const { diff, changedLineCount } = this.generateContextDiff(file.originalContent, file.content, file.relativePath);
-        const origLineCount = file.originalContent.split('\n').length;
-        const changeRatio = origLineCount > 0 ? changedLineCount / origLineCount : 1;
-
-        if (changeRatio <= 0.6) {
-          section = `### ${file.relativePath} (MODIFY — diff only)\n\`\`\`diff\n${diff}\n\`\`\``;
-        } else {
-          section = this.formatFullContentSection(file.relativePath, file.content, remaining, 'MODIFY — full content, extensive changes');
-        }
-      } else {
-        const label = file.action === 'create' ? 'NEW FILE' : 'FULL CONTENT';
-        section = this.formatFullContentSection(file.relativePath, file.content, remaining, label);
-      }
-
+      let section = this.renderFileSection(file, remaining);
       if (section.length > remaining) {
         // Truncate section to fit budget
         section = section.substring(0, remaining - 20) + '\n... (truncated)\n```';
       }
-
       sections.push(section);
       remaining -= section.length;
     }
 
     return sections.join('\n\n');
+  }
+
+  /**
+   * Render a single file as a code-section block. MODIFY files become a
+   * unified diff when the change ratio is small; CREATE files (and large
+   * MODIFY changes) become full content.
+   */
+  private renderFileSection(file: GeneratedFile, remaining: number): string {
+    if (file.action === 'modify' && file.originalContent) {
+      return this.renderModifySection(file, remaining);
+    }
+    const label = file.action === 'create' ? 'NEW FILE' : 'FULL CONTENT';
+    return this.formatFullContentSection(file.relativePath, file.content, remaining, label);
+  }
+
+  private renderModifySection(file: GeneratedFile, remaining: number): string {
+    const { diff, changedLineCount } = this.generateContextDiff(
+      file.originalContent!, file.content, file.relativePath,
+    );
+    const origLineCount = file.originalContent!.split('\n').length;
+    const changeRatio = origLineCount > 0 ? changedLineCount / origLineCount : 1;
+    if (changeRatio <= 0.6) {
+      return `### ${file.relativePath} (MODIFY — diff only)\n\`\`\`diff\n${diff}\n\`\`\``;
+    }
+    return this.formatFullContentSection(file.relativePath, file.content, remaining, 'MODIFY — full content, extensive changes');
   }
 
   private formatFullContentSection(filePath: string, content: string, remaining: number, label: string): string {

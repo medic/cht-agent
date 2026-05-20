@@ -70,7 +70,7 @@ function checkSignatureCoverage(tsFiles: GeneratedFile[]): CrossFileIssue[] {
       for (const otherFile of tsFiles) {
         if (otherFile.relativePath === file.relativePath) continue;
         // Match `.methodName(args)` calls. Captures the arg list contents (one level deep — no nested parens).
-        const callerRe = new RegExp(`\\.${escapeRegex(methodName)}\\s*\\(([^()]*)\\)`, 'g');
+        const callerRe = new RegExp(String.raw`\.${escapeRegex(methodName)}\s*\(([^()]*)\)`, 'g');
         let cm: RegExpExecArray | null;
         const flagged = new Set<number>();
         while ((cm = callerRe.exec(otherFile.content)) !== null) {

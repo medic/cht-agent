@@ -151,19 +151,19 @@ export class MCPClient {
     };
 
     // Extract thread ID
-    const threadIdMatch = content.match(/\*\*Thread ID:\*\*\s*([^\n]+)/);
+    const threadIdMatch = /\*\*Thread ID:\*\*\s*([^\n]+)/.exec(content);
     if (threadIdMatch) {
       result.threadId = threadIdMatch[1].trim();
     }
 
     // Extract question answer ID
-    const qaIdMatch = content.match(/\*\*Question Answer ID:\*\*\s*([^\n]+)/);
+    const qaIdMatch = /\*\*Question Answer ID:\*\*\s*([^\n]+)/.exec(content);
     if (qaIdMatch) {
       result.questionAnswerId = qaIdMatch[1].trim();
     }
 
     // Extract sources
-    const sourcesMatch = content.match(/\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/);
+    const sourcesMatch = /\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/.exec(content);
     if (sourcesMatch) {
       const sourcesText = sourcesMatch[1];
       const sourceLinks = sourcesText.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g);
@@ -176,7 +176,7 @@ export class MCPClient {
     }
 
     // Extract answer (everything before Sources section)
-    const answerMatch = content.match(/^([\s\S]*?)(?=\*\*Sources:\*\*|$)/);
+    const answerMatch = /^([\s\S]*?)(?=\*\*Sources:\*\*|$)/.exec(content);
     if (answerMatch) {
       result.answer = answerMatch[1].trim();
     }
@@ -194,7 +194,7 @@ export class MCPClient {
     // Parse lines like "- source_type: description"
     const lines = content.split('\n');
     for (const line of lines) {
-      const match = line.match(/^-\s*([^:]+):\s*(.+)$/);
+      const match = /^-\s*([^:]+):\s*(.+)$/.exec(line);
       if (match) {
         sources.push({
           type: match[1].trim(),
@@ -265,15 +265,15 @@ export class MCPClient {
    */
   private parseDocumentSection(section: string): MCPParsedDocument | null {
     // Extract title (first bold line like **Title|Title**)
-    const titleMatch = section.match(/\*\*([^|*]+)\|([^*]+)\*\*/);
+    const titleMatch = /\*\*([^|*]+)\|([^*]+)\*\*/.exec(section);
     const title = titleMatch ? titleMatch[1].trim() : '';
 
     // Extract section path (like # Section > Subsection)
-    const sectionMatch = section.match(/^#\s*([^\n]+)/m);
+    const sectionMatch = /^#\s*([^\n]+)/m.exec(section);
     const sectionPath = sectionMatch ? sectionMatch[1].trim() : '';
 
     // Extract source URL
-    const sourceMatch = section.match(/Source:\s*(https?:\/\/[^\s]+)/);
+    const sourceMatch = /Source:\s*(https?:\/\/[^\s]+)/.exec(section);
     const sourceUrl = sourceMatch ? sourceMatch[1].trim() : '';
 
     if (!sourceUrl) {

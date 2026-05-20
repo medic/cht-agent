@@ -90,8 +90,8 @@ export const askWithOptions = async (
     const answer = await askQuestion('\nEnter your choice (number or text): ');
 
     // Check if it's a number
-    const num = parseInt(answer, 10);
-    if (!isNaN(num) && num >= 1 && num <= options.length) {
+    const num = Number.parseInt(answer, 10);
+    if (!Number.isNaN(num) && num >= 1 && num <= options.length) {
       selectedOption = options[num - 1];
     } else {
       // Check if it matches an option (case insensitive)

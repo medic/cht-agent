@@ -138,56 +138,18 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       );
     }
     const llm = this.getProvider();
-    // Reset per-invocation caches so environment changes between calls are picked up.
-    this.pythonAvailable = null;
-    this.maxContinuationsCache = null;
+    this.resetPerInvocationCaches();
 
     // Local mutable working copy so we never mutate the caller's input.contextFiles.
     const workingContextFiles: ContextFile[] = [...input.contextFiles];
 
-    console.log(`[Code Gen Module] Generating code for "${input.ticket.issue.title}"...`);
-    console.log(`[Code Gen Module] Context: ${workingContextFiles.length} file(s), ${input.orchestrationPlan.phases.length} phase(s)`);
-
-    // Phase 1: Build deterministic file manifest
+    this.logGenerateStart(input, workingContextFiles);
     const manifest = this.buildFileManifest(workingContextFiles);
     console.log(`[Code Gen Module] Manifest: ${manifest.existingFiles.length} existing file(s), ${manifest.allowedDirectories.length} allowed dir(s)`);
 
-    // Phase 2: Generate plan (separate focused LLM call)
-    // On selective regeneration, skip plan generation and reuse failing file paths
-    let plan: PlanItem[];
-    let planTokens = 0;
-    if (input.failingFiles && input.failingFiles.length > 0) {
-      console.log(`[Code Gen Module] Selective regeneration: reusing plan for ${input.failingFiles.length} failing file(s)`);
-      plan = input.failingFiles.map(f => ({
-        action: (f.action === 'create' ? 'CREATE' : 'MODIFY') as 'CREATE' | 'MODIFY',
-        filePath: f.path,
-        rationale: 'Regenerate — previous version failed validation',
-      }));
-    } else {
-      try {
-        const planResult = await this.generatePlan(input, manifest);
-        plan = planResult.plan;
-        planTokens = planResult.tokensUsed;
-      } catch (error) {
-        console.error('[Code Gen Module] Plan generation failed:', error);
-        return {
-          files: [],
-          explanation: `Code generation failed for "${input.ticket.issue.title}".`,
-          tokensUsed: 0,
-          modelUsed: llm.modelName,
-        };
-      }
-    }
-
-    if (plan.length === 0) {
-      console.log('[Code Gen Module] Empty plan generated — no files to produce');
-      return {
-        files: [],
-        explanation: `No implementation plan generated for "${input.ticket.issue.title}".`,
-        tokensUsed: planTokens,
-        modelUsed: llm.modelName,
-      };
-    }
+    const planResult = await this.resolvePlan(input, manifest, llm.modelName);
+    if (planResult.bailout) return planResult.bailout;
+    const { plan, planTokens } = planResult;
 
     // Phase 2b: Fetch any MODIFY files missing from pre-gathered context.
     // Mutates the working copy only; input.contextFiles stays untouched.
@@ -196,39 +158,17 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     // consumers see post-downgrade actions.
     const originalContentMap = this.buildOriginalContentMap(workingContextFiles);
     await this.fetchMissingModifyFiles(plan, input, workingContextFiles, originalContentMap, manifest);
-
-    console.log(`[Code Gen Module] Plan (${plan.length} item(s)):`);
-    for (const item of plan) {
-      console.log(`[Code Gen Module]   ${item.action} ${item.filePath} — ${item.rationale}`);
-    }
-
-    // Surface the plan to the agent's optional tracker (Beads, etc.)
-    await this.fireCallback('onPlan', input.onPlan, plan as ReadonlyArray<PlanSummaryItem>);
+    await this.surfacePlan(plan, input);
 
     // Phase 3: Generate files sequentially (one LLM call per file).
     // Downstream prompts need the post-fetch view, so pass a shallow-cloned input.
     const downstreamInput: CodeGenModuleInput = { ...input, contextFiles: workingContextFiles };
     const genResult = await this.generateFilesSequentially(plan, downstreamInput, manifest, originalContentMap);
-
     const totalTokens = planTokens + genResult.tokensUsed;
     const files = genResult.files;
 
-    // Phase 4: Post-call validation
-    const warnings = this.validateAgainstManifest(files, plan, manifest);
-    if (warnings.length > 0) {
-      console.log(`[Code Gen Module] Validation warnings:`);
-      for (const warning of warnings) {
-        console.log(`[Code Gen Module]   ! ${warning}`);
-      }
-    }
-
-    // Log each file with create/modify indicator
-    const existingPaths = new Set(manifest.existingFiles);
-    console.log(`[Code Gen Module] Generated ${files.length} file(s):`);
-    for (const file of files) {
-      const action = existingPaths.has(file.path) ? '~' : '+';
-      console.log(`[Code Gen Module]   ${action} ${file.path}`);
-    }
+    this.runPostCallValidation(files, plan, manifest);
+    this.logGeneratedFiles(files, manifest);
 
     return {
       files,
@@ -238,6 +178,98 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       tokensUsed: totalTokens,
       modelUsed: llm.modelName,
     };
+  }
+
+  private resetPerInvocationCaches(): void {
+    this.pythonAvailable = null;
+    this.maxContinuationsCache = null;
+  }
+
+  private logGenerateStart(input: CodeGenModuleInput, workingContextFiles: ContextFile[]): void {
+    console.log(`[Code Gen Module] Generating code for "${input.ticket.issue.title}"...`);
+    console.log(`[Code Gen Module] Context: ${workingContextFiles.length} file(s), ${input.orchestrationPlan.phases.length} phase(s)`);
+  }
+
+  /**
+   * Resolve the plan from one of three sources:
+   *  (a) Selective regeneration → reuse failing file paths verbatim.
+   *  (b) Plan call → generate via the LLM.
+   *  (c) Empty plan → early-return a bailout result.
+   *
+   * Returns either a plan + token count, or a bailout CodeGenModuleOutput to
+   * short-circuit generate(). Either-or is encoded by the union return type.
+   */
+  private async resolvePlan(
+    input: CodeGenModuleInput,
+    manifest: FileManifest,
+    modelName: string,
+  ): Promise<{ plan: PlanItem[]; planTokens: number; bailout?: undefined }
+    | { bailout: CodeGenModuleOutput; plan: PlanItem[]; planTokens: number }> {
+    if (input.failingFiles && input.failingFiles.length > 0) {
+      console.log(`[Code Gen Module] Selective regeneration: reusing plan for ${input.failingFiles.length} failing file(s)`);
+      const plan = input.failingFiles.map(f => ({
+        action: (f.action === 'create' ? 'CREATE' : 'MODIFY') as 'CREATE' | 'MODIFY',
+        filePath: f.path,
+        rationale: 'Regenerate — previous version failed validation',
+      }));
+      return { plan, planTokens: 0 };
+    }
+
+    try {
+      const planResult = await this.generatePlan(input, manifest);
+      if (planResult.plan.length === 0) {
+        console.log('[Code Gen Module] Empty plan generated — no files to produce');
+        return {
+          plan: [],
+          planTokens: planResult.tokensUsed,
+          bailout: {
+            files: [],
+            explanation: `No implementation plan generated for "${input.ticket.issue.title}".`,
+            tokensUsed: planResult.tokensUsed,
+            modelUsed: modelName,
+          },
+        };
+      }
+      return { plan: planResult.plan, planTokens: planResult.tokensUsed };
+    } catch (error) {
+      console.error('[Code Gen Module] Plan generation failed:', error);
+      return {
+        plan: [],
+        planTokens: 0,
+        bailout: {
+          files: [],
+          explanation: `Code generation failed for "${input.ticket.issue.title}".`,
+          tokensUsed: 0,
+          modelUsed: modelName,
+        },
+      };
+    }
+  }
+
+  private async surfacePlan(plan: PlanItem[], input: CodeGenModuleInput): Promise<void> {
+    console.log(`[Code Gen Module] Plan (${plan.length} item(s)):`);
+    for (const item of plan) {
+      console.log(`[Code Gen Module]   ${item.action} ${item.filePath} — ${item.rationale}`);
+    }
+    await this.fireCallback('onPlan', input.onPlan, plan as ReadonlyArray<PlanSummaryItem>);
+  }
+
+  private runPostCallValidation(files: GeneratedFile[], plan: PlanItem[], manifest: FileManifest): void {
+    const warnings = this.validateAgainstManifest(files, plan, manifest);
+    if (warnings.length === 0) return;
+    console.log(`[Code Gen Module] Validation warnings:`);
+    for (const warning of warnings) {
+      console.log(`[Code Gen Module]   ! ${warning}`);
+    }
+  }
+
+  private logGeneratedFiles(files: GeneratedFile[], manifest: FileManifest): void {
+    const existingPaths = new Set(manifest.existingFiles);
+    console.log(`[Code Gen Module] Generated ${files.length} file(s):`);
+    for (const file of files) {
+      const action = existingPaths.has(file.path) ? '~' : '+';
+      console.log(`[Code Gen Module]   ${action} ${file.path}`);
+    }
   }
 
   async validate(): Promise<boolean> {
@@ -369,60 +401,113 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
         console.log(`[Code Gen Module]   Retry ${attempt}/${maxAttempts} for ${planItem.filePath}`);
       }
 
-      const result = await this.generateSingleFile(
-        planItem, fullPlan, input, originalContentMap, previouslyGenerated,
-        codeGenTools, lastFailures.length > 0 ? lastFailures : undefined,
-      );
+      const attemptResult = await this.runSingleFileAttempt({
+        planItem,
+        fullPlan,
+        input,
+        originalContentMap,
+        previouslyGenerated,
+        codeGenTools,
+        previousFailures: lastFailures.length > 0 ? lastFailures : undefined,
+        attempt,
+      });
+      totalTokens += attemptResult.tokensUsed;
 
-      totalTokens += result.tokensUsed;
-      if (!result.file) {
-        lastFailures = ['LLM call returned no usable content'];
-        await this.fireCallback(
-          'onAttemptFailure', input.onAttemptFailure, planItem.filePath, attempt, lastFailures,
-        );
-        continue;
-      }
-
-      // Handle truncation — continue generating from where it left off
-      let file = result.file;
-      if (result.truncated) {
-        console.log(`[Code Gen Module]   Output truncated for ${planItem.filePath}, continuing...`);
-        const contResult = await this.continueTruncatedGeneration(
-          file.content, planItem, input,
-        );
-        totalTokens += contResult.tokensUsed;
-        file = { ...file, content: file.content + contResult.continuation };
-        if (contResult.stillTruncated) {
-          // Cap reached: retries will not help (same prompt, same model, same budget).
-          // Surface as a hard failure with actionable context.
-          const reasons = [
-            `Output truncated after ${this.getMaxContinuations()} continuation(s); file likely too large.`,
-            'Consider raising CODE_GEN_MAX_CONTINUATIONS or splitting the file across multiple plan items.',
-          ];
-          console.warn(
-            `[Code Gen Module]   File "${planItem.filePath}" exceeds the continuation budget; not retrying.`
-          );
-          await this.fireCallback(
-            'onFileFailed', input.onFileFailed, planItem.filePath, reasons,
-          );
-          return { file: null, tokensUsed: totalTokens };
-        }
-      }
-
-      // Run assertions
-      const failures = this.assertFileContent(file, [planItem], originalContentMap);
-      if (failures.length === 0) {
-        return { file, tokensUsed: totalTokens };
-      }
-
-      console.log(`[Code Gen Module]   Assertion failures: ${failures.join('; ')}`);
-      lastFailures = failures;
-      await this.fireCallback(
-        'onAttemptFailure', input.onAttemptFailure, planItem.filePath, attempt, failures,
-      );
+      if (attemptResult.outcome === 'success') return { file: attemptResult.file, tokensUsed: totalTokens };
+      if (attemptResult.outcome === 'over-budget') return { file: null, tokensUsed: totalTokens };
+      // 'retry' — accumulate failure reasons and let the loop continue.
+      lastFailures = attemptResult.failures;
     }
 
     return { file: null, tokensUsed: totalTokens };
+  }
+
+  /**
+   * Run one attempt at generating a single file. The outcome is one of:
+   *  - 'success'      : assertions passed; return the file to the retry loop.
+   *  - 'retry'        : assertions failed (or LLM returned nothing); the caller
+   *                     should iterate again with the failure reasons.
+   *  - 'over-budget'  : continuation cap reached after truncation; further
+   *                     retries cannot help (same prompt, same model, same
+   *                     budget) so the loop must terminate.
+   */
+  private async runSingleFileAttempt(args: {
+    planItem: PlanItem;
+    fullPlan: PlanItem[];
+    input: CodeGenModuleInput;
+    originalContentMap: Map<string, string>;
+    previouslyGenerated: GeneratedFile[];
+    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
+    previousFailures?: string[];
+    attempt: number;
+  }): Promise<
+    | { outcome: 'success'; file: GeneratedFile; tokensUsed: number }
+    | { outcome: 'retry'; failures: string[]; tokensUsed: number }
+    | { outcome: 'over-budget'; tokensUsed: number }
+  > {
+    const result = await this.generateSingleFile(
+      args.planItem, args.fullPlan, args.input, args.originalContentMap,
+      args.previouslyGenerated, args.codeGenTools, args.previousFailures,
+    );
+    let tokensUsed = result.tokensUsed;
+
+    if (!result.file) {
+      const failures = ['LLM call returned no usable content'];
+      await this.fireCallback(
+        'onAttemptFailure', args.input.onAttemptFailure, args.planItem.filePath, args.attempt, failures,
+      );
+      return { outcome: 'retry', failures, tokensUsed };
+    }
+
+    let file = result.file;
+    if (result.truncated) {
+      const continuation = await this.completeTruncatedFile(file, args.planItem, args.input);
+      tokensUsed += continuation.tokensUsed;
+      if (continuation.overBudget) return { outcome: 'over-budget', tokensUsed };
+      file = continuation.file;
+    }
+
+    const failures = this.assertFileContent(file, [args.planItem], args.originalContentMap);
+    if (failures.length === 0) return { outcome: 'success', file, tokensUsed };
+
+    console.log(`[Code Gen Module]   Assertion failures: ${failures.join('; ')}`);
+    await this.fireCallback(
+      'onAttemptFailure', args.input.onAttemptFailure, args.planItem.filePath, args.attempt, failures,
+    );
+    return { outcome: 'retry', failures, tokensUsed };
+  }
+
+  /**
+   * Continue a truncated file via continuation calls. Returns the assembled
+   * file, plus a flag indicating whether the continuation cap was reached
+   * (which the caller treats as a hard failure).
+   */
+  private async completeTruncatedFile(
+    file: GeneratedFile,
+    planItem: PlanItem,
+    input: CodeGenModuleInput,
+  ): Promise<
+    | { overBudget: true; tokensUsed: number }
+    | { overBudget: false; file: GeneratedFile; tokensUsed: number }
+  > {
+    console.log(`[Code Gen Module]   Output truncated for ${planItem.filePath}, continuing...`);
+    const contResult = await this.continueTruncatedGeneration(file.content, planItem, input);
+    if (contResult.stillTruncated) {
+      const reasons = [
+        `Output truncated after ${this.getMaxContinuations()} continuation(s); file likely too large.`,
+        'Consider raising CODE_GEN_MAX_CONTINUATIONS or splitting the file across multiple plan items.',
+      ];
+      console.warn(
+        `[Code Gen Module]   File "${planItem.filePath}" exceeds the continuation budget; not retrying.`
+      );
+      await this.fireCallback('onFileFailed', input.onFileFailed, planItem.filePath, reasons);
+      return { overBudget: true, tokensUsed: contResult.tokensUsed };
+    }
+    return {
+      overBudget: false,
+      file: { ...file, content: file.content + contResult.continuation },
+      tokensUsed: contResult.tokensUsed,
+    };
   }
 
   /**
@@ -545,49 +630,13 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     }
 
     // For large MODIFY files: apply surgical edits to the original
-    let content = rawContent;
     const isLarge = this.isLargeFile(planItem, originalContentMap);
     console.log(`[Code Gen Module]   ${planItem.filePath}: ${isLarge ? 'large-file mode' : 'full-file mode'}`);
+    let content = rawContent;
     if (isLarge) {
-      const original = originalContentMap.get(planItem.filePath)!;
-      const isJson = planItem.filePath.endsWith('.json');
-
-      if (isJson) {
-        if (this.looksLikePythonScript(rawContent)) {
-          if (!(await this.checkPythonAvailable())) {
-            console.log(`[Code Gen Module]   Skipping JSON transform for ${planItem.filePath} — python3 unavailable`);
-            return { file: null, tokensUsed, truncated: false };
-          }
-          // Large JSON: execute Python transform script
-          const cleanedScript = this.extractPythonScript(rawContent);
-          const transformed = await this.executePythonTransform(cleanedScript, original, planItem.filePath);
-          if (transformed !== null) {
-            content = transformed;
-            console.log(`[Code Gen Module]   Applied Python transform to ${planItem.filePath}`);
-          } else {
-            console.log(`[Code Gen Module]   Python transform failed for ${planItem.filePath}, skipping (will retry)`);
-            return { file: null, tokensUsed, truncated: false };
-          }
-        } else {
-          // JSON file but output isn't Python — unexpected, skip for retry
-          console.log(`[Code Gen Module]   Expected Python script for large JSON ${planItem.filePath}, got other output — skipping`);
-          return { file: null, tokensUsed, truncated: false };
-        }
-      } else {
-        // Large non-JSON: apply search-replace blocks
-        const blocks = this.parseSearchReplaceBlocks(rawContent);
-        if (blocks.length > 0) {
-          const applied = this.applySearchReplace(original, blocks);
-          if (applied !== null) {
-            content = applied;
-            console.log(`[Code Gen Module]   Applied ${blocks.length} search-replace edit(s) to ${planItem.filePath}`);
-          } else {
-            console.log(`[Code Gen Module]   Search-replace matching failed for ${planItem.filePath}, skipping (will retry)`);
-            return { file: null, tokensUsed, truncated: false };
-          }
-        }
-        // No search-replace blocks = LLM output the full file (acceptable, passes looksLikeCodeContent above)
-      }
+      const transformed = await this.applyLargeFileTransform(planItem, rawContent, originalContentMap);
+      if (transformed === null) return { file: null, tokensUsed, truncated: false };
+      content = transformed;
     }
 
     return {
@@ -595,6 +644,65 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       tokensUsed,
       truncated,
     };
+  }
+
+  /**
+   * Apply the large-file transform for a MODIFY item. Returns the rewritten
+   * content, or `null` when a retry-worthy skip happens. Splits into JSON
+   * (Python script transform) and non-JSON (search-replace blocks) paths.
+   */
+  private async applyLargeFileTransform(
+    planItem: PlanItem,
+    rawContent: string,
+    originalContentMap: Map<string, string>,
+  ): Promise<string | null> {
+    const original = originalContentMap.get(planItem.filePath)!;
+    if (planItem.filePath.endsWith('.json')) {
+      return this.applyLargeJsonTransform(planItem, rawContent, original);
+    }
+    return this.applyLargeSearchReplaceTransform(planItem, rawContent, original);
+  }
+
+  private async applyLargeJsonTransform(
+    planItem: PlanItem,
+    rawContent: string,
+    original: string,
+  ): Promise<string | null> {
+    if (!this.looksLikePythonScript(rawContent)) {
+      console.log(`[Code Gen Module]   Expected Python script for large JSON ${planItem.filePath}, got other output — skipping`);
+      return null;
+    }
+    if (!(await this.checkPythonAvailable())) {
+      console.log(`[Code Gen Module]   Skipping JSON transform for ${planItem.filePath} — python3 unavailable`);
+      return null;
+    }
+    const cleanedScript = this.extractPythonScript(rawContent);
+    const transformed = await this.executePythonTransform(cleanedScript, original, planItem.filePath);
+    if (transformed === null) {
+      console.log(`[Code Gen Module]   Python transform failed for ${planItem.filePath}, skipping (will retry)`);
+      return null;
+    }
+    console.log(`[Code Gen Module]   Applied Python transform to ${planItem.filePath}`);
+    return transformed;
+  }
+
+  private applyLargeSearchReplaceTransform(
+    planItem: PlanItem,
+    rawContent: string,
+    original: string,
+  ): string | null {
+    const blocks = this.parseSearchReplaceBlocks(rawContent);
+    if (blocks.length === 0) {
+      // LLM output the full file (acceptable; passes looksLikeCodeContent upstream)
+      return rawContent;
+    }
+    const applied = this.applySearchReplace(original, blocks);
+    if (applied === null) {
+      console.log(`[Code Gen Module]   Search-replace matching failed for ${planItem.filePath}, skipping (will retry)`);
+      return null;
+    }
+    console.log(`[Code Gen Module]   Applied ${blocks.length} search-replace edit(s) to ${planItem.filePath}`);
+    return applied;
   }
 
   /**

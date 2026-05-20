@@ -112,7 +112,7 @@ function extractHtmlIdentifiers(content: string): string {
   const filtered = Array.from(ids)
     .filter(i => !KEYWORDS.has(i))
     .filter(i => !declaredLocals.has(i))
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   return `Template identifiers referenced: ${filtered.join(', ')}`;
 }
 

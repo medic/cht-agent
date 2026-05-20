@@ -28,7 +28,7 @@ import { gatherDomainContext } from '../utils/cht-core-context';
 import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 
 export class ContextAnalysisAgent {
-  private todos: TodoTracker;
+  private readonly todos: TodoTracker;
 
   constructor(_options: { modelName?: string } = {}) {
     // Model will be used for advanced pattern analysis in future iterations

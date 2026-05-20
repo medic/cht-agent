@@ -1,4 +1,4 @@
-import * as path from 'path';
+import * as path from 'node:path';
 
 /** Patterns that indicate the start of actual source code (vs LLM reasoning text) */
 export const CODE_START_PATTERNS = [

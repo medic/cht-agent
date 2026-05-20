@@ -243,14 +243,12 @@ export const executeResearchWorkflow = async (
     if (validation.approved) {
       researchApproved = true;
       console.log('\n✅ Research approved! Ready to proceed to Development Phase.\n');
+    } else if (iterationCount >= MAX_RESEARCH_ITERATIONS) {
+      console.log(`\n⚠️  Maximum research iterations (${MAX_RESEARCH_ITERATIONS}) reached.`);
+      console.log('Please review the results and consider refining the ticket manually.\n');
     } else {
-      if (iterationCount >= MAX_RESEARCH_ITERATIONS) {
-        console.log(`\n⚠️  Maximum research iterations (${MAX_RESEARCH_ITERATIONS}) reached.`);
-        console.log('Please review the results and consider refining the ticket manually.\n');
-      } else {
-        console.log(`\n🔄 Re-running research with your feedback (iteration ${iterationCount + 1}/${MAX_RESEARCH_ITERATIONS})...\n`);
-        additionalContext = validation.additionalContext;
-      }
+      console.log(`\n🔄 Re-running research with your feedback (iteration ${iterationCount + 1}/${MAX_RESEARCH_ITERATIONS})...\n`);
+      additionalContext = validation.additionalContext;
     }
   }
 

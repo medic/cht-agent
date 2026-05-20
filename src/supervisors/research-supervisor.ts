@@ -53,6 +53,18 @@ const ResearchStateAnnotation = Annotation.Root({
   }),
 });
 
+/**
+ * Pull bullet-point lines from a markdown section, stripping leading
+ * whitespace and the `-` / `*` markers. Returns just the bullet text.
+ */
+function collectBulletText(section: string): string[] {
+  return section
+    .split('\n')
+    .filter(line => line.trim().startsWith('-') || line.trim().startsWith('*'))
+    .map(line => line.replace(/^[\s\-*]+/, '').trim())
+    .filter(line => line.length > 0);
+}
+
 export class ResearchSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly docSearchAgent: DocumentationSearchAgent;
@@ -408,42 +420,35 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    * Looks for the "### IMPLEMENTATION APPROACH" section and extracts bullet points
    */
   private extractImplementationApproach(content: string): string {
-    // Try to find the IMPLEMENTATION APPROACH section
-    const approachMatch = content.match(
-      /###\s*(?:1\.\s*)?IMPLEMENTATION APPROACH[^\n]*\n([\s\S]*?)(?=###|$)/i
-    );
-
-    if (approachMatch) {
-      const section = approachMatch[1].trim();
-      // Extract bullet points
-      const bullets = section
-        .split('\n')
-        .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
-        .map((line) => line.replace(/^[\s\-*]+/, '').trim())
-        .filter((line) => line.length > 0);
-
-      if (bullets.length > 0) {
-        // Return the first few bullets as the recommended approach
-        return bullets.slice(0, 3).join('; ');
-      }
-
-      // If no bullets, return the first meaningful line
-      const firstLine = section.split('\n').find((line) => line.trim().length > 20);
-      if (firstLine) {
-        return firstLine.trim();
-      }
-    }
-
-    // Fallback: look for any numbered list or bullet points in the response
-    const bulletMatch = content.match(/(?:^|\n)[\s]*[-*]\s+(.+?)(?=\n|$)/gm);
-    if (bulletMatch && bulletMatch.length > 0) {
-      return bulletMatch
-        .slice(0, 3)
-        .map((b) => b.replace(/^[\s\-*]+/, '').trim())
-        .join('; ');
-    }
-
+    const fromSection = this.extractApproachFromSection(content);
+    if (fromSection) return fromSection;
+    const fromBullets = this.extractApproachFromAnyBullets(content);
+    if (fromBullets) return fromBullets;
     return 'Follow CHT best practices and patterns from documentation';
+  }
+
+  /**
+   * Try to pull the approach from the IMPLEMENTATION APPROACH section first,
+   * either via bullet points or via the first meaningful line.
+   */
+  private extractApproachFromSection(content: string): string | undefined {
+    const approachMatch = /###\s*(?:1\.\s*)?IMPLEMENTATION APPROACH[^\n]*\n([\s\S]*?)(?=###|$)/i.exec(content);
+    if (!approachMatch) return undefined;
+    const section = approachMatch[1].trim();
+    const bullets = collectBulletText(section);
+    if (bullets.length > 0) return bullets.slice(0, 3).join('; ');
+    const firstLine = section.split('\n').find(line => line.trim().length > 20);
+    return firstLine?.trim();
+  }
+
+  /** Fallback: any numbered list / bullet anywhere in the response. */
+  private extractApproachFromAnyBullets(content: string): string | undefined {
+    const bulletMatch = content.match(/(?:^|\n)[\s]*[-*]\s+(.+?)(?=\n|$)/gm);
+    if (!bulletMatch || bulletMatch.length === 0) return undefined;
+    return bulletMatch
+      .slice(0, 3)
+      .map(b => b.replace(/^[\s\-*]+/, '').trim())
+      .join('; ');
   }
 
   /**
@@ -451,58 +456,39 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    */
   private extractKeyFiles(content: string): string[] {
     const files: string[] = [];
-
-    // Try to find the KEY FILES section
-    const filesMatch = content.match(/###\s*(?:2\.\s*)?KEY FILES[^\n]*\n([\s\S]*?)(?=###|$)/i);
-
-    if (filesMatch) {
-      const section = filesMatch[1];
-      // Look for file paths (containing / or ending in common extensions)
-      const pathMatches = section.match(
-        /[\w\-./]+(?:\.ts|\.js|\.html|\.json|\.service\.ts|\.component\.ts)/g
-      );
-      if (pathMatches) {
-        files.push(...pathMatches);
-      }
-    }
-
-    // Also look for backtick-wrapped file references throughout the content
-    const backtickMatches = content.match(/`([^`]*(?:\.ts|\.js|\.html|\.json)[^`]*)`/g);
-    if (backtickMatches) {
-      backtickMatches.forEach((match) => {
-        const file = match.replace(/`/g, '').trim();
-        if (file.includes('/') || file.includes('.')) {
-          files.push(file);
-        }
-      });
-    }
-
+    this.collectFilesFromKeyFilesSection(content, files);
+    this.collectFilesFromBackticks(content, files);
     // Deduplicate and return
     return [...new Set(files)].slice(0, 10);
+  }
+
+  private collectFilesFromKeyFilesSection(content: string, files: string[]): void {
+    const filesMatch = /###\s*(?:2\.\s*)?KEY FILES[^\n]*\n([\s\S]*?)(?=###|$)/i.exec(content);
+    if (!filesMatch) return;
+    const pathMatches = filesMatch[1].match(
+      /[\w\-./]+(?:\.ts|\.js|\.html|\.json|\.service\.ts|\.component\.ts)/g,
+    );
+    if (pathMatches) files.push(...pathMatches);
+  }
+
+  private collectFilesFromBackticks(content: string, files: string[]): void {
+    const backtickMatches = content.match(/`([^`]*(?:\.ts|\.js|\.html|\.json)[^`]*)`/g);
+    if (!backtickMatches) return;
+    for (const match of backtickMatches) {
+      const file = match.replaceAll('`', '').trim();
+      if (file.includes('/') || file.includes('.')) {
+        files.push(file);
+      }
+    }
   }
 
   /**
    * Extract risk factors from Claude's response
    */
   private extractRiskFactors(content: string): string[] {
-    const risks: string[] = [];
-
-    // Try to find the RISK FACTORS section
-    const riskMatch = content.match(/###\s*(?:4\.\s*)?RISK FACTORS[^\n]*\n([\s\S]*?)(?=###|$)/i);
-
-    if (riskMatch) {
-      const section = riskMatch[1];
-      // Extract bullet points
-      const bullets = section
-        .split('\n')
-        .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
-        .map((line) => line.replace(/^[\s\-*]+/, '').trim())
-        .filter((line) => line.length > 0);
-
-      risks.push(...bullets);
-    }
-
-    return risks.slice(0, 5);
+    const riskMatch = /###\s*(?:4\.\s*)?RISK FACTORS[^\n]*\n([\s\S]*?)(?=###|$)/i.exec(content);
+    if (!riskMatch) return [];
+    return collectBulletText(riskMatch[1]).slice(0, 5);
   }
 
   /**
@@ -571,43 +557,37 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
   }
 
   /**
-   * Identify risk factors
+   * Identify risk factors. Each rule is a `(condition, message)` pair so the
+   * function reads as data, not nested ifs.
    */
   private identifyRiskFactors(
     issue: IssueTemplate,
     findings: ResearchFindings,
-    analysis: ContextAnalysisResult
+    analysis: ContextAnalysisResult,
   ): string[] {
-    const risks: string[] = [];
-
-    // Low confidence from research
-    if (findings.confidence < 0.5) {
-      risks.push('Low confidence in documentation findings - may require additional research');
-    }
-
-    // No similar past implementations
-    if (analysis.similarContexts.length === 0) {
-      risks.push('No similar past implementations found - breaking new ground');
-    }
-
-    // Complex constraints
-    if (issue.issue.constraints.length > 2) {
-      risks.push(`Multiple constraints to satisfy: ${issue.issue.constraints.join(', ')}`);
-    }
-
-    // High priority
-    if (issue.issue.priority === 'high') {
-      risks.push('High priority issue - requires careful attention and thorough testing');
-    }
-
-    // Multiple components
-    if (issue.issue.technical_context.components.length > 3) {
-      risks.push(
-        'Changes span multiple components - requires coordination and integration testing'
-      );
-    }
-
-    return risks;
+    const rules: Array<{ condition: boolean; message: string }> = [
+      {
+        condition: findings.confidence < 0.5,
+        message: 'Low confidence in documentation findings - may require additional research',
+      },
+      {
+        condition: analysis.similarContexts.length === 0,
+        message: 'No similar past implementations found - breaking new ground',
+      },
+      {
+        condition: issue.issue.constraints.length > 2,
+        message: `Multiple constraints to satisfy: ${issue.issue.constraints.join(', ')}`,
+      },
+      {
+        condition: issue.issue.priority === 'high',
+        message: 'High priority issue - requires careful attention and thorough testing',
+      },
+      {
+        condition: issue.issue.technical_context.components.length > 3,
+        message: 'Changes span multiple components - requires coordination and integration testing',
+      },
+    ];
+    return rules.filter(r => r.condition).map(r => r.message);
   }
 
   /**

@@ -35,6 +35,8 @@ import {
   snapshotChtCore,
   captureChtCoreDiff,
   rollbackChtCore,
+  ChtCoreSnapshot,
+  RollbackResult,
 } from './workspace';
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
@@ -64,12 +66,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
 
   async generate(input: CodeGenModuleInput): Promise<CodeGenModuleOutput> {
     this.cliValidationCache = null;
-
-    const chtCorePath = input.targetDirectory;
-    if (!chtCorePath) {
-      throw new Error('claude-code-cli requires input.targetDirectory (cht-core path).');
-    }
-
+    const chtCorePath = this.requireChtCorePath(input);
     console.log(`[claude-code-cli] Generating code for "${input.ticket.issue.title}"...`);
 
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before snapshot');
@@ -81,50 +78,30 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     // Explicit try/catch instead of try/finally with throw: rollback may fail
     // and need to surface its own error, but throwing from `finally` is unsafe
     // (it would mask any error from the work block). Manage both errors here.
-    let workResult: CodeGenModuleOutput | undefined;
-    let workError: unknown;
+    const work = await this.runWorkBlock(input, snapshot, chtCorePath);
+    handleRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+
+    if (work.error) throw work.error;
+    return work.result!;
+  }
+
+  private requireChtCorePath(input: CodeGenModuleInput): string {
+    if (!input.targetDirectory) {
+      throw new Error('claude-code-cli requires input.targetDirectory (cht-core path).');
+    }
+    return input.targetDirectory;
+  }
+
+  private async runWorkBlock(
+    input: CodeGenModuleInput,
+    snapshot: ChtCoreSnapshot,
+    chtCorePath: string,
+  ): Promise<{ result?: CodeGenModuleOutput; error?: unknown }> {
     try {
-      workResult = await this.runGeneration(input, snapshot, chtCorePath);
+      return { result: await this.runGeneration(input, snapshot, chtCorePath) };
     } catch (err) {
-      workError = err;
+      return { error: err };
     }
-
-    // Always restore cht-core to pre-run state. Capture happened above.
-    const rollback = await rollbackChtCore(chtCorePath, snapshot);
-    if (rollback.reset === 'failed' || rollback.clean === 'failed' || rollback.stashPop === 'failed') {
-      console.error('[claude-code-cli] ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:');
-      for (const e of rollback.errors) console.error(`[claude-code-cli]   - ${e}`);
-
-      // A reset failure is fatal: CLI edits remain on disk and subsequent runs
-      // can fail at snapshot. Emit a recovery checklist and throw to surface
-      // the failure. clean/stashPop failures are warnings only.
-      if (rollback.reset === 'failed') {
-        const recoveryLines: string[] = [
-          '',
-          '[claude-code-cli] To recover manually:',
-          `[claude-code-cli]   1. cd ${chtCorePath}`,
-          '[claude-code-cli]   2. git status                            # see what is modified',
-          '[claude-code-cli]   3. git diff                              # inspect changes',
-          `[claude-code-cli]   4. git reset --hard ${snapshot.headSha}   # DESTRUCTIVE; discards working-tree changes`,
-          '[claude-code-cli]   5. git stash list                        # check for orphan stashes',
-        ];
-        if (snapshot.stashRef) {
-          recoveryLines.push(
-            `[claude-code-cli]   6. git stash pop ${snapshot.stashRef}          # restore stashed pre-run state`
-          );
-        }
-        recoveryLines.push('[claude-code-cli]   7. Re-run the agent only after the working tree is clean.');
-        for (const line of recoveryLines) console.error(line);
-
-        throw new Error(
-          `claude-code-cli rollback failed: ${rollback.errors.join('; ')}. ` +
-          `Inspect cht-core working tree before retrying.`
-        );
-      }
-    }
-
-    if (workError) throw workError;
-    return workResult!;
   }
 
   /**
@@ -144,47 +121,14 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       console.warn('[claude-code-cli] Plan phase produced no items; skipping execute');
       return emptyResult(input, 'empty plan');
     }
-    // Surface the plan to the agent's optional tracker (Beads, etc.) and HC1.
-    await fireCallback('onPlan', input.onPlan, plan as ReadonlyArray<PlanSummaryItem>);
-    console.log(`[claude-code-cli] Plan (${plan.length} item(s)):`);
-    for (const item of plan) {
-      console.log(`[claude-code-cli]   ${item.action} ${item.filePath} — ${item.rationale}`);
-    }
+    await this.surfacePlan(input, plan);
 
     // Phase 2: full-edit execute call. The CLI does the work.
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before execute');
     const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
-
-    // Capture the diff for the staging path.
-    let generatedFiles = await captureChtCoreDiff(chtCorePath, snapshot.headSha);
-    console.log(`[claude-code-cli] Captured ${generatedFiles.length} file change(s) from CLI session`);
-
-    // R17 (v7): relaxed-retry when STRICT execute produced zero edits on a
-    // non-empty plan and did not partial-complete. The CLI explored but
-    // abstained; one extra LLM call with relaxed rules typically converts
-    // exploration into a best-effort draft the human can judge at HC2.
-    let executeNoOp = false;
-    const shouldRetry =
-      generatedFiles.length === 0 &&
-      plan.length > 0 &&
-      !executeResult.partialCompletion &&
-      !isShutdownRequested();
-    if (shouldRetry) {
-      console.warn(
-        '[claude-code-cli] Zero files captured on STRICT execute; attempting relaxed retry (R17)'
-      );
-      await this.runExecutePhase(input, plan, chtCorePath, buildRelaxedExecutePrompt);
-      generatedFiles = await captureChtCoreDiff(chtCorePath, snapshot.headSha);
-      console.log(
-        `[claude-code-cli] After relaxed retry: ${generatedFiles.length} file change(s) captured`
-      );
-      if (generatedFiles.length === 0) {
-        executeNoOp = true;
-        console.warn(
-          '[claude-code-cli] Relaxed retry also produced zero files; surfacing execute-no-op'
-        );
-      }
-    }
+    const captureResult = await this.captureWithRelaxedRetry(input, plan, executeResult, snapshot.headSha, chtCorePath);
+    const generatedFiles = captureResult.files;
+    const executeNoOp = captureResult.executeNoOp;
 
     // V1: reconcile captured paths against the approved plan. Surface drift
     // as cross-file issues so the supervisor's refinement loop sees them.
@@ -232,6 +176,55 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       compileGateSkipped: compileResult.skipped,
       compileGateSkipReason: compileResult.skipReason,
     };
+  }
+
+  private async surfacePlan(input: CodeGenModuleInput, plan: PlanItem[]): Promise<void> {
+    // Surface the plan to the agent's optional tracker (Beads, etc.) and HC1.
+    await fireCallback('onPlan', input.onPlan, plan as ReadonlyArray<PlanSummaryItem>);
+    console.log(`[claude-code-cli] Plan (${plan.length} item(s)):`);
+    for (const item of plan) {
+      console.log(`[claude-code-cli]   ${item.action} ${item.filePath} — ${item.rationale}`);
+    }
+  }
+
+  /**
+   * Run the diff capture, and conditionally retry with the relaxed prompt
+   * when STRICT execute produced zero edits on a non-empty plan and did not
+   * partial-complete. The CLI explored but abstained; one extra LLM call with
+   * relaxed rules typically converts exploration into a best-effort draft.
+   */
+  private async captureWithRelaxedRetry(
+    input: CodeGenModuleInput,
+    plan: PlanItem[],
+    executeResult: { partialCompletion: boolean; reason?: string; resultText: string },
+    snapshotSha: string,
+    chtCorePath: string,
+  ): Promise<{ files: Awaited<ReturnType<typeof captureChtCoreDiff>>; executeNoOp: boolean }> {
+    let files = await captureChtCoreDiff(chtCorePath, snapshotSha);
+    console.log(`[claude-code-cli] Captured ${files.length} file change(s) from CLI session`);
+
+    const shouldRetry =
+      files.length === 0 &&
+      plan.length > 0 &&
+      !executeResult.partialCompletion &&
+      !isShutdownRequested();
+    if (!shouldRetry) return { files, executeNoOp: false };
+
+    console.warn(
+      '[claude-code-cli] Zero files captured on STRICT execute; attempting relaxed retry (R17)'
+    );
+    await this.runExecutePhase(input, plan, chtCorePath, buildRelaxedExecutePrompt);
+    files = await captureChtCoreDiff(chtCorePath, snapshotSha);
+    console.log(
+      `[claude-code-cli] After relaxed retry: ${files.length} file change(s) captured`
+    );
+    if (files.length === 0) {
+      console.warn(
+        '[claude-code-cli] Relaxed retry also produced zero files; surfacing execute-no-op'
+      );
+      return { files, executeNoOp: true };
+    }
+    return { files, executeNoOp: false };
   }
 
   private async runPlanPhase(input: CodeGenModuleInput, cwd: string): Promise<PlanItem[]> {
@@ -302,6 +295,54 @@ function emptyResult(input: CodeGenModuleInput, reason: string): CodeGenModuleOu
     explanation: `Generation aborted (${reason}) for "${input.ticket.issue.title}".`,
     modelUsed: 'claude-cli',
   };
+}
+
+/**
+ * Inspect the rollback result and surface failures.
+ *  - reset failed → emit recovery checklist + throw (cht-core may have leftover edits).
+ *  - clean / stashPop failed → log warnings; do not throw.
+ *  - all ok → silent.
+ */
+function handleRollbackOutcome(
+  rollback: RollbackResult,
+  snapshot: ChtCoreSnapshot,
+  chtCorePath: string,
+): void {
+  const anyFailed =
+    rollback.reset === 'failed' ||
+    rollback.clean === 'failed' ||
+    rollback.stashPop === 'failed';
+  if (!anyFailed) return;
+
+  console.error('[claude-code-cli] ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:');
+  for (const e of rollback.errors) console.error(`[claude-code-cli]   - ${e}`);
+
+  if (rollback.reset === 'failed') {
+    emitRecoveryChecklist(snapshot, chtCorePath);
+    throw new Error(
+      `claude-code-cli rollback failed: ${rollback.errors.join('; ')}. ` +
+      `Inspect cht-core working tree before retrying.`
+    );
+  }
+}
+
+function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): void {
+  const recoveryLines: string[] = [
+    '',
+    '[claude-code-cli] To recover manually:',
+    `[claude-code-cli]   1. cd ${chtCorePath}`,
+    '[claude-code-cli]   2. git status                            # see what is modified',
+    '[claude-code-cli]   3. git diff                              # inspect changes',
+    `[claude-code-cli]   4. git reset --hard ${snapshot.headSha}   # DESTRUCTIVE; discards working-tree changes`,
+    '[claude-code-cli]   5. git stash list                        # check for orphan stashes',
+  ];
+  if (snapshot.stashRef) {
+    recoveryLines.push(
+      `[claude-code-cli]   6. git stash pop ${snapshot.stashRef}          # restore stashed pre-run state`
+    );
+  }
+  recoveryLines.push('[claude-code-cli]   7. Re-run the agent only after the working tree is clean.');
+  for (const line of recoveryLines) console.error(line);
 }
 
 /**

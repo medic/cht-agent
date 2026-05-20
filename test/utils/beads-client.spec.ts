@@ -24,7 +24,7 @@ const buildExecFileStub = (
 const loadClient = (responses: Array<{ err?: Error & { code?: string }; stdout?: string; stderr?: string }>) => {
   const { stub, calls } = buildExecFileStub(responses);
   const mod = proxyquire('../../src/utils/beads-client', {
-    child_process: { execFile: stub },
+    'node:child_process': { execFile: stub },
   });
   return { BeadsClient: mod.BeadsClient, BeadsCodeGenSession: mod.BeadsCodeGenSession, calls };
 };

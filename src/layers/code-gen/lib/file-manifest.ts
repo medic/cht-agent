@@ -27,7 +27,7 @@ export function buildFileManifest(contextFiles: ReadonlyArray<ContextFile>): Fil
 
   return {
     existingFiles,
-    allowedDirectories: Array.from(dirSet).sort(),
+    allowedDirectories: Array.from(dirSet).sort((a, b) => a.localeCompare(b)),
   };
 }
 
@@ -140,7 +140,7 @@ export async function fetchMissingModifyFiles(
       }
     }
   }
-  manifest.allowedDirectories.sort();
+  manifest.allowedDirectories.sort((a, b) => a.localeCompare(b));
 }
 
 /**

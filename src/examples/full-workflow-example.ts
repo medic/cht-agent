@@ -16,7 +16,7 @@
  */
 
 import * as dotenv from 'dotenv';
-import * as path from 'path';
+import * as path from 'node:path';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';

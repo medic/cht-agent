@@ -329,22 +329,20 @@ export const executeDevelopmentWorkflow = async (
 
         // Clean up staging
         await clearStaging(stagingPath);
-      } else {
-        if (iterationCount >= MAX_DEVELOPMENT_ITERATIONS) {
-          console.log(`\n⚠️  Maximum development iterations (${MAX_DEVELOPMENT_ITERATIONS}) reached.`);
-          console.log('Please review the generated code and consider manual adjustments.\n');
+      } else if (iterationCount >= MAX_DEVELOPMENT_ITERATIONS) {
+        console.log(`\n⚠️  Maximum development iterations (${MAX_DEVELOPMENT_ITERATIONS}) reached.`);
+        console.log('Please review the generated code and consider manual adjustments.\n');
 
-          // Clean up staging
-          if (stagingPath) {
-            await clearStaging(stagingPath);
-          }
-        } else {
-          console.log(`\n🔄 Re-running development with your feedback (iteration ${iterationCount + 1}/${MAX_DEVELOPMENT_ITERATIONS})...\n`);
-          additionalContext = validation.additionalContext;
-
-          // Clean up staging before next iteration
+        // Clean up staging
+        if (stagingPath) {
           await clearStaging(stagingPath);
         }
+      } else {
+        console.log(`\n🔄 Re-running development with your feedback (iteration ${iterationCount + 1}/${MAX_DEVELOPMENT_ITERATIONS})...\n`);
+        additionalContext = validation.additionalContext;
+
+        // Clean up staging before next iteration
+        await clearStaging(stagingPath);
       }
     } else {
       // Direct Mode: Write directly to cht-core, no checkpoint #2

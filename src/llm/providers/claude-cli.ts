@@ -10,7 +10,7 @@
  * - Logged in via: claude login
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import {
   LLMProvider,
   LLMProviderType,
@@ -243,7 +243,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 
     // Claude CLI can include non-JSON content before the result
     // Look for the JSON result object
-    const jsonMatch = stdout.match(/\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/);
+    const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
     if (jsonMatch) {
       try {
         return JSON.parse(jsonMatch[0]);
@@ -342,13 +342,13 @@ IMPORTANT: Respond with valid JSON only. Do not include any text before or after
     }
 
     // Strip markdown code blocks if present
-    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(content);
     if (codeBlockMatch) {
       content = codeBlockMatch[1].trim();
     }
 
     // Try to extract JSON object from the response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonMatch = /\{[\s\S]*\}/.exec(content);
     if (!jsonMatch) {
       throw new Error('CLI response did not contain valid JSON object');
     }

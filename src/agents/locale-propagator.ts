@@ -26,7 +26,7 @@ function escapeRegex(str: string): string {
 }
 
 function keyExists(content: string, key: string): boolean {
-  const re = new RegExp(`(^|\\n)\\s*${escapeRegex(key)}\\s*=`);
+  const re = new RegExp(String.raw`(^|\n)\s*${escapeRegex(key)}\s*=`);
   return re.test(content);
 }
 

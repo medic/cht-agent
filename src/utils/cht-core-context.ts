@@ -3,8 +3,8 @@
  * Reads relevant code from cht-core based on domain mappings
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { loadIndex } from './context-loader';
 import { CHTDomain } from '../types';
 

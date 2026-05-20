@@ -28,8 +28,8 @@ import { installShutdownHandlers } from '../utils/shutdown';
 import { crossFileValidate } from './cross-file-validator';
 import { astValidate } from './ast-validator';
 import { propagateNewLocaleKeys } from './locale-propagator';
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   ContextFile,
   CodeGenModuleInput,
@@ -66,100 +66,34 @@ export class CodeGenerationAgent {
    * Main entry point for code generation
    */
   async generate(input: CodeGenerationInput): Promise<CodeGenerationResult> {
-    console.log('\n[Code Generation Agent] Starting code generation...');
-    console.log(`[Code Generation Agent] Issue: ${input.issue.issue.title}`);
-    console.log(`[Code Generation Agent] CHT Core Path: ${input.chtCorePath}`);
-    console.log(`[Code Generation Agent] Using LLM: ${this.llm.modelName}`);
-
-    // Clear any previous todos
+    this.logGenerateStart(input);
     this.todos.clear();
+    this.logSelectiveRegen(input);
 
-    if (input.additionalContext) {
-      console.log(`[Code Generation Agent] Additional context from feedback provided`);
-    }
-
-    // Selective regeneration: if passing files provided, carry them forward
-    const hasSelectiveRegen = input.passingFiles && input.passingFiles.length > 0;
-    if (hasSelectiveRegen) {
-      console.log(`[Code Generation Agent] Selective regeneration: carrying forward ${input.passingFiles!.length} passing file(s)`);
-      if (input.failingFiles) {
-        console.log(`[Code Generation Agent] Files to regenerate: ${input.failingFiles.map(f => f.path).join(', ')}`);
-      }
-    }
-
-    // Gather context from cht-core
     const codeContext = await this.todos.run(
       'Gather code context from cht-core',
       'Gathering code context from cht-core',
       async () => this.gatherCodeContext(input)
     );
-
-    // Generate code via module
     const llmResult = await this.todos.run(
       'Generate code with LLM',
       'Generating code with LLM',
       async () => this.generateWithLLM(input, codeContext)
     );
-
-    // Validate generated files
     const validatedFiles = await this.todos.run(
       'Validate generated files',
       'Validating generated files',
       async () => this.validateGeneratedFiles(llmResult.files)
     );
 
-    // Merge: carry forward passing files + newly regenerated files
-    let allFiles = validatedFiles;
-    if (hasSelectiveRegen) {
-      const newlyGeneratedPaths = new Set(validatedFiles.map(f => f.relativePath));
-      const keptFiles = input.passingFiles!.filter(f => !newlyGeneratedPaths.has(f.relativePath));
-      allFiles = [...keptFiles, ...validatedFiles];
-      console.log(`[Code Generation Agent] Merged: ${keptFiles.length} kept + ${validatedFiles.length} regenerated = ${allFiles.length} total`);
-    }
-
-    // Cross-file validation: identifier consistency across the MERGED batch.
-    // Per D1: must run on `allFiles` (not `validatedFiles`) so iteration 2+ of
-    // selective regen sees both the kept and regenerated files together.
-    const regexIssues = crossFileValidate(allFiles);
-    // AST-driven semantic checks (signature drift, permission literals). v5 Batch C.
-    const astIssues = astValidate(allFiles);
-    // Module-level signals (plan adherence, etc.) come up alongside the static
-    // checks. Order is purely cosmetic; the supervisor treats them uniformly.
-    const moduleIssues = llmResult.moduleCrossFileIssues ?? [];
-    const crossFileIssues = [...regexIssues, ...astIssues, ...moduleIssues];
-
-    // v6 A.9: surface module-level partial-completion as a cross-file issue so
-    // the supervisor's refinement loop triggers consistently with static checks.
-    if (llmResult.partialGeneration) {
-      const reason = llmResult.partialGenerationReason ?? 'execute phase did not complete cleanly';
-      crossFileIssues.push({
-        filePath: '(generation)',
-        issueType: 'partial-completion',
-        description: reason,
-        reason,
-      });
-    }
-
-    if (crossFileIssues.length > 0) {
-      console.warn(
-        `[Code Generation Agent] Found ${crossFileIssues.length} cross-file issue(s) ` +
-        `(${regexIssues.length} regex + ${astIssues.length} AST + ${moduleIssues.length} module):`
-      );
-      for (const issue of crossFileIssues) {
-        const detail = issue.reason ?? issue.description ?? '(no detail)';
-        console.warn(`[Code Generation Agent]   ${issue.filePath}: ${detail}`);
-      }
-    }
+    const allFilesBeforeLocale = this.mergeSelectiveRegen(input, validatedFiles);
+    const crossFileIssues = this.collectCrossFileIssues(allFilesBeforeLocale, llmResult);
+    this.logCrossFileIssues(crossFileIssues, llmResult);
 
     // Locale auto-propagation: when messages-en.properties has new keys, append
     // English-value placeholders to the 9 other locale files. Deterministic, no LLM.
-    allFiles = await propagateNewLocaleKeys(allFiles, input.chtCorePath);
-
-    // Determine which requirements were implemented
-    const { implemented, pending } = this.analyzeRequirements(
-      input.issue.issue.requirements,
-      allFiles
-    );
+    const allFiles = await propagateNewLocaleKeys(allFilesBeforeLocale, input.chtCorePath);
+    const { implemented, pending } = this.analyzeRequirements(input.issue.issue.requirements, allFiles);
 
     const result: CodeGenerationResult = {
       files: allFiles,
@@ -176,10 +110,92 @@ export class CodeGenerationAgent {
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
     console.log(`[Code Generation Agent] Confidence: ${(result.confidence * 100).toFixed(0)}%`);
-
     this.todos.printSummary();
-
     return result;
+  }
+
+  private logGenerateStart(input: CodeGenerationInput): void {
+    console.log('\n[Code Generation Agent] Starting code generation...');
+    console.log(`[Code Generation Agent] Issue: ${input.issue.issue.title}`);
+    console.log(`[Code Generation Agent] CHT Core Path: ${input.chtCorePath}`);
+    console.log(`[Code Generation Agent] Using LLM: ${this.llm.modelName}`);
+    if (input.additionalContext) {
+      console.log(`[Code Generation Agent] Additional context from feedback provided`);
+    }
+  }
+
+  private logSelectiveRegen(input: CodeGenerationInput): void {
+    if (!input.passingFiles || input.passingFiles.length === 0) return;
+    console.log(`[Code Generation Agent] Selective regeneration: carrying forward ${input.passingFiles.length} passing file(s)`);
+    if (input.failingFiles) {
+      console.log(`[Code Generation Agent] Files to regenerate: ${input.failingFiles.map(f => f.path).join(', ')}`);
+    }
+  }
+
+  /**
+   * On selective regeneration, merge the previously-passing files (carried
+   * forward from earlier iterations) with the newly regenerated files. Newly
+   * generated paths take precedence.
+   */
+  private mergeSelectiveRegen(
+    input: CodeGenerationInput,
+    validatedFiles: GeneratedFile[],
+  ): GeneratedFile[] {
+    const passing = input.passingFiles;
+    if (!passing || passing.length === 0) return validatedFiles;
+    const newlyGeneratedPaths = new Set(validatedFiles.map(f => f.relativePath));
+    const keptFiles = passing.filter(f => !newlyGeneratedPaths.has(f.relativePath));
+    const merged = [...keptFiles, ...validatedFiles];
+    console.log(`[Code Generation Agent] Merged: ${keptFiles.length} kept + ${validatedFiles.length} regenerated = ${merged.length} total`);
+    return merged;
+  }
+
+  /**
+   * Cross-file validation: identifier consistency across the MERGED batch.
+   * Per D1: must run on `allFiles` (not `validatedFiles`) so iteration 2+ of
+   * selective regen sees both the kept and regenerated files together.
+   *
+   * Combines static-validator issues (regex + AST) with runtime-signal issues
+   * (module crossFileIssues + partial-completion sentinel).
+   */
+  private collectCrossFileIssues(
+    allFiles: GeneratedFile[],
+    llmResult: { moduleCrossFileIssues?: import('../types').CrossFileIssue[]; partialGeneration?: boolean; partialGenerationReason?: string },
+  ): import('../types').CrossFileIssue[] {
+    const regexIssues = crossFileValidate(allFiles);
+    const astIssues = astValidate(allFiles);
+    const moduleIssues = llmResult.moduleCrossFileIssues ?? [];
+    const crossFileIssues = [...regexIssues, ...astIssues, ...moduleIssues];
+
+    // v6 A.9: surface module-level partial-completion as a cross-file issue so
+    // the supervisor's refinement loop triggers consistently with static checks.
+    if (llmResult.partialGeneration) {
+      const reason = llmResult.partialGenerationReason ?? 'execute phase did not complete cleanly';
+      crossFileIssues.push({
+        filePath: '(generation)',
+        issueType: 'partial-completion',
+        description: reason,
+        reason,
+      });
+    }
+    return crossFileIssues;
+  }
+
+  private logCrossFileIssues(
+    crossFileIssues: import('../types').CrossFileIssue[],
+    llmResult: { moduleCrossFileIssues?: import('../types').CrossFileIssue[] },
+  ): void {
+    if (crossFileIssues.length === 0) return;
+    const moduleCount = (llmResult.moduleCrossFileIssues ?? []).length;
+    const partialCount = crossFileIssues.length - moduleCount;
+    console.warn(
+      `[Code Generation Agent] Found ${crossFileIssues.length} cross-file issue(s) ` +
+      `(${partialCount} static + ${moduleCount} module):`
+    );
+    for (const issue of crossFileIssues) {
+      const detail = issue.reason ?? issue.description ?? '(no detail)';
+      console.warn(`[Code Generation Agent]   ${issue.filePath}: ${detail}`);
+    }
   }
 
   /**
@@ -407,7 +423,7 @@ export class CodeGenerationAgent {
     }
 
     const lines: string[] = [];
-    for (const dir of Array.from(dirs).sort()) {
+    for (const dir of Array.from(dirs).sort((a, b) => a.localeCompare(b))) {
       try {
         const entries = await listChtCoreDirectory(dir, chtCorePath);
         lines.push(`${dir}`);

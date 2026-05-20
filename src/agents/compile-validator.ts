@@ -53,6 +53,53 @@ export interface CompileValidationResult {
 }
 
 /**
+ * Result discriminator for a single per-tsconfig tsc invocation.
+ *  - 'ok'        : tsc succeeded; no issues to add.
+ *  - 'failed'    : tsc found errors; `issues` is non-empty.
+ *  - 'unavailable': tsc binary not present; the whole gate must skip.
+ */
+type PerTsconfigOutcome =
+  | { kind: 'ok' }
+  | { kind: 'failed'; issues: CrossFileIssue[] }
+  | { kind: 'unavailable' };
+
+const buildSkippedResult = (skipReason: string): CompileValidationResult => ({
+  passed: true,
+  issues: [],
+  skipped: true,
+  skipReason,
+});
+
+const TSC_UNAVAILABLE_REASON =
+  'tsc not available in cht-core workspace (run `npm install` there to enable the compile gate)';
+
+const isTscUnavailableError = (err: { code?: string; stderr?: string }): boolean =>
+  err.code === 'ENOENT' || /not found/i.test(err.stderr ?? '');
+
+/**
+ * Run `tsc --noEmit` against a single tsconfig. Returns a structured outcome
+ * so the orchestrator can decide whether to skip the whole gate (when tsc is
+ * unavailable) or just collect issues and continue.
+ */
+async function runTscAgainstTsconfig(
+  chtCorePath: string,
+  tsconfig: string,
+): Promise<PerTsconfigOutcome> {
+  try {
+    await execFileAsync(
+      'npx',
+      ['--no-install', 'tsc', '--noEmit', '-p', tsconfig],
+      { cwd: chtCorePath, maxBuffer: TSC_MAX_BUFFER },
+    );
+    return { kind: 'ok' };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; code?: string };
+    if (isTscUnavailableError(e)) return { kind: 'unavailable' };
+    return { kind: 'failed', issues: parseTscOutput(e.stdout ?? '', chtCorePath) };
+  }
+}
+
+/**
  * Run the compile gate over every tsconfig*.json the cht-core workspace
  * publishes. The result merges errors across tsconfigs and dedupes by
  * (filePath, description) so a file `include`d by two tsconfigs is not
@@ -61,39 +108,22 @@ export interface CompileValidationResult {
 export async function compileCheck(chtCorePath: string): Promise<CompileValidationResult> {
   const tsconfigs = await discoverTsconfigs(chtCorePath);
   if (tsconfigs.length === 0) {
-    return {
-      passed: true,
-      issues: [],
-      skipped: true,
-      skipReason: `No tsconfig*.json files found under ${chtCorePath}`,
-    };
+    return buildSkippedResult(`No tsconfig*.json files found under ${chtCorePath}`);
   }
 
   const allIssues: CrossFileIssue[] = [];
   const tsconfigsRun: string[] = [];
 
   for (const tsconfig of tsconfigs) {
-    try {
-      await execFileAsync(
-        'npx',
-        ['--no-install', 'tsc', '--noEmit', '-p', tsconfig],
-        { cwd: chtCorePath, maxBuffer: TSC_MAX_BUFFER },
-      );
-      tsconfigsRun.push(path.relative(chtCorePath, tsconfig));
-    } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; code?: string };
-      // tsc not available at all — degrade gracefully so the user can choose
-      // at HC2 whether to accept the diff without a compile check.
-      if (e.code === 'ENOENT' || /not found/i.test(e.stderr ?? '')) {
-        return {
-          passed: true,
-          issues: [],
-          skipped: true,
-          skipReason: 'tsc not available in cht-core workspace (run `npm install` there to enable the compile gate)',
-        };
-      }
-      tsconfigsRun.push(path.relative(chtCorePath, tsconfig));
-      allIssues.push(...parseTscOutput(e.stdout ?? '', chtCorePath));
+    const outcome = await runTscAgainstTsconfig(chtCorePath, tsconfig);
+    if (outcome.kind === 'unavailable') {
+      // Degrade gracefully so the user can choose at HC2 whether to accept
+      // the diff without a compile check.
+      return buildSkippedResult(TSC_UNAVAILABLE_REASON);
+    }
+    tsconfigsRun.push(path.relative(chtCorePath, tsconfig));
+    if (outcome.kind === 'failed') {
+      allIssues.push(...outcome.issues);
     }
   }
 
@@ -111,28 +141,46 @@ export async function compileCheck(chtCorePath: string): Promise<CompileValidati
  */
 async function discoverTsconfigs(root: string): Promise<string[]> {
   const found: string[] = [];
-
-  const walk = async (dir: string, depth: number): Promise<void> => {
-    if (depth > TSCONFIG_DISCOVERY_MAX_DEPTH) return;
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        if (!DISCOVERY_SKIP_DIRS.has(entry.name)) {
-          await walk(path.join(dir, entry.name), depth + 1);
-        }
-      } else if (entry.isFile() && /^tsconfig.*\.json$/.test(entry.name)) {
-        found.push(path.join(dir, entry.name));
-      }
-    }
-  };
-
-  await walk(root, 0);
+  await walkForTsconfigs(root, 0, found);
   return found;
+}
+
+async function walkForTsconfigs(
+  dir: string,
+  depth: number,
+  found: string[],
+): Promise<void> {
+  if (depth > TSCONFIG_DISCOVERY_MAX_DEPTH) return;
+  const entries = await readDirSafe(dir);
+  if (entries === null) return;
+  for (const entry of entries) {
+    await processTsconfigEntry(dir, entry, depth, found);
+  }
+}
+
+async function readDirSafe(dir: string): Promise<Array<{ name: string; isDirectory(): boolean; isFile(): boolean }> | null> {
+  try {
+    return await readdir(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+}
+
+async function processTsconfigEntry(
+  dir: string,
+  entry: { name: string; isDirectory(): boolean; isFile(): boolean },
+  depth: number,
+  found: string[],
+): Promise<void> {
+  if (entry.isDirectory()) {
+    if (!DISCOVERY_SKIP_DIRS.has(entry.name)) {
+      await walkForTsconfigs(path.join(dir, entry.name), depth + 1, found);
+    }
+    return;
+  }
+  if (entry.isFile() && /^tsconfig.*\.json$/.test(entry.name)) {
+    found.push(path.join(dir, entry.name));
+  }
 }
 
 function dedupIssues(issues: CrossFileIssue[]): CrossFileIssue[] {

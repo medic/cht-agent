@@ -661,7 +661,7 @@ describe('CodeGenerationAgent', () => {
       const proxyquire = require('proxyquire').noCallThru();
       const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
       const cliProvider = proxyquire('../../src/llm/providers/claude-cli', {
-        child_process: { spawn: spawnStub },
+        'node:child_process': { spawn: spawnStub },
       });
 
       const provider = cliProvider.createClaudeCLIProvider({
@@ -680,7 +680,7 @@ describe('CodeGenerationAgent', () => {
       const proxyquire = require('proxyquire').noCallThru();
       const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
       const cliProvider = proxyquire('../../src/llm/providers/claude-cli', {
-        child_process: { spawn: spawnStub },
+        'node:child_process': { spawn: spawnStub },
       });
 
       const provider = cliProvider.createClaudeCLIProvider({
@@ -697,7 +697,7 @@ describe('CodeGenerationAgent', () => {
       const proxyquire = require('proxyquire').noCallThru();
       const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
       const cliProvider = proxyquire('../../src/llm/providers/claude-cli', {
-        child_process: { spawn: spawnStub },
+        'node:child_process': { spawn: spawnStub },
       });
 
       const provider = cliProvider.createClaudeCLIProvider({
@@ -728,7 +728,7 @@ describe('CodeGenerationAgent', () => {
       const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
 
       const proxiedCli = proxyquire('../../src/llm/providers/claude-cli', {
-        child_process: { spawn: spawnStub },
+        'node:child_process': { spawn: spawnStub },
       });
       const proxiedFactory = proxyquire('../../src/llm/factory', {
         './providers/claude-cli': proxiedCli,

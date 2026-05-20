@@ -40,6 +40,56 @@ const DEFAULT_PLAN_TIMEOUT_MS = 10 * 60 * 1000;
  */
 export const DEFAULT_MAX_TURNS = 150;
 
+const PROGRESS_INTERVAL_MS = 60_000;
+
+function buildCliArgs(opts: SpawnOptions, maxTurns: number): string[] {
+  return [
+    '-p',
+    '--output-format', 'json',
+    '--max-turns', maxTurns.toString(),
+    '--allowedTools', opts.allowedTools.join(','),
+    '--permission-mode', opts.permissionMode,
+  ];
+}
+
+function resolveTimeoutMs(opts: SpawnOptions): number {
+  if (opts.timeoutMs !== undefined) return opts.timeoutMs;
+  return opts.phase === ClaudeCliPhase.Execute
+    ? DEFAULT_EXECUTE_TIMEOUT_MS
+    : DEFAULT_PLAN_TIMEOUT_MS;
+}
+
+function logSpawnStart(prompt: string, opts: SpawnOptions, maxTurns: number): void {
+  const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
+  console.log(
+    `[claude-code-cli ${opts.phase}] Starting: "${promptPreview}..." ` +
+    `(${prompt.length} chars, tools=${opts.allowedTools.join('+')}, maxTurns=${maxTurns})`
+  );
+}
+
+function buildSpawnErrorMessage(error: NodeJS.ErrnoException, cliPath: string): string {
+  if (error.code === 'ENOENT') {
+    return `Claude Code CLI not found at "${cliPath}". ` +
+      'Install with: npm install -g @anthropic-ai/claude-code';
+  }
+  return `Failed to execute Claude CLI: ${error.message}`;
+}
+
+function buildCloseErrorMessage(
+  code: number | null,
+  stdout: string,
+  stderr: string,
+  phase: ClaudeCliPhase,
+): string | null {
+  if (code !== 0 && !stdout) {
+    return `Claude CLI ${phase} exited with code ${code}: ${stderr || 'Unknown error'}`;
+  }
+  if (!stdout.trim()) {
+    return `Claude CLI ${phase} returned empty stdout`;
+  }
+  return null;
+}
+
 /**
  * Spawn the Claude Code CLI as a tool-using agent.
  *
@@ -48,25 +98,12 @@ export const DEFAULT_MAX_TURNS = 150;
  */
 export async function spawnClaudeCli(prompt: string, opts: SpawnOptions): Promise<string> {
   const cliPath = readEnv('CLAUDE_CLI_PATH') || 'claude';
-  const timeoutMs = opts.timeoutMs ?? (opts.phase === ClaudeCliPhase.Execute
-    ? DEFAULT_EXECUTE_TIMEOUT_MS
-    : DEFAULT_PLAN_TIMEOUT_MS);
+  const timeoutMs = resolveTimeoutMs(opts);
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
 
   return new Promise<string>((resolve, reject) => {
-    const args = [
-      '-p',
-      '--output-format', 'json',
-      '--max-turns', maxTurns.toString(),
-      '--allowedTools', opts.allowedTools.join(','),
-      '--permission-mode', opts.permissionMode,
-    ];
-
-    const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
-    console.log(
-      `[claude-code-cli ${opts.phase}] Starting: "${promptPreview}..." ` +
-      `(${prompt.length} chars, tools=${opts.allowedTools.join('+')}, maxTurns=${maxTurns})`
-    );
+    const args = buildCliArgs(opts, maxTurns);
+    logSpawnStart(prompt, opts, maxTurns);
     const startTime = Date.now();
 
     const proc: ChildProcess = spawn(cliPath, args, {
@@ -85,7 +122,7 @@ export async function spawnClaudeCli(prompt: string, opts: SpawnOptions): Promis
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       const stdoutSize = stdoutChunks.reduce((sum, c) => sum + c.length, 0);
       console.log(`[claude-code-cli ${opts.phase}] Still running... ${elapsed}s elapsed, stdout=${stdoutSize} bytes`);
-    }, 60_000);
+    }, PROGRESS_INTERVAL_MS);
 
     const timeoutId = setTimeout(() => {
       clearInterval(progressId);
@@ -101,21 +138,12 @@ export async function spawnClaudeCli(prompt: string, opts: SpawnOptions): Promis
     proc.on('error', (error) => {
       clearTimeout(timeoutId);
       clearInterval(progressId);
-      const nodeError = error as NodeJS.ErrnoException;
-      if (nodeError.code === 'ENOENT') {
-        reject(new Error(
-          `Claude Code CLI not found at "${cliPath}". ` +
-          'Install with: npm install -g @anthropic-ai/claude-code'
-        ));
-        return;
-      }
-      reject(new Error(`Failed to execute Claude CLI: ${error.message}`));
+      reject(new Error(buildSpawnErrorMessage(error as NodeJS.ErrnoException, cliPath)));
     });
 
     proc.on('close', (code) => {
       clearTimeout(timeoutId);
       clearInterval(progressId);
-
       const stdout = stdoutChunks.join('');
       const stderr = stderrChunks.join('');
       const elapsed = Math.round((Date.now() - startTime) / 1000);
@@ -123,13 +151,9 @@ export async function spawnClaudeCli(prompt: string, opts: SpawnOptions): Promis
         `[claude-code-cli ${opts.phase}] Completed in ${elapsed}s ` +
         `(code=${code}, stdout=${stdout.length} bytes, stderr=${stderr.length} bytes)`
       );
-
-      if (code !== 0 && !stdout) {
-        reject(new Error(`Claude CLI ${opts.phase} exited with code ${code}: ${stderr || 'Unknown error'}`));
-        return;
-      }
-      if (!stdout.trim()) {
-        reject(new Error(`Claude CLI ${opts.phase} returned empty stdout`));
+      const errorMsg = buildCloseErrorMessage(code, stdout, stderr, opts.phase);
+      if (errorMsg !== null) {
+        reject(new Error(errorMsg));
         return;
       }
       resolve(stdout);
@@ -150,6 +174,42 @@ export interface ClaudeCliResult {
   cost?: number;
 }
 
+type RawCliJson = Partial<{
+  result: string;
+  is_error: boolean;
+  num_turns: number;
+  session_id: string;
+  total_cost_usd: number;
+}>;
+
+function toClaudeCliResult(parsed: RawCliJson): ClaudeCliResult {
+  return {
+    result: parsed.result ?? '',
+    isError: !!parsed.is_error,
+    numTurns: parsed.num_turns ?? 0,
+    sessionId: parsed.session_id,
+    cost: parsed.total_cost_usd,
+  };
+}
+
+function tryParseResultObject(stdout: string): ClaudeCliResult | null {
+  const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
+  if (!jsonMatch) return null;
+  try {
+    return toClaudeCliResult(JSON.parse(jsonMatch[0]) as RawCliJson);
+  } catch {
+    return null;
+  }
+}
+
+function tryParseWholeStdout(stdout: string): ClaudeCliResult | null {
+  try {
+    return toClaudeCliResult(JSON.parse(stdout) as RawCliJson);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parse the CLI's JSON output into a typed result. Empty stdout is treated as
  * an error case (isError=true) so callers can surface partial completions.
@@ -159,44 +219,12 @@ export function parseCliResult(stdout: string): ClaudeCliResult {
   if (!stdout || stdout.trim() === '') {
     return { result: '', isError: true, numTurns: 0 };
   }
-
   // Look for the result-shaped JSON object first (matches the existing claude-cli.ts pattern).
-  const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]) as Partial<{
-        result: string;
-        is_error: boolean;
-        num_turns: number;
-        session_id: string;
-        total_cost_usd: number;
-      }>;
-      return {
-        result: parsed.result ?? '',
-        isError: !!parsed.is_error,
-        numTurns: parsed.num_turns ?? 0,
-        sessionId: parsed.session_id,
-        cost: parsed.total_cost_usd,
-      };
-    } catch {
-      // fall through
-    }
-  }
-
+  const fromResultBlock = tryParseResultObject(stdout);
+  if (fromResultBlock) return fromResultBlock;
   // Fall back to treating the whole stdout as the result.
-  try {
-    const parsed = JSON.parse(stdout) as Partial<{
-      result: string;
-      is_error: boolean;
-      num_turns: number;
-    }>;
-    return {
-      result: parsed.result ?? '',
-      isError: !!parsed.is_error,
-      numTurns: parsed.num_turns ?? 0,
-    };
-  } catch {
-    return { result: stdout.trim(), isError: false, numTurns: 0 };
-  }
+  const fromWhole = tryParseWholeStdout(stdout);
+  if (fromWhole) return fromWhole;
+  return { result: stdout.trim(), isError: false, numTurns: 0 };
 }
 
