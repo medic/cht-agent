@@ -298,8 +298,10 @@ export class DocumentationSearchAgent {
 
     // Captures multi-line bullet points: starts with -, *, bullet, or number-dot;
     // lazily extends until the next bullet, a blank line, or end of input.
-    // Required complexity to parse LLM markdown output reliably. NOSONAR
+    // Required complexity to parse LLM markdown output reliably.
+    // NOSONAR_BEGIN
     const bulletRegex = /(?:^|\n)\s*(?:[-*•]|\d+\.)\s+([\s\S]*?)(?=\n\s*(?:[-*•]|\d+\.)\s+|\n\n|$)/g;
+    // NOSONAR_END
 
     let match;
     while ((match = bulletRegex.exec(text)) !== null) {
@@ -326,8 +328,10 @@ export class DocumentationSearchAgent {
     }
 
     // Incomplete if starts with conjunction, article, or preposition.
-    // Long alternation is intentional to enumerate the heuristic vocabulary. NOSONAR
+    // Long alternation is intentional to enumerate the heuristic vocabulary.
+    // NOSONAR_BEGIN
     const incompleteStarters = /^(and|or|but|the|a|an|,|;|:|\.|with|for|to|of|in|on|at|by|from|as|into|through|during|before|after|above|below|between|under)\s/i;
+    // NOSONAR_END
     if (incompleteStarters.test(text)) {
       return false;
     }

@@ -17,6 +17,10 @@ function formatNumberedList(items: ReadonlyArray<string>): string {
   return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
 }
 
+function formatBulletList(items: ReadonlyArray<string>): string {
+  return items.map(item => `- ${item}`).join('\n');
+}
+
 /**
  * Build a structural summary of a JSON file for the LLM.
  * Shows top-level keys, their types, and nested key names — enough to
@@ -269,7 +273,7 @@ Acceptance Criteria:
 ${formatNumberedList(ticket.issue.acceptance_criteria)}
 
 ## Documentation References
-${researchFindings.suggestedApproaches.map((a) => `- ${a}`).join('\n')}`;
+${formatBulletList(researchFindings.suggestedApproaches)}`;
 
   const feedback = extractValidationFeedback(input.contextFiles);
   if (feedback) {
