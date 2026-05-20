@@ -20,18 +20,7 @@ import type {
   DistillOptions,
   SkipLogEntry,
 } from '../types/pipeline';
-
-const DEFAULT_LOG_PATH = path.join(
-  __dirname, '..', '..', 'agent-memory', '_skipped.ndjson'
-);
-const DEFAULT_OUTPUT_DIR = path.join(
-  __dirname, '..', '..', 'agent-memory', '_pending'
-);
-
-const CHT_DOMAINS = [
-  'authentication', 'contacts', 'forms-and-reports', 'tasks-and-targets',
-  'messaging', 'data-sync', 'configuration', 'interoperability',
-] as const;
+import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 
 const DEFAULT_DISTILL_MODEL = 'anthropic/claude-sonnet-4-5';
 const ANTHROPIC_DISTILL_MODEL = 'claude-sonnet-4-5-20251015';
@@ -69,12 +58,12 @@ let _distillChain: any;
 function getDistillChain() {
   if (_distillChain !== undefined) return _distillChain;
 
-  const openrouterKey = process.env['OPENROUTER_API_KEY'];
-  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   if (openrouterKey) {
     const llm = new ChatOpenAI({
-      modelName: process.env['DISTILL_MODEL'] ?? DEFAULT_DISTILL_MODEL,
+      modelName: process.env.DISTILL_MODEL ?? DEFAULT_DISTILL_MODEL,
       maxTokens: 2000,
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
@@ -109,8 +98,8 @@ function buildPrompt(pr: ScrapedPR): string {
     .join('\n\n');
 
   const reviewContext = pr.reviewComments
-    .slice(0, MAX_REVIEWS)
     .filter(r => r.body.trim().length > 0)
+    .slice(0, MAX_REVIEWS)
     .map(r => `Review by ${r.author}:\n${r.body.slice(0, REVIEW_BODY_LIMIT)}`)
     .join('\n\n');
 
@@ -119,8 +108,7 @@ function buildPrompt(pr: ScrapedPR): string {
 Analyse this merged GitHub PR and produce a structured knowledge entry for the agent memory system.
 
 The CHT has 8 functional domains — pick the most specific one that fits:
-  authentication, contacts, forms-and-reports, tasks-and-targets,
-  messaging, data-sync, configuration, interoperability
+  ${CHT_DOMAINS.join(', ')}
 
 PR #${pr.prNumber}: ${pr.prTitle}
 Labels: ${pr.labels.join(', ') || 'none'}
@@ -276,22 +264,22 @@ export async function distillPR(
   pr: ScrapedPR,
   opts: DistillOptions = {}
 ): Promise<DistillResult> {
-  const logPath = opts.logPath ?? DEFAULT_LOG_PATH;
-  const outputDir = opts.outputDir ?? DEFAULT_OUTPUT_DIR;
+  const logPath = opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH;
+  const outputDir = opts.outputDir ?? DEFAULT_PIPELINE_OUTPUT_DIR;
   const distillFn = opts.distillFn ?? llmDistill;
 
   let draft: DistillDraft;
   try {
     draft = await distillFn(pr);
   } catch (err) {
-    const reason = `Distill LLM unavailable: ${err instanceof Error ? err.message : String(err)}`;
+    const reason = err instanceof Error ? err.message : `Distill failed: ${String(err)}`;
     const entry: SkipLogEntry = {
       prNumber: pr.prNumber,
       decision: 'flag-for-human',
       reason,
       timestamp: new Date().toISOString(),
     };
-    fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
+    await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
     return { status: 'flag-for-human', reason };
   }
 
@@ -300,10 +288,10 @@ export async function distillPR(
   const filename = `${pr.prNumber}-${slug}.md`;
   const domainDir = path.join(outputDir, draft.domain);
 
-  fs.mkdirSync(domainDir, { recursive: true });
+  await fs.promises.mkdir(domainDir, { recursive: true });
 
   const outputPath = path.join(domainDir, filename);
-  fs.writeFileSync(outputPath, markdown, 'utf8');
+  await fs.promises.writeFile(outputPath, markdown, 'utf8');
 
   return {
     status: 'written',

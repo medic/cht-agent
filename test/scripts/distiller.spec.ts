@@ -230,7 +230,6 @@ describe('distillPR', () => {
 
     it('should populate provenance frontmatter fields', async () => {
       const { distillPR } = loadDistiller();
-      const parsed = matter;
       const outputDir = tmpOutputDir();
 
       const result: DistillResult = await distillPR(makePR({ prNumber: 42, mergeSha: 'deadbeef' }), {
@@ -240,7 +239,7 @@ describe('distillPR', () => {
       });
 
       const content = fs.readFileSync(result.outputPath!, 'utf8');
-      const fm = parsed(content).data as Record<string, unknown>;
+      const fm = matter(content).data as Record<string, unknown>;
       expect(fm['source_pr']).to.equal('medic/cht-core#42');
       expect(fm['source_sha']).to.equal('deadbeef');
       expect(fm['distilled_at']).to.match(/^\d{4}-\d{2}-\d{2}$/);

@@ -10,15 +10,11 @@
  */
 
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
-
-const DEFAULT_LOG_PATH = path.join(
-  __dirname, '..', '..', 'agent-memory', '_skipped.ndjson'
-);
+import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
 
 // CHT service directory prefixes — a PR touching ≥2 of these is "multi-service"
 const SERVICE_PREFIXES = ['api/', 'webapp/', 'sentinel/', 'admin/', 'shared-libs/'];
@@ -143,12 +139,12 @@ let _triageChain: any;
 function getTriageChain() {
   if (_triageChain !== undefined) return _triageChain;
 
-  const openrouterKey = process.env['OPENROUTER_API_KEY'];
-  const anthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const openrouterKey = process.env.OPENROUTER_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   if (openrouterKey) {
     const llm = new ChatOpenAI({
-      modelName: process.env['TRIAGE_MODEL'] ?? DEFAULT_TRIAGE_MODEL,
+      modelName: process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL,
       maxTokens: 200,
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
@@ -227,7 +223,7 @@ export async function filterPR(
   pr: ScrapedPR,
   opts: FilterOptions = {}
 ): Promise<FilterResult> {
-  const logPath = opts.logPath ?? DEFAULT_LOG_PATH;
+  const logPath = opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH;
 
   // Stage 1: deterministic skip
   const skipReason = checkSkipRules(pr);
