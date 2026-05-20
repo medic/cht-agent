@@ -14,50 +14,16 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import Ajv, { ValidateFunction, ErrorObject } from 'ajv';
+import { ValidateFunction, ErrorObject } from 'ajv';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const matter = require('gray-matter') as typeof import('gray-matter');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const addFormats = require('ajv-formats') as (ajv: Ajv) => void;
+import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
 
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const MEMORY_DIR = path.join(REPO_ROOT, 'agent-memory');
-const SCHEMA_PATH = path.join(MEMORY_DIR, 'schema.json');
-
-interface RootSchema {
-  definitions: {
-    frontmatter: Record<string, unknown>;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
-
-/**
- * Loads schema.json and compiles the frontmatter sub-schema with AJV.
- *
- * @returns Compiled AJV validate function for the frontmatter definition.
- *
- * @example
- * const validate = buildValidator();
- * const isValid = validate({ domain: 'messaging', title: 'Foo', last_updated: '2025-01-01' });
- */
-function buildValidator(): ValidateFunction {
-  const schemaRaw = fs.readFileSync(SCHEMA_PATH, 'utf8');
-  const schema = JSON.parse(schemaRaw) as RootSchema;
-
-  const ajv = new Ajv({ strict: false, allErrors: true });
-  addFormats(ajv);
-
-  // Compile the frontmatter sub-schema; embed definitions so $ref resolution works
-  return ajv.compile({
-    ...schema.definitions.frontmatter,
-    definitions: schema.definitions,
-  });
-}
 
 // ---------------------------------------------------------------------------
 // File discovery
@@ -120,57 +86,6 @@ function formatError(err: ErrorObject): string {
 }
 
 /**
- * Converts a value to an ISO date string (YYYY-MM-DD) if it is a Date object,
- * otherwise returns the value unchanged.
- *
- * @param value - Value to coerce.
- * @returns ISO date string or the original value.
- *
- * @example
- * toDateString(new Date('2025-11-04T00:00:00.000Z')); // => '2025-11-04'
- * toDateString('2025-11-04');                          // => '2025-11-04'
- * toDateString(42);                                    // => 42
- */
-function toDateString(value: unknown): unknown {
-  if (value instanceof Date) {
-    return value.toISOString().slice(0, 10);
-  }
-  return value;
-}
-
-/**
- * Normalizes frontmatter data to reconcile:
- * - camelCase field names used in existing files (e.g. `lastUpdated`) with the
- *   schema's snake_case names (e.g. `last_updated`).
- * - JavaScript Date objects (parsed by gray-matter from bare YAML dates) into
- *   ISO date strings, as the schema expects `"type": "string"` with `"format": "date"`.
- *
- * The canonical schema field takes precedence if both forms are present.
- *
- * @param data - Raw frontmatter data object.
- * @returns Normalized data object safe to validate against the schema.
- *
- * @example
- * const out = normalizeFrontmatter({ lastUpdated: new Date('2025-01-01'), title: 'X' });
- * // => { last_updated: '2025-01-01', title: 'X' }
- */
-function normalizeFrontmatter(data: Record<string, unknown>): Record<string, unknown> {
-  const normalized: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(data)) {
-    normalized[key] = toDateString(value);
-  }
-
-  // Alias camelCase legacy field to snake_case schema field
-  if ('lastUpdated' in normalized && !('last_updated' in normalized)) {
-    normalized['last_updated'] = normalized['lastUpdated'];
-    delete normalized['lastUpdated'];
-  }
-
-  return normalized;
-}
-
-/**
  * Validates the frontmatter of a single markdown file.
  *
  * @param filePath - Absolute path to the markdown file.
@@ -198,8 +113,7 @@ function validateFile(filePath: string, validate: ValidateFunction): FileResult 
     };
   }
 
-  // Skip files with no frontmatter
-  if (!parsed.matter || parsed.matter.trim() === '') {
+  if (!hasFrontmatter(content)) {
     return { file: filePath, passed: true, skipped: true, errors: [] };
   }
 

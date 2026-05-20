@@ -16,46 +16,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'child_process';
-import Ajv, { ValidateFunction } from 'ajv';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const matter = require('gray-matter') as typeof import('gray-matter');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const addFormats = require('ajv-formats') as (ajv: Ajv) => void;
 import type { SkipLogEntry, OpenReviewOptions, ReviewPRResult } from '../types/pipeline';
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
+import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
 
-const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_DOMAINS_DIR = path.join(REPO_ROOT, 'agent-memory', 'domains');
-const SCHEMA_PATH = path.join(REPO_ROOT, 'agent-memory', 'schema.json');
 
-function buildValidator(): ValidateFunction {
-  const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf8')) as {
-    definitions: { frontmatter: Record<string, unknown>; [k: string]: unknown };
-  };
-  const ajv = new Ajv({ strict: false, allErrors: true });
-  addFormats(ajv);
-  return ajv.compile({
-    ...schema.definitions.frontmatter,
-    definitions: schema.definitions,
-  });
-}
-
-function hasFrontmatter(content: string): boolean {
-  const s = content.replace(/^\uFEFF/, '');
-  return s.startsWith('---\n') || s.startsWith('---\r\n');
-}
-
-function normalizeFrontmatter(data: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(data)) {
-    out[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
-  }
-  if ('lastUpdated' in out && !('last_updated' in out)) {
-    out.last_updated = out.lastUpdated;
-    delete out.lastUpdated;
-  }
-  return out;
-}
+const validate = buildValidator();
 
 /**
  * Collect .md draft paths (excluding .gitkeep) grouped by domain.
@@ -70,8 +39,13 @@ export function discoverDraftsByDomain(pendingDir: string): Map<string, string[]
   const result = new Map<string, string[]>();
   for (const domain of CHT_DOMAINS) {
     const domainDir = path.join(pendingDir, domain);
-    if (!fs.existsSync(domainDir)) continue;
-    const files = fs.readdirSync(domainDir)
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(domainDir);
+    } catch {
+      continue;
+    }
+    const files = entries
       .filter(f => f.endsWith('.md'))
       .map(f => path.join(domainDir, f));
     if (files.length > 0) result.set(domain, files);
@@ -125,31 +99,33 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
 }
 
 function writeSkipEntry(logPath: string, draftPath: string, reason: string): void {
-  const match = path.basename(draftPath).match(/^(\d+)-/);
+  const filename = path.basename(draftPath);
+  const match = filename.match(/^(\d+)-/);
   const entry: SkipLogEntry = {
     prNumber: match ? parseInt(match[1], 10) : 0,
     decision: 'flag-for-human',
-    reason: `open-review-pr: ${reason} — ${path.basename(draftPath)}`,
+    reason: `open-review-pr: ${reason} — ${filename}`,
     timestamp: new Date().toISOString(),
   };
   fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
 }
+
+const MAX_BRANCH_SUFFIX = 99;
 
 function uniqueBranchName(
   base: string,
   exec: (file: string, args: string[]) => string
 ): string {
   let branch = base;
-  let counter = 2;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
+  for (let counter = 2; counter <= MAX_BRANCH_SUFFIX; counter++) {
     try {
       exec('git', ['rev-parse', '--verify', branch]);
-      branch = `${base}-${counter++}`;
+      branch = `${base}-${counter}`;
     } catch {
       return branch;
     }
   }
+  throw new Error(`Could not find a unique branch name for base: ${base}`);
 }
 
 /**
@@ -177,11 +153,8 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
   const exec = opts.execFn ??
     ((file: string, args: string[]) => execFileSync(file, args, { encoding: 'utf8' }) as string);
 
-  const validate = buildValidator();
   const byDomain = discoverDraftsByDomain(pendingDir);
   const results: ReviewPRResult[] = [];
-
-  // Phase 1: re-validate all drafts before touching git
   const plans = new Map<string, string[]>();
   for (const [domain, draftPaths] of byDomain) {
     const validDrafts: string[] = [];
@@ -213,7 +186,6 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
     }
   }
 
-  // Phase 2: dry-run early return
   if (!apply) {
     for (const [domain, validDrafts] of plans) {
       results.push({
@@ -228,7 +200,6 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
 
   if (plans.size === 0) return results;
 
-  // Phase 3: git operations — one branch + PR per domain
   exec('git', ['fetch', 'origin', 'main']);
   const originalBranch = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
 
