@@ -38,11 +38,13 @@ export interface DomainToComponentsIndex {
   domains: Record<string, DomainComponentMapping>;
 }
 
+export type CodeRelevance = 'high' | 'medium' | 'low';
+
 export interface CodeSnippet {
   filePath: string;
   content: string;
   language: string;
-  relevance: 'high' | 'medium' | 'low';
+  relevance: CodeRelevance;
 }
 
 export interface CHTCoreContext {
@@ -310,14 +312,20 @@ export function getDomainComponentSummary(domain: CHTDomain): string | null {
   appendBulletSection(lines, '**Webapp Modules:**', mapping.webapp.modules);
   appendBulletSection(lines, '**API Controllers:**', mapping.api.controllers);
   appendBulletSection(lines, '**Sentinel Transitions:**', mapping.sentinel.transitions);
-  if (mapping.shared_libs.length > 0) {
-    lines.push('**Shared Libraries:**');
-    for (const lib of mapping.shared_libs) {
-      lines.push(`- ${lib.name} (${lib.critical ? 'critical' : 'optional'})`);
-    }
-    lines.push('');
-  }
+  appendSharedLibsSection(lines, mapping.shared_libs);
   return lines.join('\n');
+}
+
+function appendSharedLibsSection(
+  lines: string[],
+  sharedLibs: { name: string; critical: boolean }[],
+): void {
+  if (sharedLibs.length === 0) return;
+  lines.push('**Shared Libraries:**');
+  for (const lib of sharedLibs) {
+    lines.push(`- ${lib.name} (${lib.critical ? 'critical' : 'optional'})`);
+  }
+  lines.push('');
 }
 
 function appendBulletSection(lines: string[], heading: string, items: string[]): void {

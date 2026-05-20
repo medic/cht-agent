@@ -156,7 +156,7 @@ async function collectTrackedChanges(
 function parseDiffStatusLine(line: string): { relPath: string; action: 'create' | 'modify' } | null {
   const parts = line.split('\t');
   const status = parts[0]?.charAt(0);
-  const relPath = parts[parts.length - 1];
+  const relPath = parts.at(-1);
   if (!status || !relPath || status === 'D') return null;
   return { relPath, action: status === 'A' ? 'create' : 'modify' };
 }

@@ -238,6 +238,53 @@ const VALID_FILE_TYPES: ReadonlySet<FileType> = new Set<FileType>([
   'fixture',
 ]);
 
+interface BeadsCounters {
+  plannedCount: number;
+  successCount: number;
+  failCount: number;
+}
+
+function attachBeadsCallbacks(
+  moduleInput: CodeGenModuleInput,
+  session: BeadsCodeGenSession,
+  counters: BeadsCounters,
+): void {
+  moduleInput.onPlan = async (plan) => {
+    counters.plannedCount = plan.length;
+    await session.recordPlan(plan as { action: string; filePath: string; rationale: string }[])
+      .catch(() => undefined);
+  };
+  moduleInput.onFileInProgress = (filePath) =>
+    session.markFileInProgress(filePath).catch(() => undefined);
+  moduleInput.onFileCompleted = (file) => {
+    counters.successCount += 1;
+    return session.recordFileCompleted(file.path, file.content, file.purpose)
+      .catch(() => undefined);
+  };
+  moduleInput.onFileFailed = (filePath, reasons) => {
+    counters.failCount += 1;
+    return session.recordFileFailed(filePath, [...reasons]).catch(() => undefined);
+  };
+  moduleInput.onAttemptFailure = (filePath, attempt, reasons) =>
+    session.recordAttemptFailure(filePath, attempt, [...reasons]).catch(() => undefined);
+}
+
+async function closeBeadsSession(
+  session: BeadsCodeGenSession,
+  counters: BeadsCounters,
+  fileCount: number,
+): Promise<string | undefined> {
+  // Some callers may have skipped onPlan if generation aborted early; fall back to
+  // counting from the module's output so the summary is still coherent.
+  if (counters.plannedCount === 0) counters.plannedCount = fileCount;
+  try {
+    await session.closeSession(counters.plannedCount, counters.successCount, counters.failCount);
+  } catch (err) {
+    console.log(`[Code Generation Agent] Beads close failed (non-fatal): ${err}`);
+  }
+  return session.getSessionId() ?? undefined;
+}
+
 function collectParentDirectories(relevantFiles: string[]): Set<string> {
   const dirs = new Set<string>();
   for (const filePath of relevantFiles) {
@@ -648,46 +695,13 @@ export class CodeGenerationAgent {
   }> {
     const moduleInput = this.buildModuleInput(input, context);
     const session = await this.initBeadsSession(input);
-
-    let plannedCount = 0;
-    let successCount = 0;
-    let failCount = 0;
-
-    if (session) {
-      moduleInput.onPlan = async (plan) => {
-        plannedCount = plan.length;
-        await session.recordPlan(plan as { action: string; filePath: string; rationale: string }[])
-          .catch(() => undefined);
-      };
-      moduleInput.onFileInProgress = (filePath) =>
-        session.markFileInProgress(filePath).catch(() => undefined);
-      moduleInput.onFileCompleted = (file) => {
-        successCount += 1;
-        return session.recordFileCompleted(file.path, file.content, file.purpose)
-          .catch(() => undefined);
-      };
-      moduleInput.onFileFailed = (filePath, reasons) => {
-        failCount += 1;
-        return session.recordFileFailed(filePath, [...reasons]).catch(() => undefined);
-      };
-      moduleInput.onAttemptFailure = (filePath, attempt, reasons) =>
-        session.recordAttemptFailure(filePath, attempt, [...reasons]).catch(() => undefined);
-    }
+    const counters = { plannedCount: 0, successCount: 0, failCount: 0 };
+    if (session) attachBeadsCallbacks(moduleInput, session, counters);
 
     const moduleOutput = await this.registry.getActiveModule().generate(moduleInput);
-
-    let beadsSessionId: string | undefined;
-    if (session) {
-      // Some callers may have skipped onPlan if generation aborted early; fall back to
-      // counting from the module's output so the summary is still coherent.
-      if (plannedCount === 0) plannedCount = moduleOutput.files.length;
-      try {
-        await session.closeSession(plannedCount, successCount, failCount);
-      } catch (err) {
-        console.log(`[Code Generation Agent] Beads close failed (non-fatal): ${err}`);
-      }
-      beadsSessionId = session.getSessionId() ?? undefined;
-    }
+    const beadsSessionId = session
+      ? await closeBeadsSession(session, counters, moduleOutput.files.length)
+      : undefined;
 
     return {
       files: this.convertModuleFiles(moduleOutput.files, context.existingFiles),

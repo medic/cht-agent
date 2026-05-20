@@ -269,17 +269,20 @@ function buildOriginalContentSection(planItem: PlanItem, originalContentMap: Map
 
 function buildPreviouslyGeneratedSection(previouslyGenerated: GeneratedFile[]): string {
   if (previouslyGenerated.length === 0) return '';
-  let section = `\n\n## Previously Generated Files (PUBLIC API SURFACE — these are the exact identifier names you MUST reference)`;
-  for (const prev of previouslyGenerated) {
-    const surface = extractPublicSurface(prev.path, prev.content);
-    section += `\n### ${prev.path}${prev.purpose ? ` — ${prev.purpose}` : ''}\n\`\`\`\n${surface}\n\`\`\``;
-  }
-  return section;
+  const sections = previouslyGenerated.map(renderPreviousFileEntry).join('');
+  return `\n\n## Previously Generated Files (PUBLIC API SURFACE — these are the exact identifier names you MUST reference)${sections}`;
+}
+
+function renderPreviousFileEntry(prev: GeneratedFile): string {
+  const surface = extractPublicSurface(prev.path, prev.content);
+  const purposeSuffix = prev.purpose ? ` — ${prev.purpose}` : '';
+  return `\n### ${prev.path}${purposeSuffix}\n\`\`\`\n${surface}\n\`\`\``;
 }
 
 function buildPreviousFailuresSection(previousFailures?: string[]): string {
   if (!previousFailures || previousFailures.length === 0) return '';
-  return `\n\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${previousFailures.map(f => `- ${f}`).join('\n')}\nFix these specific issues. Do not repeat the same mistakes.`;
+  const bulletList = formatBulletList(previousFailures);
+  return `\n\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${bulletList}\nFix these specific issues. Do not repeat the same mistakes.`;
 }
 
 export function buildSingleFilePrompt(opts: BuildSingleFilePromptOpts): string {

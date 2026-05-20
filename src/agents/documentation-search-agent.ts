@@ -263,10 +263,14 @@ export class DocumentationSearchAgent {
 
   private appendApproachesFromSections(approaches: string[], references: DocumentationReference[]): void {
     for (const ref of references) {
-      for (const section of ref.relevantSections ?? []) {
-        if (section && approaches.length < 5) {
-          approaches.push(`Follow ${section} pattern from ${ref.title}`);
-        }
+      this.appendApproachesFromOneReference(approaches, ref);
+    }
+  }
+
+  private appendApproachesFromOneReference(approaches: string[], ref: DocumentationReference): void {
+    for (const section of ref.relevantSections ?? []) {
+      if (section && approaches.length < 5) {
+        approaches.push(`Follow ${section} pattern from ${ref.title}`);
       }
     }
   }
@@ -332,24 +336,25 @@ export class DocumentationSearchAgent {
    */
   private extractKeySentences(text: string): string[] {
     const sentences: string[] = [];
-
-    // Look for sentences that contain action words or recommendations
+    // Sentences containing action words or recommendations.
     const actionPatterns = [
       /you (?:can|could|should|need to|must|might|may)\s+[^.!?]+[.!?]/gi,
       /(?:implement|configure|set up|create|add|modify|update|use|enable|disable)\s+[^.!?]+[.!?]/gi,
       /the (?:recommended|suggested|best|proper)\s+[^.!?]+[.!?]/gi,
     ];
-
     for (const pattern of actionPatterns) {
-      for (const m of text.matchAll(pattern)) {
-        const cleaned = m[0].trim();
-        if (cleaned.length > 20 && cleaned.length < 300 && !sentences.includes(cleaned)) {
-          sentences.push(cleaned);
-        }
+      this.appendKeySentencesForPattern(text, pattern, sentences);
+    }
+    return sentences;
+  }
+
+  private appendKeySentencesForPattern(text: string, pattern: RegExp, sentences: string[]): void {
+    for (const m of text.matchAll(pattern)) {
+      const cleaned = m[0].trim();
+      if (cleaned.length > 20 && cleaned.length < 300 && !sentences.includes(cleaned)) {
+        sentences.push(cleaned);
       }
     }
-
-    return sentences;
   }
 
   /**

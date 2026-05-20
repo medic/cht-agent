@@ -72,20 +72,21 @@ function appendModifiedFileDiff(
   const maxLines = Math.max(originalLines.length, newLines.length);
   let chunk: DiffChunk = { start: -1, lines: [] };
   for (let i = 0; i < maxLines; i++) {
-    chunk = stepDiff(chunk, originalLines[i], newLines[i], i, stats, diffLines);
+    chunk = stepDiff({ chunk, origLine: originalLines[i], newLine: newLines[i], i, stats, diffLines });
   }
   flushChunk(chunk, diffLines, stats);
   return { diff: diffLines.join('\n'), additions: stats.additions, deletions: stats.deletions };
 }
 
-function stepDiff(
-  chunk: DiffChunk,
-  origLine: string | undefined,
-  newLine: string | undefined,
-  i: number,
-  stats: { additions: number; deletions: number },
-  diffLines: string[],
-): DiffChunk {
+function stepDiff(args: {
+  chunk: DiffChunk;
+  origLine: string | undefined;
+  newLine: string | undefined;
+  i: number;
+  stats: { additions: number; deletions: number };
+  diffLines: string[];
+}): DiffChunk {
+  const { chunk, origLine, newLine, i, stats, diffLines } = args;
   if (origLine === newLine) {
     flushChunk(chunk, diffLines, stats);
     return { start: -1, lines: [] };
@@ -320,12 +321,14 @@ export const displayFileSummary = (files: GeneratedFile[]): void => {
 function displayFileGroup(label: string, files: GeneratedFile[], includeDescription: boolean): void {
   if (files.length === 0) return;
   console.log(`${label} (${files.length}):`);
-  for (const f of files) {
-    const icon = f.action === 'create' ? '🆕' : '📝';
-    console.log(`   ${icon} ${f.relativePath}`);
-    if (includeDescription) console.log(`      ${f.description}`);
-  }
+  for (const f of files) printFileEntry(f, includeDescription);
   console.log();
+}
+
+function printFileEntry(f: GeneratedFile, includeDescription: boolean): void {
+  const icon = f.action === 'create' ? '🆕' : '📝';
+  console.log(`   ${icon} ${f.relativePath}`);
+  if (includeDescription) console.log(`      ${f.description}`);
 }
 
 /**
