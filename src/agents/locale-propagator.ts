@@ -10,15 +10,21 @@ interface PropEntry { key: string; value: string }
 function parseProperties(content: string): PropEntry[] {
   const entries: PropEntry[] = [];
   for (const line of content.split('\n')) {
-    const trimmed = line.trimStart();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    const key = line.substring(0, eq).trim();
-    const value = line.substring(eq + 1).replace(/^\s+/, '');
-    if (key) entries.push({ key, value });
+    const entry = parsePropertyLine(line);
+    if (entry) entries.push(entry);
   }
   return entries;
+}
+
+function parsePropertyLine(line: string): PropEntry | null {
+  const trimmed = line.trimStart();
+  if (!trimmed || trimmed.startsWith('#')) return null;
+  const eq = line.indexOf('=');
+  if (eq <= 0) return null;
+  const key = line.substring(0, eq).trim();
+  if (!key) return null;
+  const value = line.substring(eq + 1).replace(/^\s+/, '');
+  return { key, value };
 }
 
 function escapeRegex(str: string): string {
@@ -41,25 +47,26 @@ function insertEntriesAlphabetically(content: string, entries: PropEntry[]): str
   const lines = content.split('\n');
   // Strip a single trailing blank line so insertions land before EOF, not after.
   while (lines.length > 0 && lines.at(-1) === '') lines.pop();
-
-  for (const entry of entries) {
-    const formatted = `${entry.key} = ${entry.value}`;
-    let inserted = false;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const eq = line.indexOf('=');
-      if (eq <= 0) continue;
-      const existingKey = line.substring(0, eq).trim();
-      if (existingKey > entry.key) {
-        lines.splice(i, 0, formatted);
-        inserted = true;
-        break;
-      }
-    }
-    if (!inserted) lines.push(formatted);
-  }
-
+  for (const entry of entries) insertOneEntry(lines, entry);
   return lines.join('\n') + '\n';
+}
+
+function insertOneEntry(lines: string[], entry: PropEntry): void {
+  const formatted = `${entry.key} = ${entry.value}`;
+  const insertAt = findAlphabeticalSlot(lines, entry.key);
+  if (insertAt === -1) lines.push(formatted);
+  else lines.splice(insertAt, 0, formatted);
+}
+
+function findAlphabeticalSlot(lines: string[], key: string): number {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const existingKey = line.substring(0, eq).trim();
+    if (existingKey > key) return i;
+  }
+  return -1;
 }
 
 /**
@@ -77,56 +84,63 @@ export async function propagateNewLocaleKeys(
   const enFile = files.find(f => f.relativePath === ENGLISH_FILE);
   if (!enFile) return files;
 
-  const originalEntries = enFile.originalContent ? parseProperties(enFile.originalContent) : [];
-  const originalKeys = new Set(originalEntries.map(e => e.key));
-  const newEntries = parseProperties(enFile.content).filter(e => !originalKeys.has(e.key));
-
+  const newEntries = collectNewEnglishEntries(enFile);
   if (newEntries.length === 0) return files;
-
   console.log(`[Locale Propagator] Found ${newEntries.length} new key(s) in messages-en.properties`);
 
   const dir = path.join(chtCorePath, TRANSLATIONS_DIR);
-  let dirEntries: string[];
-  try {
-    dirEntries = await fs.readdir(dir);
-  } catch (err) {
-    console.warn(`[Locale Propagator] Could not read ${dir}: ${err}`);
-    return files;
-  }
+  const dirEntries = await listLocaleDir(dir);
+  if (dirEntries === null) return files;
 
   const propagated: GeneratedFile[] = [];
-
   for (const localeFile of dirEntries) {
-    if (!/^messages-\w+\.properties$/.test(localeFile)) continue;
-    if (localeFile === 'messages-en.properties') continue;
-
-    const localePath = path.join(dir, localeFile);
-    let original: string;
-    try {
-      original = await fs.readFile(localePath, 'utf-8');
-    } catch {
-      continue;
-    }
-
-    const toAdd = newEntries.filter(e => !keyExists(original, e.key));
-    if (toAdd.length === 0) continue;
-
-    const updated = insertEntriesAlphabetically(original, toAdd);
-
-    propagated.push({
-      relativePath: `${TRANSLATIONS_DIR}/${localeFile}`,
-      content: updated,
-      originalContent: original,
-      language: 'properties',
-      type: 'config',
-      description: `Auto-propagated ${toAdd.length} new key(s) from messages-en.properties (English values as placeholders for translation)`,
-      action: 'modify',
-    });
+    const generated = await propagateToLocale(dir, localeFile, newEntries);
+    if (generated) propagated.push(generated);
   }
-
   if (propagated.length > 0) {
     console.log(`[Locale Propagator] Auto-propagated to ${propagated.length} locale file(s)`);
   }
-
   return [...files, ...propagated];
+}
+
+function collectNewEnglishEntries(enFile: GeneratedFile): PropEntry[] {
+  const originalEntries = enFile.originalContent ? parseProperties(enFile.originalContent) : [];
+  const originalKeys = new Set(originalEntries.map(e => e.key));
+  return parseProperties(enFile.content).filter(e => !originalKeys.has(e.key));
+}
+
+async function listLocaleDir(dir: string): Promise<string[] | null> {
+  try {
+    return await fs.readdir(dir);
+  } catch (err) {
+    console.warn(`[Locale Propagator] Could not read ${dir}: ${err}`);
+    return null;
+  }
+}
+
+async function propagateToLocale(
+  dir: string,
+  localeFile: string,
+  newEntries: PropEntry[],
+): Promise<GeneratedFile | null> {
+  if (!/^messages-\w+\.properties$/.test(localeFile)) return null;
+  if (localeFile === 'messages-en.properties') return null;
+  const localePath = path.join(dir, localeFile);
+  let original: string;
+  try {
+    original = await fs.readFile(localePath, 'utf-8');
+  } catch {
+    return null;
+  }
+  const toAdd = newEntries.filter(e => !keyExists(original, e.key));
+  if (toAdd.length === 0) return null;
+  return {
+    relativePath: `${TRANSLATIONS_DIR}/${localeFile}`,
+    content: insertEntriesAlphabetically(original, toAdd),
+    originalContent: original,
+    language: 'properties',
+    type: 'config',
+    description: `Auto-propagated ${toAdd.length} new key(s) from messages-en.properties (English values as placeholders for translation)`,
+    action: 'modify',
+  };
 }

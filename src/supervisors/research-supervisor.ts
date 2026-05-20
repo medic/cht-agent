@@ -62,6 +62,81 @@ function formatSuccessRate(rate: number | null): string {
   return `${(rate * 100).toFixed(0)}%`;
 }
 
+function logResearchStart(issue: IssueTemplate, additionalContext?: string): void {
+  console.log('\n========================================');
+  console.log('RESEARCH SUPERVISOR - Starting Research Phase');
+  console.log('========================================');
+  console.log(`Issue: ${issue.issue.title}`);
+  console.log(`Domain: ${issue.issue.technical_context.domain}`);
+  console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
+  if (additionalContext) console.log(`Additional Context: ${additionalContext}`);
+  console.log('========================================\n');
+}
+
+function buildInitialResearchState(
+  issue: IssueTemplate,
+  additionalContext?: string,
+): typeof ResearchStateAnnotation.State {
+  const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: string }> = [
+    {
+      role: 'user',
+      content: `Research issue: ${issue.issue.title}`,
+      timestamp: new Date().toISOString(),
+    },
+  ];
+  if (additionalContext) {
+    messages.push({
+      role: 'system',
+      content: `Additional context from human feedback: ${additionalContext}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return {
+    messages,
+    issue,
+    researchFindings: undefined,
+    contextAnalysis: undefined,
+    orchestrationPlan: undefined,
+    currentPhase: 'init',
+    errors: [],
+  };
+}
+
+function handleResearchError(
+  error: unknown,
+  initialState: typeof ResearchStateAnnotation.State,
+): typeof ResearchStateAnnotation.State {
+  const errorMessage = error instanceof Error ? error.message : 'Unknown error during graph execution';
+  console.error('\n========================================');
+  console.error('RESEARCH SUPERVISOR - Error during execution');
+  console.error('========================================');
+  console.error(`Error: ${errorMessage}`);
+  console.error('========================================\n');
+  return { ...initialState, currentPhase: 'error', errors: [errorMessage] };
+}
+
+function logResearchComplete(result: typeof ResearchStateAnnotation.State): void {
+  console.log('\n========================================');
+  console.log('RESEARCH SUPERVISOR - Research Phase Complete');
+  console.log('========================================');
+  console.log(`Final Phase: ${result.currentPhase}`);
+  console.log(`Errors: ${result.errors.length}`);
+  if (result.errors.length > 0) {
+    console.log(`Error details: ${result.errors.join(', ')}`);
+  }
+  console.log('========================================\n');
+}
+
+function logCodeContextUsage(codeContext: { codeSnippets: unknown[] } | null | undefined): void {
+  if (codeContext) {
+    console.log(
+      `[Research Supervisor] Using ${codeContext.codeSnippets.length} code snippets from context analysis`
+    );
+  } else {
+    console.log('[Research Supervisor] No code context available from context analysis');
+  }
+}
+
 function collectBulletText(section: string): string[] {
   return section
     .split('\n')
@@ -203,7 +278,6 @@ export class ResearchSupervisor {
    */
   private async generatePlanNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== GENERATE PLAN NODE ===');
-
     const todoId = 'research-3';
     this.todos.start(todoId);
 
@@ -217,26 +291,16 @@ export class ResearchSupervisor {
     }
 
     try {
-      // Use code context from Context Analysis Agent (already gathered)
       const codeContext = state.contextAnalysis.codeContext;
-      if (codeContext) {
-        console.log(
-          `[Research Supervisor] Using ${codeContext.codeSnippets.length} code snippets from context analysis`
-        );
-      } else {
-        console.log('[Research Supervisor] No code context available from context analysis');
-      }
-
+      logCodeContextUsage(codeContext);
       const plan = await this.generateOrchestrationPlan(
         state.issue,
         state.researchFindings,
         state.contextAnalysis,
         codeContext
       );
-
       this.todos.complete(todoId);
       this.todos.printSummary();
-
       return {
         orchestrationPlan: plan,
         currentPhase: 'complete' as const,
@@ -618,81 +682,27 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    * @param additionalContext Optional additional context (e.g., human feedback from previous iteration)
    */
   async research(issue: IssueTemplate, additionalContext?: string): Promise<ResearchState> {
-    console.log('\n========================================');
-    console.log('RESEARCH SUPERVISOR - Starting Research Phase');
-    console.log('========================================');
-    console.log(`Issue: ${issue.issue.title}`);
-    console.log(`Domain: ${issue.issue.technical_context.domain}`);
-    console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
-    if (additionalContext) {
-      console.log(`Additional Context: ${additionalContext}`);
-    }
-    console.log('========================================\n');
+    logResearchStart(issue, additionalContext);
+    this.initResearchTodos();
+    const initialState = buildInitialResearchState(issue, additionalContext);
 
-    // Initialize todos for the research workflow
+    let result: typeof ResearchStateAnnotation.State;
+    try {
+      result = await this.graph.invoke(initialState);
+    } catch (error) {
+      return handleResearchError(error, initialState);
+    }
+
+    logResearchComplete(result);
+    return result;
+  }
+
+  private initResearchTodos(): void {
     this.todos.clear();
     this.todos.addMany([
       { content: 'Search documentation', activeForm: 'Searching documentation' },
       { content: 'Analyze context', activeForm: 'Analyzing context' },
       { content: 'Generate orchestration plan', activeForm: 'Generating orchestration plan' },
     ]);
-
-    const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: string }> = [
-      {
-        role: 'user',
-        content: `Research issue: ${issue.issue.title}`,
-        timestamp: new Date().toISOString(),
-      },
-    ];
-
-    // Add additional context as a system message if provided
-    if (additionalContext) {
-      messages.push({
-        role: 'system',
-        content: `Additional context from human feedback: ${additionalContext}`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const initialState: typeof ResearchStateAnnotation.State = {
-      messages,
-      issue: issue,
-      researchFindings: undefined,
-      contextAnalysis: undefined,
-      orchestrationPlan: undefined,
-      currentPhase: 'init',
-      errors: [],
-    };
-
-    let result: typeof ResearchStateAnnotation.State;
-    try {
-      result = await this.graph.invoke(initialState);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error during graph execution';
-      console.error('\n========================================');
-      console.error('RESEARCH SUPERVISOR - Error during execution');
-      console.error('========================================');
-      console.error(`Error: ${errorMessage}`);
-      console.error('========================================\n');
-
-      // Return state with error recorded
-      return {
-        ...initialState,
-        currentPhase: 'error',
-        errors: [errorMessage],
-      };
-    }
-
-    console.log('\n========================================');
-    console.log('RESEARCH SUPERVISOR - Research Phase Complete');
-    console.log('========================================');
-    console.log(`Final Phase: ${result.currentPhase}`);
-    console.log(`Errors: ${result.errors.length}`);
-    if (result.errors.length > 0) {
-      console.log(`Error details: ${result.errors.join(', ')}`);
-    }
-    console.log('========================================\n');
-
-    return result;
   }
 }

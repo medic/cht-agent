@@ -134,27 +134,38 @@ export async function captureChtCoreDiff(
   );
 
   const files: GeneratedFile[] = [];
+  await collectTrackedChanges(files, nameList, chtCorePath, preRunSha);
+  await collectUntrackedCreates(files, untrackedList, chtCorePath, preRunSha);
+  return files;
+}
 
-  // Tracked changes (M, A, R, ...)
+async function collectTrackedChanges(
+  files: GeneratedFile[],
+  nameList: string,
+  chtCorePath: string,
+  preRunSha: string,
+): Promise<void> {
   for (const line of nameList.split('\n').filter(Boolean)) {
     const parts = line.split('\t');
     const status = parts[0]?.charAt(0);
     const relPath = parts[parts.length - 1];
-    if (!status || !relPath) continue;
-    if (status === 'D') continue; // skip deletes; not modeled in GeneratedFile
-
+    if (!status || !relPath || status === 'D') continue;
     const action: 'create' | 'modify' = status === 'A' ? 'create' : 'modify';
     const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, action);
     if (file) files.push(file);
   }
+}
 
-  // Untracked files = new CREATEs the CLI made.
+async function collectUntrackedCreates(
+  files: GeneratedFile[],
+  untrackedList: string,
+  chtCorePath: string,
+  preRunSha: string,
+): Promise<void> {
   for (const relPath of untrackedList.split('\n').filter(Boolean)) {
     const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
     if (file) files.push(file);
   }
-
-  return files;
 }
 
 async function readChtCoreFile(

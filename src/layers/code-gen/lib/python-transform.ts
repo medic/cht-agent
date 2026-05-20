@@ -34,6 +34,29 @@ export interface PythonTransformResult {
   pythonMissing: boolean;
 }
 
+function handlePythonError(error: Error, stderr: string): PythonTransformResult {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === 'ENOENT') {
+    console.error('[Code Gen Lib]   python3 binary disappeared mid-run.');
+    if (stderr) console.error(`[Code Gen Lib]   stderr: ${stderr}`);
+    return { content: null, pythonMissing: true };
+  }
+  console.error(`[Code Gen Lib]   Python script error: ${error.message}`);
+  if (stderr) console.error(`[Code Gen Lib]   stderr: ${stderr}`);
+  return { content: null, pythonMissing: false };
+}
+
+function readAndValidateJson(tmpJsonPath: string): PythonTransformResult {
+  try {
+    const modified = fs.readFileSync(tmpJsonPath, 'utf-8');
+    JSON.parse(modified);
+    return { content: modified, pythonMissing: false };
+  } catch (readErr) {
+    console.error(`[Code Gen Lib]   Failed to read/validate modified JSON: ${readErr}`);
+    return { content: null, pythonMissing: false };
+  }
+}
+
 /**
  * Execute a Python script to transform a JSON file.
  * Writes the original content + script to temp files, runs python3, reads the result.
@@ -53,27 +76,8 @@ export async function executePythonTransform(
 
     const result = await new Promise<PythonTransformResult>((resolve) => {
       execFile('python3', [tmpScriptPath, tmpJsonPath], { timeout: 30000 }, (error, _stdout, stderr) => {
-        if (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code === 'ENOENT') {
-            console.error('[Code Gen Lib]   python3 binary disappeared mid-run.');
-            if (stderr) console.error(`[Code Gen Lib]   stderr: ${stderr}`);
-            resolve({ content: null, pythonMissing: true });
-            return;
-          }
-          console.error(`[Code Gen Lib]   Python script error: ${error.message}`);
-          if (stderr) console.error(`[Code Gen Lib]   stderr: ${stderr}`);
-          resolve({ content: null, pythonMissing: false });
-          return;
-        }
-        try {
-          const modified = fs.readFileSync(tmpJsonPath, 'utf-8');
-          JSON.parse(modified);
-          resolve({ content: modified, pythonMissing: false });
-        } catch (readErr) {
-          console.error(`[Code Gen Lib]   Failed to read/validate modified JSON: ${readErr}`);
-          resolve({ content: null, pythonMissing: false });
-        }
+        if (error) return resolve(handlePythonError(error, stderr));
+        resolve(readAndValidateJson(tmpJsonPath));
       });
     });
 

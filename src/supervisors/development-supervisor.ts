@@ -84,34 +84,54 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
   const score = state.validationResult?.overallScore ?? 0;
   const iterations = state.iterationCount ?? 0;
   const issues = state.codeGeneration?.crossFileIssues ?? [];
-  const hasExecuteNoOp = issues.some(i => i.issueType === 'execute-no-op');
-  const hasCrossFileIssues = issues.length > 0;
-
   // R17 (v7): when the CLI abstained even after the relaxed retry, looping
   // cannot help — it would just repeat the same abstain pattern with the
   // same plan. End cleanly so the user sees the HC2 banner.
-  if (hasExecuteNoOp) {
+  if (issues.some(i => i.issueType === 'execute-no-op')) {
     console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
     return '__end__';
   }
-
-  // D2: loop back when either the LLM-judge score is below threshold OR the
-  // deterministic cross-file validator found identifier mismatches. Without
-  // the second condition, a high-scoring run that nonetheless has dangling
-  // Selectors.X references ends without ever retrying.
-  if ((score < REFINEMENT_THRESHOLD || hasCrossFileIssues) && iterations < MAX_ITERATIONS) {
-    const reason = score < REFINEMENT_THRESHOLD
-      ? `Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold`
-      : `${issues.length} cross-file issue(s)`;
-    console.log(`[Development Supervisor] ${reason}, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
+  const belowBar = score < REFINEMENT_THRESHOLD || issues.length > 0;
+  if (belowBar && iterations < MAX_ITERATIONS) {
+    logRefinementLoop(score, issues, iterations);
     return 'generateCode';
   }
-
-  if (score < REFINEMENT_THRESHOLD || hasCrossFileIssues) {
+  if (belowBar) {
     console.log(`[Development Supervisor] Below quality bar but max iterations (${MAX_ITERATIONS}) reached — proceeding to END`);
   }
 
   return '__end__';
+}
+
+function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
+  return issue.issue.requirements.map(req => {
+    const isImplemented = codeGen.implementedRequirements.includes(req);
+    return {
+      requirement: req,
+      met: isImplemented,
+      notes: isImplemented ? 'Appears to be implemented' : 'Not found in generated code',
+    };
+  });
+}
+
+function checkAcceptanceCriteria(issue: IssueTemplate, codeGen: CodeGenerationResult) {
+  const allCode = codeGen.files.map(f => f.content).join('\n').toLowerCase();
+  return issue.issue.acceptance_criteria.map(criteria => {
+    const keywords = criteria.toLowerCase().split(' ').filter(w => w.length > 4);
+    const hasMatches = keywords.some(kw => allCode.includes(kw));
+    return {
+      criteria,
+      passed: hasMatches,
+      notes: hasMatches ? 'Keywords found in implementation' : 'May need manual verification',
+    };
+  });
+}
+
+function logRefinementLoop(score: number, issues: { issueType?: string }[], iterations: number): void {
+  const reason = score < REFINEMENT_THRESHOLD
+    ? `Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold`
+    : `${issues.length} cross-file issue(s)`;
+  console.log(`[Development Supervisor] ${reason}, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
 }
 
 interface DevelopmentSupervisorOptions {
@@ -376,42 +396,46 @@ export class DevelopmentSupervisor {
       console.log('[Development Supervisor] Shutdown requested; skipping validation node');
       return { currentPhase: 'complete' as const };
     }
-
     console.log('\n=== VALIDATION NODE ===');
-
     const todoId = 'development-3';
     this.todos.start(todoId);
 
     if (!state.issue || !state.codeGeneration) {
       this.todos.fail(todoId, 'Missing required data');
-      return {
-        errors: ['Missing required data for validation'],
-        currentPhase: 'validation' as const,
-      };
+      return { errors: ['Missing required data for validation'], currentPhase: 'validation' as const };
     }
-
-    // Skip validation if no files were generated — nothing to judge
     if (state.codeGeneration.files.length === 0) {
-      console.log('[Development Supervisor] Skipping validation — no files generated');
-      this.todos.complete(todoId);
-      this.todos.printSummary();
-      return {
-        validationResult: this.heuristicValidation(state.issue, state.codeGeneration, state.testEnvironment),
-        currentPhase: 'complete' as const,
-      };
+      return this.skipValidationForEmptyFiles(state, todoId);
     }
+    return await this.runValidationWithTodo(state, todoId);
+  }
 
+  private skipValidationForEmptyFiles(
+    state: typeof DevelopmentStateAnnotation.State,
+    todoId: string,
+  ): { validationResult: ImplementationValidation; currentPhase: 'complete' } {
+    console.log('[Development Supervisor] Skipping validation — no files generated');
+    this.todos.complete(todoId);
+    this.todos.printSummary();
+    return {
+      validationResult: this.heuristicValidation(state.issue!, state.codeGeneration!, state.testEnvironment),
+      currentPhase: 'complete' as const,
+    };
+  }
+
+  private async runValidationWithTodo(
+    state: typeof DevelopmentStateAnnotation.State,
+    todoId: string,
+  ) {
     try {
       const validation = await this.validateImplementation(
-        state.issue,
-        state.codeGeneration,
+        state.issue!,
+        state.codeGeneration!,
         state.testEnvironment
       );
-
       this.todos.complete(todoId);
       this.todos.printSummary();
-
-      return this.buildValidationStateUpdate(validation, state.codeGeneration);
+      return this.buildValidationStateUpdate(validation, state.codeGeneration!);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.todos.fail(todoId, errorMessage);
@@ -634,22 +658,21 @@ Respond with a JSON object:
    */
   private buildCodeSection(files: GeneratedFile[], budgetChars: number): string {
     if (files.length === 0) return 'No files generated.';
-
     const sections: string[] = [];
     let remaining = budgetChars;
-
     for (const file of files) {
       if (remaining < 100) break;
-      let section = this.renderFileSection(file, remaining);
-      if (section.length > remaining) {
-        // Truncate section to fit budget
-        section = section.substring(0, remaining - 20) + '\n... (truncated)\n```';
-      }
+      const section = this.renderAndFitSection(file, remaining);
       sections.push(section);
       remaining -= section.length;
     }
-
     return sections.join('\n\n');
+  }
+
+  private renderAndFitSection(file: GeneratedFile, remaining: number): string {
+    const section = this.renderFileSection(file, remaining);
+    if (section.length <= remaining) return section;
+    return section.substring(0, remaining - 20) + '\n... (truncated)\n```';
   }
 
   /**
@@ -715,42 +738,39 @@ Respond with a JSON object:
     codeGen: CodeGenerationResult,
     testEnv?: TestEnvironmentResult
   ): ImplementationValidation {
-    const requirementsMet = issue.issue.requirements.map((req) => {
-      const isImplemented = codeGen.implementedRequirements.includes(req);
-      return {
-        requirement: req,
-        met: isImplemented,
-        notes: isImplemented ? 'Appears to be implemented' : 'Not found in generated code',
-      };
-    });
+    const requirementsMet = checkRequirements(issue, codeGen);
+    const acceptanceCriteriaPassed = checkAcceptanceCriteria(issue, codeGen);
+    const metCount = requirementsMet.filter(r => r.met).length;
+    const passedCount = acceptanceCriteriaPassed.filter(c => c.passed).length;
+    const overallScore = this.computeOverallScore(metCount, passedCount, requirementsMet.length, acceptanceCriteriaPassed.length, testEnv);
+    const recommendations = this.buildHeuristicRecommendations(metCount, requirementsMet.length, testEnv, overallScore);
+    return { requirementsMet, acceptanceCriteriaPassed, overallScore, recommendations };
+  }
 
-    const acceptanceCriteriaPassed = issue.issue.acceptance_criteria.map((criteria) => {
-      // Simple heuristic: check if related keywords exist in code
-      const keywords = criteria.toLowerCase().split(' ').filter((w) => w.length > 4);
-      const allCode = codeGen.files.map((f) => f.content).join('\n').toLowerCase();
-      const hasMatches = keywords.some((kw) => allCode.includes(kw));
-
-      return {
-        criteria,
-        passed: hasMatches,
-        notes: hasMatches ? 'Keywords found in implementation' : 'May need manual verification',
-      };
-    });
-
-    const metCount = requirementsMet.filter((r) => r.met).length;
-    const passedCount = acceptanceCriteriaPassed.filter((c) => c.passed).length;
-    const totalChecks = requirementsMet.length + acceptanceCriteriaPassed.length;
+  private computeOverallScore(
+    metCount: number,
+    passedCount: number,
+    totalRequirements: number,
+    totalCriteria: number,
+    testEnv?: TestEnvironmentResult,
+  ): number {
+    const totalChecks = totalRequirements + totalCriteria;
     const passedChecks = metCount + passedCount;
-
-    let overallScore = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
-
-    // Bonus for having tests (only when test generation wasn't skipped)
+    let score = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
     if (!this.skipTestEnvironment && testEnv && testEnv.testFiles.length > 0) {
-      overallScore = Math.min(overallScore + 10, 100);
+      score = Math.min(score + 10, 100);
     }
+    return score;
+  }
 
+  private buildHeuristicRecommendations(
+    metCount: number,
+    totalRequirements: number,
+    testEnv: TestEnvironmentResult | undefined,
+    overallScore: number,
+  ): string[] {
     const recommendations: string[] = [];
-    if (metCount < requirementsMet.length) {
+    if (metCount < totalRequirements) {
       recommendations.push('Some requirements may not be fully implemented - manual review needed');
     }
     if (!this.skipTestEnvironment && (!testEnv || testEnv.testFiles.length === 0)) {
@@ -759,13 +779,7 @@ Respond with a JSON object:
     if (overallScore < 70) {
       recommendations.push('Implementation confidence is low - additional review recommended');
     }
-
-    return {
-      requirementsMet,
-      acceptanceCriteriaPassed,
-      overallScore,
-      recommendations,
-    };
+    return recommendations;
   }
 
   /**

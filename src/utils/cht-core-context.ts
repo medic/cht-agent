@@ -123,39 +123,28 @@ function readFileWithLimit(filePath: string, maxLines: number = 200): string | n
  */
 function resolveToFiles(basePath: string, relativePath: string): string[] {
   const fullPath = path.join(basePath, relativePath);
-
-  if (!fs.existsSync(fullPath)) {
-    return [];
-  }
-
+  if (!fs.existsSync(fullPath)) return [];
   const stats = fs.statSync(fullPath);
-
-  if (stats.isFile()) {
-    return [fullPath];
-  }
-
-  if (stats.isDirectory()) {
-    // Get main files from directory (limit to key files)
-    const files: string[] = [];
-    try {
-      const entries = fs.readdirSync(fullPath);
-      for (const entry of entries) {
-        const entryPath = path.join(fullPath, entry);
-        const entryStats = fs.statSync(entryPath);
-
-        if (entryStats.isFile() && /\.(ts|js)$/.test(entry)) {
-          files.push(entryPath);
-          // Limit to 5 files per directory
-          if (files.length >= 5) break;
-        }
-      }
-    } catch {
-      // Ignore read errors
-    }
-    return files;
-  }
-
+  if (stats.isFile()) return [fullPath];
+  if (stats.isDirectory()) return readTopTsJsFiles(fullPath, 5);
   return [];
+}
+
+function readTopTsJsFiles(dirPath: string, limit: number): string[] {
+  const files: string[] = [];
+  try {
+    for (const entry of fs.readdirSync(dirPath)) {
+      const entryPath = path.join(dirPath, entry);
+      const entryStats = fs.statSync(entryPath);
+      if (entryStats.isFile() && /\.(ts|js)$/.test(entry)) {
+        files.push(entryPath);
+        if (files.length >= limit) break;
+      }
+    }
+  } catch {
+    // Ignore read errors
+  }
+  return files;
 }
 
 /**
@@ -180,86 +169,75 @@ export function gatherDomainContext(
   }
 
   const mapping = index.domains[domain];
+  const allPaths = collectMappedPaths(mapping);
+  const sortedPaths = sortPathsByPrioritization(allPaths, prioritize);
+
   const codeSnippets: CodeSnippet[] = [];
   const availableFiles: string[] = [];
   const missingFiles: string[] = [];
-
-  // Collect all file paths from mapping
-  const allPaths: Array<{ path: string; relevance: 'high' | 'medium' | 'low' }> = [];
-
-  // Webapp services are high relevance
-  for (const p of mapping.webapp.services) {
-    allPaths.push({ path: p, relevance: 'high' });
-  }
-
-  // Webapp modules are high relevance
-  for (const p of mapping.webapp.modules) {
-    allPaths.push({ path: p, relevance: 'high' });
-  }
-
-  // API controllers are medium relevance
-  for (const p of mapping.api.controllers) {
-    allPaths.push({ path: p, relevance: 'medium' });
-  }
-
-  // Sentinel transitions are medium relevance
-  for (const p of mapping.sentinel.transitions) {
-    allPaths.push({ path: p, relevance: 'medium' });
-  }
-
-  // Shared libs are low relevance (usually large)
-  for (const lib of mapping.shared_libs) {
-    if (lib.critical) {
-      allPaths.push({ path: `${lib.path}/src`, relevance: 'low' });
-    }
-  }
-
-  // Prioritize paths that match the prioritize list
-  const sortedPaths = allPaths.toSorted((a, b) => {
-    const aMatch = prioritize.some((p) => a.path.includes(p));
-    const bMatch = prioritize.some((p) => b.path.includes(p));
-    if (aMatch && !bMatch) return -1;
-    if (!aMatch && bMatch) return 1;
-
-    const relevanceOrder = { high: 0, medium: 1, low: 2 };
-    return relevanceOrder[a.relevance] - relevanceOrder[b.relevance];
-  });
-
-  // Read files
   for (const { path: relativePath, relevance } of sortedPaths) {
     if (codeSnippets.length >= maxSnippets) break;
-
-    const files = resolveToFiles(chtCorePath, relativePath);
-
-    if (files.length === 0) {
-      missingFiles.push(relativePath);
-      continue;
-    }
-
-    for (const file of files) {
-      if (codeSnippets.length >= maxSnippets) break;
-
-      const content = readFileWithLimit(file);
-      if (content) {
-        const relPath = path.relative(chtCorePath, file);
-        availableFiles.push(relPath);
-        codeSnippets.push({
-          filePath: relPath,
-          content,
-          language: getLanguage(file),
-          relevance,
-        });
-      }
-    }
+    addSnippetsForPath({
+      chtCorePath, relativePath, relevance, maxSnippets, codeSnippets, availableFiles, missingFiles,
+    });
   }
+  return { domain, description: mapping.description, codeSnippets, availableFiles, missingFiles };
+}
 
-  return {
-    domain,
-    description: mapping.description,
-    codeSnippets,
-    availableFiles,
-    missingFiles,
-  };
+interface DomainMapping {
+  webapp: { services: string[]; modules: string[] };
+  api: { controllers: string[] };
+  sentinel: { transitions: string[] };
+  shared_libs: { path: string; critical: boolean }[];
+}
+type RelevancePath = { path: string; relevance: 'high' | 'medium' | 'low' };
+
+function collectMappedPaths(mapping: DomainMapping): RelevancePath[] {
+  const paths: RelevancePath[] = [];
+  for (const p of mapping.webapp.services) paths.push({ path: p, relevance: 'high' });
+  for (const p of mapping.webapp.modules) paths.push({ path: p, relevance: 'high' });
+  for (const p of mapping.api.controllers) paths.push({ path: p, relevance: 'medium' });
+  for (const p of mapping.sentinel.transitions) paths.push({ path: p, relevance: 'medium' });
+  for (const lib of mapping.shared_libs) {
+    if (lib.critical) paths.push({ path: `${lib.path}/src`, relevance: 'low' });
+  }
+  return paths;
+}
+
+function sortPathsByPrioritization(paths: RelevancePath[], prioritize: string[]): RelevancePath[] {
+  const relevanceOrder = { high: 0, medium: 1, low: 2 };
+  return paths.toSorted((a, b) => {
+    const aMatch = prioritize.some(p => a.path.includes(p));
+    const bMatch = prioritize.some(p => b.path.includes(p));
+    if (aMatch && !bMatch) return -1;
+    if (!aMatch && bMatch) return 1;
+    return relevanceOrder[a.relevance] - relevanceOrder[b.relevance];
+  });
+}
+
+function addSnippetsForPath(args: {
+  chtCorePath: string;
+  relativePath: string;
+  relevance: 'high' | 'medium' | 'low';
+  maxSnippets: number;
+  codeSnippets: CodeSnippet[];
+  availableFiles: string[];
+  missingFiles: string[];
+}): void {
+  const { chtCorePath, relativePath, relevance, maxSnippets, codeSnippets, availableFiles, missingFiles } = args;
+  const files = resolveToFiles(chtCorePath, relativePath);
+  if (files.length === 0) {
+    missingFiles.push(relativePath);
+    return;
+  }
+  for (const file of files) {
+    if (codeSnippets.length >= maxSnippets) break;
+    const content = readFileWithLimit(file);
+    if (!content) continue;
+    const relPath = path.relative(chtCorePath, file);
+    availableFiles.push(relPath);
+    codeSnippets.push({ filePath: relPath, content, language: getLanguage(file), relevance });
+  }
 }
 
 /**
@@ -305,10 +283,7 @@ export function formatContextForPrompt(context: CHTCoreContext): string {
  */
 export function getDomainComponentSummary(domain: CHTDomain): string | null {
   const index = loadIndex('domain-to-components') as DomainToComponentsIndex | null;
-  if (!index?.domains[domain]) {
-    return null;
-  }
-
+  if (!index?.domains[domain]) return null;
   const mapping = index.domains[domain];
   const lines: string[] = [
     `## ${domain} Domain Components`,
@@ -316,39 +291,10 @@ export function getDomainComponentSummary(domain: CHTDomain): string | null {
     `**Description:** ${mapping.description}`,
     '',
   ];
-
-  if (mapping.webapp.services.length > 0) {
-    lines.push('**Webapp Services:**');
-    for (const s of mapping.webapp.services) {
-      lines.push(`- ${s}`);
-    }
-    lines.push('');
-  }
-
-  if (mapping.webapp.modules.length > 0) {
-    lines.push('**Webapp Modules:**');
-    for (const m of mapping.webapp.modules) {
-      lines.push(`- ${m}`);
-    }
-    lines.push('');
-  }
-
-  if (mapping.api.controllers.length > 0) {
-    lines.push('**API Controllers:**');
-    for (const c of mapping.api.controllers) {
-      lines.push(`- ${c}`);
-    }
-    lines.push('');
-  }
-
-  if (mapping.sentinel.transitions.length > 0) {
-    lines.push('**Sentinel Transitions:**');
-    for (const t of mapping.sentinel.transitions) {
-      lines.push(`- ${t}`);
-    }
-    lines.push('');
-  }
-
+  appendBulletSection(lines, '**Webapp Services:**', mapping.webapp.services);
+  appendBulletSection(lines, '**Webapp Modules:**', mapping.webapp.modules);
+  appendBulletSection(lines, '**API Controllers:**', mapping.api.controllers);
+  appendBulletSection(lines, '**Sentinel Transitions:**', mapping.sentinel.transitions);
   if (mapping.shared_libs.length > 0) {
     lines.push('**Shared Libraries:**');
     for (const lib of mapping.shared_libs) {
@@ -356,6 +302,12 @@ export function getDomainComponentSummary(domain: CHTDomain): string | null {
     }
     lines.push('');
   }
-
   return lines.join('\n');
+}
+
+function appendBulletSection(lines: string[], heading: string, items: string[]): void {
+  if (items.length === 0) return;
+  lines.push(heading);
+  for (const item of items) lines.push(`- ${item}`);
+  lines.push('');
 }

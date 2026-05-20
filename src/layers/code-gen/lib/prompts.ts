@@ -21,6 +21,29 @@ function formatBulletList(items: ReadonlyArray<string>): string {
   return items.map(item => `- ${item}`).join('\n');
 }
 
+function summarizeArray(val: unknown[]): string {
+  if (val.length === 0) return '[]';
+  const first = typeof val[0] === 'object' ? '{...}' : JSON.stringify(val[0]).substring(0, 40);
+  return `[ ${val.length} items, first: ${first} ]`;
+}
+
+function summarizeObject(
+  obj: Record<string, unknown>,
+  depth: number,
+  recurse: (val: unknown, depth: number) => string,
+): string {
+  const indent = '  '.repeat(depth);
+  const keys = Object.keys(obj);
+  if (keys.length === 0) return '{}';
+  if (depth >= 2) {
+    const overflow = keys.length > 5 ? ', ...' : '';
+    return `{ ${keys.length} keys: ${keys.slice(0, 5).join(', ')}${overflow} }`;
+  }
+  const entries = keys.slice(0, 15).map(k => `${indent}  "${k}": ${recurse(obj[k], depth + 1)}`);
+  const more = keys.length > 15 ? `\n${indent}  ... (${keys.length - 15} more keys)` : '';
+  return `{\n${entries.join('\n')}${more}\n${indent}}`;
+}
+
 /**
  * Build a structural summary of a JSON file for the LLM.
  * Shows top-level keys, their types, and nested key names — enough to
@@ -32,23 +55,10 @@ export function buildJsonStructureSummary(content: string): string {
     const lines: string[] = ['```', 'JSON structure (top-level keys):'];
 
     const summarizeValue = (val: unknown, depth: number = 0): string => {
-      const indent = '  '.repeat(depth);
       if (val === null) return 'null';
       if (typeof val !== 'object') return `${typeof val}: ${JSON.stringify(val).substring(0, 60)}`;
-      if (Array.isArray(val)) {
-        if (val.length === 0) return '[]';
-        const first = typeof val[0] === 'object' ? '{...}' : JSON.stringify(val[0]).substring(0, 40);
-        return `[ ${val.length} items, first: ${first} ]`;
-      }
-      const obj = val as Record<string, unknown>;
-      const keys = Object.keys(obj);
-      if (keys.length === 0) return '{}';
-      if (depth >= 2) return `{ ${keys.length} keys: ${keys.slice(0, 5).join(', ')}${keys.length > 5 ? ', ...' : ''} }`;
-      const entries = keys.slice(0, 15).map(k => {
-        return `${indent}  "${k}": ${summarizeValue(obj[k], depth + 1)}`;
-      });
-      const more = keys.length > 15 ? `\n${indent}  ... (${keys.length - 15} more keys)` : '';
-      return `{\n${entries.join('\n')}${more}\n${indent}}`;
+      if (Array.isArray(val)) return summarizeArray(val);
+      return summarizeObject(val as Record<string, unknown>, depth, summarizeValue);
     };
 
     lines.push(summarizeValue(data, 0), '```');
@@ -62,34 +72,41 @@ export function buildJsonStructureSummary(content: string): string {
 /**
  * Build the LLM prompt that produces the implementation plan (file-list-only output).
  */
-export function buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifest): string {
-  const { ticket, orchestrationPlan, researchFindings, contextFiles } = input;
+const MAX_PLAN_CONTEXT_BYTES = 64 * 1024;
 
-  const MAX_CONTEXT_BYTES = 64 * 1024;
-  let existingCodeContext = '';
+function truncateFileContent(content: string): string {
+  const lines = content.split('\n');
+  if (lines.length <= 300) return content;
+  return lines.slice(0, 200).join('\n') + `\n... (${lines.length - 200} more lines)`;
+}
+
+function buildExistingCodeContext(contextFiles: ReadonlyArray<ContextFile>): string {
+  let context = '';
   let usedBytes = 0;
   let truncatedFileCount = 0;
-  const feedbackContext = extractValidationFeedback(contextFiles);
   for (const file of contextFiles) {
     if (file.source !== 'workspace') continue;
-    const lines = file.content.split('\n');
-    const content = lines.length > 300
-      ? lines.slice(0, 200).join('\n') + `\n... (${lines.length - 200} more lines)`
-      : file.content;
-    const section = `\n--- ${file.path} ---\n${content}\n`;
-    if (usedBytes + section.length > MAX_CONTEXT_BYTES) {
+    const section = `\n--- ${file.path} ---\n${truncateFileContent(file.content)}\n`;
+    if (usedBytes + section.length > MAX_PLAN_CONTEXT_BYTES) {
       truncatedFileCount++;
       continue;
     }
-    existingCodeContext += section;
+    context += section;
     usedBytes += section.length;
   }
   if (truncatedFileCount > 0) {
-    existingCodeContext +=
+    context +=
       `\n[NOTE: ${truncatedFileCount} file(s) omitted to fit a ` +
-      `${Math.floor(MAX_CONTEXT_BYTES / 1024)} KiB context budget. ` +
+      `${Math.floor(MAX_PLAN_CONTEXT_BYTES / 1024)} KiB context budget. ` +
       `Files are ranked by relevance; omitted entries are the least relevant.]\n`;
   }
+  return context;
+}
+
+export function buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifest): string {
+  const { ticket, orchestrationPlan, researchFindings, contextFiles } = input;
+  const feedbackContext = extractValidationFeedback(contextFiles);
+  const existingCodeContext = buildExistingCodeContext(contextFiles);
 
   const manifestSection = buildManifestSection(manifest);
 
@@ -229,18 +246,45 @@ export interface BuildSingleFilePromptOpts {
  * Includes the full plan for context, original content for MODIFY,
  * and summaries of previously generated files for coherence.
  */
+function logJsonPromptCheck(planItem: PlanItem, originalContentMap: Map<string, string>, isLarge: boolean): void {
+  if (!planItem.filePath.endsWith('.json')) return;
+  const hasContent = originalContentMap.has(planItem.filePath);
+  const lineCount = hasContent ? originalContentMap.get(planItem.filePath)!.split('\n').length : 0;
+  console.log(`[Code Gen Lib]   JSON prompt check: path=${planItem.filePath} hasContent=${hasContent} lines=${lineCount} isLarge=${isLarge} action=${planItem.action}`);
+}
+
+function buildOriginalContentSection(planItem: PlanItem, originalContentMap: Map<string, string>, isLarge: boolean): string {
+  if (planItem.action !== 'MODIFY') return '';
+  const original = originalContentMap.get(planItem.filePath);
+  if (!original) return '';
+  if (isLarge) {
+    return `\n\n## Original File Content (${original.split('\n').length} lines — output ONLY search-replace blocks, NOT the full file)\n\`\`\`\n${original}\n\`\`\``;
+  }
+  return `\n\n## Original File Content (you must output the COMPLETE modified version)\n\`\`\`\n${original}\n\`\`\``;
+}
+
+function buildPreviouslyGeneratedSection(previouslyGenerated: GeneratedFile[]): string {
+  if (previouslyGenerated.length === 0) return '';
+  let section = `\n\n## Previously Generated Files (PUBLIC API SURFACE — these are the exact identifier names you MUST reference)`;
+  for (const prev of previouslyGenerated) {
+    const surface = extractPublicSurface(prev.path, prev.content);
+    section += `\n### ${prev.path}${prev.purpose ? ` — ${prev.purpose}` : ''}\n\`\`\`\n${surface}\n\`\`\``;
+  }
+  return section;
+}
+
+function buildPreviousFailuresSection(previousFailures?: string[]): string {
+  if (!previousFailures || previousFailures.length === 0) return '';
+  return `\n\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${previousFailures.map(f => `- ${f}`).join('\n')}\nFix these specific issues. Do not repeat the same mistakes.`;
+}
+
 export function buildSingleFilePrompt(opts: BuildSingleFilePromptOpts): string {
   const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures } = opts;
   const { ticket, researchFindings } = input;
 
   const isLarge = isLargeFile(planItem, originalContentMap);
-  const isJson = planItem.filePath.endsWith('.json');
-  if (isJson) {
-    const hasContent = originalContentMap.has(planItem.filePath);
-    const lineCount = hasContent ? originalContentMap.get(planItem.filePath)!.split('\n').length : 0;
-    console.log(`[Code Gen Lib]   JSON prompt check: path=${planItem.filePath} hasContent=${hasContent} lines=${lineCount} isLarge=${isLarge} action=${planItem.action}`);
-  }
-  if (isLarge && isJson && planItem.action === 'MODIFY') {
+  logJsonPromptCheck(planItem, originalContentMap, isLarge);
+  if (isLarge && planItem.filePath.endsWith('.json') && planItem.action === 'MODIFY') {
     return buildLargeJsonPrompt(planItem, originalContentMap, previousFailures);
   }
 
@@ -277,56 +321,12 @@ ${formatBulletList(researchFindings.suggestedApproaches)}`;
 
   const feedback = extractValidationFeedback(input.contextFiles);
   if (feedback) {
-    prompt += `
-
-## Validation Feedback from Previous Iteration
-The previous attempt at generating this code was validated and found lacking. Address ALL issues below:
-${feedback}`;
+    prompt += `\n\n## Validation Feedback from Previous Iteration\nThe previous attempt at generating this code was validated and found lacking. Address ALL issues below:\n${feedback}`;
   }
 
-  if (planItem.action === 'MODIFY') {
-    const original = originalContentMap.get(planItem.filePath);
-    if (original) {
-      if (isLarge) {
-        prompt += `
-
-## Original File Content (${original.split('\n').length} lines — output ONLY search-replace blocks, NOT the full file)
-\`\`\`
-${original}
-\`\`\``;
-      } else {
-        prompt += `
-
-## Original File Content (you must output the COMPLETE modified version)
-\`\`\`
-${original}
-\`\`\``;
-      }
-    }
-  }
-
-  if (previouslyGenerated.length > 0) {
-    prompt += `
-
-## Previously Generated Files (PUBLIC API SURFACE — these are the exact identifier names you MUST reference)`;
-    for (const prev of previouslyGenerated) {
-      const surface = extractPublicSurface(prev.path, prev.content);
-      prompt += `
-### ${prev.path}${prev.purpose ? ` — ${prev.purpose}` : ''}
-\`\`\`
-${surface}
-\`\`\``;
-    }
-  }
-
-  if (previousFailures && previousFailures.length > 0) {
-    prompt += `
-
-## PREVIOUS ATTEMPT FAILED
-Your previous output for this file failed these checks:
-${previousFailures.map(f => `- ${f}`).join('\n')}
-Fix these specific issues. Do not repeat the same mistakes.`;
-  }
+  prompt += buildOriginalContentSection(planItem, originalContentMap, isLarge);
+  prompt += buildPreviouslyGeneratedSection(previouslyGenerated);
+  prompt += buildPreviousFailuresSection(previousFailures);
 
   if (previouslyGenerated.length > 0) {
     prompt += `

@@ -52,69 +52,143 @@ export function astValidate(files: GeneratedFile[]): CrossFileIssue[] {
  */
 function checkSignatureCoverage(tsFiles: GeneratedFile[]): CrossFileIssue[] {
   const issues: CrossFileIssue[] = [];
-
   for (const file of tsFiles) {
     if (!file.originalContent) continue;
-
-    const newMethods = collectMethodSignatures(file.relativePath, file.content);
-    const oldMethods = collectMethodSignatures(file.relativePath, file.originalContent);
-
-    for (const [methodName, newSig] of newMethods) {
-      const oldSig = oldMethods.get(methodName);
-      if (!oldSig) continue;
-      if (newSig.params.length <= oldSig.params.length) continue;
-
-      const addedParams = newSig.params.slice(oldSig.params.length).map(p => p.name);
-      const newParamNames = addedParams.join(', ');
-
-      for (const otherFile of tsFiles) {
-        if (otherFile.relativePath === file.relativePath) continue;
-        // Match `.methodName(args)` calls. Captures the arg list contents (one level deep — no nested parens).
-        const callerRe = new RegExp(String.raw`\.${escapeRegex(methodName)}\s*\(([^()]*)\)`, 'g');
-        let cm: RegExpExecArray | null;
-        const flagged = new Set<number>();
-        while ((cm = callerRe.exec(otherFile.content)) !== null) {
-          const argsText = cm[1].trim();
-          const argCount = argsText === '' ? 0 : splitArgs(argsText).length;
-          if (argCount === oldSig.params.length && !flagged.has(cm.index)) {
-            flagged.add(cm.index);
-            issues.push({
-              filePath: otherFile.relativePath,
-              referencedIdentifier: methodName,
-              expectedSource: file.relativePath,
-              reason: `Method "${methodName}" gained parameter(s) (${newParamNames}) in ${file.relativePath}, but this call site passes ${argCount} arguments (old signature). Add the new argument(s).`,
-            });
-          }
-        }
-      }
-    }
+    issues.push(...collectSignatureDriftIssues(file, tsFiles));
   }
-
   return issues;
+}
+
+/** A method whose param list grew between original and new content. */
+interface GrownMethod {
+  modifiedFilePath: string;
+  methodName: string;
+  oldParamCount: number;
+  newParamNames: string;
+}
+
+/**
+ * For one MODIFY'd TS file, find every method whose param list grew and
+ * collect call-site mismatches across the rest of the batch.
+ */
+function collectSignatureDriftIssues(
+  modifiedFile: GeneratedFile,
+  tsFiles: GeneratedFile[],
+): CrossFileIssue[] {
+  const issues: CrossFileIssue[] = [];
+  for (const grown of findGrownMethods(modifiedFile)) {
+    issues.push(...collectCallSiteIssuesAcrossFiles(grown, tsFiles));
+  }
+  return issues;
+}
+
+function collectCallSiteIssuesAcrossFiles(
+  grown: GrownMethod,
+  tsFiles: GeneratedFile[],
+): CrossFileIssue[] {
+  const issues: CrossFileIssue[] = [];
+  for (const otherFile of tsFiles) {
+    if (otherFile.relativePath === grown.modifiedFilePath) continue;
+    issues.push(...findStaleCallers(otherFile, grown));
+  }
+  return issues;
+}
+
+/** Compare new vs original signatures and emit GrownMethod records. */
+function findGrownMethods(modifiedFile: GeneratedFile): GrownMethod[] {
+  const newMethods = collectMethodSignatures(modifiedFile.relativePath, modifiedFile.content);
+  const oldMethods = collectMethodSignatures(modifiedFile.relativePath, modifiedFile.originalContent!);
+  const grown: GrownMethod[] = [];
+  for (const [methodName, newSig] of newMethods) {
+    const oldSig = oldMethods.get(methodName);
+    if (!oldSig || newSig.params.length <= oldSig.params.length) continue;
+    grown.push({
+      modifiedFilePath: modifiedFile.relativePath,
+      methodName,
+      oldParamCount: oldSig.params.length,
+      newParamNames: newSig.params.slice(oldSig.params.length).map(p => p.name).join(', '),
+    });
+  }
+  return grown;
+}
+
+/**
+ * Scan one file for `.methodName(args)` call sites that still pass the old
+ * argument count. Returns an issue for each match.
+ */
+function findStaleCallers(otherFile: GeneratedFile, grown: GrownMethod): CrossFileIssue[] {
+  // Captures the arg list contents one level deep (no nested parens).
+  const callerRe = new RegExp(String.raw`\.${escapeRegex(grown.methodName)}\s*\(([^()]*)\)`, 'g');
+  const issues: CrossFileIssue[] = [];
+  const flagged = new Set<number>();
+  let cm: RegExpExecArray | null;
+  while ((cm = callerRe.exec(otherFile.content)) !== null) {
+    const issue = buildStaleCallerIssue(cm, otherFile, grown, flagged);
+    if (issue) issues.push(issue);
+  }
+  return issues;
+}
+
+function buildStaleCallerIssue(
+  match: RegExpExecArray,
+  otherFile: GeneratedFile,
+  grown: GrownMethod,
+  flagged: Set<number>,
+): CrossFileIssue | null {
+  const argsText = match[1].trim();
+  const argCount = argsText === '' ? 0 : splitArgs(argsText).length;
+  if (argCount !== grown.oldParamCount) return null;
+  if (flagged.has(match.index)) return null;
+  flagged.add(match.index);
+  return {
+    filePath: otherFile.relativePath,
+    referencedIdentifier: grown.methodName,
+    expectedSource: grown.modifiedFilePath,
+    reason: `Method "${grown.methodName}" gained parameter(s) (${grown.newParamNames}) in ${grown.modifiedFilePath}, but this call site passes ${argCount} arguments (old signature). Add the new argument(s).`,
+  };
 }
 
 function collectMethodSignatures(filePath: string, content: string): Map<string, MethodSignature> {
   const sigs = new Map<string, MethodSignature>();
   const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
-
   const visit = (node: ts.Node): void => {
-    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-      for (const member of node.members) {
-        if (ts.isMethodDeclaration(member) && member.name) {
-          const name = member.name.getText(sourceFile);
-          const params = member.parameters.map(p => ({
-            name: p.name.getText(sourceFile),
-            optional: !!p.questionToken || !!p.initializer,
-          }));
-          sigs.set(name, { params });
-        }
-      }
-    }
+    collectMethodsFromClassNode(node, sourceFile, sigs);
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(sourceFile, visit);
-
   return sigs;
+}
+
+function collectMethodsFromClassNode(
+  node: ts.Node,
+  sourceFile: ts.SourceFile,
+  sigs: Map<string, MethodSignature>,
+): void {
+  if (!isClassLikeNode(node)) return;
+  for (const member of node.members) {
+    if (isMethodWithName(member)) registerMethodSignature(member, sourceFile, sigs);
+  }
+}
+
+function isClassLikeNode(node: ts.Node): node is ts.ClassDeclaration | ts.ClassExpression {
+  return ts.isClassDeclaration(node) || ts.isClassExpression(node);
+}
+
+function isMethodWithName(member: ts.ClassElement): member is ts.MethodDeclaration {
+  return ts.isMethodDeclaration(member) && !!member.name;
+}
+
+function registerMethodSignature(
+  member: ts.MethodDeclaration,
+  sourceFile: ts.SourceFile,
+  sigs: Map<string, MethodSignature>,
+): void {
+  sigs.set(member.name!.getText(sourceFile), {
+    params: member.parameters.map(p => ({
+      name: p.name.getText(sourceFile),
+      optional: !!p.questionToken || !!p.initializer,
+    })),
+  });
 }
 
 /**
@@ -128,57 +202,86 @@ function checkPermissionLiterals(
   tsFiles: GeneratedFile[],
   appSettings: GeneratedFile,
 ): CrossFileIssue[] {
-  const issues: CrossFileIssue[] = [];
-
   const definedPermissions = collectDefinedPermissions(appSettings);
   if (definedPermissions.size === 0) return [];
 
-  // Match string literals matching the `can_X_Y(_Z...)` shape (≥3 underscore-separated segments).
-  const literalRe = /['"]([a-z]+(?:_[a-z_]+){2,})['"]/g;
-
+  const issues: CrossFileIssue[] = [];
   for (const file of tsFiles) {
-    const seenInFile = new Set<string>();
-    let m: RegExpExecArray | null;
-    while ((m = literalRe.exec(file.content)) !== null) {
-      const literal = m[1];
-      if (!literal.startsWith('can_')) continue;
-      if (seenInFile.has(literal)) continue;
-      seenInFile.add(literal);
-
-      if (!definedPermissions.has(literal)) {
-        issues.push({
-          filePath: file.relativePath,
-          referencedIdentifier: literal,
-          expectedSource: 'config/default/app_settings.json',
-          reason: `Permission "${literal}" is referenced but not defined in app_settings.json's permissions object.`,
-        });
-      }
-    }
-    literalRe.lastIndex = 0;
+    issues.push(...findUndefinedPermissionLiterals(file, definedPermissions));
   }
-
   return issues;
+}
+
+/**
+ * Match string literals matching the `can_X_Y(_Z...)` shape
+ * (3+ underscore-separated segments).
+ */
+const PERMISSION_LITERAL_RE = /['"]([a-z]+(?:_[a-z_]+){2,})['"]/g;
+
+function findUndefinedPermissionLiterals(
+  file: GeneratedFile,
+  definedPermissions: Set<string>,
+): CrossFileIssue[] {
+  const seen = new Set<string>();
+  const literals = extractCanLiteralsFromContent(file.content, seen);
+  return literals
+    .filter(literal => !definedPermissions.has(literal))
+    .map(literal => buildPermissionIssue(literal, file.relativePath));
+}
+
+/**
+ * Pull every `can_*` literal out of `content`, deduped via `seen`. Returns
+ * the literals in source order, which keeps the resulting issue list stable
+ * across reruns.
+ */
+function extractCanLiteralsFromContent(content: string, seen: Set<string>): string[] {
+  const re = new RegExp(PERMISSION_LITERAL_RE.source, 'g');
+  const out: string[] = [];
+  for (const m of content.matchAll(re)) {
+    const literal = m[1];
+    if (!literal.startsWith('can_') || seen.has(literal)) continue;
+    seen.add(literal);
+    out.push(literal);
+  }
+  return out;
+}
+
+function buildPermissionIssue(literal: string, filePath: string): CrossFileIssue {
+  return {
+    filePath,
+    referencedIdentifier: literal,
+    expectedSource: 'config/default/app_settings.json',
+    reason: `Permission "${literal}" is referenced but not defined in app_settings.json's permissions object.`,
+  };
 }
 
 function collectDefinedPermissions(appSettings: GeneratedFile): Set<string> {
   const keys = new Set<string>();
-  try {
-    const parsed = JSON.parse(appSettings.content) as { permissions?: Record<string, unknown> };
-    for (const k of Object.keys(parsed.permissions ?? {})) keys.add(k);
-  } catch {
-    // malformed JSON; defer to other validators
-  }
+  addPermissionKeysFromJson(keys, appSettings.content);
   if (appSettings.originalContent) {
-    try {
-      const parsed = JSON.parse(appSettings.originalContent) as { permissions?: Record<string, unknown> };
-      for (const k of Object.keys(parsed.permissions ?? {})) keys.add(k);
-    } catch { /* ignore */ }
+    addPermissionKeysFromJson(keys, appSettings.originalContent);
   }
   return keys;
 }
 
+function addPermissionKeysFromJson(keys: Set<string>, jsonText: string): void {
+  try {
+    const parsed = JSON.parse(jsonText) as { permissions?: Record<string, unknown> };
+    for (const k of Object.keys(parsed.permissions ?? {})) keys.add(k);
+  } catch {
+    // malformed JSON; defer to other validators
+  }
+}
+
+/**
+ * Escape regex metacharacters in `str` so the result can be embedded in a
+ * RegExp source. The character class matches any single regex metacharacter;
+ * the canonical MDN helper. S7780/S7781 are false positives here because the
+ * pattern is a character class, not a plain string literal.
+ */
 function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // NOSONAR
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // NOSONAR
 }
 
 function splitArgs(argsText: string): string[] {

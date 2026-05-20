@@ -14,6 +14,7 @@
 import {
   CodeGenerationInput,
   CodeGenerationResult,
+  ContextAnalysisResult,
   GeneratedFile,
   FileLanguage,
   FileType,
@@ -43,6 +44,184 @@ type DomainIndex = { domains?: Record<string, Record<string, unknown>> };
 interface CodeGenerationAgentOptions {
   llmProvider?: LLMProvider;
   codeGenRegistry?: CodeGenModuleRegistry;
+}
+
+/**
+ * Read a file from cht-core into the existing-files map, skipping when it's
+ * already loaded or when the read returns null (missing / unreadable).
+ */
+async function readIntoMap(
+  relativePath: string,
+  chtCorePath: string,
+  existingFiles: Map<string, string>,
+): Promise<void> {
+  if (existingFiles.has(relativePath)) return;
+  const content = await readFromChtCore(relativePath, chtCorePath);
+  if (content) existingFiles.set(relativePath, content);
+}
+
+/** Push every string entry from each named section of `domainData` into `out`. */
+function collectFromSections(
+  domainData: Record<string, unknown>,
+  sections: string[],
+  out: string[],
+): void {
+  for (const section of sections) {
+    const sectionData = domainData[section];
+    if (!sectionData || typeof sectionData !== 'object') continue;
+    pushStringEntriesFromSubtree(sectionData as Record<string, unknown>, out);
+  }
+}
+
+function pushStringEntriesFromSubtree(subtree: Record<string, unknown>, out: string[]): void {
+  for (const entries of Object.values(subtree)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (typeof entry === 'string') out.push(entry);
+    }
+  }
+}
+
+function collectSharedLibPaths(domainData: Record<string, unknown>, out: string[]): void {
+  const sharedLibs = domainData.shared_libs;
+  if (!Array.isArray(sharedLibs)) return;
+  for (const lib of sharedLibs) {
+    if (lib?.path) out.push(lib.path);
+  }
+}
+
+/**
+ * NgRx infrastructure (actions, reducers, effects, selectors) for the domain.
+ * Surfacing these to the LLM during planning lets it emit a coherent
+ * state-management chain (action + reducer + selector + effect).
+ */
+function collectNgrxPaths(domainData: Record<string, unknown>, out: string[]): void {
+  const ngrxData = domainData.ngrx;
+  if (!ngrxData || typeof ngrxData !== 'object') return;
+  pushStringEntriesFromSubtree(ngrxData as Record<string, unknown>, out);
+}
+
+function extractPatternsForPrompt(
+  reusablePatterns: ContextAnalysisResult['reusablePatterns'] | undefined,
+): string[] {
+  if (!reusablePatterns) return [];
+  return reusablePatterns.map(p => `${p.pattern}: ${p.description}`);
+}
+
+/** Produce the variant paths to match a component string against the index. */
+function stripSlashes(value: string): string {
+  let out = value;
+  if (out.startsWith('/')) out = out.slice(1);
+  if (out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+
+function buildComponentVariants(component: string): string[] {
+  // Normalize: strip leading/trailing slashes, normalize webapp/ -> webapp/src/ts/
+  const normalized = stripSlashes(component);
+  return [
+    normalized,
+    normalized.replace(/^webapp\/(?!src\/)/, 'webapp/src/ts/'),
+    normalized.replace(/^webapp\/modules\//, 'webapp/src/ts/modules/'),
+    normalized.replace(/^webapp\/services\//, 'webapp/src/ts/services/'),
+  ];
+}
+
+/**
+ * For one domain's data, push every string entry from the api / webapp /
+ * sentinel sections that matches any of the supplied component variants.
+ */
+function collectComponentMatchesFromDomain(
+  domainData: Record<string, unknown>,
+  variants: string[],
+  matches: string[],
+): void {
+  for (const section of ['api', 'webapp', 'sentinel']) {
+    const sectionData = domainData[section];
+    if (!sectionData || typeof sectionData !== 'object') continue;
+    collectComponentMatchesFromSection(sectionData as Record<string, unknown>, variants, matches);
+  }
+}
+
+function collectComponentMatchesFromSection(
+  sectionData: Record<string, unknown>,
+  variants: string[],
+  matches: string[],
+): void {
+  for (const entries of Object.values(sectionData)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (typeof entry === 'string' && matchesAnyVariant(entry, variants)) {
+        matches.push(entry);
+      }
+    }
+  }
+}
+
+function matchesAnyVariant(entry: string, variants: string[]): boolean {
+  return variants.some(v => entry.startsWith(v) || entry.includes(v));
+}
+
+const CROSS_DOMAIN_KEYWORDS: Record<string, string[]> = {
+  authentication: ['permission', 'auth', 'role', 'login', 'session', 'credential'],
+  configuration: ['app_settings', 'settings', 'config', 'branding'],
+  'data-sync': ['replication', 'sync', 'purge', 'offline'],
+  'forms-and-reports': ['form', 'xform', 'xml-form', 'report', 'xform_id', 'form_id'],
+};
+
+function buildTicketSearchText(issue: CodeGenerationInput['issue']): string {
+  return [
+    issue.issue.title,
+    issue.issue.description,
+    ...issue.issue.requirements,
+    ...issue.issue.technical_context.components,
+  ].join(' ').toLowerCase();
+}
+
+/** Pull the api/webapp service-file lists out of one domain into `out`. */
+function collectServiceFilesFromDomain(
+  domainData: Record<string, unknown>,
+  out: string[],
+): void {
+  for (const section of ['api', 'webapp']) {
+    const sectionData = domainData[section];
+    if (!sectionData || typeof sectionData !== 'object') continue;
+    const services = (sectionData as Record<string, unknown>).services;
+    if (!Array.isArray(services)) continue;
+    for (const entry of services) {
+      if (typeof entry === 'string') out.push(entry);
+    }
+  }
+}
+
+const VALID_LANGUAGES: ReadonlySet<FileLanguage> = new Set<FileLanguage>([
+  'typescript',
+  'javascript',
+  'json',
+  'xml',
+  'yaml',
+  'properties',
+  'markdown',
+  'html',
+  'css',
+  'shell',
+]);
+
+const VALID_FILE_TYPES: ReadonlySet<FileType> = new Set<FileType>([
+  'source',
+  'test',
+  'config',
+  'documentation',
+  'fixture',
+]);
+
+function collectParentDirectories(relevantFiles: string[]): Set<string> {
+  const dirs = new Set<string>();
+  for (const filePath of relevantFiles) {
+    const lastSlash = filePath.lastIndexOf('/');
+    if (lastSlash > 0) dirs.add(filePath.substring(0, lastSlash + 1));
+  }
+  return dirs;
 }
 
 export class CodeGenerationAgent {
@@ -205,116 +384,116 @@ export class CodeGenerationAgent {
     input: CodeGenerationInput
   ): Promise<{ existingFiles: Map<string, string>; relatedPatterns: string[]; directoryListing: string }> {
     const existingFiles = new Map<string, string>();
-    const relatedPatterns: string[] = [];
-
     const { orchestrationPlan, contextAnalysis, chtCorePath, issue } = input;
-    const domain = issue.issue.technical_context.domain;
-
-    // Load domain-to-components index for relevant directories
     const domainToComponents = loadIndex('domain-to-components') as DomainIndex | null;
+
+    const relevantFiles = this.collectRelevantFilesFromDomainIndex(domainToComponents, issue.issue.technical_context.domain);
+    await this.gatherFilesFromPhases(orchestrationPlan, domainToComponents, chtCorePath, existingFiles);
+    this.appendCrossDomainFiles(issue, domainToComponents, relevantFiles);
+    await this.readAllRelevantFiles(relevantFiles, chtCorePath, existingFiles);
+
+    const relatedPatterns = extractPatternsForPrompt(contextAnalysis.reusablePatterns);
+    const directoryListing = await this.buildDirectoryListing(relevantFiles, chtCorePath);
+    return { existingFiles, relatedPatterns, directoryListing };
+  }
+
+  /**
+   * Pull the domain's known files out of the domain-to-components index.
+   * Splits the section / shared_libs / ngrx subtrees into separate helpers
+   * so each remains under the complexity threshold.
+   */
+  private collectRelevantFilesFromDomainIndex(
+    domainToComponents: DomainIndex | null,
+    domain: string,
+  ): string[] {
     const relevantFiles: string[] = [];
+    const domainData = domainToComponents?.domains?.[domain];
+    if (!domainData) return relevantFiles;
+    collectFromSections(domainData, ['api', 'webapp', 'sentinel'], relevantFiles);
+    collectSharedLibPaths(domainData, relevantFiles);
+    collectNgrxPaths(domainData, relevantFiles);
+    console.log(`[Code Generation Agent] Found ${relevantFiles.length} relevant files from index`);
+    return relevantFiles;
+  }
 
-    if (domainToComponents?.domains?.[domain]) {
-      const domainData = domainToComponents.domains[domain];
-      // Flatten nested structure (api.controllers, webapp.modules, etc.) into file paths
-      for (const section of ['api', 'webapp', 'sentinel']) {
-        const sectionData = domainData[section];
-        if (sectionData && typeof sectionData === 'object') {
-          for (const [, entries] of Object.entries(sectionData)) {
-            if (Array.isArray(entries)) {
-              for (const entry of entries) {
-                if (typeof entry === 'string') {
-                  relevantFiles.push(entry);
-                }
-              }
-            }
-          }
-        }
-      }
-      // Also extract shared_libs paths
-      if (Array.isArray(domainData.shared_libs)) {
-        for (const lib of domainData.shared_libs) {
-          if (lib?.path) {
-            relevantFiles.push(lib.path);
-          }
-        }
-      }
-      // NgRx infrastructure (actions, reducers, effects, selectors) for the domain.
-      // Pulling these surfaces the full NgRx flow to the LLM during planning so it
-      // emits coherent state-management changes (action + reducer + selector + effect).
-      const ngrxData = domainData.ngrx as Record<string, unknown> | undefined;
-      if (ngrxData && typeof ngrxData === 'object') {
-        for (const section of ['actions', 'reducers', 'effects', 'selectors']) {
-          const ngrxSection = ngrxData[section];
-          if (Array.isArray(ngrxSection)) {
-            for (const entry of ngrxSection) {
-              if (typeof entry === 'string') {
-                relevantFiles.push(entry);
-              }
-            }
-          }
-        }
-      }
-      console.log(`[Code Generation Agent] Found ${relevantFiles.length} relevant files from index`);
-    }
-
-    // Resolve directory-style components from orchestration plan to actual files
+  /**
+   * Resolve directory-style components from orchestration plan to actual files.
+   */
+  private async gatherFilesFromPhases(
+    orchestrationPlan: CodeGenerationInput['orchestrationPlan'],
+    domainToComponents: DomainIndex | null,
+    chtCorePath: string,
+    existingFiles: Map<string, string>,
+  ): Promise<void> {
     for (const phase of orchestrationPlan.phases) {
       for (const component of phase.suggestedComponents) {
-        const resolvedPaths = this.resolveComponentToFiles(component, domainToComponents);
-        if (resolvedPaths.length > 0) {
-          for (const filePath of resolvedPaths) {
-            if (!existingFiles.has(filePath)) {
-              const content = await readFromChtCore(filePath, chtCorePath);
-              if (content) existingFiles.set(filePath, content);
-            }
-          }
-        } else if (this.looksLikeFilePath(component)) {
-          const content = await readFromChtCore(component, chtCorePath);
-          if (content) existingFiles.set(component, content);
-        }
+        await this.gatherFilesForComponent(component, domainToComponents, chtCorePath, existingFiles);
       }
     }
+  }
 
-    // Gather cross-domain files (e.g., auth/permission files for contacts ticket)
-    const crossDomainFiles = this.getCrossDomainFiles(issue, domainToComponents);
-    if (crossDomainFiles.length > 0) {
-      console.log(`[Code Generation Agent] Found ${crossDomainFiles.length} cross-domain files`);
-      relevantFiles.push(...crossDomainFiles);
+  private async gatherFilesForComponent(
+    component: string,
+    domainToComponents: DomainIndex | null,
+    chtCorePath: string,
+    existingFiles: Map<string, string>,
+  ): Promise<void> {
+    const resolvedPaths = this.resolveComponentToFiles(component, domainToComponents);
+    if (resolvedPaths.length > 0) {
+      for (const filePath of resolvedPaths) {
+        await readIntoMap(filePath, chtCorePath, existingFiles);
+      }
+      return;
     }
+    if (this.looksLikeFilePath(component)) {
+      await readIntoMap(component, chtCorePath, existingFiles);
+    }
+  }
 
-    // Read ALL relevant files from the index (no artificial limit)
+  private appendCrossDomainFiles(
+    issue: CodeGenerationInput['issue'],
+    domainToComponents: DomainIndex | null,
+    relevantFiles: string[],
+  ): void {
+    const crossDomainFiles = this.getCrossDomainFiles(issue, domainToComponents);
+    if (crossDomainFiles.length === 0) return;
+    console.log(`[Code Generation Agent] Found ${crossDomainFiles.length} cross-domain files`);
+    relevantFiles.push(...crossDomainFiles);
+  }
+
+  /**
+   * Read every file listed in `relevantFiles` into the existing-files map,
+   * expanding directory entries (trailing slash) via listChtCoreDirectory.
+   */
+  private async readAllRelevantFiles(
+    relevantFiles: string[],
+    chtCorePath: string,
+    existingFiles: Map<string, string>,
+  ): Promise<void> {
     for (const filePath of relevantFiles) {
       if (existingFiles.has(filePath)) continue;
       if (filePath.endsWith('/')) {
-        try {
-          const files = await listChtCoreDirectory(filePath, chtCorePath);
-          for (const file of files) {
-            if (!file.endsWith('/') && !existingFiles.has(file)) {
-              const content = await readFromChtCore(file, chtCorePath);
-              if (content) existingFiles.set(file, content);
-            }
-          }
-        } catch {
-          // Directory might not exist
-        }
+        await this.readDirectoryIntoMap(filePath, chtCorePath, existingFiles);
       } else {
-        const content = await readFromChtCore(filePath, chtCorePath);
-        if (content) existingFiles.set(filePath, content);
+        await readIntoMap(filePath, chtCorePath, existingFiles);
       }
     }
+  }
 
-    // Get patterns from context analysis
-    if (contextAnalysis.reusablePatterns) {
-      for (const pattern of contextAnalysis.reusablePatterns) {
-        relatedPatterns.push(`${pattern.pattern}: ${pattern.description}`);
+  private async readDirectoryIntoMap(
+    dirPath: string,
+    chtCorePath: string,
+    existingFiles: Map<string, string>,
+  ): Promise<void> {
+    try {
+      const files = await listChtCoreDirectory(dirPath, chtCorePath);
+      for (const file of files) {
+        if (file.endsWith('/') || existingFiles.has(file)) continue;
+        await readIntoMap(file, chtCorePath, existingFiles);
       }
+    } catch {
+      // Directory might not exist; skip.
     }
-
-    // Build directory listing (repo map) for LLM awareness
-    const directoryListing = await this.buildDirectoryListing(relevantFiles, chtCorePath);
-
-    return { existingFiles, relatedPatterns, directoryListing };
   }
 
   /**
@@ -326,37 +505,11 @@ export class CodeGenerationAgent {
     domainIndex: DomainIndex | null,
   ): string[] {
     if (!domainIndex?.domains) return [];
-
-    // Normalize: strip leading/trailing slashes, normalize webapp/ -> webapp/src/ts/
-    const normalized = component.replace(/^\/|\/$/g, '');
-    const variants = [
-      normalized,
-      normalized.replace(/^webapp\/(?!src\/)/, 'webapp/src/ts/'),
-      normalized.replace(/^webapp\/modules\//, 'webapp/src/ts/modules/'),
-      normalized.replace(/^webapp\/services\//, 'webapp/src/ts/services/'),
-    ];
-
+    const variants = buildComponentVariants(component);
     const matches: string[] = [];
-
-    // Search across all domains (primarily the current domain, but check all)
-    for (const [, domainData] of Object.entries(domainIndex.domains) as [string, Record<string, unknown>][]) {
-      for (const section of ['api', 'webapp', 'sentinel']) {
-        const sectionData = domainData[section];
-        if (!sectionData || typeof sectionData !== 'object') continue;
-        for (const [, entries] of Object.entries(sectionData)) {
-          if (!Array.isArray(entries)) continue;
-          for (const entry of entries) {
-            if (typeof entry !== 'string') continue;
-            for (const variant of variants) {
-              if (entry.startsWith(variant) || entry.includes(variant)) {
-                matches.push(entry);
-              }
-            }
-          }
-        }
-      }
+    for (const domainData of Object.values(domainIndex.domains) as Record<string, unknown>[]) {
+      collectComponentMatchesFromDomain(domainData, variants, matches);
     }
-
     return [...new Set(matches)];
   }
 
@@ -366,45 +519,16 @@ export class CodeGenerationAgent {
    */
   private getCrossDomainFiles(issue: CodeGenerationInput['issue'], domainIndex: DomainIndex | null): string[] {
     if (!domainIndex?.domains) return [];
-
-    const crossDomainKeywords: Record<string, string[]> = {
-      authentication: ['permission', 'auth', 'role', 'login', 'session', 'credential'],
-      configuration: ['app_settings', 'settings', 'config', 'branding'],
-      'data-sync': ['replication', 'sync', 'purge', 'offline'],
-      'forms-and-reports': ['form', 'xform', 'xml-form', 'report', 'xform_id', 'form_id'],
-    };
-
-    const ticketText = [
-      issue.issue.title,
-      issue.issue.description,
-      ...issue.issue.requirements,
-      ...issue.issue.technical_context.components,
-    ].join(' ').toLowerCase();
-
-    const files: string[] = [];
+    const ticketText = buildTicketSearchText(issue);
     const currentDomain = issue.issue.technical_context.domain;
-
-    for (const [domain, keywords] of Object.entries(crossDomainKeywords)) {
+    const files: string[] = [];
+    for (const [domain, keywords] of Object.entries(CROSS_DOMAIN_KEYWORDS)) {
       if (domain === currentDomain) continue;
-      const hasMatch = keywords.some(kw => ticketText.includes(kw));
-      if (!hasMatch) continue;
-
+      if (!keywords.some(kw => ticketText.includes(kw))) continue;
       const domainData = domainIndex.domains[domain];
       if (!domainData) continue;
-
-      // Pull service files from cross-domain (most likely to be needed)
-      for (const section of ['api', 'webapp']) {
-        const sectionData = domainData[section] as Record<string, unknown> | undefined;
-        if (!sectionData || typeof sectionData !== 'object') continue;
-        const services = sectionData.services;
-        if (Array.isArray(services)) {
-          for (const entry of services) {
-            if (typeof entry === 'string') files.push(entry);
-          }
-        }
-      }
+      collectServiceFilesFromDomain(domainData, files);
     }
-
     return files;
   }
 
@@ -413,29 +537,26 @@ export class CodeGenerationAgent {
    * Gives the LLM awareness of what files exist in relevant cht-core directories.
    */
   private async buildDirectoryListing(relevantFiles: string[], chtCorePath: string): Promise<string> {
-    // Extract unique parent directories from relevant files
-    const dirs = new Set<string>();
-    for (const filePath of relevantFiles) {
-      const lastSlash = filePath.lastIndexOf('/');
-      if (lastSlash > 0) {
-        dirs.add(filePath.substring(0, lastSlash + 1));
-      }
-    }
-
+    const dirs = collectParentDirectories(relevantFiles);
     const lines: string[] = [];
     for (const dir of Array.from(dirs).sort((a, b) => a.localeCompare(b))) {
-      try {
-        const entries = await listChtCoreDirectory(dir, chtCorePath);
-        lines.push(`${dir}`);
-        for (const entry of entries) {
-          lines.push(`  ${entry}`);
-        }
-      } catch {
-        // Directory might not exist in cht-core
-      }
+      await this.appendDirectoryListing(dir, chtCorePath, lines);
     }
-
     return lines.length > 0 ? lines.join('\n') : '';
+  }
+
+  private async appendDirectoryListing(
+    dir: string,
+    chtCorePath: string,
+    lines: string[],
+  ): Promise<void> {
+    try {
+      const entries = await listChtCoreDirectory(dir, chtCorePath);
+      lines.push(dir);
+      for (const entry of entries) lines.push(`  ${entry}`);
+    } catch {
+      // Directory might not exist in cht-core; skip.
+    }
   }
 
   /**
@@ -611,42 +732,20 @@ export class CodeGenerationAgent {
    * Validate generated files
    */
   private validateGeneratedFiles(files: GeneratedFile[]): GeneratedFile[] {
-    return files.filter((file) => {
-      // Ensure required fields exist
-      if (!file.relativePath || !file.content) {
-        return false;
-      }
+    return files.filter(file => this.normalizeGeneratedFile(file));
+  }
 
-      // Validate language
-      const validLanguages: FileLanguage[] = [
-        'typescript',
-        'javascript',
-        'json',
-        'xml',
-        'yaml',
-        'properties',
-        'markdown',
-        'html',
-        'css',
-        'shell',
-      ];
-      if (!validLanguages.includes(file.language)) {
-        file.language = this.inferLanguage(file.relativePath);
-      }
-
-      // Validate type
-      const validTypes: FileType[] = ['source', 'test', 'config', 'documentation', 'fixture'];
-      if (!validTypes.includes(file.type)) {
-        file.type = this.inferFileType(file.relativePath);
-      }
-
-      // Ensure action is set
-      if (!file.action) {
-        file.action = 'create';
-      }
-
-      return true;
-    });
+  /**
+   * Drop files missing required fields. Repair invalid language/type fields
+   * by re-inferring from the path. Default action to 'create' when unset.
+   * Mutates `file` in place; returns whether the file should be kept.
+   */
+  private normalizeGeneratedFile(file: GeneratedFile): boolean {
+    if (!file.relativePath || !file.content) return false;
+    if (!VALID_LANGUAGES.has(file.language)) file.language = this.inferLanguage(file.relativePath);
+    if (!VALID_FILE_TYPES.has(file.type)) file.type = this.inferFileType(file.relativePath);
+    if (!file.action) file.action = 'create';
+    return true;
   }
 
   /**
@@ -782,7 +881,7 @@ export class CodeGenerationAgent {
       score += (implemented.length / totalRequirements) * 0.2;
     }
 
-    return Math.min(score, 1.0);
+    return Math.min(score, 1);
   }
 
 

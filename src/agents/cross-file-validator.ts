@@ -52,17 +52,21 @@ function buildComponentFieldRegistry(files: GeneratedFile[]): Map<string, Set<st
   for (const file of files) {
     if (!file.relativePath.endsWith('.component.ts')) continue;
     const base = file.relativePath.replace(/\.component\.ts$/, '');
-    const fields = new Set<string>();
-    // Mirrors the public-surface regex but captures member names directly.
-    const memberRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:readonly\s+)?(?:async\s+)?(\w+)\s*[(:=]/gm;
-    let m: RegExpExecArray | null;
-    while ((m = memberRe.exec(file.content)) !== null) {
-      if (m[1] === 'constructor') continue;
-      fields.add(m[1]);
-    }
-    registry.set(base, fields);
+    registry.set(base, extractComponentFields(file.content));
   }
   return registry;
+}
+
+function extractComponentFields(content: string): Set<string> {
+  const fields = new Set<string>();
+  // Mirrors the public-surface regex but captures member names directly.
+  const memberRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:readonly\s+)?(?:async\s+)?(\w+)\s*[(:=]/gm;
+  let m: RegExpExecArray | null;
+  while ((m = memberRe.exec(content)) !== null) {
+    if (m[1] === 'constructor') continue;
+    fields.add(m[1]);
+  }
+  return fields;
 }
 
 function buildSelectorExportRegistry(files: GeneratedFile[]): Set<string> {
@@ -198,24 +202,20 @@ function collectIdsFromInterpolations(content: string, ids: Set<string>): void {
   while ((m = interpRe.exec(content)) !== null) collectIdsFromExpression(m[1], ids);
 }
 
+const TEMPLATE_BUILTIN_IDENTIFIERS = new Set(['$event', '$any', '$implicit']);
+
 function validateTemplate(file: GeneratedFile, fields: Map<string, Set<string>>): CrossFileIssue[] {
-  const issues: CrossFileIssue[] = [];
   const base = file.relativePath.replace(/\.component\.html$/, '');
   const componentFields = fields.get(base);
-  if (!componentFields) return issues; // No paired component in this batch; skip
-
-  const BUILTIN = new Set(['$event', '$any', '$implicit']);
-  for (const id of extractTemplateReferenced(file.content)) {
-    if (BUILTIN.has(id)) continue;
-    if (componentFields.has(id)) continue;
-    issues.push({
+  if (!componentFields) return []; // No paired component in this batch; skip
+  return [...extractTemplateReferenced(file.content)]
+    .filter(id => !TEMPLATE_BUILTIN_IDENTIFIERS.has(id) && !componentFields.has(id))
+    .map(id => ({
       filePath: file.relativePath,
       referencedIdentifier: id,
       expectedSource: `${base}.component.ts`,
       reason: `Template references "${id}" but the component class does not declare it as a public field/method.`,
-    });
-  }
-  return issues;
+    }));
 }
 
 function validateComponentSelectors(file: GeneratedFile, selectorExports: Set<string>): CrossFileIssue[] {
@@ -242,30 +242,33 @@ function validateComponentSelectors(file: GeneratedFile, selectorExports: Set<st
 function validateEffectActions(file: GeneratedFile, actionMethods: Map<string, Set<string>>): CrossFileIssue[] {
   const issues: CrossFileIssue[] = [];
   const re = /\bthis\.(\w+Actions)\.(\w+)\s*\(/g;
-  let m: RegExpExecArray | null;
   const seen = new Set<string>();
-  while ((m = re.exec(file.content)) !== null) {
-    const lowerCaseClassName = m[1];
-    // `this.contactsActions` references a class named ContactsActions
-    const className = lowerCaseClassName.charAt(0).toUpperCase() + lowerCaseClassName.slice(1);
-    const methodName = m[2];
-    const key = `${className}.${methodName}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const methods = actionMethods.get(className);
-    if (!methods) {
-      // Foreign action class (not in this batch). Cannot validate; skip.
-      // Mirrors validateTemplate's "no paired component in this batch" pattern.
-      continue;
-    }
-    if (!methods.has(methodName)) {
-      issues.push({
-        filePath: file.relativePath,
-        referencedIdentifier: key,
-        expectedSource: 'webapp/src/ts/actions/<domain>.ts',
-        reason: `Effect calls "this.${lowerCaseClassName}.${methodName}(...)" but the action class does not declare the method.`,
-      });
-    }
+  for (const m of file.content.matchAll(re)) {
+    const issue = checkEffectActionCall(file.relativePath, m, actionMethods, seen);
+    if (issue) issues.push(issue);
   }
   return issues;
+}
+
+function checkEffectActionCall(
+  filePath: string,
+  match: RegExpMatchArray,
+  actionMethods: Map<string, Set<string>>,
+  seen: Set<string>,
+): CrossFileIssue | null {
+  const lowerCaseClassName = match[1];
+  const className = lowerCaseClassName.charAt(0).toUpperCase() + lowerCaseClassName.slice(1);
+  const methodName = match[2];
+  const key = `${className}.${methodName}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const methods = actionMethods.get(className);
+  // Foreign action class (not in this batch). Cannot validate; skip.
+  if (!methods || methods.has(methodName)) return null;
+  return {
+    filePath,
+    referencedIdentifier: key,
+    expectedSource: 'webapp/src/ts/actions/<domain>.ts',
+    reason: `Effect calls "this.${lowerCaseClassName}.${methodName}(...)" but the action class does not declare the method.`,
+  };
 }

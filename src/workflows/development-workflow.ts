@@ -39,113 +39,84 @@ const MAX_DEVELOPMENT_ITERATIONS = 3;
  * Display development results to the user
  */
 export const displayDevelopmentResults = (state: DevelopmentState, duration: string): void => {
+  displayDevelopmentHeader(state, duration);
+  if (state.codeGeneration) displayCodeGenerationResults(state.codeGeneration);
+  if (state.testEnvironment) displayTestEnvironmentResults(state.testEnvironment);
+  if (state.validationResult) displayValidationResults(state.validationResult);
+};
+
+function displayDevelopmentHeader(state: DevelopmentState, duration: string): void {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
   console.log('║                    DEVELOPMENT RESULTS                         ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
   console.log(`⏱️  Duration: ${duration} seconds`);
   console.log(`📊 Phase: ${state.currentPhase}`);
   console.log(`❌ Errors: ${state.errors.length}\n`);
-
   if (state.errors.length > 0) {
     console.log('⚠️  Errors encountered:');
-    state.errors.forEach((error) => console.log(`   - ${error}`));
+    state.errors.forEach(error => console.log(`   - ${error}`));
     console.log();
   }
+}
 
-  // Code Generation Results
-  if (state.codeGeneration) {
-    console.log('💻 CODE GENERATION RESULTS');
-    console.log('─'.repeat(70));
-    console.log(`Generated Files: ${state.codeGeneration.files.length}`);
-    console.log(`Confidence: ${(state.codeGeneration.confidence * 100).toFixed(0)}%`);
-
-    console.log(`\nSummary:`);
-    console.log(`   ${state.codeGeneration.summary}`);
-
-    if (state.codeGeneration.implementedRequirements.length > 0) {
-      console.log(`\n✅ Implemented Requirements:`);
-      state.codeGeneration.implementedRequirements.forEach((req, i) => {
-        console.log(`   ${i + 1}. ${req}`);
-      });
-    }
-
-    if (state.codeGeneration.pendingRequirements.length > 0) {
-      console.log(`\n⏳ Pending Requirements:`);
-      state.codeGeneration.pendingRequirements.forEach((req, i) => {
-        console.log(`   ${i + 1}. ${req}`);
-      });
-    }
-
-    if (state.codeGeneration.notes.length > 0) {
-      console.log(`\n📝 Notes:`);
-      state.codeGeneration.notes.forEach((note, i) => {
-        console.log(`   ${i + 1}. ${note}`);
-      });
-    }
-
+function displayCodeGenerationResults(codeGen: NonNullable<DevelopmentState['codeGeneration']>): void {
+  console.log('💻 CODE GENERATION RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Generated Files: ${codeGen.files.length}`);
+  console.log(`Confidence: ${(codeGen.confidence * 100).toFixed(0)}%`);
+  console.log(`\nSummary:`);
+  console.log(`   ${codeGen.summary}`);
+  printNumberedList('✅ Implemented Requirements:', codeGen.implementedRequirements);
+  printNumberedList('⏳ Pending Requirements:', codeGen.pendingRequirements);
+  printNumberedList('📝 Notes:', codeGen.notes);
+  if (codeGen.files.length > 0) {
     console.log(`\nGenerated Files:`);
-    state.codeGeneration.files.forEach((file, i) => {
+    codeGen.files.forEach((file, i) => {
       console.log(`   ${i + 1}. ${file.relativePath}`);
       console.log(`      Type: ${file.type} | Language: ${file.language} | Action: ${file.action}`);
-      if (file.description) {
-        console.log(`      ${file.description}`);
-      }
+      if (file.description) console.log(`      ${file.description}`);
     });
-
-    console.log();
   }
+  console.log();
+}
 
-  // Test Environment Results
-  if (state.testEnvironment) {
-    console.log('🧪 TEST ENVIRONMENT RESULTS');
-    console.log('─'.repeat(70));
-    console.log(`Test Files: ${state.testEnvironment.testFiles.length}`);
-    console.log(`Fixture Files: ${state.testEnvironment.testDataFiles.length}`);
-    console.log(`Estimated Coverage: ${state.testEnvironment.estimatedCoverage}%`);
-
-    if (state.testEnvironment.configs.length > 0) {
-      console.log(`\nTest Configurations:`);
-      state.testEnvironment.configs.forEach((config, i) => {
-        console.log(`   ${i + 1}. ${config.type.toUpperCase()} (${config.framework})`);
-        console.log(`      Dependencies: ${config.dependencies.join(', ')}`);
-      });
-    }
-
-    if (state.testEnvironment.testFiles.length > 0) {
-      console.log(`\nTest Files:`);
-      state.testEnvironment.testFiles.forEach((file, i) => {
-        console.log(`   ${i + 1}. ${file.relativePath}`);
-      });
-    }
-
-    console.log();
+function displayTestEnvironmentResults(testEnv: NonNullable<DevelopmentState['testEnvironment']>): void {
+  console.log('🧪 TEST ENVIRONMENT RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Test Files: ${testEnv.testFiles.length}`);
+  console.log(`Fixture Files: ${testEnv.testDataFiles.length}`);
+  console.log(`Estimated Coverage: ${testEnv.estimatedCoverage}%`);
+  if (testEnv.configs.length > 0) {
+    console.log(`\nTest Configurations:`);
+    testEnv.configs.forEach((config, i) => {
+      console.log(`   ${i + 1}. ${config.type.toUpperCase()} (${config.framework})`);
+      console.log(`      Dependencies: ${config.dependencies.join(', ')}`);
+    });
   }
-
-  // Validation Results
-  if (state.validationResult) {
-    console.log('✅ VALIDATION RESULTS');
-    console.log('─'.repeat(70));
-    console.log(`Overall Score: ${state.validationResult.overallScore}%`);
-
-    const metCount = state.validationResult.requirementsMet.filter((r) => r.met).length;
-    const totalReqs = state.validationResult.requirementsMet.length;
-    console.log(`Requirements Met: ${metCount}/${totalReqs}`);
-
-    const passedCount = state.validationResult.acceptanceCriteriaPassed.filter((c) => c.passed).length;
-    const totalCriteria = state.validationResult.acceptanceCriteriaPassed.length;
-    console.log(`Acceptance Criteria Passed: ${passedCount}/${totalCriteria}`);
-
-    if (state.validationResult.recommendations.length > 0) {
-      console.log(`\n💡 Recommendations:`);
-      state.validationResult.recommendations.forEach((rec, i) => {
-        console.log(`   ${i + 1}. ${rec}`);
-      });
-    }
-
-    console.log();
+  if (testEnv.testFiles.length > 0) {
+    console.log(`\nTest Files:`);
+    testEnv.testFiles.forEach((file, i) => console.log(`   ${i + 1}. ${file.relativePath}`));
   }
-};
+  console.log();
+}
+
+function displayValidationResults(validation: NonNullable<DevelopmentState['validationResult']>): void {
+  console.log('✅ VALIDATION RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Overall Score: ${validation.overallScore}%`);
+  const metCount = validation.requirementsMet.filter(r => r.met).length;
+  console.log(`Requirements Met: ${metCount}/${validation.requirementsMet.length}`);
+  const passedCount = validation.acceptanceCriteriaPassed.filter(c => c.passed).length;
+  console.log(`Acceptance Criteria Passed: ${passedCount}/${validation.acceptanceCriteriaPassed.length}`);
+  printNumberedList('💡 Recommendations:', validation.recommendations);
+  console.log();
+}
+
+function printNumberedList(heading: string, items: ReadonlyArray<string>): void {
+  if (items.length === 0) return;
+  console.log(`\n${heading}`);
+  items.forEach((item, i) => console.log(`   ${i + 1}. ${item}`));
+}
 
 /**
  * Run development phase and return results with duration
@@ -183,32 +154,39 @@ export const humanDevelopmentValidationCheckpoint = async (
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║            HUMAN VALIDATION CHECKPOINT #2                      ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
+  if (iterationCount > 1) console.log(`📝 This is development iteration #${iterationCount}\n`);
 
-  if (iterationCount > 1) {
-    console.log(`📝 This is development iteration #${iterationCount}\n`);
-  }
+  const allFiles = collectAllGeneratedFiles(state);
+  console.log('📂 FILES TO BE WRITTEN');
+  console.log('─'.repeat(70));
+  displayFileSummary(allFiles);
+  console.log();
+  displayCheckpointBanners(state, chtCorePath);
 
-  // Get all generated files
+  console.log('📝 FILE DIFFS');
+  console.log('─'.repeat(70));
+  const diffs = await generateDiffs(allFiles, stagingPath, chtCorePath);
+  displayDiffs(diffs);
+  console.log();
+
+  return await captureCheckpointFeedback();
+};
+
+function collectAllGeneratedFiles(state: DevelopmentState): GeneratedFile[] {
   const allFiles: GeneratedFile[] = [];
-  if (state.codeGeneration) {
-    allFiles.push(...state.codeGeneration.files);
-  }
+  if (state.codeGeneration) allFiles.push(...state.codeGeneration.files);
   if (state.testEnvironment) {
     allFiles.push(
       ...state.testEnvironment.testFiles,
       ...state.testEnvironment.testDataFiles,
     );
   }
+  return allFiles;
+}
 
-  // Display file summary
-  console.log('📂 FILES TO BE WRITTEN');
-  console.log('─'.repeat(70));
-  displayFileSummary(allFiles);
-  console.log();
-
+function displayCheckpointBanners(state: DevelopmentState, chtCorePath: string): void {
   // H.4 (v6): surface compile-gate skip + unresolved cross-file issues
-  // BEFORE the diff so the user reads the warnings in context. Both banners
-  // render independently of each other.
+  // BEFORE the diff so the user reads the warnings in context.
   if (state.codeGeneration?.compileGateSkipped) {
     const reason = state.codeGeneration.compileGateSkipReason ?? 'reason not provided';
     console.log(renderCompileGateSkipBanner(reason, chtCorePath));
@@ -219,38 +197,22 @@ export const humanDevelopmentValidationCheckpoint = async (
     console.log(banner);
     console.log();
   }
+}
 
-  // Generate and display diffs
-  console.log('📝 FILE DIFFS');
-  console.log('─'.repeat(70));
-  const diffs = await generateDiffs(allFiles, stagingPath, chtCorePath);
-  displayDiffs(diffs);
-  console.log();
-
-  const isApproved = await askYesNo(
-    '✅ Do you approve these changes to be written to cht-core?'
-  );
-
-  if (isApproved) {
-    return {
-      approved: true,
-      timestamp: new Date().toISOString(),
-    };
-  }
-
-  // Development not satisfactory - collect feedback
+async function captureCheckpointFeedback(): Promise<HumanFeedback> {
+  const isApproved = await askYesNo('✅ Do you approve these changes to be written to cht-core?');
+  if (isApproved) return { approved: true, timestamp: new Date().toISOString() };
   console.log('\n📝 Please provide feedback on what should be changed.');
   const feedback = await askForFeedback(
     'What changes or improvements should be made to the generated code?'
   );
-
   return {
     approved: false,
     feedback,
     additionalContext: feedback,
     timestamp: new Date().toISOString(),
   };
-};
+}
 
 /**
  * Create development input from research results
@@ -293,63 +255,23 @@ export const executeDevelopmentWorkflow = async (
   let developmentApproved = false;
   let finalState: DevelopmentState | undefined;
   let filesWritten: string[] = [];
-  let stagingPath: string | undefined;
 
   const { previewMode, chtCorePath } = input.options;
 
   while (!developmentApproved && iterationCount < MAX_DEVELOPMENT_ITERATIONS) {
     iterationCount++;
-
-    // Run development phase
     const { state, duration } = await runDevelopment(supervisor, input, additionalContext);
     finalState = state;
-
-    // Display results
     displayDevelopmentResults(state, duration);
-
     if (previewMode) {
-      // Preview Mode: Write to staging, show diffs, ask for approval
-      console.log('\n📦 Writing generated files to staging area...');
-      const stagingResult = await supervisor.writeToStaging(state);
-      stagingPath = stagingResult.stagingPath;
-
-      // Human validation checkpoint #2
-      const validation = await humanDevelopmentValidationCheckpoint(
-        state,
-        stagingPath,
-        chtCorePath,
-        iterationCount
-      );
-
-      if (validation.approved) {
-        developmentApproved = true;
-
-        // Copy files from staging to cht-core
-        console.log('\n📝 Copying approved files to cht-core...');
-        filesWritten = await copyToTarget(stagingPath, chtCorePath);
-        console.log(`✅ Written ${filesWritten.length} files to ${chtCorePath}`);
-
-        // Clean up staging
-        await clearStaging(stagingPath);
-      } else if (iterationCount >= MAX_DEVELOPMENT_ITERATIONS) {
-        console.log(`\n⚠️  Maximum development iterations (${MAX_DEVELOPMENT_ITERATIONS}) reached.`);
-        console.log('Please review the generated code and consider manual adjustments.\n');
-
-        // Clean up staging
-        if (stagingPath) {
-          await clearStaging(stagingPath);
-        }
-      } else {
-        console.log(`\n🔄 Re-running development with your feedback (iteration ${iterationCount + 1}/${MAX_DEVELOPMENT_ITERATIONS})...\n`);
-        additionalContext = validation.additionalContext;
-
-        // Clean up staging before next iteration
-        await clearStaging(stagingPath);
-      }
+      const outcome = await runPreviewModeIteration({
+        supervisor, state, chtCorePath, iterationCount,
+      });
+      developmentApproved = outcome.approved;
+      additionalContext = outcome.additionalContext;
+      filesWritten = outcome.filesWritten;
     } else {
-      // Direct Mode: Write directly to cht-core, no checkpoint #2
       developmentApproved = true;
-
       console.log('\n📝 Writing generated files directly to cht-core...');
       filesWritten = await supervisor.writeToChtCore(state, chtCorePath);
       console.log(`✅ Written ${filesWritten.length} files to ${chtCorePath}`);
@@ -364,6 +286,41 @@ export const executeDevelopmentWorkflow = async (
   };
 };
 
+interface PreviewIterationOutcome {
+  approved: boolean;
+  stagingPath?: string;
+  additionalContext?: string;
+  filesWritten: string[];
+}
+
+async function runPreviewModeIteration(args: {
+  supervisor: DevelopmentSupervisor;
+  state: DevelopmentState;
+  chtCorePath: string;
+  iterationCount: number;
+}): Promise<PreviewIterationOutcome> {
+  const { supervisor, state, chtCorePath, iterationCount } = args;
+  console.log('\n📦 Writing generated files to staging area...');
+  const { stagingPath } = await supervisor.writeToStaging(state);
+  const validation = await humanDevelopmentValidationCheckpoint(state, stagingPath, chtCorePath, iterationCount);
+  if (validation.approved) {
+    console.log('\n📝 Copying approved files to cht-core...');
+    const filesWritten = await copyToTarget(stagingPath, chtCorePath);
+    console.log(`✅ Written ${filesWritten.length} files to ${chtCorePath}`);
+    await clearStaging(stagingPath);
+    return { approved: true, stagingPath, filesWritten };
+  }
+  if (iterationCount >= MAX_DEVELOPMENT_ITERATIONS) {
+    console.log(`\n⚠️  Maximum development iterations (${MAX_DEVELOPMENT_ITERATIONS}) reached.`);
+    console.log('Please review the generated code and consider manual adjustments.\n');
+    await clearStaging(stagingPath);
+    return { approved: false, stagingPath, filesWritten: [] };
+  }
+  console.log(`\n🔄 Re-running development with your feedback (iteration ${iterationCount + 1}/${MAX_DEVELOPMENT_ITERATIONS})...\n`);
+  await clearStaging(stagingPath);
+  return { approved: false, stagingPath, additionalContext: validation.additionalContext, filesWritten: [] };
+}
+
 /**
  * Display final development workflow completion status
  */
@@ -372,43 +329,47 @@ export const displayDevelopmentCompletion = (
   options: DevelopmentOptions
 ): void => {
   if (workflowResult.approved && workflowResult.result) {
-    console.log('\n╔════════════════════════════════════════════════════════════════╗');
-    console.log('║                Development Phase Complete! ✅                  ║');
-    console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
-    console.log(`📁 Files Written: ${workflowResult.filesWritten.length}`);
-    console.log(`📂 Target: ${options.chtCorePath}`);
-    console.log(`🔄 Iterations: ${workflowResult.iterationCount}`);
-
-    if (workflowResult.filesWritten.length > 0) {
-      console.log(`\n📋 Written Files:`);
-      workflowResult.filesWritten.forEach((file, i) => {
-        console.log(`   ${i + 1}. ${file}`);
-      });
-    }
-
-    if (workflowResult.result.validationResult) {
-      console.log(`\n📊 Validation Score: ${workflowResult.result.validationResult.overallScore}%`);
-    }
-
-    console.log('\n💡 Next Steps:');
-    console.log('   1. Review the generated files');
-    console.log('   2. Run the tests to verify implementation');
-    console.log('   3. Make any necessary manual adjustments');
-    console.log('   4. Submit for code review');
-    console.log();
+    displayDevelopmentSuccess(workflowResult, options);
   } else {
-    console.log('\n╔════════════════════════════════════════════════════════════════╗');
-    console.log('║              Development Phase Needs Review ⚠️                 ║');
-    console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
-    console.log('💡 Suggestions:');
-    console.log('   1. Review the generated code manually');
-    console.log('   2. Refine the requirements in the ticket');
-    console.log('   3. Re-run development with more specific feedback');
-    console.log();
+    displayDevelopmentNeedsReview();
   }
 };
+
+function displayDevelopmentSuccess(
+  workflowResult: DevelopmentWorkflowResult,
+  options: DevelopmentOptions,
+): void {
+  console.log('\n╔════════════════════════════════════════════════════════════════╗');
+  console.log('║                Development Phase Complete! ✅                  ║');
+  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+  console.log(`📁 Files Written: ${workflowResult.filesWritten.length}`);
+  console.log(`📂 Target: ${options.chtCorePath}`);
+  console.log(`🔄 Iterations: ${workflowResult.iterationCount}`);
+  if (workflowResult.filesWritten.length > 0) {
+    console.log(`\n📋 Written Files:`);
+    workflowResult.filesWritten.forEach((file, i) => console.log(`   ${i + 1}. ${file}`));
+  }
+  if (workflowResult.result?.validationResult) {
+    console.log(`\n📊 Validation Score: ${workflowResult.result.validationResult.overallScore}%`);
+  }
+  console.log('\n💡 Next Steps:');
+  console.log('   1. Review the generated files');
+  console.log('   2. Run the tests to verify implementation');
+  console.log('   3. Make any necessary manual adjustments');
+  console.log('   4. Submit for code review');
+  console.log();
+}
+
+function displayDevelopmentNeedsReview(): void {
+  console.log('\n╔════════════════════════════════════════════════════════════════╗');
+  console.log('║              Development Phase Needs Review ⚠️                 ║');
+  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+  console.log('💡 Suggestions:');
+  console.log('   1. Review the generated code manually');
+  console.log('   2. Refine the requirements in the ticket');
+  console.log('   3. Re-run development with more specific feedback');
+  console.log();
+}
 
 /**
  * Run complete workflow: Research -> Development

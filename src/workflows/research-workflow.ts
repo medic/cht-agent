@@ -18,116 +18,96 @@ const MAX_RESEARCH_ITERATIONS = 3;
  * Display research results to the user
  */
 export const displayResearchResults = (result: ResearchState, duration: string): void => {
+  displayResearchHeader(result, duration);
+  if (result.researchFindings) displayDocumentationSearchResults(result.researchFindings);
+  if (result.contextAnalysis) displayContextAnalysisResults(result.contextAnalysis);
+  if (result.orchestrationPlan) displayOrchestrationPlanResults(result.orchestrationPlan);
+};
+
+function displayResearchHeader(result: ResearchState, duration: string): void {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
   console.log('║                      RESEARCH RESULTS                          ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
   console.log(`⏱️  Duration: ${duration} seconds`);
   console.log(`📊 Phase: ${result.currentPhase}`);
   console.log(`❌ Errors: ${result.errors.length}\n`);
-
   if (result.errors.length > 0) {
     console.log('⚠️  Errors encountered:');
-    result.errors.forEach((error) => console.log(`   - ${error}`));
+    result.errors.forEach(error => console.log(`   - ${error}`));
     console.log();
   }
+}
 
-  // Documentation Search Results
-  if (result.researchFindings) {
-    console.log('📚 DOCUMENTATION SEARCH RESULTS');
-    console.log('─'.repeat(70));
-    console.log(`Source: ${result.researchFindings.source}`);
-    console.log(`Confidence: ${(result.researchFindings.confidence * 100).toFixed(0)}%`);
-    console.log(
-      `\nDocumentation References (${result.researchFindings.documentationReferences.length}):`
-    );
+function displayDocumentationSearchResults(findings: NonNullable<ResearchState['researchFindings']>): void {
+  console.log('📚 DOCUMENTATION SEARCH RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Source: ${findings.source}`);
+  console.log(`Confidence: ${(findings.confidence * 100).toFixed(0)}%`);
+  console.log(`\nDocumentation References (${findings.documentationReferences.length}):`);
+  findings.documentationReferences.forEach((ref, i) => {
+    console.log(`\n${i + 1}. ${ref.title}`);
+    console.log(`   URL: ${ref.url}`);
+    console.log(`   Topics: ${ref.topics.join(', ')}`);
+    if (ref.relevantSections?.length) {
+      console.log(`   Sections: ${ref.relevantSections.join(', ')}`);
+    }
+  });
+  if (findings.suggestedApproaches.length > 0) {
+    console.log(`\nSuggested Approaches:`);
+    findings.suggestedApproaches.forEach((approach, i) => console.log(`   ${i + 1}. ${approach}`));
+  }
+  console.log();
+}
 
-    result.researchFindings.documentationReferences.forEach((ref, i) => {
-      console.log(`\n${i + 1}. ${ref.title}`);
-      console.log(`   URL: ${ref.url}`);
-      console.log(`   Topics: ${ref.topics.join(', ')}`);
-      if (ref.relevantSections?.length) {
-        console.log(`   Sections: ${ref.relevantSections.join(', ')}`);
-      }
+function displayContextAnalysisResults(analysis: NonNullable<ResearchState['contextAnalysis']>): void {
+  console.log('🔎 CONTEXT ANALYSIS RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Similar Past Issues: ${analysis.similarContexts.length}`);
+  console.log(`Reusable Patterns: ${analysis.reusablePatterns.length}`);
+  console.log(`Design Decisions: ${analysis.relevantDesignDecisions.length}`);
+  const successRate = analysis.historicalSuccessRate;
+  const successRateLabel = successRate === null
+    ? 'N/A (no historical data)'
+    : `${(successRate * 100).toFixed(0)}%`;
+  console.log(`Historical Success Rate: ${successRateLabel}`);
+  if (analysis.recommendations.length > 0) {
+    console.log(`\nRecommendations:`);
+    analysis.recommendations.forEach((rec, i) => console.log(`   ${i + 1}. ${rec}`));
+  }
+  if (analysis.reusablePatterns.length > 0) {
+    console.log(`\nReusable Patterns:`);
+    analysis.reusablePatterns.forEach((pattern, i) => {
+      console.log(`   ${i + 1}. ${pattern.pattern} (used ${pattern.frequency} times)`);
+      console.log(`      ${pattern.description}`);
     });
-
-    if (result.researchFindings.suggestedApproaches.length > 0) {
-      console.log(`\nSuggested Approaches:`);
-      result.researchFindings.suggestedApproaches.forEach((approach, i) => {
-        console.log(`   ${i + 1}. ${approach}`);
-      });
-    }
-
-    console.log();
   }
+  console.log();
+}
 
-  // Context Analysis Results
-  if (result.contextAnalysis) {
-    console.log('🔎 CONTEXT ANALYSIS RESULTS');
-    console.log('─'.repeat(70));
-    console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
-    console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
-    console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
-    const successRate = result.contextAnalysis.historicalSuccessRate;
-    const successRateLabel = successRate === null
-      ? 'N/A (no historical data)'
-      : `${(successRate * 100).toFixed(0)}%`;
-    console.log(`Historical Success Rate: ${successRateLabel}`);
-
-    if (result.contextAnalysis.recommendations.length > 0) {
-      console.log(`\nRecommendations:`);
-      result.contextAnalysis.recommendations.forEach((rec, i) => {
-        console.log(`   ${i + 1}. ${rec}`);
-      });
+function displayOrchestrationPlanResults(plan: NonNullable<ResearchState['orchestrationPlan']>): void {
+  console.log('📋 ORCHESTRATION PLAN');
+  console.log('─'.repeat(70));
+  console.log(`Estimated Complexity: ${plan.estimatedComplexity.toUpperCase()}`);
+  console.log(`Estimated Effort: ${plan.estimatedEffort}`);
+  console.log(`\nRecommended Approach:`);
+  console.log(`   ${plan.recommendedApproach}`);
+  console.log(`\nKey Findings:`);
+  plan.keyFindings.forEach((finding, i) => console.log(`   ${i + 1}. ${finding}`));
+  console.log(`\nImplementation Phases (${plan.phases.length}):`);
+  plan.phases.forEach((phase, i) => {
+    console.log(`\n   ${i + 1}. ${phase.name} [${phase.estimatedComplexity}]`);
+    console.log(`      ${phase.description}`);
+    console.log(`      Components: ${phase.suggestedComponents.join(', ')}`);
+    if (phase.dependencies.length > 0) {
+      console.log(`      Dependencies: ${phase.dependencies.join(', ')}`);
     }
-
-    if (result.contextAnalysis.reusablePatterns.length > 0) {
-      console.log(`\nReusable Patterns:`);
-      result.contextAnalysis.reusablePatterns.forEach((pattern, i) => {
-        console.log(`   ${i + 1}. ${pattern.pattern} (used ${pattern.frequency} times)`);
-        console.log(`      ${pattern.description}`);
-      });
-    }
-
-    console.log();
+  });
+  if (plan.riskFactors.length > 0) {
+    console.log(`\n⚠️  Risk Factors:`);
+    plan.riskFactors.forEach((risk, i) => console.log(`   ${i + 1}. ${risk}`));
   }
-
-  // Orchestration Plan
-  if (result.orchestrationPlan) {
-    console.log('📋 ORCHESTRATION PLAN');
-    console.log('─'.repeat(70));
-    console.log(
-      `Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`
-    );
-    console.log(`Estimated Effort: ${result.orchestrationPlan.estimatedEffort}`);
-    console.log(`\nRecommended Approach:`);
-    console.log(`   ${result.orchestrationPlan.recommendedApproach}`);
-
-    console.log(`\nKey Findings:`);
-    result.orchestrationPlan.keyFindings.forEach((finding, i) => {
-      console.log(`   ${i + 1}. ${finding}`);
-    });
-
-    console.log(`\nImplementation Phases (${result.orchestrationPlan.phases.length}):`);
-    result.orchestrationPlan.phases.forEach((phase, i) => {
-      console.log(`\n   ${i + 1}. ${phase.name} [${phase.estimatedComplexity}]`);
-      console.log(`      ${phase.description}`);
-      console.log(`      Components: ${phase.suggestedComponents.join(', ')}`);
-      if (phase.dependencies.length > 0) {
-        console.log(`      Dependencies: ${phase.dependencies.join(', ')}`);
-      }
-    });
-
-    if (result.orchestrationPlan.riskFactors.length > 0) {
-      console.log(`\n⚠️  Risk Factors:`);
-      result.orchestrationPlan.riskFactors.forEach((risk, i) => {
-        console.log(`   ${i + 1}. ${risk}`);
-      });
-    }
-
-    console.log();
-  }
-};
+  console.log();
+}
 
 /**
  * Run research phase and return results with duration
@@ -219,6 +199,23 @@ export interface ResearchWorkflowResult {
 /**
  * Run the complete research workflow with human validation loop
  */
+function handleValidationOutcome(
+  validation: HumanFeedback,
+  iterationCount: number,
+): { approved: boolean; additionalContext?: string } {
+  if (validation.approved) {
+    console.log('\n✅ Research approved! Ready to proceed to Development Phase.\n');
+    return { approved: true };
+  }
+  if (iterationCount >= MAX_RESEARCH_ITERATIONS) {
+    console.log(`\n⚠️  Maximum research iterations (${MAX_RESEARCH_ITERATIONS}) reached.`);
+    console.log('Please review the results and consider refining the ticket manually.\n');
+    return { approved: false };
+  }
+  console.log(`\n🔄 Re-running research with your feedback (iteration ${iterationCount + 1}/${MAX_RESEARCH_ITERATIONS})...\n`);
+  return { approved: false, additionalContext: validation.additionalContext };
+}
+
 export const executeResearchWorkflow = async (
   supervisor: ResearchSupervisor,
   ticket: IssueTemplate
@@ -230,27 +227,13 @@ export const executeResearchWorkflow = async (
 
   while (!researchApproved && iterationCount < MAX_RESEARCH_ITERATIONS) {
     iterationCount++;
-
-    // Run research phase
     const { result, duration } = await runResearch(supervisor, ticket, additionalContext);
     finalResult = result;
-
-    // Display results
     displayResearchResults(result, duration);
-
-    // Human validation checkpoint
     const validation = await humanValidationCheckpoint(iterationCount);
-
-    if (validation.approved) {
-      researchApproved = true;
-      console.log('\n✅ Research approved! Ready to proceed to Development Phase.\n');
-    } else if (iterationCount >= MAX_RESEARCH_ITERATIONS) {
-      console.log(`\n⚠️  Maximum research iterations (${MAX_RESEARCH_ITERATIONS}) reached.`);
-      console.log('Please review the results and consider refining the ticket manually.\n');
-    } else {
-      console.log(`\n🔄 Re-running research with your feedback (iteration ${iterationCount + 1}/${MAX_RESEARCH_ITERATIONS})...\n`);
-      additionalContext = validation.additionalContext;
-    }
+    const outcome = handleValidationOutcome(validation, iterationCount);
+    if (outcome.approved) researchApproved = true;
+    additionalContext = outcome.additionalContext;
   }
 
   return {

@@ -38,6 +38,48 @@ function extractTextContent(content: unknown): string {
 /**
  * Convert LLMToolDefinition to LangChain ToolDefinition format.
  */
+interface UsageAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+interface ResponseWithUsage {
+  usage_metadata?: { input_tokens: number; output_tokens: number };
+}
+
+function accumulateUsage(totalUsage: UsageAccumulator, response: ResponseWithUsage): void {
+  if (response.usage_metadata) {
+    totalUsage.inputTokens += response.usage_metadata.input_tokens;
+    totalUsage.outputTokens += response.usage_metadata.output_tokens;
+  }
+}
+
+interface AnthropicToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  id?: string;
+}
+
+async function dispatchToolCalls(
+  toolCalls: AnthropicToolCall[],
+  options: InvokeOptions,
+  messages: BaseMessage[],
+): Promise<void> {
+  for (const toolCall of toolCalls) {
+    try {
+      const result = await options.toolHandler!(toolCall.name, toolCall.args);
+      messages.push(new ToolMessage({ content: result, tool_call_id: toolCall.id! }));
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      messages.push(new ToolMessage({
+        content: `Error: ${errMsg}`,
+        tool_call_id: toolCall.id!,
+        status: 'error',
+      }));
+    }
+  }
+}
+
 function toLangChainTools(tools: LLMToolDefinition[]) {
   return tools.map(tool => ({
     type: 'function' as const,
@@ -85,11 +127,7 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
 
     for (let round = 0; round < maxRounds; round++) {
       const response = await boundModel.invoke(messages);
-
-      if (response.usage_metadata) {
-        totalUsage.inputTokens += response.usage_metadata.input_tokens;
-        totalUsage.outputTokens += response.usage_metadata.output_tokens;
-      }
+      accumulateUsage(totalUsage, response);
       lastStopReason = response.response_metadata?.stop_reason as string | undefined;
 
       if (!response.tool_calls || response.tool_calls.length === 0) {
@@ -102,29 +140,12 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
       }
 
       messages.push(response);
-      for (const toolCall of response.tool_calls) {
-        try {
-          const result = await options.toolHandler!(toolCall.name, toolCall.args);
-          messages.push(new ToolMessage({
-            content: result,
-            tool_call_id: toolCall.id!,
-          }));
-        } catch (error) {
-          messages.push(new ToolMessage({
-            content: `Error: ${error instanceof Error ? error.message : String(error)}`,
-            tool_call_id: toolCall.id!,
-            status: 'error',
-          }));
-        }
-      }
+      await dispatchToolCalls(response.tool_calls, options, messages);
     }
 
     // Max rounds reached — invoke without tools to force a text response
     const finalResponse = await baseModel.invoke(messages);
-    if (finalResponse.usage_metadata) {
-      totalUsage.inputTokens += finalResponse.usage_metadata.input_tokens;
-      totalUsage.outputTokens += finalResponse.usage_metadata.output_tokens;
-    }
+    accumulateUsage(totalUsage, finalResponse);
 
     return {
       content: extractTextContent(finalResponse.content),

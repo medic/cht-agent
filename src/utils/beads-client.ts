@@ -41,6 +41,16 @@ export interface BeadsUpdateOptions {
 
 const COMMENT_FILE_THRESHOLD = 4096;
 
+function buildUpdateArgs(options: BeadsUpdateOptions): string[] {
+  const args: string[] = [];
+  if (options.status) args.push('-s', options.status);
+  if (options.description) args.push('-d', options.description);
+  if (options.notes) args.push('--notes', options.notes);
+  for (const label of options.addLabels ?? []) args.push('--add-label', label);
+  for (const label of options.removeLabels ?? []) args.push('--remove-label', label);
+  return args;
+}
+
 /**
  * Low-level wrapper around the bd (Beads) CLI.
  * All read commands append --json and parse stdout.
@@ -63,20 +73,7 @@ export class BeadsClient {
   }
 
   async update(id: string, options: BeadsUpdateOptions): Promise<void> {
-    const args = ['update', id];
-    if (options.status) args.push('-s', options.status);
-    if (options.description) args.push('-d', options.description);
-    if (options.notes) args.push('--notes', options.notes);
-    if (options.addLabels?.length) {
-      for (const label of options.addLabels) {
-        args.push('--add-label', label);
-      }
-    }
-    if (options.removeLabels?.length) {
-      for (const label of options.removeLabels) {
-        args.push('--remove-label', label);
-      }
-    }
+    const args = ['update', id, ...buildUpdateArgs(options)];
     await this.exec(args);
   }
 

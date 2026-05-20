@@ -61,50 +61,37 @@ export function extractPythonScript(content: string): string {
 /**
  * Check if content appears to be actual code rather than LLM reasoning/thinking.
  */
+const REASONING_PATTERNS: RegExp[] = [
+  /^I'm (unable|not able|sorry|afraid)/i,
+  /^I (cannot|can't|don't have|would need|need to)/i,
+  /^(Unfortunately|Could you|Please provide|Let me explain)/i,
+  /^(Based on|Looking at|From the|Without being able)/i,
+  /I'm unable to/i,
+  /I cannot (read|access|view|see|generate)/i,
+  /Could you (please )?provide/i,
+  /I don't have (access|the ability|file reading)/i,
+  /I (only )?have (documentation search|the first \d+ lines)/i,
+];
+
+function looksLikeCodeByExtension(trimmed: string, ext: string): boolean {
+  if (ext === '.json') return trimmed.startsWith('{') || trimmed.startsWith('[');
+  if (['.ts', '.js', '.tsx', '.jsx'].includes(ext)) {
+    const markers = ['import ', 'export ', 'function ', 'class ', 'const ', 'let ', 'var ', 'interface ', 'type ', 'async ', 'return ', 'module.exports', 'require('];
+    return markers.some(marker => trimmed.includes(marker));
+  }
+  if (ext === '.py') {
+    const markers = ['import ', 'def ', 'class ', 'from ', 'if ', 'for ', 'while '];
+    return markers.some(marker => trimmed.includes(marker));
+  }
+  return /[{}[\]();=]/.test(trimmed) || /^(import|export|function|class|def |const |let |var |#include)\b/m.test(trimmed);
+}
+
 export function looksLikeCodeContent(content: string, filePath: string): boolean {
   const trimmed = content.trim();
-
-  const reasoningPatterns = [
-    /^I'm (unable|not able|sorry|afraid)/i,
-    /^I (cannot|can't|don't have|would need|need to)/i,
-    /^(Unfortunately|Could you|Please provide|Let me explain)/i,
-    /^(Based on|Looking at|From the|Without being able)/i,
-    /I'm unable to/i,
-    /I cannot (read|access|view|see|generate)/i,
-    /Could you (please )?provide/i,
-    /I don't have (access|the ability|file reading)/i,
-    /I (only )?have (documentation search|the first \d+ lines)/i,
-  ];
-
-  for (const pattern of reasoningPatterns) {
-    if (pattern.test(trimmed)) return false;
-  }
-
-  if (/<<<<<<< SEARCH/.test(trimmed) && />>>>>>> REPLACE/.test(trimmed)) {
-    return true;
-  }
-
-  if (looksLikePythonScript(trimmed)) {
-    return true;
-  }
-
-  const ext = path.extname(filePath).toLowerCase();
-
-  if (ext === '.json') {
-    return trimmed.startsWith('{') || trimmed.startsWith('[');
-  }
-
-  if (['.ts', '.js', '.tsx', '.jsx'].includes(ext)) {
-    const codeMarkers = ['import ', 'export ', 'function ', 'class ', 'const ', 'let ', 'var ', 'interface ', 'type ', 'async ', 'return ', 'module.exports', 'require('];
-    return codeMarkers.some(marker => trimmed.includes(marker));
-  }
-
-  if (ext === '.py') {
-    const codeMarkers = ['import ', 'def ', 'class ', 'from ', 'if ', 'for ', 'while '];
-    return codeMarkers.some(marker => trimmed.includes(marker));
-  }
-
-  return /[{}[\]();=]/.test(trimmed) || /^(import|export|function|class|def |const |let |var |#include)\b/m.test(trimmed);
+  if (REASONING_PATTERNS.some(p => p.test(trimmed))) return false;
+  if (/<<<<<<< SEARCH/.test(trimmed) && />>>>>>> REPLACE/.test(trimmed)) return true;
+  if (looksLikePythonScript(trimmed)) return true;
+  return looksLikeCodeByExtension(trimmed, path.extname(filePath).toLowerCase());
 }
 
 /**
@@ -132,32 +119,37 @@ export function parseSearchReplaceBlocks(output: string): SearchReplaceBlock[] {
  */
 export function applySearchReplace(original: string, blocks: SearchReplaceBlock[]): string | null {
   let result = original;
-
   for (const block of blocks) {
-    const idx = result.indexOf(block.search);
-    if (idx === -1) {
-      const normalizedResult = result.split('\n').map(l => l.trimEnd()).join('\n');
-      const normalizedSearch = block.search.split('\n').map(l => l.trimEnd()).join('\n');
-      const normalizedIdx = normalizedResult.indexOf(normalizedSearch);
-
-      if (normalizedIdx === -1) {
-        const preview = block.search.substring(0, 80).replaceAll('\n', String.raw`\n`);
-        console.log(`[Code Gen Lib]   Search block not found (${preview}...)`);
-        return null;
-      }
-
-      const linesBeforeMatch = normalizedResult.substring(0, normalizedIdx).split('\n').length - 1;
-      const searchLineCount = block.search.split('\n').length;
-      const originalLines = result.split('\n');
-      const before = originalLines.slice(0, linesBeforeMatch).join('\n');
-      const after = originalLines.slice(linesBeforeMatch + searchLineCount).join('\n');
-      result = before + (before ? '\n' : '') + block.replace + (after ? '\n' : '') + after;
-    } else {
-      result = result.substring(0, idx) + block.replace + result.substring(idx + block.search.length);
-    }
+    const next = applyOneBlock(result, block);
+    if (next === null) return null;
+    result = next;
   }
-
   return result;
+}
+
+function applyOneBlock(result: string, block: SearchReplaceBlock): string | null {
+  const idx = result.indexOf(block.search);
+  if (idx !== -1) {
+    return result.substring(0, idx) + block.replace + result.substring(idx + block.search.length);
+  }
+  return applyNormalizedBlock(result, block);
+}
+
+function applyNormalizedBlock(result: string, block: SearchReplaceBlock): string | null {
+  const normalizedResult = result.split('\n').map(l => l.trimEnd()).join('\n');
+  const normalizedSearch = block.search.split('\n').map(l => l.trimEnd()).join('\n');
+  const normalizedIdx = normalizedResult.indexOf(normalizedSearch);
+  if (normalizedIdx === -1) {
+    const preview = block.search.substring(0, 80).replaceAll('\n', String.raw`\n`);
+    console.log(`[Code Gen Lib]   Search block not found (${preview}...)`);
+    return null;
+  }
+  const linesBeforeMatch = normalizedResult.substring(0, normalizedIdx).split('\n').length - 1;
+  const searchLineCount = block.search.split('\n').length;
+  const originalLines = result.split('\n');
+  const before = originalLines.slice(0, linesBeforeMatch).join('\n');
+  const after = originalLines.slice(linesBeforeMatch + searchLineCount).join('\n');
+  return before + (before ? '\n' : '') + block.replace + (after ? '\n' : '') + after;
 }
 
 /**

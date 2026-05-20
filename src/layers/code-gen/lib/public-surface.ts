@@ -36,63 +36,81 @@ export function extractPublicSurface(filePath: string, content: string): string 
 function extractTsSurface(content: string): string {
   const lines: string[] = [];
   const seen = new Set<string>();
+  collectExportedDeclarations(content, lines, seen);
+  collectPublicClassMembers(content, lines, seen);
+  collectNamespaceMembers(content, lines);
+  return lines.length > 0 ? lines.join('\n') : '(no public surface detected)';
+}
 
+function collectExportedDeclarations(content: string, lines: string[], seen: Set<string>): void {
   const exportRe = /^export\s+(?:default\s+)?(class|function|interface|type|enum|const|let|abstract\s+class)\s+(\w+)/gm;
-  let m: RegExpExecArray | null;
-  while ((m = exportRe.exec(content)) !== null) {
+  for (const m of content.matchAll(exportRe)) {
     const decl = `export ${m[1]} ${m[2]}`;
     if (!seen.has(decl)) { seen.add(decl); lines.push(decl); }
   }
+}
 
+function collectPublicClassMembers(content: string, lines: string[], seen: Set<string>): void {
   // Public class members. D6 fix: any leading whitespace, not just 2-space indent,
   // so the extractor is robust against tab-indented or 4-space external fixtures.
   // Excludes private/protected/# fields, optional public/readonly/async modifiers.
   // NOSONAR_BEGIN
   const memberRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:readonly\s+)?(async\s+)?(\w+)\s*(\([^)]*\)[^{;]*|[:=][^;]*);?/gm;
   // NOSONAR_END
-  while ((m = memberRe.exec(content)) !== null) {
+  for (const m of content.matchAll(memberRe)) {
     const sig = m[0].trim();
     if (/^(constructor|ngOnInit|ngOnDestroy|ngAfterViewInit)\b/.test(sig)) continue;
     if (!seen.has(sig)) { seen.add(sig); lines.push(`  ${sig}`); }
   }
+}
 
+function collectNamespaceMembers(content: string, lines: string[]): void {
   // Namespace-style object properties (Actions, Selectors namespaces).
   // Multi-line safe: [\s\S]*? spans newlines, \n\} anchor requires close-brace
   // at column 0 (cht-core convention for the Selectors namespace).
   // Must stay byte-identical to the namespace regex in src/agents/cross-file-validator.ts.
   const namespaceRe = /export\s+const\s+(\w+)\s*=\s*\{([\s\S]*?)\n\}\s*;?/g;
-  while ((m = namespaceRe.exec(content)) !== null) {
-    const namespaceName = m[1];
-    const body = m[2];
-    const propRe = /^\s+(\w+)\s*[:=]/gm;
-    let p: RegExpExecArray | null;
-    const props: string[] = [];
-    while ((p = propRe.exec(body)) !== null) {
-      if (!props.includes(p[1])) props.push(p[1]);
-    }
-    if (props.length > 0) {
-      lines.push(`namespace ${namespaceName}: { ${props.join(', ')} }`);
-    }
+  for (const m of content.matchAll(namespaceRe)) {
+    const props = extractNamespaceProps(m[2]);
+    if (props.length > 0) lines.push(`namespace ${m[1]}: { ${props.join(', ')} }`);
   }
-
-  return lines.length > 0 ? lines.join('\n') : '(no public surface detected)';
 }
+
+function extractNamespaceProps(body: string): string[] {
+  const propRe = /^\s+(\w+)\s*[:=]/gm;
+  const props: string[] = [];
+  for (const p of body.matchAll(propRe)) {
+    if (!props.includes(p[1])) props.push(p[1]);
+  }
+  return props;
+}
+
+const TEMPLATE_KEYWORDS = new Set(['true','false','null','undefined','let','of','as','then','else','async','await','typeof']);
 
 function extractHtmlIdentifiers(content: string): string {
   // D5 fix: collect *ngFor-declared locals and #templateRef declarations so they
   // don't false-flag as undeclared component fields.
+  const declaredLocals = collectTemplateDeclaredLocals(content);
+  const ids = collectTemplateReferencedIds(content);
+  const filtered = Array.from(ids)
+    .filter(i => !TEMPLATE_KEYWORDS.has(i) && !declaredLocals.has(i))
+    .sort((a, b) => a.localeCompare(b));
+  return `Template identifiers referenced: ${filtered.join(', ')}`;
+}
+
+function collectTemplateDeclaredLocals(content: string): Set<string> {
   const declaredLocals = new Set<string>();
   const ngForLocalRe = /\*ngFor\s*=\s*"\s*let\s+(\w+)(?:\s*,\s*(\w+))?(?:\s+of\s+\w+)?/g;
-  let nf: RegExpExecArray | null;
-  while ((nf = ngForLocalRe.exec(content)) !== null) {
+  for (const nf of content.matchAll(ngForLocalRe)) {
     declaredLocals.add(nf[1]);
     if (nf[2]) declaredLocals.add(nf[2]);
   }
   const tplRefRe = /#(\w+)(?=[\s>=/])/g;
-  while ((nf = tplRefRe.exec(content)) !== null) {
-    declaredLocals.add(nf[1]);
-  }
+  for (const nf of content.matchAll(tplRefRe)) declaredLocals.add(nf[1]);
+  return declaredLocals;
+}
 
+function collectTemplateReferencedIds(content: string): Set<string> {
   const ids = new Set<string>();
   // Matches Angular structural directives (*ngIf, *ngFor), property bindings
   // ([...]) excluding class/style/ngClass/ngStyle, and event bindings ((...))
@@ -100,28 +118,15 @@ function extractHtmlIdentifiers(content: string): string {
   // NOSONAR_BEGIN
   const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
   // NOSONAR_END
-  let m: RegExpExecArray | null;
-  while ((m = bindingRe.exec(content)) !== null) {
-    const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
-    let i: RegExpExecArray | null;
-    while ((i = idRe.exec(m[1])) !== null) {
-      ids.add(i[1]);
-    }
-  }
+  for (const m of content.matchAll(bindingRe)) collectIdentifiers(m[1], ids);
   const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
-  while ((m = interpRe.exec(content)) !== null) {
-    const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
-    let i: RegExpExecArray | null;
-    while ((i = idRe.exec(m[1])) !== null) {
-      ids.add(i[1]);
-    }
-  }
-  const KEYWORDS = new Set(['true','false','null','undefined','let','of','as','then','else','async','await','typeof']);
-  const filtered = Array.from(ids)
-    .filter(i => !KEYWORDS.has(i))
-    .filter(i => !declaredLocals.has(i))
-    .sort((a, b) => a.localeCompare(b));
-  return `Template identifiers referenced: ${filtered.join(', ')}`;
+  for (const m of content.matchAll(interpRe)) collectIdentifiers(m[1], ids);
+  return ids;
+}
+
+function collectIdentifiers(expression: string, ids: Set<string>): void {
+  const idRe = /\b([a-zA-Z_$][\w$]*)\b/g;
+  for (const i of expression.matchAll(idRe)) ids.add(i[1]);
 }
 
 function extractJsonKeys(content: string): string {
@@ -130,14 +135,7 @@ function extractJsonKeys(content: string): string {
     if (typeof obj !== 'object' || obj === null) return '(non-object JSON)';
     const lines: string[] = ['Top-level keys:'];
     for (const k of Object.keys(obj)) {
-      const v = (obj as Record<string, unknown>)[k];
-      if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-        const subKeys = Object.keys(v).slice(0, 8);
-        const more = Object.keys(v).length > 8 ? ', ...' : '';
-        lines.push(`  ${k}: { ${subKeys.join(', ')}${more} }`);
-      } else {
-        lines.push(`  ${k}: ${typeof v}`);
-      }
+      lines.push(`  ${k}: ${summarizeJsonValue((obj as Record<string, unknown>)[k])}`);
     }
     return lines.join('\n');
   } catch {
@@ -145,15 +143,28 @@ function extractJsonKeys(content: string): string {
   }
 }
 
+function summarizeJsonValue(v: unknown): string {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return typeof v;
+  const allKeys = Object.keys(v);
+  const subKeys = allKeys.slice(0, 8);
+  const more = allKeys.length > 8 ? ', ...' : '';
+  return `{ ${subKeys.join(', ')}${more} }`;
+}
+
 function extractPropertiesKeys(content: string): string {
   const keys: string[] = [];
   for (const line of content.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq > 0) keys.push(trimmed.substring(0, eq).trim());
+    const key = parsePropertyKey(line);
+    if (key) keys.push(key);
   }
   if (keys.length === 0) return '(no keys)';
   if (keys.length <= 50) return `Keys: ${keys.join(', ')}`;
   return `Keys (${keys.length} total, showing first 50): ${keys.slice(0, 50).join(', ')}, ...`;
+}
+
+function parsePropertyKey(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('#')) return null;
+  const eq = trimmed.indexOf('=');
+  return eq > 0 ? trimmed.substring(0, eq).trim() : null;
 }

@@ -38,6 +38,17 @@ const PLAINTEXT_INDICATORS = [
   /^to implement this/im,
 ];
 
+function isTrivialDiff(a: string, b: string): boolean {
+  const shorter = Math.min(a.length, b.length);
+  const longer = Math.max(a.length, b.length);
+  if (shorter === 0 || longer <= 100) return false;
+  let matchCount = 0;
+  for (let i = 0; i < shorter; i++) {
+    if (a[i] === b[i]) matchCount++;
+  }
+  return matchCount / longer > 0.99;
+}
+
 // Language-specific syntax markers
 const SYNTAX_MARKERS: Record<string, RegExp[]> = {
   ts: [/(?:import|export|interface|type|const|let|function|class|async|=>)/],
@@ -94,34 +105,18 @@ export const FileContentAssertions = {
    * A modified file that is identical to the original means the LLM didn't actually change anything.
    */
   hasStructuralChanges(content: string, original: string): string[] {
-    const failures: string[] = [];
-
-    // Normalize whitespace for comparison
     const normalizedContent = content.replace(/\s+/g, ' ').trim();
     const normalizedOriginal = original.replace(/\s+/g, ' ').trim();
 
     if (normalizedContent === normalizedOriginal) {
-      failures.push('Modified file is identical to the original — no actual changes were made');
-      return failures;
+      return ['Modified file is identical to the original — no actual changes were made'];
     }
 
-    // Check if the diff is too small (less than 1% change by character count)
-    const shorter = Math.min(normalizedContent.length, normalizedOriginal.length);
-    const longer = Math.max(normalizedContent.length, normalizedOriginal.length);
-    if (shorter > 0 && longer > 100) {
-      // Simple character-level diff heuristic: count matching chars
-      let matchCount = 0;
-      const limit = Math.min(normalizedContent.length, normalizedOriginal.length);
-      for (let i = 0; i < limit; i++) {
-        if (normalizedContent[i] === normalizedOriginal[i]) matchCount++;
-      }
-      const similarity = matchCount / longer;
-      if (similarity > 0.99) {
-        failures.push('Modified file has less than 1% difference from the original — changes may be trivial');
-      }
+    if (isTrivialDiff(normalizedContent, normalizedOriginal)) {
+      return ['Modified file has less than 1% difference from the original — changes may be trivial'];
     }
 
-    return failures;
+    return [];
   },
 
   /**

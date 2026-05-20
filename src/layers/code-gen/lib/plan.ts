@@ -21,32 +21,22 @@ export function sanitizePath(rawPath: string): string {
  */
 export function parsePlan(output: string): PlanItem[] {
   const items: PlanItem[] = [];
-  const lines = output.split('\n');
-
   let inPlan = false;
-
-  for (const line of lines) {
+  for (const line of output.split('\n')) {
     const trimmed = line.trim();
-
-    if (trimmed === PLAN_START) {
-      inPlan = true;
-      continue;
-    }
-    if (trimmed === PLAN_END) {
-      break;
-    }
-
-    if (inPlan) {
-      const match = PLAN_ITEM_RE.exec(trimmed);
-      if (match) {
-        items.push({
-          action: match[1] as 'MODIFY' | 'CREATE',
-          filePath: sanitizePath(match[2]),
-          rationale: match[3].trim(),
-        });
-      }
-    }
+    if (trimmed === PLAN_START) { inPlan = true; continue; }
+    if (trimmed === PLAN_END) break;
+    if (inPlan) tryAppendPlanItem(items, trimmed);
   }
-
   return items;
+}
+
+function tryAppendPlanItem(items: PlanItem[], trimmed: string): void {
+  const match = PLAN_ITEM_RE.exec(trimmed);
+  if (!match) return;
+  items.push({
+    action: match[1] as 'MODIFY' | 'CREATE',
+    filePath: sanitizePath(match[2]),
+    rationale: match[3].trim(),
+  });
 }

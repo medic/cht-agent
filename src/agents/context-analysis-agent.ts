@@ -315,51 +315,40 @@ export class ContextAnalysisAgent {
     codeContext?: CodeContext | null;
   }): string[] {
     const { issue, similarContexts, patterns, domainOverview, codeContext } = opts;
-    const recommendations: string[] = [];
+    return [
+      ...this.recommendationsFromSimilarContexts(similarContexts),
+      ...this.recommendationsFromPatterns(patterns),
+      ...this.recommendationsFromCodeContext(codeContext),
+      ...(domainOverview ? ['Review domain overview for key concepts and technologies'] : []),
+      ...this.getIssueTypeRecommendations(issue),
+    ];
+  }
 
-    // Recommendations from similar contexts
-    if (similarContexts.length > 0) {
-      recommendations.push(
-        `Review ${similarContexts.length} similar past implementation(s) for guidance`
-      );
-
-      // Component-specific recommendations
-      const commonComponents = this.findCommonComponents(similarContexts);
-      if (commonComponents.length > 0) {
-        recommendations.push(
-          `Focus on these frequently modified components: ${commonComponents.join(', ')}`
-        );
-      }
+  private recommendationsFromSimilarContexts(similarContexts: ResolvedIssueContext[]): string[] {
+    if (similarContexts.length === 0) return [];
+    const recs: string[] = [
+      `Review ${similarContexts.length} similar past implementation(s) for guidance`,
+    ];
+    const commonComponents = this.findCommonComponents(similarContexts);
+    if (commonComponents.length > 0) {
+      recs.push(`Focus on these frequently modified components: ${commonComponents.join(', ')}`);
     }
+    return recs;
+  }
 
-    // Pattern-based recommendations
-    if (patterns.length > 0) {
-      const topPattern = patterns.toSorted((a, b) => b.frequency - a.frequency)[0];
-      recommendations.push(
-        `Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`
-      );
-    }
+  private recommendationsFromPatterns(patterns: CodePattern[]): string[] {
+    if (patterns.length === 0) return [];
+    const topPattern = patterns.toSorted((a, b) => b.frequency - a.frequency)[0];
+    return [`Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`];
+  }
 
-    // Code context recommendations
-    if (codeContext && codeContext.codeSnippets.length > 0) {
-      const highRelevanceFiles = codeContext.codeSnippets
-        .filter((s) => s.relevance === 'high')
-        .map((s) => s.filePath);
-      if (highRelevanceFiles.length > 0) {
-        recommendations.push(
-          `Key files to review/modify: ${highRelevanceFiles.slice(0, 3).join(', ')}`
-        );
-      }
-    }
-
-    // Domain-specific recommendations
-    if (domainOverview) {
-      recommendations.push(`Review domain overview for key concepts and technologies`);
-    }
-
-    recommendations.push(...this.getIssueTypeRecommendations(issue));
-
-    return recommendations;
+  private recommendationsFromCodeContext(codeContext: CodeContext | null | undefined): string[] {
+    if (!codeContext?.codeSnippets.length) return [];
+    const highRelevanceFiles = codeContext.codeSnippets
+      .filter(s => s.relevance === 'high')
+      .map(s => s.filePath);
+    if (highRelevanceFiles.length === 0) return [];
+    return [`Key files to review/modify: ${highRelevanceFiles.slice(0, 3).join(', ')}`];
   }
 
   private getIssueTypeRecommendations(issue: IssueTemplate): string[] {

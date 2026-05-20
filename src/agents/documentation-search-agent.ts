@@ -226,23 +226,11 @@ export class DocumentationSearchAgent {
    * Extract code examples from document content
    */
   private extractCodeExamples(content: string): string[] {
-    const examples: string[] = [];
-
-    // Look for code blocks
-    const codeBlockRegex = /```[\s\S]*?```/g;
-    const matches = content.match(codeBlockRegex);
-
-    if (matches) {
-      for (const match of matches.slice(0, 3)) { // Limit to 3 examples
-        // Extract a brief description of the code
-        const firstLine = match.split('\n')[1]?.trim().substring(0, 50);
-        if (firstLine) {
-          examples.push(firstLine);
-        }
-      }
-    }
-
-    return examples;
+    const matches = content.match(/```[\s\S]*?```/g) ?? [];
+    return matches
+      .slice(0, 3)
+      .map(block => block.split('\n')[1]?.trim().substring(0, 50))
+      .filter((line): line is string => !!line);
   }
 
   /**
@@ -253,41 +241,34 @@ export class DocumentationSearchAgent {
     _issue: IssueTemplate,
     answer: string
   ): string[] {
-    const approaches: string[] = [];
-
-    // Extract complete bullet points from the answer (handle multi-line bullets)
-    const bulletPoints = this.extractBulletPoints(answer);
-    for (const bullet of bulletPoints.slice(0, 3)) {
-      // Only add if it's a meaningful, complete sentence/thought
-      if (bullet.length > 20 && this.isCompleteSentence(bullet)) {
-        approaches.push(bullet);
-      }
-    }
-
-    // If no good bullet points found, try to extract key sentences from the answer
+    const approaches = this.approachesFromBullets(answer);
     if (approaches.length === 0) {
-      const sentences = this.extractKeySentences(answer);
-      for (const sentence of sentences.slice(0, 3)) {
-        if (sentence.length > 20) {
-          approaches.push(sentence);
-        }
-      }
+      approaches.push(...this.approachesFromSentences(answer));
     }
-
-    // Extract relevant sections as approaches (only if we don't have enough)
     if (approaches.length < 3) {
-      for (const ref of references) {
-        if (ref.relevantSections) {
-          for (const section of ref.relevantSections) {
-            if (section && approaches.length < 5) {
-              approaches.push(`Follow ${section} pattern from ${ref.title}`);
-            }
-          }
+      this.appendApproachesFromSections(approaches, references);
+    }
+    return approaches.slice(0, 5); // Limit to top 5
+  }
+
+  private approachesFromBullets(answer: string): string[] {
+    return this.extractBulletPoints(answer)
+      .slice(0, 3)
+      .filter(bullet => bullet.length > 20 && this.isCompleteSentence(bullet));
+  }
+
+  private approachesFromSentences(answer: string): string[] {
+    return this.extractKeySentences(answer).slice(0, 3).filter(s => s.length > 20);
+  }
+
+  private appendApproachesFromSections(approaches: string[], references: DocumentationReference[]): void {
+    for (const ref of references) {
+      for (const section of ref.relevantSections ?? []) {
+        if (section && approaches.length < 5) {
+          approaches.push(`Follow ${section} pattern from ${ref.title}`);
         }
       }
     }
-
-    return approaches.slice(0, 5); // Limit to top 5
   }
 
   /**

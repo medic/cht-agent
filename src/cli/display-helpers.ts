@@ -27,7 +27,17 @@ const MAX_ENTRIES_PER_GROUP = 10;
  */
 export const renderCrossFileIssueBanner = (issues: CrossFileIssue[] | undefined): string => {
   if (!issues || issues.length === 0) return '';
+  const groups = groupIssuesByType(issues);
+  const lines: string[] = ['', '⚠️  UNRESOLVED ISSUES REMAIN AFTER REFINEMENT', '─'.repeat(70)];
+  for (const [type, items] of groups) appendIssueGroup(lines, type, items);
+  lines.push(
+    'You may still accept the diff (manual fix required), refine further, or abandon.',
+    '─'.repeat(70),
+  );
+  return lines.join('\n');
+};
 
+function groupIssuesByType(issues: CrossFileIssue[]): Map<string, CrossFileIssue[]> {
   const groups = new Map<string, CrossFileIssue[]>();
   for (const issue of issues) {
     const key = issue.issueType ?? 'other';
@@ -35,28 +45,21 @@ export const renderCrossFileIssueBanner = (issues: CrossFileIssue[] | undefined)
     if (bucket) bucket.push(issue);
     else groups.set(key, [issue]);
   }
+  return groups;
+}
 
-  const lines: string[] = ['', '⚠️  UNRESOLVED ISSUES REMAIN AFTER REFINEMENT', '─'.repeat(70)];
-
-  for (const [type, items] of groups) {
-    const heading = ISSUE_TYPE_HEADINGS[type] ?? FALLBACK_HEADING;
-    lines.push(`${heading} (${items.length}):`);
-    for (const item of items.slice(0, MAX_ENTRIES_PER_GROUP)) {
-      const detail = item.description ?? item.reason ?? '(no detail)';
-      lines.push(`  - ${item.filePath}: ${detail}`);
-    }
-    if (items.length > MAX_ENTRIES_PER_GROUP) {
-      lines.push(`  ... and ${items.length - MAX_ENTRIES_PER_GROUP} more`);
-    }
-    lines.push('');
+function appendIssueGroup(lines: string[], type: string, items: CrossFileIssue[]): void {
+  const heading = ISSUE_TYPE_HEADINGS[type] ?? FALLBACK_HEADING;
+  lines.push(`${heading} (${items.length}):`);
+  for (const item of items.slice(0, MAX_ENTRIES_PER_GROUP)) {
+    const detail = item.description ?? item.reason ?? '(no detail)';
+    lines.push(`  - ${item.filePath}: ${detail}`);
   }
-
-  lines.push(
-    'You may still accept the diff (manual fix required), refine further, or abandon.',
-    '─'.repeat(70),
-  );
-  return lines.join('\n');
-};
+  if (items.length > MAX_ENTRIES_PER_GROUP) {
+    lines.push(`  ... and ${items.length - MAX_ENTRIES_PER_GROUP} more`);
+  }
+  lines.push('');
+}
 
 /**
  * Render a separate banner when the compile gate did not run (e.g., tsc

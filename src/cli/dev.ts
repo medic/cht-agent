@@ -75,33 +75,31 @@ function synthesizeContextAnalysis(ticket: IssueTemplate): ContextAnalysisResult
   };
 }
 
+function collectRealPathsFromDomain(domainData: Record<string, unknown>): string[] {
+  const realPaths: string[] = [];
+  for (const section of ['api', 'webapp', 'sentinel']) {
+    const sectionData = domainData[section];
+    if (!sectionData || typeof sectionData !== 'object') continue;
+    for (const [, entries] of Object.entries(sectionData)) {
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (typeof entry === 'string') realPaths.push(entry);
+      }
+    }
+  }
+  return realPaths;
+}
+
 function synthesizeOrchestrationPlan(ticket: IssueTemplate): OrchestrationPlan {
   // Load domain index to get real file paths instead of generic component strings
   const domainIndex = loadIndex('domain-to-components') as { domains?: Record<string, Record<string, unknown>> } | null;
   const domain = ticket.issue.technical_context.domain;
   let suggestedComponents = ticket.issue.technical_context.components;
 
-  if (domainIndex?.domains?.[domain]) {
-    const domainData = domainIndex.domains[domain];
-    const realPaths: string[] = [];
-
-    for (const section of ['api', 'webapp', 'sentinel']) {
-      const sectionData = domainData[section];
-      if (sectionData && typeof sectionData === 'object') {
-        for (const [, entries] of Object.entries(sectionData)) {
-          if (Array.isArray(entries)) {
-            for (const entry of entries) {
-              if (typeof entry === 'string') {
-                realPaths.push(entry);
-              }
-            }
-          }
-        }
-      }
-    }
-
+  const domainData = domainIndex?.domains?.[domain];
+  if (domainData) {
+    const realPaths = collectRealPathsFromDomain(domainData);
     if (realPaths.length > 0) {
-      // Use real file paths, plus any original components that look like file paths
       const originalPaths = suggestedComponents.filter(c => c.includes('/') && /\.\w+$/.test(c));
       suggestedComponents = [...new Set([...realPaths, ...originalPaths])];
     }
@@ -126,13 +124,7 @@ function synthesizeOrchestrationPlan(ticket: IssueTemplate): OrchestrationPlan {
   };
 }
 
-const main = async (): Promise<void> => {
-  console.log('╔════════════════════════════════════════════════════════════════╗');
-  console.log('║      CHT Multi-Agent System - Development Only CLI            ║');
-  console.log('║      (Research phase skipped — using synthesized stubs)        ║');
-  console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
-  // Check for API key (not required in CLI mode)
+function ensureApiKey(): void {
   const usingCLI = isUsingCLIProvider();
   if (!usingCLI && !process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
@@ -142,12 +134,10 @@ const main = async (): Promise<void> => {
     console.log('LLM_PROVIDER=claude-cli\n');
     process.exit(1);
   }
+  if (usingCLI) console.log('🔧 Using Claude Code CLI provider (no API key required)\n');
+}
 
-  if (usingCLI) {
-    console.log('🔧 Using Claude Code CLI provider (no API key required)\n');
-  }
-
-  // Check for CHT_CORE_PATH
+function ensureChtCorePath(): string {
   const chtCorePath = process.env.CHT_CORE_PATH;
   if (!chtCorePath) {
     console.error('❌ Error: CHT_CORE_PATH not found in environment variables');
@@ -155,21 +145,33 @@ const main = async (): Promise<void> => {
     console.log('CHT_CORE_PATH=/path/to/cht-core\n');
     process.exit(1);
   }
+  return chtCorePath;
+}
+
+function ensureTicketPath(): string {
+  if (!process.argv[2]) {
+    console.error('❌ Error: No ticket file specified\n');
+    console.log('Usage:');
+    console.log('  npm run dev <ticket-file>\n');
+    console.log('Examples:');
+    console.log('  npm run dev tickets/10139.md');
+    console.log('  npm run dev /path/to/ticket.md\n');
+    process.exit(1);
+  }
+  return path.resolve(process.argv[2]);
+}
+
+const main = async (): Promise<void> => {
+  console.log('╔════════════════════════════════════════════════════════════════╗');
+  console.log('║      CHT Multi-Agent System - Development Only CLI            ║');
+  console.log('║      (Research phase skipped — using synthesized stubs)        ║');
+  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+
+  ensureApiKey();
+  const chtCorePath = ensureChtCorePath();
 
   try {
-    // Check if ticket file is provided
-    if (!process.argv[2]) {
-      console.error('❌ Error: No ticket file specified\n');
-      console.log('Usage:');
-      console.log('  npm run dev <ticket-file>\n');
-      console.log('Examples:');
-      console.log('  npm run dev tickets/10139.md');
-      console.log('  npm run dev /path/to/ticket.md\n');
-      process.exit(1);
-    }
-
-    // Get ticket file path
-    const ticketPath = path.resolve(process.argv[2]);
+    const ticketPath = ensureTicketPath();
     console.log(`📄 Loading ticket from: ${ticketPath}\n`);
 
     // Parse ticket file

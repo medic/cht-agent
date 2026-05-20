@@ -79,6 +79,89 @@ function fileStage(filePath: string): number {
   return 5;
 }
 
+/**
+ * Reorder: generate code files first, large JSON files last. JSON files (e.g.,
+ * app_settings.json) use Python transform which is slower. Generating code
+ * files first builds up context for cross-file coherence.
+ */
+function reorderPlanForJsonLast(plan: PlanItem[]): PlanItem[] {
+  return [...plan].sort((a, b) => {
+    const sa = fileStage(a.filePath);
+    const sb = fileStage(b.filePath);
+    if (sa !== sb) return sa - sb;
+    return a.filePath.localeCompare(b.filePath);
+  });
+}
+
+type RetryAttemptResult =
+  | { outcome: 'success'; file: GeneratedFile; tokensUsed: number }
+  | { outcome: 'retry'; failures: string[]; tokensUsed: number }
+  | { outcome: 'over-budget'; tokensUsed: number };
+
+function decideRetryNext(
+  attempt: RetryAttemptResult,
+): { kind: 'terminate'; file: GeneratedFile | null } | { kind: 'retry'; failures: string[] } {
+  if (attempt.outcome === 'success') return { kind: 'terminate', file: attempt.file };
+  if (attempt.outcome === 'over-budget') return { kind: 'terminate', file: null };
+  return { kind: 'retry', failures: attempt.failures };
+}
+
+const READ_FILE_TOOL: LLMToolDefinition = {
+  name: 'read_file',
+  description:
+    'Read the contents of a file from the CHT-Core workspace. ' +
+    'Use this to examine type definitions, interfaces, existing implementations, ' +
+    'or configuration files you need to understand before generating code.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Relative path within the CHT-Core workspace (e.g. "webapp/src/ts/services/auth.service.ts")',
+      },
+    },
+    required: ['path'],
+  },
+};
+
+const LIST_DIRECTORY_TOOL: LLMToolDefinition = {
+  name: 'list_directory',
+  description:
+    'List files and subdirectories in a directory within the CHT-Core workspace. ' +
+    'Use this to explore the project structure and find relevant files.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      path: {
+        type: 'string',
+        description: 'Relative path to a directory (e.g. "webapp/src/ts/services/")',
+      },
+    },
+    required: ['path'],
+  },
+};
+
+function buildToolHandler(input: CodeGenModuleInput): ToolHandler {
+  return async (toolName, toolInput) => {
+    const filePath = toolInput.path as string;
+    if (toolName === 'read_file') return handleReadFileTool(input, filePath);
+    if (toolName === 'list_directory') return handleListDirectoryTool(input, filePath);
+    return `Error: Unknown tool: ${toolName}`;
+  };
+}
+
+async function handleReadFileTool(input: CodeGenModuleInput, filePath: string): Promise<string> {
+  if (!input.readFile) return 'Error: read_file is not available';
+  const content = await input.readFile(filePath);
+  return content ?? `Error: File not found: ${filePath}`;
+}
+
+async function handleListDirectoryTool(input: CodeGenModuleInput, filePath: string): Promise<string> {
+  if (!input.listDirectory) return 'Error: list_directory is not available';
+  const entries = await input.listDirectory(filePath);
+  return entries.length > 0 ? entries.join('\n') : `(empty directory: ${filePath})`;
+}
+
 export class ClaudeApiCodeGenModule implements CodeGenModule {
   name = 'claude-api';
 
@@ -333,17 +416,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     const generatedFiles: GeneratedFile[] = [];
     let totalTokens = 0;
     const codeGenTools = this.buildCodeGenTools(input);
-
-    // Reorder: generate code files first, large JSON files last.
-    // JSON files (e.g., app_settings.json) use Python transform which is slower.
-    // Generating code files first builds up context for cross-file coherence.
-    const sortedPlan = [...plan].sort((a, b) => {
-      const sa = fileStage(a.filePath);
-      const sb = fileStage(b.filePath);
-      if (sa !== sb) return sa - sb;
-      return a.filePath.localeCompare(b.filePath);
-    });
-
+    const sortedPlan = reorderPlanForJsonLast(plan);
     for (let i = 0; i < sortedPlan.length; i++) {
       if (isShutdownRequested()) {
         console.log(`[Code Gen Module] Shutdown requested; stopping after ${i} of ${sortedPlan.length} files`);
@@ -351,9 +424,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       }
       const planItem = sortedPlan[i];
       console.log(`[Code Gen Module] Generating file ${i + 1}/${plan.length}: ${planItem.filePath}`);
-
       await this.fireCallback('onFileInProgress', input.onFileInProgress, planItem.filePath);
-
       const result = await this.generateSingleFileWithRetry({
         planItem,
         fullPlan: plan,
@@ -362,26 +433,32 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
         previouslyGenerated: generatedFiles,
         codeGenTools,
       });
-
       totalTokens += result.tokensUsed;
-      if (result.file) {
-        // Attach original content for MODIFY files so upstream can generate diffs
-        const origContent = originalContentMap.get(planItem.filePath);
-        if (planItem.action === 'MODIFY' && origContent) {
-          result.file.originalContent = origContent;
-        }
-        generatedFiles.push(result.file);
-        console.log(`[Code Gen Module]   OK ${planItem.filePath} (${result.file.content.length} chars)`);
-        await this.fireCallback('onFileCompleted', input.onFileCompleted, result.file);
-      } else {
-        console.log(`[Code Gen Module]   FAILED ${planItem.filePath} (no usable content after retries)`);
-        await this.fireCallback(
-          'onFileFailed', input.onFileFailed, planItem.filePath, ['No usable content after retries'],
-        );
-      }
+      await this.handleGenerationResult(result, planItem, input, originalContentMap, generatedFiles);
     }
-
     return { files: generatedFiles, tokensUsed: totalTokens };
+  }
+
+  private async handleGenerationResult(
+    result: { file: GeneratedFile | null; tokensUsed: number },
+    planItem: PlanItem,
+    input: CodeGenModuleInput,
+    originalContentMap: Map<string, string>,
+    generatedFiles: GeneratedFile[],
+  ): Promise<void> {
+    if (!result.file) {
+      console.log(`[Code Gen Module]   FAILED ${planItem.filePath} (no usable content after retries)`);
+      await this.fireCallback(
+        'onFileFailed', input.onFileFailed, planItem.filePath, ['No usable content after retries'],
+      );
+      return;
+    }
+    // Attach original content for MODIFY files so upstream can generate diffs.
+    const origContent = originalContentMap.get(planItem.filePath);
+    if (planItem.action === 'MODIFY' && origContent) result.file.originalContent = origContent;
+    generatedFiles.push(result.file);
+    console.log(`[Code Gen Module]   OK ${planItem.filePath} (${result.file.content.length} chars)`);
+    await this.fireCallback('onFileCompleted', input.onFileCompleted, result.file);
   }
 
   /**
@@ -410,25 +487,16 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       if (attempt > 1) {
         console.log(`[Code Gen Module]   Retry ${attempt}/${maxAttempts} for ${planItem.filePath}`);
       }
-
       const attemptResult = await this.runSingleFileAttempt({
-        planItem,
-        fullPlan,
-        input,
-        originalContentMap,
-        previouslyGenerated,
-        codeGenTools,
+        planItem, fullPlan, input, originalContentMap, previouslyGenerated, codeGenTools,
         previousFailures: lastFailures.length > 0 ? lastFailures : undefined,
         attempt,
       });
       totalTokens += attemptResult.tokensUsed;
-
-      if (attemptResult.outcome === 'success') return { file: attemptResult.file, tokensUsed: totalTokens };
-      if (attemptResult.outcome === 'over-budget') return { file: null, tokensUsed: totalTokens };
-      // 'retry' — accumulate failure reasons and let the loop continue.
-      lastFailures = attemptResult.failures;
+      const decision = decideRetryNext(attemptResult);
+      if (decision.kind === 'terminate') return { file: decision.file, tokensUsed: totalTokens };
+      lastFailures = decision.failures;
     }
-
     return { file: null, tokensUsed: totalTokens };
   }
 
@@ -533,66 +601,10 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
   ): { tools: LLMToolDefinition[]; toolHandler: ToolHandler } | undefined {
     if (!input.readFile && !input.listDirectory) return undefined;
-
     const tools: LLMToolDefinition[] = [];
-
-    if (input.readFile) {
-      tools.push({
-        name: 'read_file',
-        description:
-          'Read the contents of a file from the CHT-Core workspace. ' +
-          'Use this to examine type definitions, interfaces, existing implementations, ' +
-          'or configuration files you need to understand before generating code.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            path: {
-              type: 'string',
-              description: 'Relative path within the CHT-Core workspace (e.g. "webapp/src/ts/services/auth.service.ts")',
-            },
-          },
-          required: ['path'],
-        },
-      });
-    }
-
-    if (input.listDirectory) {
-      tools.push({
-        name: 'list_directory',
-        description:
-          'List files and subdirectories in a directory within the CHT-Core workspace. ' +
-          'Use this to explore the project structure and find relevant files.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            path: {
-              type: 'string',
-              description: 'Relative path to a directory (e.g. "webapp/src/ts/services/")',
-            },
-          },
-          required: ['path'],
-        },
-      });
-    }
-
-    const toolHandler: ToolHandler = async (toolName, toolInput) => {
-      const filePath = toolInput.path as string;
-      switch (toolName) {
-        case 'read_file': {
-          if (!input.readFile) return 'Error: read_file is not available';
-          const content = await input.readFile(filePath);
-          return content ?? `Error: File not found: ${filePath}`;
-        }
-        case 'list_directory': {
-          if (!input.listDirectory) return 'Error: list_directory is not available';
-          const entries = await input.listDirectory(filePath);
-          return entries.length > 0 ? entries.join('\n') : `(empty directory: ${filePath})`;
-        }
-        default:
-          return `Error: Unknown tool: ${toolName}`;
-      }
-    };
-
+    if (input.readFile) tools.push(READ_FILE_TOOL);
+    if (input.listDirectory) tools.push(LIST_DIRECTORY_TOOL);
+    const toolHandler = buildToolHandler(input);
     return { tools, toolHandler };
   }
 
@@ -610,61 +622,65 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     previousFailures?: string[];
   }): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
     const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, codeGenTools, previousFailures } = opts;
-    const llm = this.getProvider();
     const prompt = this.buildSingleFilePrompt({
-      planItem,
-      fullPlan,
-      input,
-      originalContentMap,
-      previouslyGenerated,
-      previousFailures,
+      planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures,
     });
-
-    let response;
-    try {
-      response = await llm.invoke(prompt, {
-        temperature: 0.3,
-        maxTokens: 65536,
-        // When code gen tools are available, the LLM uses them for filesystem access during generation.
-        ...(codeGenTools
-          ? { tools: codeGenTools.tools, toolHandler: codeGenTools.toolHandler }
-          : {}),
-      });
-    } catch (error) {
-      console.error(`[Code Gen Module]   Failed to generate ${planItem.filePath}:`, error);
-      return { file: null, tokensUsed: 0, truncated: false };
-    }
-
+    const response = await this.invokeLLM(prompt, codeGenTools, planItem.filePath);
+    if (!response) return { file: null, tokensUsed: 0, truncated: false };
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
     const truncated = response.stopReason === 'max_tokens';
     const rawContent = this.parseSingleFileContent(response.content);
 
-    if (!rawContent || rawContent.length < 10) {
-      console.log(`[Code Gen Module]   No usable content for ${planItem.filePath} (${response.content.length} raw chars)`);
+    if (!this.isUsableContent(rawContent, planItem.filePath, response.content.length)) {
       return { file: null, tokensUsed, truncated: false };
     }
-
-    // Reject LLM reasoning/thinking text masquerading as code
-    if (!this.looksLikeCodeContent(rawContent, planItem.filePath)) {
-      console.log(`[Code Gen Module]   Output for ${planItem.filePath} appears to be LLM reasoning, not code — skipping`);
-      return { file: null, tokensUsed, truncated: false };
-    }
-
-    // For large MODIFY files: apply surgical edits to the original
-    const isLarge = this.isLargeFile(planItem, originalContentMap);
-    console.log(`[Code Gen Module]   ${planItem.filePath}: ${isLarge ? 'large-file mode' : 'full-file mode'}`);
-    let content = rawContent;
-    if (isLarge) {
-      const transformed = await this.applyLargeFileTransform(planItem, rawContent, originalContentMap);
-      if (transformed === null) return { file: null, tokensUsed, truncated: false };
-      content = transformed;
-    }
-
+    const content = await this.applyLargeTransformIfNeeded(planItem, rawContent, originalContentMap);
+    if (content === null) return { file: null, tokensUsed, truncated: false };
     return {
       file: { path: planItem.filePath, content, purpose: planItem.rationale },
       tokensUsed,
       truncated,
     };
+  }
+
+  private async invokeLLM(
+    prompt: string,
+    codeGenTools: { tools: LLMToolDefinition[]; toolHandler: ToolHandler } | undefined,
+    filePath: string,
+  ): Promise<Awaited<ReturnType<LLMProvider['invoke']>> | null> {
+    try {
+      return await this.getProvider().invoke(prompt, {
+        temperature: 0.3,
+        maxTokens: 65536,
+        ...(codeGenTools ? { tools: codeGenTools.tools, toolHandler: codeGenTools.toolHandler } : {}),
+      });
+    } catch (error) {
+      console.error(`[Code Gen Module]   Failed to generate ${filePath}:`, error);
+      return null;
+    }
+  }
+
+  private isUsableContent(rawContent: string, filePath: string, rawCharCount: number): boolean {
+    if (!rawContent || rawContent.length < 10) {
+      console.log(`[Code Gen Module]   No usable content for ${filePath} (${rawCharCount} raw chars)`);
+      return false;
+    }
+    if (!this.looksLikeCodeContent(rawContent, filePath)) {
+      console.log(`[Code Gen Module]   Output for ${filePath} appears to be LLM reasoning, not code — skipping`);
+      return false;
+    }
+    return true;
+  }
+
+  private async applyLargeTransformIfNeeded(
+    planItem: PlanItem,
+    rawContent: string,
+    originalContentMap: Map<string, string>,
+  ): Promise<string | null> {
+    const isLarge = this.isLargeFile(planItem, originalContentMap);
+    console.log(`[Code Gen Module]   ${planItem.filePath}: ${isLarge ? 'large-file mode' : 'full-file mode'}`);
+    if (!isLarge) return rawContent;
+    return this.applyLargeFileTransform(planItem, rawContent, originalContentMap);
   }
 
   /**
@@ -750,48 +766,49 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
     maxContinuations: number = this.getMaxContinuations(),
   ): Promise<{ continuation: string; tokensUsed: number; stillTruncated: boolean }> {
-    const llm = this.getProvider();
-    let accumulated = '';
-    let totalTokens = 0;
-    let lastStopReason: string | undefined;
-
+    const acc = { content: '', tokens: 0, stopReason: undefined as string | undefined };
     for (let i = 0; i < maxContinuations; i++) {
-      const fullSoFar = partialContent + accumulated;
-      const lastLines = fullSoFar.split('\n').slice(-50).join('\n');
-
-      const prompt = this.buildContinuationPrompt(lastLines, planItem, input);
-
-      let response;
-      try {
-        response = await llm.invoke(prompt, { temperature: 0.3, maxTokens: 65536 });
-      } catch (error) {
-        console.error(`[Code Gen Module]   Continuation call ${i + 1} failed:`, error);
-        break;
-      }
-
-      totalTokens += (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
-      // Strip the trailing newline that parseSingleFileContent re-appends; otherwise
-      // every continuation seam would double up after the C1 fix.
-      const continuation = this.parseSingleFileContent(response.content).replace(/\n$/, '');
-      accumulated += '\n' + continuation;
-      lastStopReason = response.stopReason;
-
-      if (response.stopReason !== 'max_tokens') {
+      const ok = await this.runOneContinuation(partialContent, planItem, input, acc, i);
+      if (!ok) break;
+      if (acc.stopReason !== 'max_tokens') {
         console.log(`[Code Gen Module]   Continuation complete after ${i + 1} call(s)`);
         break;
       }
-
       console.log(`[Code Gen Module]   Continuation ${i + 1} still truncated, continuing...`);
     }
-
-    const stillTruncated = lastStopReason === 'max_tokens';
+    const stillTruncated = acc.stopReason === 'max_tokens';
     if (stillTruncated) {
       console.warn(
         `[Code Gen Module]   ! File "${planItem.filePath}" still truncated after ${maxContinuations} continuation(s). ` +
         `Consider raising CODE_GEN_MAX_CONTINUATIONS or splitting the file.`
       );
     }
-    return { continuation: accumulated, tokensUsed: totalTokens, stillTruncated };
+    return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated };
+  }
+
+  private async runOneContinuation(
+    partialContent: string,
+    planItem: PlanItem,
+    input: CodeGenModuleInput,
+    acc: { content: string; tokens: number; stopReason: string | undefined },
+    iteration: number,
+  ): Promise<boolean> {
+    const lastLines = (partialContent + acc.content).split('\n').slice(-50).join('\n');
+    const prompt = this.buildContinuationPrompt(lastLines, planItem, input);
+    let response;
+    try {
+      response = await this.getProvider().invoke(prompt, { temperature: 0.3, maxTokens: 65536 });
+    } catch (error) {
+      console.error(`[Code Gen Module]   Continuation call ${iteration + 1} failed:`, error);
+      return false;
+    }
+    acc.tokens += (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
+    // Strip the trailing newline that parseSingleFileContent re-appends; otherwise
+    // every continuation seam would double up after the C1 fix.
+    const continuation = this.parseSingleFileContent(response.content).replace(/\n$/, '');
+    acc.content += '\n' + continuation;
+    acc.stopReason = response.stopReason;
+    return true;
   }
 
   // ============================================================================

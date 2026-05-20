@@ -34,82 +34,58 @@ const readFileSafe = async (filePath: string): Promise<string | null> => {
 /**
  * Generate a simple unified diff between two strings
  */
+type DiffResult = { diff: string; additions: number; deletions: number };
+
 const generateUnifiedDiff = (
   originalContent: string | null,
   newContent: string,
   filePath: string
-): { diff: string; additions: number; deletions: number } => {
-  const originalLines = originalContent ? originalContent.split('\n') : [];
+): DiffResult => {
   const newLines = newContent.split('\n');
-
-  let additions = 0;
-  let deletions = 0;
   const diffLines: string[] = [];
 
-  // Header
   if (originalContent === null) {
     diffLines.push(`--- /dev/null`, `+++ b/${filePath}`);
-  } else {
-    diffLines.push(`--- a/${filePath}`, `+++ b/${filePath}`);
+    return appendNewFileDiff(diffLines, newLines);
   }
-
-  // Simple line-by-line diff (not a full diff algorithm, but good for display)
-  if (originalContent === null) {
-    // New file - all additions
-    diffLines.push(`@@ -0,0 +1,${newLines.length} @@`);
-    for (const line of newLines) {
-      diffLines.push(`+${line}`);
-      additions++;
-    }
-  } else {
-    // Modified file - show changes
-    const maxLines = Math.max(originalLines.length, newLines.length);
-    let chunkStart = -1;
-    let chunkLines: string[] = [];
-
-    for (let i = 0; i < maxLines; i++) {
-      const origLine = originalLines[i];
-      const newLine = newLines[i];
-
-      if (origLine !== newLine) {
-        if (chunkStart === -1) {
-          chunkStart = i;
-        }
-
-        if (origLine !== undefined) {
-          chunkLines.push(`-${origLine}`);
-          deletions++;
-        }
-        if (newLine !== undefined) {
-          chunkLines.push(`+${newLine}`);
-          additions++;
-        }
-      } else if (chunkStart !== -1) {
-        // End of chunk, output it
-        diffLines.push(
-          `@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`,
-          ...chunkLines,
-        );
-        chunkStart = -1;
-        chunkLines = [];
-      }
-    }
-
-    // Output remaining chunk
-    if (chunkLines.length > 0) {
-      diffLines.push(
-        `@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`,
-        ...chunkLines,
-      );
-    }
-  }
-
-  return {
-    diff: diffLines.join('\n'),
-    additions,
-    deletions,
-  };
+  diffLines.push(`--- a/${filePath}`, `+++ b/${filePath}`);
+  return appendModifiedFileDiff(diffLines, originalContent.split('\n'), newLines);
 };
+
+function appendNewFileDiff(diffLines: string[], newLines: string[]): DiffResult {
+  diffLines.push(`@@ -0,0 +1,${newLines.length} @@`);
+  for (const line of newLines) diffLines.push(`+${line}`);
+  return { diff: diffLines.join('\n'), additions: newLines.length, deletions: 0 };
+}
+
+function appendModifiedFileDiff(
+  diffLines: string[],
+  originalLines: string[],
+  newLines: string[],
+): DiffResult {
+  let additions = 0;
+  let deletions = 0;
+  const maxLines = Math.max(originalLines.length, newLines.length);
+  let chunkStart = -1;
+  let chunkLines: string[] = [];
+  for (let i = 0; i < maxLines; i++) {
+    const origLine = originalLines[i];
+    const newLine = newLines[i];
+    if (origLine !== newLine) {
+      if (chunkStart === -1) chunkStart = i;
+      if (origLine !== undefined) { chunkLines.push(`-${origLine}`); deletions++; }
+      if (newLine !== undefined) { chunkLines.push(`+${newLine}`); additions++; }
+    } else if (chunkStart !== -1) {
+      diffLines.push(`@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`, ...chunkLines);
+      chunkStart = -1;
+      chunkLines = [];
+    }
+  }
+  if (chunkLines.length > 0) {
+    diffLines.push(`@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`, ...chunkLines);
+  }
+  return { diff: diffLines.join('\n'), additions, deletions };
+}
 
 /**
  * Create a unique staging directory in the OS temp folder
@@ -269,50 +245,40 @@ export const displayDiffs = (diffs: FileDiff[]): void => {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
   console.log('║                         FILE CHANGES                           ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
   if (diffs.length === 0) {
     console.log('No changes to display.\n');
     return;
   }
+  displayDiffsSummary(diffs);
+  for (const fileDiff of diffs) displayOneFileDiff(fileDiff);
+};
 
-  // Summary
-  const creates = diffs.filter((d) => d.action === 'create').length;
-  const modifies = diffs.filter((d) => d.action === 'modify').length;
+function displayDiffsSummary(diffs: FileDiff[]): void {
+  const creates = diffs.filter(d => d.action === 'create').length;
+  const modifies = diffs.filter(d => d.action === 'modify').length;
   const totalAdditions = diffs.reduce((sum, d) => sum + d.additions, 0);
   const totalDeletions = diffs.reduce((sum, d) => sum + d.deletions, 0);
-
   console.log(`📊 Summary: ${creates} new files, ${modifies} modified files`);
   console.log(`   +${totalAdditions} additions, -${totalDeletions} deletions\n`);
+}
 
-  // Individual diffs
-  for (const fileDiff of diffs) {
-    const actionIcon = fileDiff.action === 'create' ? '🆕' : '📝';
-    console.log(`${actionIcon} ${fileDiff.relativePath}`);
-    console.log(`   +${fileDiff.additions} -${fileDiff.deletions}`);
-    console.log('─'.repeat(70));
+function displayOneFileDiff(fileDiff: FileDiff): void {
+  const actionIcon = fileDiff.action === 'create' ? '🆕' : '📝';
+  console.log(`${actionIcon} ${fileDiff.relativePath}`);
+  console.log(`   +${fileDiff.additions} -${fileDiff.deletions}`);
+  console.log('─'.repeat(70));
+  const lines = fileDiff.diff.split('\n');
+  for (const line of lines.slice(0, 50)) console.log(colorizeDiffLine(line));
+  if (lines.length > 50) console.log(`\x1b[33m... ${lines.length - 50} more lines\x1b[0m`);
+  console.log();
+}
 
-    // Display diff with colors (terminal codes)
-    const lines = fileDiff.diff.split('\n');
-    for (const line of lines.slice(0, 50)) {
-      // Limit to 50 lines per file
-      if (line.startsWith('+') && !line.startsWith('+++')) {
-        console.log(`\x1b[32m${line}\x1b[0m`); // Green for additions
-      } else if (line.startsWith('-') && !line.startsWith('---')) {
-        console.log(`\x1b[31m${line}\x1b[0m`); // Red for deletions
-      } else if (line.startsWith('@@')) {
-        console.log(`\x1b[36m${line}\x1b[0m`); // Cyan for chunk headers
-      } else {
-        console.log(line);
-      }
-    }
-
-    if (lines.length > 50) {
-      console.log(`\x1b[33m... ${lines.length - 50} more lines\x1b[0m`);
-    }
-
-    console.log();
-  }
-};
+function colorizeDiffLine(line: string): string {
+  if (line.startsWith('+') && !line.startsWith('+++')) return `\x1b[32m${line}\x1b[0m`;
+  if (line.startsWith('-') && !line.startsWith('---')) return `\x1b[31m${line}\x1b[0m`;
+  if (line.startsWith('@@')) return `\x1b[36m${line}\x1b[0m`;
+  return line;
+}
 
 /**
  * Display summary of files written (for non-preview mode)
@@ -321,67 +287,28 @@ export const displayFileSummary = (files: GeneratedFile[]): void => {
   console.log('\n╔════════════════════════════════════════════════════════════════╗');
   console.log('║                      FILES GENERATED                           ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
   if (files.length === 0) {
     console.log('No files generated.\n');
     return;
   }
-
-  const sourceFiles = files.filter((f) => f.type === 'source');
-  const testFiles = files.filter((f) => f.type === 'test');
-  const configFiles = files.filter((f) => f.type === 'config');
-  const docFiles = files.filter((f) => f.type === 'documentation');
-  const fixtureFiles = files.filter((f) => f.type === 'fixture');
-
   console.log(`📊 Total: ${files.length} files generated\n`);
-
-  if (sourceFiles.length > 0) {
-    console.log(`📦 Source Files (${sourceFiles.length}):`);
-    sourceFiles.forEach((f) => {
-      const icon = f.action === 'create' ? '🆕' : '📝';
-      console.log(`   ${icon} ${f.relativePath}`);
-      console.log(`      ${f.description}`);
-    });
-    console.log();
-  }
-
-  if (testFiles.length > 0) {
-    console.log(`🧪 Test Files (${testFiles.length}):`);
-    testFiles.forEach((f) => {
-      const icon = f.action === 'create' ? '🆕' : '📝';
-      console.log(`   ${icon} ${f.relativePath}`);
-      console.log(`      ${f.description}`);
-    });
-    console.log();
-  }
-
-  if (configFiles.length > 0) {
-    console.log(`⚙️  Config Files (${configFiles.length}):`);
-    configFiles.forEach((f) => {
-      const icon = f.action === 'create' ? '🆕' : '📝';
-      console.log(`   ${icon} ${f.relativePath}`);
-    });
-    console.log();
-  }
-
-  if (fixtureFiles.length > 0) {
-    console.log(`📋 Fixture Files (${fixtureFiles.length}):`);
-    fixtureFiles.forEach((f) => {
-      const icon = f.action === 'create' ? '🆕' : '📝';
-      console.log(`   ${icon} ${f.relativePath}`);
-    });
-    console.log();
-  }
-
-  if (docFiles.length > 0) {
-    console.log(`📚 Documentation Files (${docFiles.length}):`);
-    docFiles.forEach((f) => {
-      const icon = f.action === 'create' ? '🆕' : '📝';
-      console.log(`   ${icon} ${f.relativePath}`);
-    });
-    console.log();
-  }
+  displayFileGroup('📦 Source Files', files.filter(f => f.type === 'source'), true);
+  displayFileGroup('🧪 Test Files', files.filter(f => f.type === 'test'), true);
+  displayFileGroup('⚙️  Config Files', files.filter(f => f.type === 'config'), false);
+  displayFileGroup('📋 Fixture Files', files.filter(f => f.type === 'fixture'), false);
+  displayFileGroup('📚 Documentation Files', files.filter(f => f.type === 'documentation'), false);
 };
+
+function displayFileGroup(label: string, files: GeneratedFile[], includeDescription: boolean): void {
+  if (files.length === 0) return;
+  console.log(`${label} (${files.length}):`);
+  for (const f of files) {
+    const icon = f.action === 'create' ? '🆕' : '📝';
+    console.log(`   ${icon} ${f.relativePath}`);
+    if (includeDescription) console.log(`      ${f.description}`);
+  }
+  console.log();
+}
 
 /**
  * Verify cht-core path exists and is a valid directory

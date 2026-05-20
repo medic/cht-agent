@@ -110,29 +110,32 @@ export async function compileCheck(chtCorePath: string): Promise<CompileValidati
   if (tsconfigs.length === 0) {
     return buildSkippedResult(`No tsconfig*.json files found under ${chtCorePath}`);
   }
-
-  const allIssues: CrossFileIssue[] = [];
-  const tsconfigsRun: string[] = [];
-
-  for (const tsconfig of tsconfigs) {
-    const outcome = await runTscAgainstTsconfig(chtCorePath, tsconfig);
-    if (outcome.kind === 'unavailable') {
-      // Degrade gracefully so the user can choose at HC2 whether to accept
-      // the diff without a compile check.
-      return buildSkippedResult(TSC_UNAVAILABLE_REASON);
-    }
-    tsconfigsRun.push(path.relative(chtCorePath, tsconfig));
-    if (outcome.kind === 'failed') {
-      allIssues.push(...outcome.issues);
-    }
-  }
-
-  const deduped = dedupIssues(allIssues);
+  const outcome = await collectIssuesAcrossTsconfigs(chtCorePath, tsconfigs);
+  if (outcome.kind === 'skipped') return buildSkippedResult(outcome.reason);
+  const deduped = dedupIssues(outcome.allIssues);
   return {
     passed: deduped.length === 0,
     issues: deduped,
-    tsconfigsRun,
+    tsconfigsRun: outcome.tsconfigsRun,
   };
+}
+
+async function collectIssuesAcrossTsconfigs(
+  chtCorePath: string,
+  tsconfigs: string[],
+): Promise<
+  | { kind: 'collected'; allIssues: CrossFileIssue[]; tsconfigsRun: string[] }
+  | { kind: 'skipped'; reason: string }
+> {
+  const allIssues: CrossFileIssue[] = [];
+  const tsconfigsRun: string[] = [];
+  for (const tsconfig of tsconfigs) {
+    const outcome = await runTscAgainstTsconfig(chtCorePath, tsconfig);
+    if (outcome.kind === 'unavailable') return { kind: 'skipped', reason: TSC_UNAVAILABLE_REASON };
+    tsconfigsRun.push(path.relative(chtCorePath, tsconfig));
+    if (outcome.kind === 'failed') allIssues.push(...outcome.issues);
+  }
+  return { kind: 'collected', allIssues, tsconfigsRun };
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   CodeGenModuleInput,
   CodeGenModuleOutput,
   PlanSummaryItem,
+  GeneratedFile,
 } from '../../interface';
 import { CrossFileIssue } from '../../../../types';
 import { compileCheck, CompileValidationResult } from '../../../../agents/compile-validator';
@@ -114,7 +115,6 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     snapshot: { headSha: string },
     chtCorePath: string,
   ): Promise<CodeGenModuleOutput> {
-    // Phase 1: read-only plan call. Feeds HC1.
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before plan');
     const plan = await this.runPlanPhase(input, chtCorePath);
     if (plan.length === 0) {
@@ -123,58 +123,22 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     }
     await this.surfacePlan(input, plan);
 
-    // Phase 2: full-edit execute call. The CLI does the work.
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before execute');
     const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
     const captureResult = await this.captureWithRelaxedRetry({
-      input,
-      plan,
-      executeResult,
-      snapshotSha: snapshot.headSha,
-      chtCorePath,
+      input, plan, executeResult, snapshotSha: snapshot.headSha, chtCorePath,
     });
-    const generatedFiles = captureResult.files;
-    const executeNoOp = captureResult.executeNoOp;
-
-    // V1: reconcile captured paths against the approved plan. Surface drift
-    // as cross-file issues so the supervisor's refinement loop sees them.
-    const adherenceIssues = reconcilePlanAdherence(plan, generatedFiles);
-    // A.15: extract LLM-flagged discoveries from the execute summary block.
-    const discoveryIssues = extractLlmDiscoveryIssues(
-      executeResult.resultText, plan, generatedFiles,
-    );
-    // H.1/H.2: run the compile gate while edits are still on disk (rollback
-    // happens in the surrounding generate() after this returns). Compile
-    // errors join the module's cross-file issues so the supervisor's
-    // refinement loop triggers consistently.
     const compileResult = await runCompileGate(chtCorePath);
-    const moduleIssues = [...adherenceIssues, ...discoveryIssues, ...compileResult.issues];
-    if (executeNoOp) {
-      moduleIssues.push({
-        filePath: '(execute)',
-        issueType: 'execute-no-op',
-        description:
-          'The CLI explored the planned files but produced no edits, even after a relaxed retry. ' +
-          'This is an abstain signal, not a code defect. Review the plan, augment context, or skip this ticket.',
-        reason: 'CLI abstained after relaxed retry; refinement loop cannot help.',
-      });
-    }
-    if (moduleIssues.length > 0) {
-      console.warn(
-        `[claude-code-cli] Module issues: ${moduleIssues.length} ` +
-        `(${adherenceIssues.length} adherence + ${discoveryIssues.length} discovery + ${compileResult.issues.length} compile` +
-        `${executeNoOp ? ' + 1 execute-no-op' : ''})`
-      );
-      for (const issue of moduleIssues) {
-        console.warn(`[claude-code-cli]   - ${issue.issueType}: ${issue.filePath}`);
-      }
-    }
-
+    const moduleIssues = collectModuleIssues({
+      plan,
+      generatedFiles: captureResult.files,
+      executeResultText: executeResult.resultText,
+      compileIssues: compileResult.issues,
+      executeNoOp: captureResult.executeNoOp,
+    });
     return {
-      files: generatedFiles,
-      explanation:
-        `Generated ${generatedFiles.length} file(s) via Claude Code CLI tool use ` +
-        `for "${input.ticket.issue.title}".`,
+      files: captureResult.files,
+      explanation: `Generated ${captureResult.files.length} file(s) via Claude Code CLI tool use for "${input.ticket.issue.title}".`,
       modelUsed: 'claude-cli',
       partialGeneration: executeResult.partialCompletion,
       partialGenerationReason: executeResult.reason,
@@ -298,6 +262,49 @@ async function fireCallback<Args extends unknown[]>(
   }
 }
 
+function collectModuleIssues(args: {
+  plan: PlanItem[];
+  generatedFiles: GeneratedFile[];
+  executeResultText: string;
+  compileIssues: CrossFileIssue[];
+  executeNoOp: boolean;
+}): CrossFileIssue[] {
+  const { plan, generatedFiles, executeResultText, compileIssues, executeNoOp } = args;
+  const adherenceIssues = reconcilePlanAdherence(plan, generatedFiles);
+  const discoveryIssues = extractLlmDiscoveryIssues(executeResultText, plan, generatedFiles);
+  const moduleIssues = [...adherenceIssues, ...discoveryIssues, ...compileIssues];
+  if (executeNoOp) {
+    moduleIssues.push({
+      filePath: '(execute)',
+      issueType: 'execute-no-op',
+      description:
+        'The CLI explored the planned files but produced no edits, even after a relaxed retry. ' +
+        'This is an abstain signal, not a code defect. Review the plan, augment context, or skip this ticket.',
+      reason: 'CLI abstained after relaxed retry; refinement loop cannot help.',
+    });
+  }
+  logModuleIssues(moduleIssues, adherenceIssues, discoveryIssues, compileIssues, executeNoOp);
+  return moduleIssues;
+}
+
+function logModuleIssues(
+  moduleIssues: CrossFileIssue[],
+  adherenceIssues: CrossFileIssue[],
+  discoveryIssues: CrossFileIssue[],
+  compileIssues: CrossFileIssue[],
+  executeNoOp: boolean,
+): void {
+  if (moduleIssues.length === 0) return;
+  console.warn(
+    `[claude-code-cli] Module issues: ${moduleIssues.length} ` +
+    `(${adherenceIssues.length} adherence + ${discoveryIssues.length} discovery + ${compileIssues.length} compile` +
+    `${executeNoOp ? ' + 1 execute-no-op' : ''})`
+  );
+  for (const issue of moduleIssues) {
+    console.warn(`[claude-code-cli]   - ${issue.issueType}: ${issue.filePath}`);
+  }
+}
+
 function emptyResult(input: CodeGenModuleInput, reason: string): CodeGenModuleOutput {
   return {
     files: [],
@@ -362,18 +369,7 @@ function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): 
 async function runCompileGate(chtCorePath: string): Promise<CompileValidationResult> {
   try {
     const result = await compileCheck(chtCorePath);
-    if (result.skipped) {
-      console.warn(`[claude-code-cli] Compile gate skipped: ${result.skipReason}`);
-    } else if (result.passed) {
-      console.log(
-        `[claude-code-cli] Compile gate passed (${result.tsconfigsRun?.length ?? 0} tsconfig(s)).`
-      );
-    } else {
-      console.warn(
-        `[claude-code-cli] Compile gate FAILED: ${result.issues.length} error(s) across ` +
-        `${result.tsconfigsRun?.length ?? 0} tsconfig(s).`
-      );
-    }
+    logCompileGateResult(result);
     return result;
   } catch (err) {
     console.warn(`[claude-code-cli] Compile gate raised an unexpected error: ${err}; treating as skipped.`);
@@ -384,6 +380,21 @@ async function runCompileGate(chtCorePath: string): Promise<CompileValidationRes
       skipReason: `Compile gate raised an unexpected error: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+function logCompileGateResult(result: CompileValidationResult): void {
+  if (result.skipped) {
+    console.warn(`[claude-code-cli] Compile gate skipped: ${result.skipReason}`);
+    return;
+  }
+  const tsconfigsCount = result.tsconfigsRun?.length ?? 0;
+  if (result.passed) {
+    console.log(`[claude-code-cli] Compile gate passed (${tsconfigsCount} tsconfig(s)).`);
+    return;
+  }
+  console.warn(
+    `[claude-code-cli] Compile gate FAILED: ${result.issues.length} error(s) across ${tsconfigsCount} tsconfig(s).`
+  );
 }
 
 /**
@@ -409,18 +420,20 @@ interface ExecuteSummaryBlock {
 function extractSummaryBlock(resultText: string): ExecuteSummaryBlock | null {
   if (!resultText) return null;
   // Prefer the fenced JSON code block (the format the execute prompt requires).
-  const fencedMatch = /```json\s*([\s\S]+?)\s*```/.exec(resultText);
-  if (fencedMatch) {
-    try { return JSON.parse(fencedMatch[1]) as ExecuteSummaryBlock; }
-    catch { /* fall through */ }
-  }
+  const fenced = tryParseJsonBlock(/```json\s*([\s\S]+?)\s*```/, resultText, 1);
+  if (fenced) return fenced;
   // Fall back to the last `{...}` block. Greedy-from-the-end via lookahead.
-  const lastBraceMatch = /\{[\s\S]*\}(?![\s\S]*\})/.exec(resultText);
-  if (lastBraceMatch) {
-    try { return JSON.parse(lastBraceMatch[0]) as ExecuteSummaryBlock; }
-    catch { /* fall through */ }
+  return tryParseJsonBlock(/\{[\s\S]*\}(?![\s\S]*\})/, resultText, 0);
+}
+
+function tryParseJsonBlock(re: RegExp, text: string, group: number): ExecuteSummaryBlock | null {
+  const match = re.exec(text);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[group]) as ExecuteSummaryBlock;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 const DISCOVERY_HINT_RE = /\b(discovered|would also need|would need|missing from( the)? plan|should also (modify|create))\b/i;
@@ -432,27 +445,35 @@ export function extractLlmDiscoveryIssues(
 ): CrossFileIssue[] {
   const summary = extractSummaryBlock(resultText);
   if (!summary) return [];
-
-  const issues: CrossFileIssue[] = [];
   const planPaths = new Set(plan.map(p => p.filePath));
   const capturedPaths = new Set(generatedFiles.map(f => f.path));
+  return [
+    ...buildProseDiscoveryIssue(summary.summary),
+    ...buildDeclaredPathIssues(summary, planPaths, capturedPaths),
+  ];
+}
 
-  // Signal 1: prose hint in the summary text.
-  if (summary.summary && DISCOVERY_HINT_RE.test(summary.summary)) {
-    const description = `LLM noted in execute summary: "${summary.summary.substring(0, 300)}"`;
-    issues.push({
-      filePath: '(LLM-flagged)',
-      issueType: 'plan-discovered-missing',
-      description,
-      reason: description,
-    });
-  }
+function buildProseDiscoveryIssue(summaryText?: string): CrossFileIssue[] {
+  if (!summaryText || !DISCOVERY_HINT_RE.test(summaryText)) return [];
+  const description = `LLM noted in execute summary: "${summaryText.substring(0, 300)}"`;
+  return [{
+    filePath: '(LLM-flagged)',
+    issueType: 'plan-discovered-missing',
+    description,
+    reason: description,
+  }];
+}
 
-  // Signal 2: declared paths absent from the diff AND absent from the plan.
+function buildDeclaredPathIssues(
+  summary: ExecuteSummaryBlock,
+  planPaths: Set<string>,
+  capturedPaths: Set<string>,
+): CrossFileIssue[] {
   const declaredPaths = new Set([
     ...(summary.files_modified ?? []),
     ...(summary.files_created ?? []),
   ]);
+  const issues: CrossFileIssue[] = [];
   for (const declared of declaredPaths) {
     if (!capturedPaths.has(declared) && !planPaths.has(declared)) {
       const description =

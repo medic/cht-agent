@@ -14,21 +14,21 @@ export interface FileManifest {
 export function buildFileManifest(contextFiles: ReadonlyArray<ContextFile>): FileManifest {
   const existingFiles: string[] = [];
   const dirSet = new Set<string>();
-
   for (const file of contextFiles) {
-    if (file.source === 'workspace') {
-      existingFiles.push(file.path);
-      const lastSlash = file.path.lastIndexOf('/');
-      if (lastSlash > 0) {
-        dirSet.add(file.path.substring(0, lastSlash + 1));
-      }
-    }
+    if (file.source !== 'workspace') continue;
+    existingFiles.push(file.path);
+    const dir = extractParentDir(file.path);
+    if (dir) dirSet.add(dir);
   }
-
   return {
     existingFiles,
     allowedDirectories: Array.from(dirSet).sort((a, b) => a.localeCompare(b)),
   };
+}
+
+function extractParentDir(filePath: string): string | null {
+  const lastSlash = filePath.lastIndexOf('/');
+  return lastSlash > 0 ? filePath.substring(0, lastSlash + 1) : null;
 }
 
 /**
@@ -53,24 +53,15 @@ export function buildManifestSection(manifest: FileManifest): string {
     return `## File Manifest (your working scope)
 No existing files or directories identified. You may create files in appropriate CHT project directories.`;
   }
-
   let section = '## File Manifest (known files and directories)\nThese are the files and directories already identified as relevant. You may reference files outside this list if the feature requires it.\n';
-
-  if (manifest.existingFiles.length > 0) {
-    section += '\nKnown existing files:\n';
-    for (const file of manifest.existingFiles) {
-      section += `- ${file}\n`;
-    }
-  }
-
-  if (manifest.allowedDirectories.length > 0) {
-    section += '\nKnown directories:\n';
-    for (const dir of manifest.allowedDirectories) {
-      section += `- ${dir}\n`;
-    }
-  }
-
+  section += renderBulletList('Known existing files:', manifest.existingFiles);
+  section += renderBulletList('Known directories:', manifest.allowedDirectories);
   return section;
+}
+
+function renderBulletList(heading: string, items: ReadonlyArray<string>): string {
+  if (items.length === 0) return '';
+  return '\n' + heading + '\n' + items.map(item => `- ${item}\n`).join('');
 }
 
 export interface FetchMissingModifyFilesOpts {
@@ -93,57 +84,51 @@ export async function fetchMissingModifyFiles(opts: FetchMissingModifyFilesOpts)
   const missingModifyItems = plan.filter(
     item => item.action === 'MODIFY' && !originalContentMap.has(item.filePath)
   );
-
   for (const item of missingModifyItems) {
-    console.log(`[Code Gen Lib] Fetching missing MODIFY file: ${item.filePath}`);
-    const content = await readFile(item.filePath);
-    if (content !== null) {
-      workingContextFiles.push({ path: item.filePath, content, source: 'workspace' });
-      originalContentMap.set(item.filePath, content);
-      manifest.existingFiles.push(item.filePath);
-      console.log(`[Code Gen Lib]   Fetched ${item.filePath} (${content.length} chars)`);
-      continue;
-    }
-
-    // MODIFY target does not exist on disk. The planner intended to update an
-    // existing file but the file is not there. Downgrade to CREATE so the
-    // per-file prompt, the assertion path, the Beads ticket, and the agent's
-    // convertModuleFiles heuristic all agree on the action. Without this
-    // mutation, the action silently disagrees across logs and outputs.
-    //
-    // Safe to mutate in place: `plan` is a local array owned by
-    // claude-api/index.ts generate() (parsed fresh from LLM or built from
-    // input.failingFiles). No external reference is retained.
-    console.log(`[Code Gen Lib]   Downgraded ${item.filePath} from MODIFY to CREATE (no on-disk original)`);
-    item.action = 'CREATE';
-
-    // Expand allowed directories for the new CREATE target so the downstream
-    // validateAgainstManifest does not flag it as out-of-scope.
-    const lastSlash = item.filePath.lastIndexOf('/');
-    if (lastSlash > 0) {
-      const dir = item.filePath.substring(0, lastSlash + 1);
-      if (!manifest.allowedDirectories.includes(dir)) {
-        manifest.allowedDirectories.push(dir);
-      }
-    }
+    await processMissingModifyItem(item, readFile, workingContextFiles, originalContentMap, manifest);
   }
+  expandAllowedDirsForCreates(plan, manifest);
+  manifest.allowedDirectories.sort((a, b) => a.localeCompare(b));
+}
 
-  // Expand allowed directories for CREATE items outside current scope
+async function processMissingModifyItem(
+  item: PlanItem,
+  readFile: (path: string) => Promise<string | null>,
+  workingContextFiles: ContextFile[],
+  originalContentMap: Map<string, string>,
+  manifest: FileManifest,
+): Promise<void> {
+  console.log(`[Code Gen Lib] Fetching missing MODIFY file: ${item.filePath}`);
+  const content = await readFile(item.filePath);
+  if (content !== null) {
+    workingContextFiles.push({ path: item.filePath, content, source: 'workspace' });
+    originalContentMap.set(item.filePath, content);
+    manifest.existingFiles.push(item.filePath);
+    console.log(`[Code Gen Lib]   Fetched ${item.filePath} (${content.length} chars)`);
+    return;
+  }
+  // MODIFY target does not exist on disk. Downgrade to CREATE so the per-file
+  // prompt, the assertion path, the Beads ticket, and the agent's
+  // convertModuleFiles heuristic all agree on the action. Without this
+  // mutation, the action silently disagrees across logs and outputs.
+  console.log(`[Code Gen Lib]   Downgraded ${item.filePath} from MODIFY to CREATE (no on-disk original)`);
+  item.action = 'CREATE';
+  const dir = extractParentDir(item.filePath);
+  if (dir && !manifest.allowedDirectories.includes(dir)) {
+    manifest.allowedDirectories.push(dir);
+  }
+}
+
+function expandAllowedDirsForCreates(plan: PlanItem[], manifest: FileManifest): void {
   const dirSet = new Set(manifest.allowedDirectories);
   for (const item of plan) {
-    if (item.action === 'CREATE') {
-      const lastSlash = item.filePath.lastIndexOf('/');
-      if (lastSlash > 0) {
-        const dir = item.filePath.substring(0, lastSlash + 1);
-        if (!dirSet.has(dir)) {
-          dirSet.add(dir);
-          manifest.allowedDirectories.push(dir);
-          console.log(`[Code Gen Lib]   Expanded scope: ${dir}`);
-        }
-      }
-    }
+    if (item.action !== 'CREATE') continue;
+    const dir = extractParentDir(item.filePath);
+    if (!dir || dirSet.has(dir)) continue;
+    dirSet.add(dir);
+    manifest.allowedDirectories.push(dir);
+    console.log(`[Code Gen Lib]   Expanded scope: ${dir}`);
   }
-  manifest.allowedDirectories.sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -155,37 +140,30 @@ export function validateAgainstManifest(
   plan: PlanItem[],
   manifest: FileManifest,
 ): string[] {
-  const warnings: string[] = [];
+  return [
+    ...checkOutOfScopeFiles(files, manifest),
+    ...checkPlanAdherence(files, plan),
+  ];
+}
 
+function checkOutOfScopeFiles(files: GeneratedFile[], manifest: FileManifest): string[] {
+  if (manifest.allowedDirectories.length === 0) return [];
   const existingSet = new Set(manifest.existingFiles);
-  const allowedDirs = manifest.allowedDirectories;
+  return files
+    .filter(file => !existingSet.has(file.path) && !manifest.allowedDirectories.some(dir => file.path.startsWith(dir)))
+    .map(file => `Out-of-scope file: ${file.path} (not in manifest)`);
+}
 
-  if (allowedDirs.length > 0) {
-    for (const file of files) {
-      const inExisting = existingSet.has(file.path);
-      const inAllowedDir = allowedDirs.some(dir => file.path.startsWith(dir));
-      if (!inExisting && !inAllowedDir) {
-        warnings.push(`Out-of-scope file: ${file.path} (not in manifest)`);
-      }
-    }
+function checkPlanAdherence(files: GeneratedFile[], plan: PlanItem[]): string[] {
+  if (plan.length === 0) return [];
+  const generatedPaths = new Set(files.map(f => f.path));
+  const plannedPaths = new Set(plan.map(p => p.filePath));
+  const warnings: string[] = [];
+  for (const item of plan) {
+    if (!generatedPaths.has(item.filePath)) warnings.push(`Planned but not generated: ${item.filePath}`);
   }
-
-  if (plan.length > 0) {
-    const generatedPaths = new Set(files.map(f => f.path));
-    const plannedPaths = new Set(plan.map(p => p.filePath));
-
-    for (const item of plan) {
-      if (!generatedPaths.has(item.filePath)) {
-        warnings.push(`Planned but not generated: ${item.filePath}`);
-      }
-    }
-
-    for (const file of files) {
-      if (!plannedPaths.has(file.path)) {
-        warnings.push(`Generated but not planned: ${file.path}`);
-      }
-    }
+  for (const file of files) {
+    if (!plannedPaths.has(file.path)) warnings.push(`Generated but not planned: ${file.path}`);
   }
-
   return warnings;
 }

@@ -55,6 +55,29 @@ interface MCPRPCResponse {
   };
 }
 
+function matchAndCapture(re: RegExp, content: string): string | undefined {
+  const m = re.exec(content);
+  return m ? m[1].trim() : undefined;
+}
+
+function extractDocumentBody(section: string): string {
+  const contentStart = section.indexOf('##');
+  const contentEnd = section.lastIndexOf('Source:');
+  return contentStart !== -1 && contentEnd !== -1
+    ? section.substring(contentStart, contentEnd).trim()
+    : section;
+}
+
+function extractSources(content: string): MCPParsedAnswer['sources'] {
+  const sources: MCPParsedAnswer['sources'] = [];
+  const sectionMatch = /\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/.exec(content);
+  if (!sectionMatch) return sources;
+  for (const m of sectionMatch[1].matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    sources.push({ title: m[1], url: m[2] });
+  }
+  return sources;
+}
+
 /**
  * MCP Client for CHT documentation
  */
@@ -145,43 +168,12 @@ export class MCPClient {
    */
   parseAskQuestionResponse(response: MCPAskQuestionResponse): MCPParsedAnswer {
     const content = response.content;
-    const result: MCPParsedAnswer = {
-      answer: '',
-      sources: [],
+    return {
+      threadId: matchAndCapture(/\*\*Thread ID:\*\*\s*([^\n]+)/, content),
+      questionAnswerId: matchAndCapture(/\*\*Question Answer ID:\*\*\s*([^\n]+)/, content),
+      sources: extractSources(content),
+      answer: matchAndCapture(/^([\s\S]*?)(?=\*\*Sources:\*\*|$)/, content) ?? '',
     };
-
-    // Extract thread ID
-    const threadIdMatch = /\*\*Thread ID:\*\*\s*([^\n]+)/.exec(content);
-    if (threadIdMatch) {
-      result.threadId = threadIdMatch[1].trim();
-    }
-
-    // Extract question answer ID
-    const qaIdMatch = /\*\*Question Answer ID:\*\*\s*([^\n]+)/.exec(content);
-    if (qaIdMatch) {
-      result.questionAnswerId = qaIdMatch[1].trim();
-    }
-
-    // Extract sources
-    const sourcesMatch = /\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/.exec(content);
-    if (sourcesMatch) {
-      const sourcesText = sourcesMatch[1];
-      const sourceLinks = sourcesText.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g);
-      for (const match of sourceLinks) {
-        result.sources.push({
-          title: match[1],
-          url: match[2],
-        });
-      }
-    }
-
-    // Extract answer (everything before Sources section)
-    const answerMatch = /^([\s\S]*?)(?=\*\*Sources:\*\*|$)/.exec(content);
-    if (answerMatch) {
-      result.answer = answerMatch[1].trim();
-    }
-
-    return result;
   }
 
   /**
@@ -264,34 +256,12 @@ export class MCPClient {
    * Parse a single document section from search results
    */
   private parseDocumentSection(section: string): MCPParsedDocument | null {
-    // Extract title (first bold line like **Title|Title**)
-    const titleMatch = /\*\*([^|*]+)\|([^*]+)\*\*/.exec(section);
-    const title = titleMatch ? titleMatch[1].trim() : '';
-
-    // Extract section path (like # Section > Subsection)
-    const sectionMatch = /^#\s*([^\n]+)/m.exec(section);
-    const sectionPath = sectionMatch ? sectionMatch[1].trim() : '';
-
-    // Extract source URL
-    const sourceMatch = /Source:\s*(https?:\/\/[^\s]+)/.exec(section);
-    const sourceUrl = sourceMatch ? sourceMatch[1].trim() : '';
-
-    if (!sourceUrl) {
-      return null;
-    }
-
-    // Content is everything between title/section and source
-    const contentStart = section.indexOf('##');
-    const contentEnd = section.lastIndexOf('Source:');
-    const content =
-      contentStart !== -1 && contentEnd !== -1
-        ? section.substring(contentStart, contentEnd).trim()
-        : section;
-
+    const sourceUrl = matchAndCapture(/Source:\s*(https?:\/\/[^\s]+)/, section);
+    if (!sourceUrl) return null;
     return {
-      title,
-      section: sectionPath,
-      content,
+      title: matchAndCapture(/\*\*([^|*]+)\|([^*]+)\*\*/, section) ?? '',
+      section: matchAndCapture(/^#\s*([^\n]+)/m, section) ?? '',
+      content: extractDocumentBody(section),
       sourceUrl,
     };
   }
