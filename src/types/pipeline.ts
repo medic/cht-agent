@@ -97,6 +97,60 @@ export interface FilterOptions {
   triageFn?: (pr: ScrapedPR) => Promise<FilterResult>;
 }
 
+/** The 8 functional CHT domains — matches the domain enum in schema.json */
+export type CHTDomain =
+  | 'authentication'
+  | 'contacts'
+  | 'forms-and-reports'
+  | 'tasks-and-targets'
+  | 'messaging'
+  | 'data-sync'
+  | 'configuration'
+  | 'interoperability';
+
+/**
+ * The structured output the LLM returns when distilling a PR.
+ * Assembled into markdown by distiller.ts — not written raw.
+ */
+export interface DistillDraft {
+  domain: CHTDomain;
+  title: string;
+  category: 'bug' | 'feature' | 'improvement';
+  summary: string;
+  tags: string[];
+  /** Referenced files, modules, or named patterns */
+  entities: string[];
+  /** Referenced architectural or domain concepts */
+  concepts: string[];
+  problem: string;
+  rootCause: string;
+  solution: string;
+  codePatterns: string;
+  designChoices: string;
+  relatedFiles: string[];
+}
+
+/** Outcome of the distill stage for a single PR */
+export type DistillStatus = 'written' | 'flag-for-human';
+
+/** Result returned by distillPR */
+export interface DistillResult {
+  status: DistillStatus;
+  /** Absolute path of the written draft file — set only when status === 'written' */
+  outputPath?: string;
+  reason: string;
+}
+
+/** Options for distillPR — used to inject test doubles and override defaults */
+export interface DistillOptions {
+  /** Override base _pending directory (default: agent-memory/_pending) */
+  outputDir?: string;
+  /** Override _skipped.ndjson path */
+  logPath?: string;
+  /** Inject a distill function replacing the real LLM call (for testing) */
+  distillFn?: (pr: ScrapedPR) => Promise<DistillDraft>;
+}
+
 /**
  * Error thrown by the scraper when it cannot successfully retrieve or parse
  * data for a specific PR. Carries the PR number for caller-side correlation.
