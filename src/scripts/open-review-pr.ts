@@ -51,8 +51,8 @@ function normalizeFrontmatter(data: Record<string, unknown>): Record<string, unk
     out[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
   }
   if ('lastUpdated' in out && !('last_updated' in out)) {
-    out['last_updated'] = out['lastUpdated'];
-    delete out['lastUpdated'];
+    out.last_updated = out.lastUpdated;
+    delete out.lastUpdated;
   }
   return out;
 }
@@ -102,9 +102,9 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
     const content = fs.readFileSync(draftPath, 'utf8');
     const parsed = matter(content);
     const fm = parsed.data as Record<string, unknown>;
-    const title = String(fm['title'] ?? path.basename(draftPath));
-    const sourcePr = fm['source_pr']
-      ? ` — [${fm['source_pr']}](https://github.com/${fm['source_pr']})`
+    const title = String(fm.title ?? path.basename(draftPath));
+    const sourcePr = fm.source_pr
+      ? ` — [${fm.source_pr}](https://github.com/${fm.source_pr})`
       : '';
     lines.push(`- **${title}**${sourcePr}`);
   }
