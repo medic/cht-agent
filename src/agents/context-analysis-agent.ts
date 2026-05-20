@@ -290,7 +290,7 @@ export class ContextAnalysisAgent {
     // In production, these would be extracted from the full context files
 
     contexts.forEach((context) => {
-      if (context.tech_stack && context.tech_stack.length > 0) {
+      if (context.tech_stack?.length) {
         decisions.push({
           decision: `Use ${context.tech_stack.join(', ')} for ${context.category}`,
           rationale: `Successfully used in ${context.id}`,

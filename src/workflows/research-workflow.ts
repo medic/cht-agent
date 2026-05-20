@@ -46,7 +46,7 @@ export const displayResearchResults = (result: ResearchState, duration: string):
       console.log(`\n${i + 1}. ${ref.title}`);
       console.log(`   URL: ${ref.url}`);
       console.log(`   Topics: ${ref.topics.join(', ')}`);
-      if (ref.relevantSections && ref.relevantSections.length > 0) {
+      if (ref.relevantSections?.length) {
         console.log(`   Sections: ${ref.relevantSections.join(', ')}`);
       }
     });
