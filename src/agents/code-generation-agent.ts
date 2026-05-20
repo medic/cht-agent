@@ -201,6 +201,22 @@ function appendServicesFromSection(sectionData: unknown, out: string[]): void {
   pushStringsFromArray(services, out);
 }
 
+function collectCrossDomainServiceFiles(args: {
+  domain: string;
+  keywords: string[];
+  currentDomain: string;
+  ticketText: string;
+  domainIndex: DomainIndex;
+  out: string[];
+}): void {
+  const { domain, keywords, currentDomain, ticketText, domainIndex, out } = args;
+  if (domain === currentDomain) return;
+  if (!keywords.some(kw => ticketText.includes(kw))) return;
+  const domainData = domainIndex.domains?.[domain];
+  if (!domainData) return;
+  collectServiceFilesFromDomain(domainData, out);
+}
+
 const VALID_LANGUAGES: ReadonlySet<FileLanguage> = new Set<FileLanguage>([
   'typescript',
   'javascript',
@@ -486,13 +502,21 @@ export class CodeGenerationAgent {
     existingFiles: Map<string, string>,
   ): Promise<void> {
     for (const filePath of relevantFiles) {
-      if (existingFiles.has(filePath)) continue;
-      if (filePath.endsWith('/')) {
-        await this.readDirectoryIntoMap(filePath, chtCorePath, existingFiles);
-      } else {
-        await readIntoMap(filePath, chtCorePath, existingFiles);
-      }
+      await this.readSingleRelevantPath(filePath, chtCorePath, existingFiles);
     }
+  }
+
+  private async readSingleRelevantPath(
+    filePath: string,
+    chtCorePath: string,
+    existingFiles: Map<string, string>,
+  ): Promise<void> {
+    if (existingFiles.has(filePath)) return;
+    if (filePath.endsWith('/')) {
+      await this.readDirectoryIntoMap(filePath, chtCorePath, existingFiles);
+      return;
+    }
+    await readIntoMap(filePath, chtCorePath, existingFiles);
   }
 
   private async readDirectoryIntoMap(
@@ -538,11 +562,7 @@ export class CodeGenerationAgent {
     const currentDomain = issue.issue.technical_context.domain;
     const files: string[] = [];
     for (const [domain, keywords] of Object.entries(CROSS_DOMAIN_KEYWORDS)) {
-      if (domain === currentDomain) continue;
-      if (!keywords.some(kw => ticketText.includes(kw))) continue;
-      const domainData = domainIndex.domains[domain];
-      if (!domainData) continue;
-      collectServiceFilesFromDomain(domainData, files);
+      collectCrossDomainServiceFiles({ domain, keywords, currentDomain, ticketText, domainIndex, out: files });
     }
     return files;
   }

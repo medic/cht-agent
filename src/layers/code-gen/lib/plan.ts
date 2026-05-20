@@ -20,23 +20,20 @@ export function sanitizePath(rawPath: string): string {
  * Parse the PLAN section from LLM output.
  */
 export function parsePlan(output: string): PlanItem[] {
-  const items: PlanItem[] = [];
-  let inPlan = false;
-  for (const line of output.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed === PLAN_START) { inPlan = true; continue; }
-    if (trimmed === PLAN_END) break;
-    if (inPlan) tryAppendPlanItem(items, trimmed);
-  }
-  return items;
+  const lines = output.split('\n').map(l => l.trim());
+  const startIndex = lines.indexOf(PLAN_START);
+  if (startIndex === -1) return [];
+  const endIndex = lines.indexOf(PLAN_END, startIndex + 1);
+  const body = lines.slice(startIndex + 1, endIndex === -1 ? lines.length : endIndex);
+  return body.flatMap(parsePlanLine);
 }
 
-function tryAppendPlanItem(items: PlanItem[], trimmed: string): void {
+function parsePlanLine(trimmed: string): PlanItem[] {
   const match = PLAN_ITEM_RE.exec(trimmed);
-  if (!match) return;
-  items.push({
+  if (!match) return [];
+  return [{
     action: match[1] as 'MODIFY' | 'CREATE',
     filePath: sanitizePath(match[2]),
     rationale: match[3].trim(),
-  });
+  }];
 }

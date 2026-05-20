@@ -158,12 +158,12 @@ function checkPlanAdherence(files: GeneratedFile[], plan: PlanItem[]): string[] 
   if (plan.length === 0) return [];
   const generatedPaths = new Set(files.map(f => f.path));
   const plannedPaths = new Set(plan.map(p => p.filePath));
-  const warnings: string[] = [];
-  for (const item of plan) {
-    if (!generatedPaths.has(item.filePath)) warnings.push(`Planned but not generated: ${item.filePath}`);
-  }
-  for (const file of files) {
-    if (!plannedPaths.has(file.path)) warnings.push(`Generated but not planned: ${file.path}`);
-  }
-  return warnings;
+  return [
+    ...plan
+      .filter(item => !generatedPaths.has(item.filePath))
+      .map(item => `Planned but not generated: ${item.filePath}`),
+    ...files
+      .filter(file => !plannedPaths.has(file.path))
+      .map(file => `Generated but not planned: ${file.path}`),
+  ];
 }

@@ -83,24 +83,30 @@ export async function propagateNewLocaleKeys(
 ): Promise<GeneratedFile[]> {
   const enFile = files.find(f => f.relativePath === ENGLISH_FILE);
   if (!enFile) return files;
-
   const newEntries = collectNewEnglishEntries(enFile);
   if (newEntries.length === 0) return files;
   console.log(`[Locale Propagator] Found ${newEntries.length} new key(s) in messages-en.properties`);
-
   const dir = path.join(chtCorePath, TRANSLATIONS_DIR);
   const dirEntries = await listLocaleDir(dir);
   if (dirEntries === null) return files;
+  const propagated = await propagateToAllLocales(dir, dirEntries, newEntries);
+  if (propagated.length > 0) {
+    console.log(`[Locale Propagator] Auto-propagated to ${propagated.length} locale file(s)`);
+  }
+  return [...files, ...propagated];
+}
 
+async function propagateToAllLocales(
+  dir: string,
+  dirEntries: string[],
+  newEntries: PropEntry[],
+): Promise<GeneratedFile[]> {
   const propagated: GeneratedFile[] = [];
   for (const localeFile of dirEntries) {
     const generated = await propagateToLocale(dir, localeFile, newEntries);
     if (generated) propagated.push(generated);
   }
-  if (propagated.length > 0) {
-    console.log(`[Locale Propagator] Auto-propagated to ${propagated.length} locale file(s)`);
-  }
-  return [...files, ...propagated];
+  return propagated;
 }
 
 function collectNewEnglishEntries(enFile: GeneratedFile): PropEntry[] {

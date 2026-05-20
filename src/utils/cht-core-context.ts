@@ -139,14 +139,10 @@ function readTopTsJsFiles(dirPath: string, limit: number): string[] {
 }
 
 function collectTsJsFilesUpTo(entries: string[], dirPath: string, limit: number): string[] {
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (isTsJsFile(dirPath, entry)) {
-      files.push(path.join(dirPath, entry));
-      if (files.length >= limit) break;
-    }
-  }
-  return files;
+  return entries
+    .filter(entry => isTsJsFile(dirPath, entry))
+    .slice(0, limit)
+    .map(entry => path.join(dirPath, entry));
 }
 
 function isTsJsFile(dirPath: string, entry: string): boolean {

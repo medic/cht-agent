@@ -66,17 +66,25 @@ async function dispatchToolCalls(
   messages: BaseMessage[],
 ): Promise<void> {
   for (const toolCall of toolCalls) {
-    try {
-      const result = await options.toolHandler!(toolCall.name, toolCall.args);
-      messages.push(new ToolMessage({ content: result, tool_call_id: toolCall.id! }));
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      messages.push(new ToolMessage({
-        content: `Error: ${errMsg}`,
-        tool_call_id: toolCall.id!,
-        status: 'error',
-      }));
-    }
+    const message = await invokeToolCall(toolCall, options);
+    messages.push(message);
+  }
+}
+
+async function invokeToolCall(
+  toolCall: AnthropicToolCall,
+  options: InvokeOptions,
+): Promise<ToolMessage> {
+  try {
+    const result = await options.toolHandler!(toolCall.name, toolCall.args);
+    return new ToolMessage({ content: result, tool_call_id: toolCall.id! });
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return new ToolMessage({
+      content: `Error: ${errMsg}`,
+      tool_call_id: toolCall.id!,
+      status: 'error',
+    });
   }
 }
 

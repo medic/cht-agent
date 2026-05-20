@@ -86,10 +86,13 @@ function collectRealPathsFromDomain(domainData: Record<string, unknown>): string
 function collectSectionStrings(sectionData: unknown, out: string[]): void {
   if (!sectionData || typeof sectionData !== 'object') return;
   for (const [, entries] of Object.entries(sectionData)) {
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      if (typeof entry === 'string') out.push(entry);
-    }
+    if (Array.isArray(entries)) pushStringEntries(entries, out);
+  }
+}
+
+function pushStringEntries(entries: unknown[], out: string[]): void {
+  for (const entry of entries) {
+    if (typeof entry === 'string') out.push(entry);
   }
 }
 

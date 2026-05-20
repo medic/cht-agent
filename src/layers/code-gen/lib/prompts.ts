@@ -284,19 +284,49 @@ function buildPreviousFailuresSection(previousFailures?: string[]): string {
 
 export function buildSingleFilePrompt(opts: BuildSingleFilePromptOpts): string {
   const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures } = opts;
-  const { ticket, researchFindings } = input;
-
   const isLarge = isLargeFile(planItem, originalContentMap);
   logJsonPromptCheck(planItem, originalContentMap, isLarge);
   if (isLarge && planItem.filePath.endsWith('.json') && planItem.action === 'MODIFY') {
     return buildLargeJsonPrompt(planItem, originalContentMap, previousFailures);
   }
+  return assembleSingleFilePrompt({
+    planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures, isLarge,
+  });
+}
 
+function assembleSingleFilePrompt(args: {
+  planItem: PlanItem;
+  fullPlan: PlanItem[];
+  input: CodeGenModuleInput;
+  originalContentMap: Map<string, string>;
+  previouslyGenerated: GeneratedFile[];
+  previousFailures?: string[];
+  isLarge: boolean;
+}): string {
+  const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures, isLarge } = args;
+  let prompt = buildPromptHeader(planItem, fullPlan, input);
+  const feedback = extractValidationFeedback(input.contextFiles);
+  if (feedback) prompt += buildValidationFeedbackSection(feedback);
+  prompt += buildOriginalContentSection(planItem, originalContentMap, isLarge);
+  prompt += buildPreviouslyGeneratedSection(previouslyGenerated);
+  prompt += buildPreviousFailuresSection(previousFailures);
+  prompt += buildCrossFileContractSection(previouslyGenerated);
+  prompt += STYLE_AND_SCOPE_SECTION;
+  prompt += buildFileSpecificHints(planItem.filePath);
+  prompt += buildInstructionsSection(planItem, isLarge);
+  return prompt;
+}
+
+function buildValidationFeedbackSection(feedback: string): string {
+  return `\n\n## Validation Feedback from Previous Iteration\nThe previous attempt at generating this code was validated and found lacking. Address ALL issues below:\n${feedback}`;
+}
+
+function buildPromptHeader(planItem: PlanItem, fullPlan: PlanItem[], input: CodeGenModuleInput): string {
+  const { ticket, researchFindings } = input;
   const planSummary = fullPlan
     .map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`)
     .join('\n');
-
-  let prompt = `You are a CHT (Community Health Toolkit) developer. Generate the complete code for ONE file.
+  return `You are a CHT (Community Health Toolkit) developer. Generate the complete code for ONE file.
 
 ## Implementation Plan (full context — you are generating one file from this plan)
 ${planSummary}
@@ -322,18 +352,11 @@ ${formatNumberedList(ticket.issue.acceptance_criteria)}
 
 ## Documentation References
 ${formatBulletList(researchFindings.suggestedApproaches)}`;
+}
 
-  const feedback = extractValidationFeedback(input.contextFiles);
-  if (feedback) {
-    prompt += `\n\n## Validation Feedback from Previous Iteration\nThe previous attempt at generating this code was validated and found lacking. Address ALL issues below:\n${feedback}`;
-  }
-
-  prompt += buildOriginalContentSection(planItem, originalContentMap, isLarge);
-  prompt += buildPreviouslyGeneratedSection(previouslyGenerated);
-  prompt += buildPreviousFailuresSection(previousFailures);
-
-  if (previouslyGenerated.length > 0) {
-    prompt += `
+function buildCrossFileContractSection(previouslyGenerated: GeneratedFile[]): string {
+  if (previouslyGenerated.length === 0) return '';
+  return `
 
 ## Cross-File Contract Verification
 Before emitting your file, verify EVERY identifier you reference from a sibling plan item exists in that sibling's PUBLIC API SURFACE shown above. Specifically:
@@ -348,9 +371,9 @@ If you cannot find a sibling identifier you need, do NOT invent a name. Either:
 2. Choose a name that matches the surface you DO see, OR
 3. Stop and add a single-line comment at the top of your file: \`// REVIEW: missing sibling identifier <name> in <expected-file>\`. The cross-file validator will catch this and trigger a retry with feedback.
 `;
-  }
+}
 
-  prompt += `
+const STYLE_AND_SCOPE_SECTION = `
 
 ## Code Style (cht-core conventions)
 - Indentation: 2 spaces, no tabs.
@@ -370,9 +393,15 @@ Make the SMALLEST change that satisfies the ticket. Specifically:
 The reviewer should be able to read your diff and explain every line in terms of a specific requirement or acceptance criterion. If you cannot, drop the line.
 `;
 
-  // File-specific hints, conditional on filePath patterns.
-  if (planItem.filePath.endsWith('app_settings.json')) {
-    prompt += `
+function buildFileSpecificHints(filePath: string): string {
+  let hints = '';
+  if (filePath.endsWith('app_settings.json')) hints += APP_SETTINGS_HINT;
+  if (filePath.endsWith('xml-forms.service.ts')) hints += XML_FORMS_HINT;
+  if (filePath.includes('/effects/')) hints += EFFECTS_HINT;
+  return hints;
+}
+
+const APP_SETTINGS_HINT = `
 
 ## Permission roles hint
 When adding a permission to the "permissions" object, you MUST provide a non-empty roles array. Look at similar existing permissions in the file (especially those starting with the same prefix, e.g., \`can_create_*\`) and mirror their role assignments. Common roles for "can_create_*" are: ["nurse", "chw_supervisor", "data_entry"] or whatever the closest existing permission uses. An empty array effectively disables the permission for everyone, which is a backward-incompatible default. Do NOT emit \`[]\`.
@@ -384,27 +413,21 @@ The "permissions" object is alphabetically sorted by key. When adding entries:
 - Example: a new permission \`can_create_people_on_muted_contacts\` goes between \`can_create_people\` and \`can_create_places\`, NOT after the last permission in the file.
 - If you cannot determine the position from the visible file content, output the file with the new entry at the position you believe is correct; do NOT default to appending.
 `;
-  }
 
-  if (planItem.filePath.endsWith('xml-forms.service.ts')) {
-    prompt += `
+const XML_FORMS_HINT = `
 
 ## Lineage-aware muted hint
 If you need to check whether a contact is muted, use \`ContactMutedService.getMuted(doc, lineage)\` (already imported elsewhere in this codebase). You MUST pass BOTH \`doc\` AND \`lineage\` — although \`lineage\` is type-optional, omitting it misses ancestor-muted contacts. NEVER check \`doc.muted\` directly. If you need to inject \`ContactMutedService\`, add it to the constructor with the @mm-services/contact-muted.service path alias and add a corresponding import statement.
 `;
-  }
 
-  if (planItem.filePath.includes('/effects/')) {
-    prompt += `
+const EFFECTS_HINT = `
 
 ## Effect hints
 - If the effect needs to check whether a contact is muted, inject \`ContactMutedService\` and call \`getMuted(doc, lineage)\`. Do NOT duplicate the muted check logic inside the effect.
 - Action method calls must use the exact method name declared in the corresponding actions/*.ts file. The Cross-File Contract Verification section above lists the available names.
 `;
-  }
 
-  if (isLarge) {
-    prompt += `
+const LARGE_FILE_INSTRUCTIONS = `
 
 ## Instructions
 This file is too large to output in full. Output ONLY the surgical edits using this EXACT format:
@@ -425,20 +448,22 @@ Rules:
 - Do NOT include any explanations, commentary, or thinking outside of the SEARCH/REPLACE blocks.
 - NEVER say "I'm unable to", "Could you provide", or ask questions. You have the full file above — use it.
 - Start your output DIRECTLY with <<<<<<< SEARCH — nothing before it.`;
-  } else {
-    prompt += `
+
+function buildInstructionsSection(planItem: PlanItem, isLarge: boolean): string {
+  if (isLarge) return LARGE_FILE_INSTRUCTIONS;
+  const modifyOrCreate = planItem.action === 'MODIFY'
+    ? 'Output the COMPLETE modified file (not just the diff). Include ALL original code with your modifications applied.'
+    : 'Output the full new file content.';
+  return `
 
 ## Instructions
 Generate the COMPLETE content for ${planItem.filePath}.
-${planItem.action === 'MODIFY' ? 'Output the COMPLETE modified file (not just the diff). Include ALL original code with your modifications applied.' : 'Output the full new file content.'}
+${modifyOrCreate}
 End the file with a single trailing newline character (POSIX text-file convention).
 If you add a constructor dependency, you MUST also add the matching \`import\` statement at the top of the file using the @mm-* path alias. Constructor injection without an import is a compile error.
 Output ONLY the raw file content. Do NOT wrap in markdown code fences.
 Do NOT include any explanations, comments outside the file, file path headers, or delimiters.
 NEVER say "I'm unable to", "Could you provide", or ask questions. Just output the code.`;
-  }
-
-  return prompt;
 }
 
 /**

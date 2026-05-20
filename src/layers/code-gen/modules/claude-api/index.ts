@@ -93,6 +93,13 @@ function reorderPlanForJsonLast(plan: PlanItem[]): PlanItem[] {
   });
 }
 
+function logContinuationOverBudget(filePath: string, maxContinuations: number): void {
+  console.warn(
+    `[Code Gen Module]   ! File "${filePath}" still truncated after ${maxContinuations} continuation(s). ` +
+    `Consider raising CODE_GEN_MAX_CONTINUATIONS or splitting the file.`
+  );
+}
+
 type RetryAttemptResult =
   | { outcome: 'success'; file: GeneratedFile; tokensUsed: number }
   | { outcome: 'retry'; failures: string[]; tokensUsed: number }
@@ -475,30 +482,45 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
     maxAttempts?: number;
   }): Promise<{ file: GeneratedFile | null; tokensUsed: number }> {
-    const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, codeGenTools } = opts;
     const maxAttempts = opts.maxAttempts ?? 3;
-    let lastFailures: string[] = [];
-    let totalTokens = 0;
-
+    const state = { failures: [] as string[], totalTokens: 0 };
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (isShutdownRequested()) {
-        console.log(`[Code Gen Module]   Shutdown requested; aborting retry for ${planItem.filePath}`);
-        return { file: null, tokensUsed: totalTokens };
-      }
-      if (attempt > 1) {
-        console.log(`[Code Gen Module]   Retry ${attempt}/${maxAttempts} for ${planItem.filePath}`);
-      }
-      const attemptResult = await this.runSingleFileAttempt({
-        planItem, fullPlan, input, originalContentMap, previouslyGenerated, codeGenTools,
-        previousFailures: lastFailures.length > 0 ? lastFailures : undefined,
-        attempt,
-      });
-      totalTokens += attemptResult.tokensUsed;
-      const decision = decideRetryNext(attemptResult);
-      if (decision.kind === 'terminate') return { file: decision.file, tokensUsed: totalTokens };
-      lastFailures = decision.failures;
+      const decision = await this.executeOneRetryAttempt(opts, attempt, maxAttempts, state);
+      if (decision) return decision;
     }
-    return { file: null, tokensUsed: totalTokens };
+    return { file: null, tokensUsed: state.totalTokens };
+  }
+
+  private async executeOneRetryAttempt(
+    opts: {
+      planItem: PlanItem;
+      fullPlan: PlanItem[];
+      input: CodeGenModuleInput;
+      originalContentMap: Map<string, string>;
+      previouslyGenerated: GeneratedFile[];
+      codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
+    },
+    attempt: number,
+    maxAttempts: number,
+    state: { failures: string[]; totalTokens: number },
+  ): Promise<{ file: GeneratedFile | null; tokensUsed: number } | null> {
+    if (isShutdownRequested()) {
+      console.log(`[Code Gen Module]   Shutdown requested; aborting retry for ${opts.planItem.filePath}`);
+      return { file: null, tokensUsed: state.totalTokens };
+    }
+    if (attempt > 1) {
+      console.log(`[Code Gen Module]   Retry ${attempt}/${maxAttempts} for ${opts.planItem.filePath}`);
+    }
+    const attemptResult = await this.runSingleFileAttempt({
+      ...opts,
+      previousFailures: state.failures.length > 0 ? state.failures : undefined,
+      attempt,
+    });
+    state.totalTokens += attemptResult.tokensUsed;
+    const decision = decideRetryNext(attemptResult);
+    if (decision.kind === 'terminate') return { file: decision.file, tokensUsed: state.totalTokens };
+    state.failures = decision.failures;
+    return null;
   }
 
   /**
@@ -768,23 +790,29 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     maxContinuations: number = this.getMaxContinuations(),
   ): Promise<{ continuation: string; tokensUsed: number; stillTruncated: boolean }> {
     const acc = { content: '', tokens: 0, stopReason: undefined as string | undefined };
+    await this.runContinuationLoop({ partialContent, planItem, input, maxContinuations, acc });
+    const stillTruncated = acc.stopReason === 'max_tokens';
+    if (stillTruncated) logContinuationOverBudget(planItem.filePath, maxContinuations);
+    return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated };
+  }
+
+  private async runContinuationLoop(args: {
+    partialContent: string;
+    planItem: PlanItem;
+    input: CodeGenModuleInput;
+    maxContinuations: number;
+    acc: { content: string; tokens: number; stopReason: string | undefined };
+  }): Promise<void> {
+    const { partialContent, planItem, input, maxContinuations, acc } = args;
     for (let i = 0; i < maxContinuations; i++) {
       const ok = await this.runOneContinuation({ partialContent, planItem, input, acc, iteration: i });
-      if (!ok) break;
+      if (!ok) return;
       if (acc.stopReason !== 'max_tokens') {
         console.log(`[Code Gen Module]   Continuation complete after ${i + 1} call(s)`);
-        break;
+        return;
       }
       console.log(`[Code Gen Module]   Continuation ${i + 1} still truncated, continuing...`);
     }
-    const stillTruncated = acc.stopReason === 'max_tokens';
-    if (stillTruncated) {
-      console.warn(
-        `[Code Gen Module]   ! File "${planItem.filePath}" still truncated after ${maxContinuations} continuation(s). ` +
-        `Consider raising CODE_GEN_MAX_CONTINUATIONS or splitting the file.`
-      );
-    }
-    return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated };
   }
 
   private async runOneContinuation(args: {

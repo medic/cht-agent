@@ -146,14 +146,19 @@ async function collectTrackedChanges(
   preRunSha: string,
 ): Promise<void> {
   for (const line of nameList.split('\n').filter(Boolean)) {
-    const parts = line.split('\t');
-    const status = parts[0]?.charAt(0);
-    const relPath = parts[parts.length - 1];
-    if (!status || !relPath || status === 'D') continue;
-    const action: 'create' | 'modify' = status === 'A' ? 'create' : 'modify';
-    const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, action);
+    const entry = parseDiffStatusLine(line);
+    if (!entry) continue;
+    const file = await readChtCoreFile(chtCorePath, entry.relPath, preRunSha, entry.action);
     if (file) files.push(file);
   }
+}
+
+function parseDiffStatusLine(line: string): { relPath: string; action: 'create' | 'modify' } | null {
+  const parts = line.split('\t');
+  const status = parts[0]?.charAt(0);
+  const relPath = parts[parts.length - 1];
+  if (!status || !relPath || status === 'D') return null;
+  return { relPath, action: status === 'A' ? 'create' : 'modify' };
 }
 
 async function collectUntrackedCreates(
