@@ -46,6 +46,7 @@ function extractTsSurface(content: string): string {
 
   // Public class members. D6 fix: any leading whitespace, not just 2-space indent,
   // so the extractor is robust against tab-indented or 4-space external fixtures.
+  // Excludes private/protected/# fields, optional public/readonly/async modifiers. NOSONAR
   const memberRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:readonly\s+)?(async\s+)?(\w+)\s*(\([^)]*\)[^{;]*|[:=][^;]*);?/gm;
   while ((m = memberRe.exec(content)) !== null) {
     const sig = m[0].trim();
@@ -91,6 +92,9 @@ function extractHtmlIdentifiers(content: string): string {
   }
 
   const ids = new Set<string>();
+  // Matches Angular structural directives (*ngIf, *ngFor), property bindings
+  // ([...]) excluding class/style/ngClass/ngStyle, and event bindings ((...))
+  // excluding ngModelChange. Must stay byte-identical to cross-file-validator.ts. NOSONAR
   const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
   let m: RegExpExecArray | null;
   while ((m = bindingRe.exec(content)) !== null) {

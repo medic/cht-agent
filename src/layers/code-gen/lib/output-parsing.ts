@@ -141,7 +141,7 @@ export function applySearchReplace(original: string, blocks: SearchReplaceBlock[
       const normalizedIdx = normalizedResult.indexOf(normalizedSearch);
 
       if (normalizedIdx === -1) {
-        console.log(`[Code Gen Lib]   Search block not found (${block.search.substring(0, 80).replaceAll('\n', '\\n')}...)`);
+        console.log(`[Code Gen Lib]   Search block not found (${block.search.substring(0, 80).replaceAll('\n', String.raw`\n`)}...)`);
         return null;
       }
 

@@ -57,6 +57,11 @@ const ResearchStateAnnotation = Annotation.Root({
  * Pull bullet-point lines from a markdown section, stripping leading
  * whitespace and the `-` / `*` markers. Returns just the bullet text.
  */
+function formatSuccessRate(rate: number | null): string {
+  if (rate === null) return 'N/A (no historical data)';
+  return `${(rate * 100).toFixed(0)}%`;
+}
+
 function collectBulletText(section: string): string[] {
   return section
     .split('\n')
@@ -115,7 +120,7 @@ export class ResearchSupervisor {
   private async documentationSearchNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== DOCUMENTATION SEARCH NODE ===');
 
-    const todoId = 'research-1'; // First todo
+    const todoId = 'research-1';
     this.todos.start(todoId);
 
     if (!state.issue) {
@@ -157,7 +162,7 @@ export class ResearchSupervisor {
   private async contextAnalysisNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== CONTEXT ANALYSIS NODE ===');
 
-    const todoId = 'research-2'; // Second todo
+    const todoId = 'research-2';
     this.todos.start(todoId);
 
     if (!state.issue) {
@@ -199,7 +204,7 @@ export class ResearchSupervisor {
   private async generatePlanNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== GENERATE PLAN NODE ===');
 
-    const todoId = 'research-3'; // Third todo
+    const todoId = 'research-3';
     this.todos.start(todoId);
 
     if (!state.issue || !state.researchFindings || !state.contextAnalysis) {
@@ -338,7 +343,7 @@ ${codeContextSection}
 ## Context Analysis
 **Similar Past Issues**: ${analysis.similarContexts.length}
 **Reusable Patterns**: ${analysis.reusablePatterns.length}
-**Historical Success Rate**: ${analysis.historicalSuccessRate !== null ? `${(analysis.historicalSuccessRate * 100).toFixed(0)}%` : 'N/A (no historical data)'}
+**Historical Success Rate**: ${formatSuccessRate(analysis.historicalSuccessRate)}
 
 ## YOUR TASK
 
@@ -382,9 +387,9 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     const keyFindings = [
       `${findings.documentationReferences.length} documentation references found`,
       `${analysis.similarContexts.length} similar past implementations identified`,
-      analysis.historicalSuccessRate !== null
-        ? `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`
-        : 'No historical data available',
+      analysis.historicalSuccessRate === null
+        ? 'No historical data available'
+        : `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`,
       ...analysis.recommendations.slice(0, 2),
     ];
 
@@ -443,7 +448,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
 
   /** Fallback: any numbered list / bullet anywhere in the response. */
   private extractApproachFromAnyBullets(content: string): string | undefined {
-    const bulletMatch = content.match(/(?:^|\n)[\s]*[-*]\s+(.+?)(?=\n|$)/gm);
+    const bulletMatch = content.match(/(?:^|\n)\s*[-*]\s+(.+?)(?=\n|$)/gm);
     if (!bulletMatch || bulletMatch.length === 0) return undefined;
     return bulletMatch
       .slice(0, 3)

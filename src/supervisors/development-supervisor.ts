@@ -239,7 +239,7 @@ export class DevelopmentSupervisor {
     const iteration = (state.iterationCount ?? 0) + 1;
     console.log(`\n=== CODE GENERATION NODE (iteration ${iteration}) ===`);
 
-    const todoId = 'development-1'; // First todo
+    const todoId = 'development-1';
     this.todos.start(todoId);
 
     if (!state.issue || !state.orchestrationPlan || !state.researchFindings ||
@@ -326,7 +326,7 @@ export class DevelopmentSupervisor {
 
     console.log('\n=== TEST ENVIRONMENT NODE ===');
 
-    const todoId = 'development-2'; // Second todo
+    const todoId = 'development-2';
     this.todos.start(todoId);
 
     if (!state.issue || !state.orchestrationPlan || !state.codeGeneration || !state.options) {
@@ -379,7 +379,7 @@ export class DevelopmentSupervisor {
 
     console.log('\n=== VALIDATION NODE ===');
 
-    const todoId = 'development-3'; // Third todo
+    const todoId = 'development-3';
     this.todos.start(todoId);
 
     if (!state.issue || !state.codeGeneration) {
@@ -491,17 +491,25 @@ export class DevelopmentSupervisor {
   private synthesizeFeedback(validation: ImplementationValidation): string {
     const parts: string[] = [];
 
+    const renderRequirement = (r: { requirement: string; notes?: string }): string => {
+      const notes = r.notes ? ` (${r.notes})` : '';
+      return `${r.requirement}${notes}`;
+    };
     const unmet = renderBulletSection(
       'Unmet requirements',
       validation.requirementsMet.filter(r => !r.met),
-      r => `${r.requirement}${r.notes ? ` (${r.notes})` : ''}`,
+      renderRequirement,
     );
     if (unmet) parts.push(unmet);
 
+    const renderCriteria = (c: { criteria: string; notes?: string }): string => {
+      const notes = c.notes ? ` (${c.notes})` : '';
+      return `${c.criteria}${notes}`;
+    };
     const failed = renderBulletSection(
       'Failed acceptance criteria',
       validation.acceptanceCriteriaPassed.filter(c => !c.passed),
-      c => `${c.criteria}${c.notes ? ` (${c.notes})` : ''}`,
+      renderCriteria,
     );
     if (failed) parts.push(failed);
 
@@ -850,8 +858,10 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
     if (state.testEnvironment) {
-      allFiles.push(...state.testEnvironment.testFiles);
-      allFiles.push(...state.testEnvironment.testDataFiles);
+      allFiles.push(
+        ...state.testEnvironment.testFiles,
+        ...state.testEnvironment.testDataFiles,
+      );
     }
 
     const writtenFiles = await writeToStaging(allFiles, stagingPath);
@@ -871,8 +881,10 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
     if (state.testEnvironment) {
-      allFiles.push(...state.testEnvironment.testFiles);
-      allFiles.push(...state.testEnvironment.testDataFiles);
+      allFiles.push(
+        ...state.testEnvironment.testFiles,
+        ...state.testEnvironment.testDataFiles,
+      );
     }
 
     const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
@@ -900,8 +912,10 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
     if (state.testEnvironment) {
-      allFiles.push(...state.testEnvironment.testFiles);
-      allFiles.push(...state.testEnvironment.testDataFiles);
+      allFiles.push(
+        ...state.testEnvironment.testFiles,
+        ...state.testEnvironment.testDataFiles,
+      );
     }
 
     return allFiles;

@@ -182,6 +182,9 @@ function collectIdsFromExpression(expression: string, ids: Set<string>): void {
 }
 
 function collectIdsFromBindings(content: string, ids: Set<string>): void {
+  // Matches Angular structural directives (*ngIf, *ngFor), property bindings
+  // ([...]) excluding class/style/ngClass/ngStyle, and event bindings ((...))
+  // excluding ngModelChange. Must stay byte-identical to public-surface.ts. NOSONAR
   const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
   let m: RegExpExecArray | null;
   while ((m = bindingRe.exec(content)) !== null) collectIdsFromExpression(m[1], ids);

@@ -5,7 +5,7 @@
  * Uses Node.js built-in readline/promises module (Node 17+)
  */
 
-import * as readline from 'readline/promises';
+import * as readline from 'node:readline/promises';
 
 /**
  * Ask a question and get user input

@@ -112,13 +112,13 @@ export class ContextAnalysisAgent {
     const recommendations = await this.todos.run(
       'Generate recommendations',
       'Generating recommendations',
-      async () => this.generateRecommendations(
+      async () => this.generateRecommendations({
         issue,
         similarContexts,
         patterns,
-        domainOverview?.content,
-        codeContext
-      )
+        domainOverview: domainOverview?.content,
+        codeContext,
+      })
     );
     console.log(`[Context Analysis Agent] Generated ${recommendations.length} recommendations`);
 
@@ -305,15 +305,16 @@ export class ContextAnalysisAgent {
   }
 
   /**
-   * Generate recommendations based on analysis
+   * Generate recommendations based on analysis.
    */
-  private generateRecommendations(
-    issue: IssueTemplate,
-    similarContexts: ResolvedIssueContext[],
-    patterns: CodePattern[],
-    domainOverview?: string,
-    codeContext?: CodeContext | null
-  ): string[] {
+  private generateRecommendations(opts: {
+    issue: IssueTemplate;
+    similarContexts: ResolvedIssueContext[];
+    patterns: CodePattern[];
+    domainOverview?: string;
+    codeContext?: CodeContext | null;
+  }): string[] {
+    const { issue, similarContexts, patterns, domainOverview, codeContext } = opts;
     const recommendations: string[] = [];
 
     // Recommendations from similar contexts

@@ -37,7 +37,7 @@ export function parsePlan(output: string): PlanItem[] {
     }
 
     if (inPlan) {
-      const match = trimmed.match(PLAN_ITEM_RE);
+      const match = PLAN_ITEM_RE.exec(trimmed);
       if (match) {
         items.push({
           action: match[1] as 'MODIFY' | 'CREATE',

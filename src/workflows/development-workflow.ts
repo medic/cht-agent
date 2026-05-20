@@ -194,8 +194,10 @@ export const humanDevelopmentValidationCheckpoint = async (
     allFiles.push(...state.codeGeneration.files);
   }
   if (state.testEnvironment) {
-    allFiles.push(...state.testEnvironment.testFiles);
-    allFiles.push(...state.testEnvironment.testDataFiles);
+    allFiles.push(
+      ...state.testEnvironment.testFiles,
+      ...state.testEnvironment.testDataFiles,
+    );
   }
 
   // Display file summary

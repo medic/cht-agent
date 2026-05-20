@@ -126,7 +126,13 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     // Phase 2: full-edit execute call. The CLI does the work.
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before execute');
     const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
-    const captureResult = await this.captureWithRelaxedRetry(input, plan, executeResult, snapshot.headSha, chtCorePath);
+    const captureResult = await this.captureWithRelaxedRetry({
+      input,
+      plan,
+      executeResult,
+      snapshotSha: snapshot.headSha,
+      chtCorePath,
+    });
     const generatedFiles = captureResult.files;
     const executeNoOp = captureResult.executeNoOp;
 
@@ -194,12 +200,15 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
    * relaxed rules typically converts exploration into a best-effort draft.
    */
   private async captureWithRelaxedRetry(
-    input: CodeGenModuleInput,
-    plan: PlanItem[],
-    executeResult: { partialCompletion: boolean; reason?: string; resultText: string },
-    snapshotSha: string,
-    chtCorePath: string,
+    opts: {
+      input: CodeGenModuleInput;
+      plan: PlanItem[];
+      executeResult: { partialCompletion: boolean; reason?: string; resultText: string };
+      snapshotSha: string;
+      chtCorePath: string;
+    },
   ): Promise<{ files: Awaited<ReturnType<typeof captureChtCoreDiff>>; executeNoOp: boolean }> {
+    const { input, plan, executeResult, snapshotSha, chtCorePath } = opts;
     let files = await captureChtCoreDiff(chtCorePath, snapshotSha);
     console.log(`[claude-code-cli] Captured ${files.length} file change(s) from CLI session`);
 
@@ -355,14 +364,14 @@ async function runCompileGate(chtCorePath: string): Promise<CompileValidationRes
     const result = await compileCheck(chtCorePath);
     if (result.skipped) {
       console.warn(`[claude-code-cli] Compile gate skipped: ${result.skipReason}`);
-    } else if (!result.passed) {
+    } else if (result.passed) {
+      console.log(
+        `[claude-code-cli] Compile gate passed (${result.tsconfigsRun?.length ?? 0} tsconfig(s)).`
+      );
+    } else {
       console.warn(
         `[claude-code-cli] Compile gate FAILED: ${result.issues.length} error(s) across ` +
         `${result.tsconfigsRun?.length ?? 0} tsconfig(s).`
-      );
-    } else {
-      console.log(
-        `[claude-code-cli] Compile gate passed (${result.tsconfigsRun?.length ?? 0} tsconfig(s)).`
       );
     }
     return result;

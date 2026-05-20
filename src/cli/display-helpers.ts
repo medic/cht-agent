@@ -51,8 +51,10 @@ export const renderCrossFileIssueBanner = (issues: CrossFileIssue[] | undefined)
     lines.push('');
   }
 
-  lines.push('You may still accept the diff (manual fix required), refine further, or abandon.');
-  lines.push('─'.repeat(70));
+  lines.push(
+    'You may still accept the diff (manual fix required), refine further, or abandon.',
+    '─'.repeat(70),
+  );
   return lines.join('\n');
 };
 
@@ -137,9 +139,9 @@ export const displayContextAnalysis = (result: ResearchState) => {
   console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
   console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
   const successRate = result.contextAnalysis.historicalSuccessRate;
-  const successRateLabel = successRate !== null
-    ? `${(successRate * 100).toFixed(0)}%`
-    : 'N/A (no historical data)';
+  const successRateLabel = successRate === null
+    ? 'N/A (no historical data)'
+    : `${(successRate * 100).toFixed(0)}%`;
   console.log(`Historical Success Rate: ${successRateLabel}`);
 
   if (result.contextAnalysis.recommendations.length > 0) {

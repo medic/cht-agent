@@ -13,11 +13,6 @@
  */
 export type APIProviderType = 'anthropic' | 'openai' | 'gemini';
 
-/**
- * Backward-compatible alias for the API-keyed provider set.
- * Used by LLMProvider.providerType (CLI provider declares itself as 'anthropic' for compatibility).
- */
-export type LLMProviderType = APIProviderType;
 
 /**
  * Configuration for API-keyed LLM providers (Anthropic, OpenAI, Gemini, ...).
@@ -126,7 +121,7 @@ export interface LLMProvider {
   /**
    * Get the provider type
    */
-  readonly providerType: LLMProviderType;
+  readonly providerType: APIProviderType;
 
   /**
    * Get the model name
@@ -211,7 +206,7 @@ export function capMaxTokens(model: string, requested: number): number {
  */
 export function getConfiguredModel(provider: APIProviderType = 'anthropic'): string {
   const envModel = process.env.LLM_MODEL;
-  if (envModel && envModel.trim()) {
+  if (envModel?.trim()) {
     return envModel.trim();
   }
   return DEFAULT_MODELS[provider];

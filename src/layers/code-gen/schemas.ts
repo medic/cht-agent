@@ -46,7 +46,7 @@ const SYNTAX_MARKERS: Record<string, RegExp[]> = {
   xml: [/^\s*<[?!]?\w/],
   yaml: [/^\w[\w-]*\s*:/m],
   yml: [/^\w[\w-]*\s*:/m],
-  html: [/^\s*<!DOCTYPE|<html|<div|<template/i],
+  html: [/(?:^\s*<!DOCTYPE|<html|<div|<template)/i],
   css: [/[.#@]\w+\s*\{|:\s*\w+\s*;/],
   sh: [/^#!/, /\b(?:if|then|fi|do|done|echo|export)\b/],
 };

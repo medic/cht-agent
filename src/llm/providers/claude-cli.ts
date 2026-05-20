@@ -13,7 +13,6 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import {
   LLMProvider,
-  LLMProviderType,
   LLMMessage,
   LLMResponse,
   InvokeOptions,
@@ -65,6 +64,12 @@ interface CLIResponse {
   duration_ms: number;
   num_turns: number;
   is_error: boolean;
+}
+
+function totalLength(chunks: string[]): number {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  return total;
 }
 
 /**
@@ -128,7 +133,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       // These are handled by the account settings or model defaults
 
       // Log process start with key details
-      const promptPreview = prompt.substring(0, 80).replace(/\n/g, ' ');
+      const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
       console.log(`[Claude CLI] Starting: "${promptPreview}..." (${prompt.length} chars, maxTurns=${effectiveMaxTurns}, tools=${options?.disableTools ? 'disabled' : 'enabled'})`);
       const startTime = Date.now();
 
@@ -158,8 +163,8 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       // Periodic progress logging every 60 seconds
       const progressId = setInterval(() => {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
-        const stdoutSize = stdoutChunks.reduce((sum, c) => sum + c.length, 0);
-        const stderrSize = stderrChunks.reduce((sum, c) => sum + c.length, 0);
+        const stdoutSize = totalLength(stdoutChunks);
+        const stderrSize = totalLength(stderrChunks);
         console.log(`[Claude CLI] Still running... ${elapsed}s elapsed, stdout=${stdoutSize} bytes, stderr=${stderrSize} bytes`);
       }, 60000);
 
@@ -367,13 +372,15 @@ IMPORTANT: Respond with valid JSON only. Do not include any text before or after
     }
   };
 
-  return {
-    providerType: 'anthropic' as LLMProviderType, // Compatible with anthropic type
+  // CLI provider declares itself as 'anthropic' for compatibility with LLMProvider consumers.
+  const provider: LLMProvider = {
+    providerType: 'anthropic',
     modelName,
     invoke,
     invokeWithMessages,
     invokeForJSON,
   };
+  return provider;
 };
 
 /**

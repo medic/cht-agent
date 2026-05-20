@@ -73,18 +73,21 @@ No existing files or directories identified. You may create files in appropriate
   return section;
 }
 
+export interface FetchMissingModifyFilesOpts {
+  plan: PlanItem[];
+  readFile: ((path: string) => Promise<string | null>) | undefined;
+  workingContextFiles: ContextFile[];
+  originalContentMap: Map<string, string>;
+  manifest: FileManifest;
+}
+
 /**
  * Fetch MODIFY files that the plan references but weren't in the agent's pre-gathered context.
  * Mutates the supplied workingContextFiles (a local working copy owned by the caller),
  * the originalContentMap, and manifest.existingFiles / allowedDirectories.
  */
-export async function fetchMissingModifyFiles(
-  plan: PlanItem[],
-  readFile: ((path: string) => Promise<string | null>) | undefined,
-  workingContextFiles: ContextFile[],
-  originalContentMap: Map<string, string>,
-  manifest: FileManifest,
-): Promise<void> {
+export async function fetchMissingModifyFiles(opts: FetchMissingModifyFilesOpts): Promise<void> {
+  const { plan, readFile, workingContextFiles, originalContentMap, manifest } = opts;
   if (!readFile) return;
 
   const missingModifyItems = plan.filter(

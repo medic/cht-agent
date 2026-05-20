@@ -943,7 +943,13 @@ describe('ClaudeApiCodeGenModule', () => {
       ];
 
       const module = new ClaudeApiCodeGenModule();
-      const prompt = module.buildSingleFilePrompt(plan[0], plan, baseInput, new Map(), []);
+      const prompt = module.buildSingleFilePrompt({
+        planItem: plan[0],
+        fullPlan: plan,
+        input: baseInput,
+        originalContentMap: new Map(),
+        previouslyGenerated: [],
+      });
 
       expect(prompt).to.include('CREATE src/service.ts');
       expect(prompt).to.include('MODIFY src/existing.ts');
@@ -958,7 +964,13 @@ describe('ClaudeApiCodeGenModule', () => {
       const contentMap = new Map([['src/existing.ts', 'export class Existing { run() {} }']]);
 
       const module = new ClaudeApiCodeGenModule();
-      const prompt = module.buildSingleFilePrompt(plan[0], plan, baseInput, contentMap, []);
+      const prompt = module.buildSingleFilePrompt({
+        planItem: plan[0],
+        fullPlan: plan,
+        input: baseInput,
+        originalContentMap: contentMap,
+        previouslyGenerated: [],
+      });
 
       expect(prompt).to.include('Original File Content');
       expect(prompt).to.include('export class Existing { run() {} }');
@@ -970,7 +982,13 @@ describe('ClaudeApiCodeGenModule', () => {
       ];
 
       const module = new ClaudeApiCodeGenModule();
-      const prompt = module.buildSingleFilePrompt(plan[0], plan, baseInput, new Map(), []);
+      const prompt = module.buildSingleFilePrompt({
+        planItem: plan[0],
+        fullPlan: plan,
+        input: baseInput,
+        originalContentMap: new Map(),
+        previouslyGenerated: [],
+      });
 
       expect(prompt).not.to.include('Original File Content');
     });
@@ -984,7 +1002,13 @@ describe('ClaudeApiCodeGenModule', () => {
       ];
 
       const module = new ClaudeApiCodeGenModule();
-      const prompt = module.buildSingleFilePrompt(plan[0], plan, baseInput, new Map(), previouslyGenerated);
+      const prompt = module.buildSingleFilePrompt({
+        planItem: plan[0],
+        fullPlan: plan,
+        input: baseInput,
+        originalContentMap: new Map(),
+        previouslyGenerated,
+      });
 
       expect(prompt).to.include('Previously Generated Files');
       expect(prompt).to.include('src/a.ts');
@@ -998,7 +1022,14 @@ describe('ClaudeApiCodeGenModule', () => {
       const failures = ['plaintext description detected', 'missing syntax markers'];
 
       const module = new ClaudeApiCodeGenModule();
-      const prompt = module.buildSingleFilePrompt(plan[0], plan, baseInput, new Map(), [], failures);
+      const prompt = module.buildSingleFilePrompt({
+        planItem: plan[0],
+        fullPlan: plan,
+        input: baseInput,
+        originalContentMap: new Map(),
+        previouslyGenerated: [],
+        previousFailures: failures,
+      });
 
       expect(prompt).to.include('PREVIOUS ATTEMPT FAILED');
       expect(prompt).to.include('plaintext description detected');
@@ -1177,7 +1208,13 @@ describe('ClaudeApiCodeGenModule', () => {
       const bigContent = Array.from({ length: 1100 }, (_, i) => `// line ${i}`).join('\n');
       const contentMap = new Map([['big.ts', bigContent]]);
 
-      const prompt = module.buildSingleFilePrompt(planItem, [planItem], baseInput, contentMap, []);
+      const prompt = module.buildSingleFilePrompt({
+        planItem,
+        fullPlan: [planItem],
+        input: baseInput,
+        originalContentMap: contentMap,
+        previouslyGenerated: [],
+      });
 
       expect(prompt).to.include('<<<<<<< SEARCH');
       expect(prompt).to.include('>>>>>>> REPLACE');
@@ -1193,7 +1230,13 @@ describe('ClaudeApiCodeGenModule', () => {
       ), null, 2);
       const contentMap = new Map([['config/app_settings.json', bigJson]]);
 
-      const prompt = module.buildSingleFilePrompt(planItem, [planItem], baseInput, contentMap, []);
+      const prompt = module.buildSingleFilePrompt({
+        planItem,
+        fullPlan: [planItem],
+        input: baseInput,
+        originalContentMap: contentMap,
+        previouslyGenerated: [],
+      });
 
       expect(prompt).to.include('Python script');
       expect(prompt).to.include('json.load');

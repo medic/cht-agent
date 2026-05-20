@@ -129,7 +129,8 @@ export class BeadsClient {
     return new Promise((resolve, reject) => {
       execFile('bd', args, { cwd: this.cwd, timeout: 15000 }, (error, stdout, stderr) => {
         if (error) {
-          reject(new Error(`bd ${args[0]} failed: ${error.message}${stderr ? ` (${stderr.trim()})` : ''}`));
+          const stderrSuffix = stderr ? ` (${stderr.trim()})` : '';
+          reject(new Error(`bd ${args[0]} failed: ${error.message}${stderrSuffix}`));
           return;
         }
         const trimmed = stdout.trim();

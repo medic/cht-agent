@@ -17,7 +17,6 @@ export {
   APIProviderConfig,
   CLIProviderConfig,
   APIProviderType,
-  LLMProviderType,
   LLMMessage,
   LLMResponse,
   InvokeOptions,

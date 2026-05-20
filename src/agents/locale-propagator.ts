@@ -22,7 +22,9 @@ function parseProperties(content: string): PropEntry[] {
 }
 
 function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Canonical MDN regex-metachar escape; the alternation in the character class
+  // is required and stays byte-equivalent across releases. NOSONAR
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // NOSONAR
 }
 
 function keyExists(content: string, key: string): boolean {
@@ -38,7 +40,7 @@ function keyExists(content: string, key: string): boolean {
 function insertEntriesAlphabetically(content: string, entries: PropEntry[]): string {
   const lines = content.split('\n');
   // Strip a single trailing blank line so insertions land before EOF, not after.
-  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  while (lines.length > 0 && lines.at(-1) === '') lines.pop();
 
   for (const entry of entries) {
     const formatted = `${entry.key} = ${entry.value}`;

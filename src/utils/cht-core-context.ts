@@ -174,7 +174,7 @@ export function gatherDomainContext(
   }
 
   const index = loadIndex('domain-to-components') as DomainToComponentsIndex | null;
-  if (!index || !index.domains[domain]) {
+  if (!index?.domains[domain]) {
     console.warn(`No component mapping found for domain: ${domain}`);
     return null;
   }
@@ -215,7 +215,7 @@ export function gatherDomainContext(
   }
 
   // Prioritize paths that match the prioritize list
-  const sortedPaths = allPaths.sort((a, b) => {
+  const sortedPaths = allPaths.toSorted((a, b) => {
     const aMatch = prioritize.some((p) => a.path.includes(p));
     const bMatch = prioritize.some((p) => b.path.includes(p));
     if (aMatch && !bMatch) return -1;
@@ -280,11 +280,13 @@ export function formatContextForPrompt(context: CHTCoreContext): string {
   ];
 
   for (const snippet of context.codeSnippets) {
-    lines.push(`#### ${snippet.filePath} (${snippet.relevance} relevance)`);
-    lines.push('```' + snippet.language);
-    lines.push(snippet.content);
-    lines.push('```');
-    lines.push('');
+    lines.push(
+      `#### ${snippet.filePath} (${snippet.relevance} relevance)`,
+      '```' + snippet.language,
+      snippet.content,
+      '```',
+      '',
+    );
   }
 
   if (context.missingFiles.length > 0) {
@@ -303,7 +305,7 @@ export function formatContextForPrompt(context: CHTCoreContext): string {
  */
 export function getDomainComponentSummary(domain: CHTDomain): string | null {
   const index = loadIndex('domain-to-components') as DomainToComponentsIndex | null;
-  if (!index || !index.domains[domain]) {
+  if (!index?.domains[domain]) {
     return null;
   }
 

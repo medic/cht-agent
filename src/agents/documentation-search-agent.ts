@@ -296,8 +296,9 @@ export class DocumentationSearchAgent {
   private extractBulletPoints(text: string): string[] {
     const bullets: string[] = [];
 
-    // Match bullet points: starts with -, *, or number. followed by content until next bullet or end
-    // This regex captures multi-line bullet points
+    // Captures multi-line bullet points: starts with -, *, bullet, or number-dot;
+    // lazily extends until the next bullet, a blank line, or end of input.
+    // Required complexity to parse LLM markdown output reliably. NOSONAR
     const bulletRegex = /(?:^|\n)\s*(?:[-*•]|\d+\.)\s+([\s\S]*?)(?=\n\s*(?:[-*•]|\d+\.)\s+|\n\n|$)/g;
 
     let match;
@@ -324,7 +325,8 @@ export class DocumentationSearchAgent {
       return false;
     }
 
-    // Incomplete if starts with conjunction or continuation words
+    // Incomplete if starts with conjunction, article, or preposition.
+    // Long alternation is intentional to enumerate the heuristic vocabulary. NOSONAR
     const incompleteStarters = /^(and|or|but|the|a|an|,|;|:|\.|with|for|to|of|in|on|at|by|from|as|into|through|during|before|after|above|below|between|under)\s/i;
     if (incompleteStarters.test(text)) {
       return false;
@@ -354,13 +356,10 @@ export class DocumentationSearchAgent {
     ];
 
     for (const pattern of actionPatterns) {
-      const matches = text.match(pattern);
-      if (matches) {
-        for (const match of matches) {
-          const cleaned = match.trim();
-          if (cleaned.length > 20 && cleaned.length < 300 && !sentences.includes(cleaned)) {
-            sentences.push(cleaned);
-          }
+      for (const m of text.matchAll(pattern)) {
+        const cleaned = m[0].trim();
+        if (cleaned.length > 20 && cleaned.length < 300 && !sentences.includes(cleaned)) {
+          sentences.push(cleaned);
         }
       }
     }

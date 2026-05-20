@@ -48,11 +48,9 @@ const generateUnifiedDiff = (
 
   // Header
   if (originalContent === null) {
-    diffLines.push(`--- /dev/null`);
-    diffLines.push(`+++ b/${filePath}`);
+    diffLines.push(`--- /dev/null`, `+++ b/${filePath}`);
   } else {
-    diffLines.push(`--- a/${filePath}`);
-    diffLines.push(`+++ b/${filePath}`);
+    diffLines.push(`--- a/${filePath}`, `+++ b/${filePath}`);
   }
 
   // Simple line-by-line diff (not a full diff algorithm, but good for display)
@@ -88,8 +86,10 @@ const generateUnifiedDiff = (
         }
       } else if (chunkStart !== -1) {
         // End of chunk, output it
-        diffLines.push(`@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`);
-        diffLines.push(...chunkLines);
+        diffLines.push(
+          `@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`,
+          ...chunkLines,
+        );
         chunkStart = -1;
         chunkLines = [];
       }
@@ -97,8 +97,10 @@ const generateUnifiedDiff = (
 
     // Output remaining chunk
     if (chunkLines.length > 0) {
-      diffLines.push(`@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`);
-      diffLines.push(...chunkLines);
+      diffLines.push(
+        `@@ -${chunkStart + 1},${deletions} +${chunkStart + 1},${additions} @@`,
+        ...chunkLines,
+      );
     }
   }
 

@@ -218,12 +218,11 @@ describe('ContextAnalysisAgent', () => {
       const issue = createTestIssue();
       const similarContexts = [createResolvedContext(), createResolvedContext()];
 
-      const recommendations = (agent as any).generateRecommendations(
+      const recommendations = (agent as any).generateRecommendations({
         issue,
         similarContexts,
-        [],
-        undefined
-      );
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('similar past implementation'))).to.be
         .true;
@@ -232,7 +231,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add test coverage recommendation for features', () => {
       const issue = createTestIssue({ type: 'feature' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('test coverage'))).to.be.true;
     });
@@ -240,7 +243,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add regression test recommendation for bugs', () => {
       const issue = createTestIssue({ type: 'bug' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('regression'))).to.be.true;
     });
@@ -248,7 +255,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add validation recommendation for high priority issues', () => {
       const issue = createTestIssue({ priority: 'high' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('integration tests'))).to.be.true;
     });

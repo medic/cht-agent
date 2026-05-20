@@ -13,6 +13,10 @@ export function extractValidationFeedback(contextFiles: ReadonlyArray<ContextFil
     .join('\n');
 }
 
+function formatNumberedList(items: ReadonlyArray<string>): string {
+  return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+}
+
 /**
  * Build a structural summary of a JSON file for the LLM.
  * Shows top-level keys, their types, and nested key names — enough to
@@ -43,8 +47,7 @@ export function buildJsonStructureSummary(content: string): string {
       return `{\n${entries.join('\n')}${more}\n${indent}}`;
     };
 
-    lines.push(summarizeValue(data, 0));
-    lines.push('```');
+    lines.push(summarizeValue(data, 0), '```');
     return lines.join('\n');
   } catch {
     const fileLines = content.split('\n');
@@ -208,19 +211,22 @@ Output ONLY valid Python. No markdown, no explanations. Start with import statem
   return prompt;
 }
 
+export interface BuildSingleFilePromptOpts {
+  planItem: PlanItem;
+  fullPlan: PlanItem[];
+  input: CodeGenModuleInput;
+  originalContentMap: Map<string, string>;
+  previouslyGenerated: GeneratedFile[];
+  previousFailures?: string[];
+}
+
 /**
  * Build the prompt for generating a single file.
  * Includes the full plan for context, original content for MODIFY,
  * and summaries of previously generated files for coherence.
  */
-export function buildSingleFilePrompt(
-  planItem: PlanItem,
-  fullPlan: PlanItem[],
-  input: CodeGenModuleInput,
-  originalContentMap: Map<string, string>,
-  previouslyGenerated: GeneratedFile[],
-  previousFailures?: string[],
-): string {
+export function buildSingleFilePrompt(opts: BuildSingleFilePromptOpts): string {
+  const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures } = opts;
   const { ticket, researchFindings } = input;
 
   const isLarge = isLargeFile(planItem, originalContentMap);
@@ -257,10 +263,10 @@ Description:
 ${ticket.issue.description}
 
 Requirements:
-${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+${formatNumberedList(ticket.issue.requirements)}
 
 Acceptance Criteria:
-${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+${formatNumberedList(ticket.issue.acceptance_criteria)}
 
 ## Documentation References
 ${researchFindings.suggestedApproaches.map((a) => `- ${a}`).join('\n')}`;

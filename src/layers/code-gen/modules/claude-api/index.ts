@@ -4,7 +4,6 @@ import {
   CodeGenModuleOutput,
   ContextFile,
   GeneratedFile,
-  PlanSummaryItem,
 } from '../../interface';
 import { LLMProvider, LLMToolDefinition, ToolHandler, createAnthropicProvider, getAPIConfigFromEnv } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
@@ -98,11 +97,9 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   }
 
   private getProvider(): LLMProvider {
-    if (!this.provider) {
-      // Hard-pin to the Anthropic API. getAPIConfigFromEnv throws in CLI mode,
-      // which gives a clear error earlier than the first invoke.
-      this.provider = createAnthropicProvider(getAPIConfigFromEnv());
-    }
+    // Hard-pin to the Anthropic API. getAPIConfigFromEnv throws in CLI mode,
+    // which gives a clear error earlier than the first invoke.
+    this.provider ??= createAnthropicProvider(getAPIConfigFromEnv());
     return this.provider;
   }
 
@@ -157,7 +154,13 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     // why the plan log and the onPlan callback fire AFTER this step, so all
     // consumers see post-downgrade actions.
     const originalContentMap = this.buildOriginalContentMap(workingContextFiles);
-    await this.fetchMissingModifyFiles(plan, input, workingContextFiles, originalContentMap, manifest);
+    await this.fetchMissingModifyFiles({
+      plan,
+      input,
+      workingContextFiles,
+      originalContentMap,
+      manifest,
+    });
     await this.surfacePlan(plan, input);
 
     // Phase 3: Generate files sequentially (one LLM call per file).
@@ -203,12 +206,12 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
     manifest: FileManifest,
     modelName: string,
-  ): Promise<{ plan: PlanItem[]; planTokens: number; bailout?: undefined }
+  ): Promise<{ plan: PlanItem[]; planTokens: number; bailout?: never }
     | { bailout: CodeGenModuleOutput; plan: PlanItem[]; planTokens: number }> {
     if (input.failingFiles && input.failingFiles.length > 0) {
       console.log(`[Code Gen Module] Selective regeneration: reusing plan for ${input.failingFiles.length} failing file(s)`);
-      const plan = input.failingFiles.map(f => ({
-        action: (f.action === 'create' ? 'CREATE' : 'MODIFY') as 'CREATE' | 'MODIFY',
+      const plan: PlanItem[] = input.failingFiles.map(f => ({
+        action: f.action === 'create' ? 'CREATE' : 'MODIFY',
         filePath: f.path,
         rationale: 'Regenerate — previous version failed validation',
       }));
@@ -251,7 +254,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     for (const item of plan) {
       console.log(`[Code Gen Module]   ${item.action} ${item.filePath} — ${item.rationale}`);
     }
-    await this.fireCallback('onPlan', input.onPlan, plan as ReadonlyArray<PlanSummaryItem>);
+    await this.fireCallback('onPlan', input.onPlan, plan);
   }
 
   private runPostCallValidation(files: GeneratedFile[], plan: PlanItem[], manifest: FileManifest): void {
@@ -351,9 +354,14 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
 
       await this.fireCallback('onFileInProgress', input.onFileInProgress, planItem.filePath);
 
-      const result = await this.generateSingleFileWithRetry(
-        planItem, plan, input, originalContentMap, generatedFiles, codeGenTools,
-      );
+      const result = await this.generateSingleFileWithRetry({
+        planItem,
+        fullPlan: plan,
+        input,
+        originalContentMap,
+        previouslyGenerated: generatedFiles,
+        codeGenTools,
+      });
 
       totalTokens += result.tokensUsed;
       if (result.file) {
@@ -380,15 +388,17 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
    * Generate a single file with assertion-based retry (max 3 attempts).
    * Handles truncation via continuation calls within each attempt.
    */
-  private async generateSingleFileWithRetry(
-    planItem: PlanItem,
-    fullPlan: PlanItem[],
-    input: CodeGenModuleInput,
-    originalContentMap: Map<string, string>,
-    previouslyGenerated: GeneratedFile[],
-    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler },
-    maxAttempts: number = 3,
-  ): Promise<{ file: GeneratedFile | null; tokensUsed: number }> {
+  private async generateSingleFileWithRetry(opts: {
+    planItem: PlanItem;
+    fullPlan: PlanItem[];
+    input: CodeGenModuleInput;
+    originalContentMap: Map<string, string>;
+    previouslyGenerated: GeneratedFile[];
+    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
+    maxAttempts?: number;
+  }): Promise<{ file: GeneratedFile | null; tokensUsed: number }> {
+    const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, codeGenTools } = opts;
+    const maxAttempts = opts.maxAttempts ?? 3;
     let lastFailures: string[] = [];
     let totalTokens = 0;
 
@@ -445,10 +455,15 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     | { outcome: 'retry'; failures: string[]; tokensUsed: number }
     | { outcome: 'over-budget'; tokensUsed: number }
   > {
-    const result = await this.generateSingleFile(
-      args.planItem, args.fullPlan, args.input, args.originalContentMap,
-      args.previouslyGenerated, args.codeGenTools, args.previousFailures,
-    );
+    const result = await this.generateSingleFile({
+      planItem: args.planItem,
+      fullPlan: args.fullPlan,
+      input: args.input,
+      originalContentMap: args.originalContentMap,
+      previouslyGenerated: args.previouslyGenerated,
+      codeGenTools: args.codeGenTools,
+      previousFailures: args.previousFailures,
+    });
     let tokensUsed = result.tokensUsed;
 
     if (!result.file) {
@@ -585,19 +600,25 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
    * Single LLM call to generate one file.
    * Returns the generated file, token usage, and whether output was truncated.
    */
-  private async generateSingleFile(
-    planItem: PlanItem,
-    fullPlan: PlanItem[],
-    input: CodeGenModuleInput,
-    originalContentMap: Map<string, string>,
-    previouslyGenerated: GeneratedFile[],
-    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler },
-    previousFailures?: string[],
-  ): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
+  private async generateSingleFile(opts: {
+    planItem: PlanItem;
+    fullPlan: PlanItem[];
+    input: CodeGenModuleInput;
+    originalContentMap: Map<string, string>;
+    previouslyGenerated: GeneratedFile[];
+    codeGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
+    previousFailures?: string[];
+  }): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
+    const { planItem, fullPlan, input, originalContentMap, previouslyGenerated, codeGenTools, previousFailures } = opts;
     const llm = this.getProvider();
-    const prompt = this.buildSingleFilePrompt(
-      planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures,
-    );
+    const prompt = this.buildSingleFilePrompt({
+      planItem,
+      fullPlan,
+      input,
+      originalContentMap,
+      previouslyGenerated,
+      previousFailures,
+    });
 
     let response;
     try {
@@ -786,15 +807,15 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
    * Includes the full plan for context, original content for MODIFY,
    * and summaries of previously generated files for coherence.
    */
-  buildSingleFilePrompt(
-    planItem: PlanItem,
-    fullPlan: PlanItem[],
-    input: CodeGenModuleInput,
-    originalContentMap: Map<string, string>,
-    previouslyGenerated: GeneratedFile[],
-    previousFailures?: string[],
-  ): string {
-    return libBuildSingleFilePrompt(planItem, fullPlan, input, originalContentMap, previouslyGenerated, previousFailures);
+  buildSingleFilePrompt(opts: {
+    planItem: PlanItem;
+    fullPlan: PlanItem[];
+    input: CodeGenModuleInput;
+    originalContentMap: Map<string, string>;
+    previouslyGenerated: GeneratedFile[];
+    previousFailures?: string[];
+  }): string {
+    return libBuildSingleFilePrompt(opts);
   }
 
   buildJsonStructureSummary(content: string): string {
@@ -879,8 +900,10 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     originalContentMap: Map<string, string>
   ): string[] {
     const failures: string[] = [];
-    failures.push(...FileContentAssertions.isNotPlaintext(file.content, file.path));
-    failures.push(...FileContentAssertions.hasSyntaxMarkers(file.content, file.path));
+    failures.push(
+      ...FileContentAssertions.isNotPlaintext(file.content, file.path),
+      ...FileContentAssertions.hasSyntaxMarkers(file.content, file.path),
+    );
 
     const planItem = plan.find(p => p.filePath === file.path);
     if (planItem?.action === 'MODIFY') {
@@ -893,14 +916,21 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     return failures;
   }
 
-  private fetchMissingModifyFiles(
-    plan: PlanItem[],
-    input: CodeGenModuleInput,
-    workingContextFiles: ContextFile[],
-    originalContentMap: Map<string, string>,
-    manifest: FileManifest,
-  ): Promise<void> {
-    return libFetchMissingModifyFiles(plan, input.readFile, workingContextFiles, originalContentMap, manifest);
+  private fetchMissingModifyFiles(opts: {
+    plan: PlanItem[];
+    input: CodeGenModuleInput;
+    workingContextFiles: ContextFile[];
+    originalContentMap: Map<string, string>;
+    manifest: FileManifest;
+  }): Promise<void> {
+    const { plan, input, workingContextFiles, originalContentMap, manifest } = opts;
+    return libFetchMissingModifyFiles({
+      plan,
+      readFile: input.readFile,
+      workingContextFiles,
+      originalContentMap,
+      manifest,
+    });
   }
 
   private buildOriginalContentMap(contextFiles: ReadonlyArray<ContextFile>): Map<string, string> {
