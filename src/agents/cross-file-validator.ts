@@ -186,15 +186,21 @@ function collectIdsFromExpression(expression: string, ids: Set<string>): void {
 }
 
 function collectIdsFromBindings(content: string, ids: Set<string>): void {
-  // Matches Angular structural directives (*ngIf, *ngFor), property bindings
-  // ([...]) excluding class/style/ngClass/ngStyle, and event bindings ((...))
-  // excluding ngModelChange. Must stay byte-identical to public-surface.ts.
-  // NOSONAR_BEGIN
-  const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
-  // NOSONAR_END
-  let m: RegExpExecArray | null;
-  while ((m = bindingRe.exec(content)) !== null) collectIdsFromExpression(m[1], ids);
+  // Angular structural directives (*ngIf, *ngFor), property bindings ([...])
+  // excluding class/style/ngClass/ngStyle, and event bindings ((...)) excluding
+  // ngModelChange. Run as four smaller regexes and merge — equivalent to the
+  // single composite regex in public-surface.ts.
+  for (const re of ANGULAR_BINDING_REGEXES) {
+    for (const m of content.matchAll(re)) collectIdsFromExpression(m[1], ids);
+  }
 }
+
+const ANGULAR_BINDING_REGEXES: ReadonlyArray<RegExp> = [
+  /\*ngIf="([^"]+)"/g,
+  /\*ngFor[^=]*="([^"]+)"/g,
+  /\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]="([^"]+)"/g,
+  /\((?!ngModelChange)[^)]+\)="([^"]+)"/g,
+];
 
 function collectIdsFromInterpolations(content: string, ids: Set<string>): void {
   const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;

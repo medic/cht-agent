@@ -18,6 +18,48 @@ import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 /**
  * Options for DocumentationSearchAgent
  */
+const INCOMPLETE_STARTER_WORDS: ReadonlySet<string> = new Set([
+  'and', 'or', 'but', 'the', 'a', 'an',
+  'with', 'for', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'as',
+  'into', 'through', 'during', 'before', 'after',
+  'above', 'below', 'between', 'under',
+]);
+
+const INCOMPLETE_STARTER_PUNCTUATION: ReadonlySet<string> = new Set([',', ';', ':', '.']);
+
+/**
+ * Find the content ranges (start/end offsets) for each bullet in `text`.
+ * A bullet starts at line-start whitespace + marker (- * • or N.) + whitespace.
+ * Content extends until the next bullet's marker, a blank line, or EOF.
+ */
+function findBulletContentRanges(text: string): { start: number; end: number }[] {
+  const bulletStartRe = /(?:^|\n)([ \t]*)(?:[-*•]|\d+\.)[ \t]+/g;
+  const markers: { markerStart: number; contentStart: number }[] = [];
+  for (const m of text.matchAll(bulletStartRe)) {
+    const markerStart = m.index! + (m[0].startsWith('\n') ? 1 : 0);
+    markers.push({ markerStart, contentStart: m.index! + m[0].length });
+  }
+  return markers.map((mk, i) => ({
+    start: mk.contentStart,
+    end: computeBulletContentEnd(text, mk.contentStart, markers[i + 1]?.markerStart),
+  }));
+}
+
+function computeBulletContentEnd(text: string, contentStart: number, nextMarkerStart?: number): number {
+  const blankLineIdx = text.indexOf('\n\n', contentStart);
+  const limit = nextMarkerStart ?? text.length;
+  if (blankLineIdx !== -1 && blankLineIdx < limit) return blankLineIdx;
+  return limit;
+}
+
+function startsWithIncompleteToken(text: string): boolean {
+  // Mirror the original regex: token followed by whitespace; require something after.
+  const match = /^(\S+)\s/.exec(text);
+  if (!match) return false;
+  const first = match[1].toLowerCase();
+  return INCOMPLETE_STARTER_WORDS.has(first) || INCOMPLETE_STARTER_PUNCTUATION.has(first);
+}
+
 export interface DocumentationSearchAgentOptions {
   /** Custom MCP client (useful for testing) */
   mcpClient?: MCPClient;
@@ -280,26 +322,14 @@ export class DocumentationSearchAgent {
    */
   private extractBulletPoints(text: string): string[] {
     const bullets: string[] = [];
-
-    // Captures multi-line bullet points: starts with -, *, bullet, or number-dot;
-    // lazily extends until the next bullet, a blank line, or end of input.
-    // Required complexity to parse LLM markdown output reliably.
-    // NOSONAR_BEGIN
-    const bulletRegex = /(?:^|\n)\s*(?:[-*•]|\d+\.)\s+([\s\S]*?)(?=\n\s*(?:[-*•]|\d+\.)\s+|\n\n|$)/g;
-    // NOSONAR_END
-
-    let match;
-    while ((match = bulletRegex.exec(text)) !== null) {
-      const content = match[1]
-        .replace(/\n\s+/g, ' ') // Join continuation lines
-        .replace(/\s+/g, ' ')   // Normalize whitespace
+    const ranges = findBulletContentRanges(text);
+    for (const { start, end } of ranges) {
+      const content = text.slice(start, end)
+        .replace(/\n\s+/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
-
-      if (content.length > 10) {
-        bullets.push(content);
-      }
+      if (content.length > 10) bullets.push(content);
     }
-
     return bullets;
   }
 
@@ -311,13 +341,7 @@ export class DocumentationSearchAgent {
     if (/^[a-z]/.test(text)) {
       return false;
     }
-
-    // Incomplete if starts with conjunction, article, or preposition.
-    // Long alternation is intentional to enumerate the heuristic vocabulary.
-    // NOSONAR_BEGIN
-    const incompleteStarters = /^(and|or|but|the|a|an|,|;|:|\.|with|for|to|of|in|on|at|by|from|as|into|through|during|before|after|above|below|between|under)\s/i;
-    // NOSONAR_END
-    if (incompleteStarters.test(text)) {
+    if (startsWithIncompleteToken(text)) {
       return false;
     }
 

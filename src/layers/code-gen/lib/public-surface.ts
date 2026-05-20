@@ -53,15 +53,27 @@ function collectExportedDeclarations(content: string, lines: string[], seen: Set
 function collectPublicClassMembers(content: string, lines: string[], seen: Set<string>): void {
   // Public class members. D6 fix: any leading whitespace, not just 2-space indent,
   // so the extractor is robust against tab-indented or 4-space external fixtures.
-  // Excludes private/protected/# fields, optional public/readonly/async modifiers.
-  // NOSONAR_BEGIN
-  const memberRe = /^[ \t]+(?!private\s|protected\s|#)(?:public\s+)?(?:readonly\s+)?(async\s+)?(\w+)\s*(\([^)]*\)[^{;]*|[:=][^;]*);?/gm;
-  // NOSONAR_END
-  for (const m of content.matchAll(memberRe)) {
-    const sig = m[0].trim();
-    if (/^(constructor|ngOnInit|ngOnDestroy|ngAfterViewInit)\b/.test(sig)) continue;
-    if (!seen.has(sig)) { seen.add(sig); lines.push(`  ${sig}`); }
+  // Split into method and property regexes; filter out private/protected/# in JS.
+  for (const re of CLASS_MEMBER_REGEXES) {
+    for (const m of content.matchAll(re)) appendPublicMember(m[0], lines, seen);
   }
+}
+
+const CLASS_MEMBER_REGEXES: ReadonlyArray<RegExp> = [
+  /^[ \t]+(?:public\s+)?(?:readonly\s+)?(?:async\s+)?\w+\s*\([^)]*\)[^{;]*;?/gm,
+  /^[ \t]+(?:public\s+)?(?:readonly\s+)?\w+\s*[:=][^;]*;?/gm,
+];
+
+const NON_PUBLIC_MEMBER_PREFIXES = ['private ', 'protected ', '#'];
+const LIFECYCLE_HOOK_RE = /^(constructor|ngOnInit|ngOnDestroy|ngAfterViewInit)\b/;
+
+function appendPublicMember(rawLine: string, lines: string[], seen: Set<string>): void {
+  const sig = rawLine.trim();
+  if (NON_PUBLIC_MEMBER_PREFIXES.some(prefix => sig.startsWith(prefix))) return;
+  if (LIFECYCLE_HOOK_RE.test(sig)) return;
+  if (seen.has(sig)) return;
+  seen.add(sig);
+  lines.push(`  ${sig}`);
 }
 
 function collectNamespaceMembers(content: string, lines: string[]): void {
@@ -110,15 +122,21 @@ function collectTemplateDeclaredLocals(content: string): Set<string> {
   return declaredLocals;
 }
 
+const ANGULAR_BINDING_REGEXES: ReadonlyArray<RegExp> = [
+  /\*ngIf="([^"]+)"/g,
+  /\*ngFor[^=]*="([^"]+)"/g,
+  /\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]="([^"]+)"/g,
+  /\((?!ngModelChange)[^)]+\)="([^"]+)"/g,
+];
+
 function collectTemplateReferencedIds(content: string): Set<string> {
   const ids = new Set<string>();
-  // Matches Angular structural directives (*ngIf, *ngFor), property bindings
-  // ([...]) excluding class/style/ngClass/ngStyle, and event bindings ((...))
-  // excluding ngModelChange. Must stay byte-identical to cross-file-validator.ts.
-  // NOSONAR_BEGIN
-  const bindingRe = /(?:\*ngIf|\*ngFor[^=]*|\[(?!class\.|style\.|ngClass|ngStyle)[^\]]+\]|\((?!ngModelChange)[^)]+\))="([^"]+)"/g;
-  // NOSONAR_END
-  for (const m of content.matchAll(bindingRe)) collectIdentifiers(m[1], ids);
+  // Angular structural directives, property bindings, and event bindings — run
+  // as four smaller regexes and merge. Equivalent to the composite in
+  // cross-file-validator.ts.
+  for (const re of ANGULAR_BINDING_REGEXES) {
+    for (const m of content.matchAll(re)) collectIdentifiers(m[1], ids);
+  }
   const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
   for (const m of content.matchAll(interpRe)) collectIdentifiers(m[1], ids);
   return ids;
