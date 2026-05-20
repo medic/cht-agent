@@ -151,6 +151,31 @@ export interface DistillOptions {
   distillFn?: (pr: ScrapedPR) => Promise<DistillDraft>;
 }
 
+/** Options for openReviewPR — used to inject test doubles and override defaults */
+export interface OpenReviewOptions {
+  /** Actually create branches and PRs; default is dry-run */
+  apply?: boolean;
+  /** Override _pending base directory */
+  pendingDir?: string;
+  /** Override agent-memory/domains base directory */
+  domainsDir?: string;
+  /** Override _skipped.ndjson path */
+  logPath?: string;
+  /** Date string in YYYYMMDD format for branch naming (default: today) */
+  date?: string;
+  /** Inject execFileSync replacement for testing */
+  execFn?: (file: string, args: string[]) => string;
+}
+
+/** Result of promoting a domain's pending drafts to a review PR */
+export interface ReviewPRResult {
+  domain: string;
+  branch: string;
+  prUrl?: string;
+  filesPromoted: number;
+  status: 'created' | 'dry-run' | 'skipped';
+}
+
 /**
  * Error thrown by the scraper when it cannot successfully retrieve or parse
  * data for a specific PR. Carries the PR number for caller-side correlation.
