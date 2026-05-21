@@ -9,7 +9,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage } from '@langchain/core/messages';
 import {
   LLMProvider,
-  LLMConfig,
+  APIProviderConfig,
   LLMMessage,
   LLMResponse,
   InvokeOptions,
@@ -22,12 +22,14 @@ import {
  * Extract text content from a LangChain message response.
  * Handles both plain string and array-of-blocks content.
  */
+interface TextBlock { type: string; text?: string }
+
 function extractTextContent(content: unknown): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
-    return content
-      .filter((block: any) => block.type === 'text')
-      .map((block: any) => block.text)
+    return (content as TextBlock[])
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text ?? '')
       .join('');
   }
   return JSON.stringify(content);
@@ -36,6 +38,56 @@ function extractTextContent(content: unknown): string {
 /**
  * Convert LLMToolDefinition to LangChain ToolDefinition format.
  */
+interface UsageAccumulator {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+interface ResponseWithUsage {
+  usage_metadata?: { input_tokens: number; output_tokens: number };
+}
+
+function accumulateUsage(totalUsage: UsageAccumulator, response: ResponseWithUsage): void {
+  if (response.usage_metadata) {
+    totalUsage.inputTokens += response.usage_metadata.input_tokens;
+    totalUsage.outputTokens += response.usage_metadata.output_tokens;
+  }
+}
+
+interface AnthropicToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  id?: string;
+}
+
+async function dispatchToolCalls(
+  toolCalls: AnthropicToolCall[],
+  options: InvokeOptions,
+  messages: BaseMessage[],
+): Promise<void> {
+  for (const toolCall of toolCalls) {
+    const message = await invokeToolCall(toolCall, options);
+    messages.push(message);
+  }
+}
+
+async function invokeToolCall(
+  toolCall: AnthropicToolCall,
+  options: InvokeOptions,
+): Promise<ToolMessage> {
+  try {
+    const result = await options.toolHandler!(toolCall.name, toolCall.args);
+    return new ToolMessage({ content: result, tool_call_id: toolCall.id! });
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return new ToolMessage({
+      content: `Error: ${errMsg}`,
+      tool_call_id: toolCall.id!,
+      status: 'error',
+    });
+  }
+}
+
 function toLangChainTools(tools: LLMToolDefinition[]) {
   return tools.map(tool => ({
     type: 'function' as const,
@@ -50,7 +102,7 @@ function toLangChainTools(tools: LLMToolDefinition[]) {
 /**
  * Create an Anthropic LLM provider
  */
-export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
+export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider => {
   /** Create a ChatAnthropic instance with optional temperature/maxTokens overrides */
   const createModel = (overrides?: { temperature?: number; maxTokens?: number }) => new ChatAnthropic({
     modelName: config.model,
@@ -83,11 +135,7 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
 
     for (let round = 0; round < maxRounds; round++) {
       const response = await boundModel.invoke(messages);
-
-      if (response.usage_metadata) {
-        totalUsage.inputTokens += response.usage_metadata.input_tokens;
-        totalUsage.outputTokens += response.usage_metadata.output_tokens;
-      }
+      accumulateUsage(totalUsage, response);
       lastStopReason = response.response_metadata?.stop_reason as string | undefined;
 
       if (!response.tool_calls || response.tool_calls.length === 0) {
@@ -100,29 +148,12 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
       }
 
       messages.push(response);
-      for (const toolCall of response.tool_calls) {
-        try {
-          const result = await options.toolHandler!(toolCall.name, toolCall.args);
-          messages.push(new ToolMessage({
-            content: result,
-            tool_call_id: toolCall.id!,
-          }));
-        } catch (error) {
-          messages.push(new ToolMessage({
-            content: `Error: ${error instanceof Error ? error.message : String(error)}`,
-            tool_call_id: toolCall.id!,
-            status: 'error',
-          }));
-        }
-      }
+      await dispatchToolCalls(response.tool_calls, options, messages);
     }
 
     // Max rounds reached — invoke without tools to force a text response
     const finalResponse = await baseModel.invoke(messages);
-    if (finalResponse.usage_metadata) {
-      totalUsage.inputTokens += finalResponse.usage_metadata.input_tokens;
-      totalUsage.outputTokens += finalResponse.usage_metadata.output_tokens;
-    }
+    accumulateUsage(totalUsage, finalResponse);
 
     return {
       content: extractTextContent(finalResponse.content),
@@ -220,13 +251,13 @@ export const createAnthropicProvider = (config: LLMConfig): LLMProvider => {
     }
 
     // Strip markdown code blocks if present
-    const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(content);
     if (codeBlockMatch) {
       content = codeBlockMatch[1].trim();
     }
 
     // Try to extract JSON object from the response
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const jsonMatch = /\{[\s\S]*\}/.exec(content);
     if (!jsonMatch) {
       throw new Error('LLM response did not contain valid JSON object');
     }

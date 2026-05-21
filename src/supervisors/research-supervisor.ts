@@ -53,12 +53,104 @@ const ResearchStateAnnotation = Annotation.Root({
   }),
 });
 
+/**
+ * Pull bullet-point lines from a markdown section, stripping leading
+ * whitespace and the `-` / `*` markers. Returns just the bullet text.
+ */
+function formatSuccessRate(rate: number | null): string {
+  if (rate === null) return 'N/A (no historical data)';
+  return `${(rate * 100).toFixed(0)}%`;
+}
+
+function logResearchStart(issue: IssueTemplate, additionalContext?: string): void {
+  console.log('\n========================================');
+  console.log('RESEARCH SUPERVISOR - Starting Research Phase');
+  console.log('========================================');
+  console.log(`Issue: ${issue.issue.title}`);
+  console.log(`Domain: ${issue.issue.technical_context.domain}`);
+  console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
+  if (additionalContext) console.log(`Additional Context: ${additionalContext}`);
+  console.log('========================================\n');
+}
+
+function buildInitialResearchState(
+  issue: IssueTemplate,
+  additionalContext?: string,
+): typeof ResearchStateAnnotation.State {
+  const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: string }> = [
+    {
+      role: 'user',
+      content: `Research issue: ${issue.issue.title}`,
+      timestamp: new Date().toISOString(),
+    },
+  ];
+  if (additionalContext) {
+    messages.push({
+      role: 'system',
+      content: `Additional context from human feedback: ${additionalContext}`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  return {
+    messages,
+    issue,
+    researchFindings: undefined,
+    contextAnalysis: undefined,
+    orchestrationPlan: undefined,
+    currentPhase: 'init',
+    errors: [],
+  };
+}
+
+function handleResearchError(
+  error: unknown,
+  initialState: typeof ResearchStateAnnotation.State,
+): typeof ResearchStateAnnotation.State {
+  const errorMessage = error instanceof Error ? error.message : 'Unknown error during graph execution';
+  console.error('\n========================================');
+  console.error('RESEARCH SUPERVISOR - Error during execution');
+  console.error('========================================');
+  console.error(`Error: ${errorMessage}`);
+  console.error('========================================\n');
+  return { ...initialState, currentPhase: 'error', errors: [errorMessage] };
+}
+
+function logResearchComplete(result: typeof ResearchStateAnnotation.State): void {
+  console.log('\n========================================');
+  console.log('RESEARCH SUPERVISOR - Research Phase Complete');
+  console.log('========================================');
+  console.log(`Final Phase: ${result.currentPhase}`);
+  console.log(`Errors: ${result.errors.length}`);
+  if (result.errors.length > 0) {
+    console.log(`Error details: ${result.errors.join(', ')}`);
+  }
+  console.log('========================================\n');
+}
+
+function logCodeContextUsage(codeContext: { codeSnippets: unknown[] } | null | undefined): void {
+  if (codeContext) {
+    console.log(
+      `[Research Supervisor] Using ${codeContext.codeSnippets.length} code snippets from context analysis`
+    );
+  } else {
+    console.log('[Research Supervisor] No code context available from context analysis');
+  }
+}
+
+function collectBulletText(section: string): string[] {
+  return section
+    .split('\n')
+    .filter(line => line.trim().startsWith('-') || line.trim().startsWith('*'))
+    .map(line => line.replace(/^[\s\-*]+/, '').trim())
+    .filter(line => line.length > 0);
+}
+
 export class ResearchSupervisor {
-  private graph: ReturnType<typeof this.buildGraph>;
-  private docSearchAgent: DocumentationSearchAgent;
-  private contextAgent: ContextAnalysisAgent;
-  private llm: LLMProvider;
-  private todos: TodoTracker;
+  private readonly graph: ReturnType<typeof this.buildGraph>;
+  private readonly docSearchAgent: DocumentationSearchAgent;
+  private readonly contextAgent: ContextAnalysisAgent;
+  private readonly llm: LLMProvider;
+  private readonly todos: TodoTracker;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean; llmProvider?: LLMProvider } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
@@ -103,7 +195,7 @@ export class ResearchSupervisor {
   private async documentationSearchNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== DOCUMENTATION SEARCH NODE ===');
 
-    const todoId = 'research-1'; // First todo
+    const todoId = 'research-1';
     this.todos.start(todoId);
 
     if (!state.issue) {
@@ -145,7 +237,7 @@ export class ResearchSupervisor {
   private async contextAnalysisNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== CONTEXT ANALYSIS NODE ===');
 
-    const todoId = 'research-2'; // Second todo
+    const todoId = 'research-2';
     this.todos.start(todoId);
 
     if (!state.issue) {
@@ -186,8 +278,7 @@ export class ResearchSupervisor {
    */
   private async generatePlanNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== GENERATE PLAN NODE ===');
-
-    const todoId = 'research-3'; // Third todo
+    const todoId = 'research-3';
     this.todos.start(todoId);
 
     if (!state.issue || !state.researchFindings || !state.contextAnalysis) {
@@ -200,26 +291,16 @@ export class ResearchSupervisor {
     }
 
     try {
-      // Use code context from Context Analysis Agent (already gathered)
       const codeContext = state.contextAnalysis.codeContext;
-      if (codeContext) {
-        console.log(
-          `[Research Supervisor] Using ${codeContext.codeSnippets.length} code snippets from context analysis`
-        );
-      } else {
-        console.log('[Research Supervisor] No code context available from context analysis');
-      }
-
+      logCodeContextUsage(codeContext);
       const plan = await this.generateOrchestrationPlan(
         state.issue,
         state.researchFindings,
         state.contextAnalysis,
         codeContext
       );
-
       this.todos.complete(todoId);
       this.todos.printSummary();
-
       return {
         orchestrationPlan: plan,
         currentPhase: 'complete' as const,
@@ -286,13 +367,13 @@ The following code snippets are from the actual cht-core codebase for the "${cod
 Use these to understand the existing patterns and where to make changes.
 
 ${codeContext.codeSnippets
-  .map(
-    (snippet) => `### ${snippet.filePath}
+    .map(
+      (snippet) => `### ${snippet.filePath}
 \`\`\`${snippet.language}
 ${snippet.content}
 \`\`\``
-  )
-  .join('\n\n')}
+    )
+    .join('\n\n')}
 `;
     }
 
@@ -326,7 +407,7 @@ ${codeContextSection}
 ## Context Analysis
 **Similar Past Issues**: ${analysis.similarContexts.length}
 **Reusable Patterns**: ${analysis.reusablePatterns.length}
-**Historical Success Rate**: ${analysis.historicalSuccessRate !== null ? `${(analysis.historicalSuccessRate * 100).toFixed(0)}%` : 'N/A (no historical data)'}
+**Historical Success Rate**: ${formatSuccessRate(analysis.historicalSuccessRate)}
 
 ## YOUR TASK
 
@@ -370,9 +451,9 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     const keyFindings = [
       `${findings.documentationReferences.length} documentation references found`,
       `${analysis.similarContexts.length} similar past implementations identified`,
-      analysis.historicalSuccessRate !== null
-        ? `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`
-        : 'No historical data available',
+      analysis.historicalSuccessRate === null
+        ? 'No historical data available'
+        : `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`,
       ...analysis.recommendations.slice(0, 2),
     ];
 
@@ -408,42 +489,35 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    * Looks for the "### IMPLEMENTATION APPROACH" section and extracts bullet points
    */
   private extractImplementationApproach(content: string): string {
-    // Try to find the IMPLEMENTATION APPROACH section
-    const approachMatch = content.match(
-      /###\s*(?:1\.\s*)?IMPLEMENTATION APPROACH[^\n]*\n([\s\S]*?)(?=###|$)/i
-    );
-
-    if (approachMatch) {
-      const section = approachMatch[1].trim();
-      // Extract bullet points
-      const bullets = section
-        .split('\n')
-        .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
-        .map((line) => line.replace(/^[\s\-\*]+/, '').trim())
-        .filter((line) => line.length > 0);
-
-      if (bullets.length > 0) {
-        // Return the first few bullets as the recommended approach
-        return bullets.slice(0, 3).join('; ');
-      }
-
-      // If no bullets, return the first meaningful line
-      const firstLine = section.split('\n').find((line) => line.trim().length > 20);
-      if (firstLine) {
-        return firstLine.trim();
-      }
-    }
-
-    // Fallback: look for any numbered list or bullet points in the response
-    const bulletMatch = content.match(/(?:^|\n)[\s]*[-*]\s+(.+?)(?=\n|$)/gm);
-    if (bulletMatch && bulletMatch.length > 0) {
-      return bulletMatch
-        .slice(0, 3)
-        .map((b) => b.replace(/^[\s\-\*]+/, '').trim())
-        .join('; ');
-    }
-
+    const fromSection = this.extractApproachFromSection(content);
+    if (fromSection) return fromSection;
+    const fromBullets = this.extractApproachFromAnyBullets(content);
+    if (fromBullets) return fromBullets;
     return 'Follow CHT best practices and patterns from documentation';
+  }
+
+  /**
+   * Try to pull the approach from the IMPLEMENTATION APPROACH section first,
+   * either via bullet points or via the first meaningful line.
+   */
+  private extractApproachFromSection(content: string): string | undefined {
+    const approachMatch = /###\s*(?:1\.\s*)?IMPLEMENTATION APPROACH[^\n]*\n([\s\S]*?)(?=###|$)/i.exec(content);
+    if (!approachMatch) return undefined;
+    const section = approachMatch[1].trim();
+    const bullets = collectBulletText(section);
+    if (bullets.length > 0) return bullets.slice(0, 3).join('; ');
+    const firstLine = section.split('\n').find(line => line.trim().length > 20);
+    return firstLine?.trim();
+  }
+
+  /** Fallback: any numbered list / bullet anywhere in the response. */
+  private extractApproachFromAnyBullets(content: string): string | undefined {
+    const bulletMatch = content.match(/(?:^|\n)\s*[-*]\s+(.+?)(?=\n|$)/gm);
+    if (!bulletMatch || bulletMatch.length === 0) return undefined;
+    return bulletMatch
+      .slice(0, 3)
+      .map(b => b.replace(/^[\s\-*]+/, '').trim())
+      .join('; ');
   }
 
   /**
@@ -451,58 +525,39 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    */
   private extractKeyFiles(content: string): string[] {
     const files: string[] = [];
-
-    // Try to find the KEY FILES section
-    const filesMatch = content.match(/###\s*(?:2\.\s*)?KEY FILES[^\n]*\n([\s\S]*?)(?=###|$)/i);
-
-    if (filesMatch) {
-      const section = filesMatch[1];
-      // Look for file paths (containing / or ending in common extensions)
-      const pathMatches = section.match(
-        /[\w\-./]+(?:\.ts|\.js|\.html|\.json|\.service\.ts|\.component\.ts)/g
-      );
-      if (pathMatches) {
-        files.push(...pathMatches);
-      }
-    }
-
-    // Also look for backtick-wrapped file references throughout the content
-    const backtickMatches = content.match(/`([^`]*(?:\.ts|\.js|\.html|\.json)[^`]*)`/g);
-    if (backtickMatches) {
-      backtickMatches.forEach((match) => {
-        const file = match.replace(/`/g, '').trim();
-        if (file.includes('/') || file.includes('.')) {
-          files.push(file);
-        }
-      });
-    }
-
+    this.collectFilesFromKeyFilesSection(content, files);
+    this.collectFilesFromBackticks(content, files);
     // Deduplicate and return
     return [...new Set(files)].slice(0, 10);
+  }
+
+  private collectFilesFromKeyFilesSection(content: string, files: string[]): void {
+    const filesMatch = /###\s*(?:2\.\s*)?KEY FILES[^\n]*\n([\s\S]*?)(?=###|$)/i.exec(content);
+    if (!filesMatch) return;
+    const pathMatches = filesMatch[1].match(
+      /[\w\-./]+(?:\.ts|\.js|\.html|\.json|\.service\.ts|\.component\.ts)/g,
+    );
+    if (pathMatches) files.push(...pathMatches);
+  }
+
+  private collectFilesFromBackticks(content: string, files: string[]): void {
+    const backtickMatches = content.match(/`([^`]*(?:\.ts|\.js|\.html|\.json)[^`]*)`/g);
+    if (!backtickMatches) return;
+    for (const match of backtickMatches) {
+      const file = match.replaceAll('`', '').trim();
+      if (file.includes('/') || file.includes('.')) {
+        files.push(file);
+      }
+    }
   }
 
   /**
    * Extract risk factors from Claude's response
    */
   private extractRiskFactors(content: string): string[] {
-    const risks: string[] = [];
-
-    // Try to find the RISK FACTORS section
-    const riskMatch = content.match(/###\s*(?:4\.\s*)?RISK FACTORS[^\n]*\n([\s\S]*?)(?=###|$)/i);
-
-    if (riskMatch) {
-      const section = riskMatch[1];
-      // Extract bullet points
-      const bullets = section
-        .split('\n')
-        .filter((line) => line.trim().startsWith('-') || line.trim().startsWith('*'))
-        .map((line) => line.replace(/^[\s\-\*]+/, '').trim())
-        .filter((line) => line.length > 0);
-
-      risks.push(...bullets);
-    }
-
-    return risks.slice(0, 5);
+    const riskMatch = /###\s*(?:4\.\s*)?RISK FACTORS[^\n]*\n([\s\S]*?)(?=###|$)/i.exec(content);
+    if (!riskMatch) return [];
+    return collectBulletText(riskMatch[1]).slice(0, 5);
   }
 
   /**
@@ -512,26 +567,22 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     issue: IssueTemplate,
     analysis: ContextAnalysisResult
   ): 'low' | 'medium' | 'high' {
-    let score = 0;
-
-    // Priority factor
-    if (issue.issue.priority === 'high') score += 2;
-    else if (issue.issue.priority === 'medium') score += 1;
-
-    // Requirements count
-    if (issue.issue.requirements.length > 5) score += 2;
-    else if (issue.issue.requirements.length > 2) score += 1;
-
-    // Constraints
-    if (issue.issue.constraints.length > 2) score += 1;
-
-    // Lack of similar context increases complexity
-    if (analysis.similarContexts.length === 0) score += 2;
-    else if (analysis.similarContexts.length < 2) score += 1;
+    const priorityScores: Record<string, number> = { high: 2, medium: 1, low: 0 };
+    const score =
+      (priorityScores[issue.issue.priority] || 0) +
+      this.rangeScore(issue.issue.requirements.length, 2, 5) +
+      (issue.issue.constraints.length > 2 ? 1 : 0) +
+      this.rangeScore(2 - analysis.similarContexts.length, 1, 2);
 
     if (score >= 5) return 'high';
     if (score >= 3) return 'medium';
     return 'low';
+  }
+
+  private rangeScore(value: number, lowThreshold: number, highThreshold: number): number {
+    if (value > highThreshold) return 2;
+    if (value > lowThreshold) return 1;
+    return 0;
   }
 
   /**
@@ -542,7 +593,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     _findings: ResearchFindings,
     analysis: ContextAnalysisResult
   ) {
-    const phases = [
+    return [
       {
         name: 'Setup and Configuration',
         description: 'Set up development environment and review documentation',
@@ -572,69 +623,57 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
         dependencies: ['Testing'],
       },
     ];
-
-    return phases;
   }
 
   /**
-   * Identify risk factors
+   * Identify risk factors. Each rule is a `(condition, message)` pair so the
+   * function reads as data, not nested ifs.
    */
   private identifyRiskFactors(
     issue: IssueTemplate,
     findings: ResearchFindings,
-    analysis: ContextAnalysisResult
+    analysis: ContextAnalysisResult,
   ): string[] {
-    const risks: string[] = [];
-
-    // Low confidence from research
-    if (findings.confidence < 0.5) {
-      risks.push('Low confidence in documentation findings - may require additional research');
-    }
-
-    // No similar past implementations
-    if (analysis.similarContexts.length === 0) {
-      risks.push('No similar past implementations found - breaking new ground');
-    }
-
-    // Complex constraints
-    if (issue.issue.constraints.length > 2) {
-      risks.push(`Multiple constraints to satisfy: ${issue.issue.constraints.join(', ')}`);
-    }
-
-    // High priority
-    if (issue.issue.priority === 'high') {
-      risks.push('High priority issue - requires careful attention and thorough testing');
-    }
-
-    // Multiple components
-    if (issue.issue.technical_context.components.length > 3) {
-      risks.push(
-        'Changes span multiple components - requires coordination and integration testing'
-      );
-    }
-
-    return risks;
+    const rules: Array<{ condition: boolean; message: string }> = [
+      {
+        condition: findings.confidence < 0.5,
+        message: 'Low confidence in documentation findings - may require additional research',
+      },
+      {
+        condition: analysis.similarContexts.length === 0,
+        message: 'No similar past implementations found - breaking new ground',
+      },
+      {
+        condition: issue.issue.constraints.length > 2,
+        message: `Multiple constraints to satisfy: ${issue.issue.constraints.join(', ')}`,
+      },
+      {
+        condition: issue.issue.priority === 'high',
+        message: 'High priority issue - requires careful attention and thorough testing',
+      },
+      {
+        condition: issue.issue.technical_context.components.length > 3,
+        message: 'Changes span multiple components - requires coordination and integration testing',
+      },
+    ];
+    return rules.filter(r => r.condition).map(r => r.message);
   }
 
   /**
    * Estimate effort based on complexity and phases
    */
   private estimateEffort(complexity: 'low' | 'medium' | 'high', phaseCount: number): string {
-    const baseHours = {
-      low: 4,
-      medium: 16,
-      high: 40,
-    };
-
+    const baseHours: Record<string, number> = { low: 4, medium: 16, high: 40 };
     const hours = baseHours[complexity] * (phaseCount / 4);
+    return this.formatDuration(hours);
+  }
 
-    if (hours < 8) return `${hours} hour${hours === 1 ? '' : 's'}`;
-    if (hours < 40) {
-      const days = Math.round(hours / 8);
-      return `${days} day${days === 1 ? '' : 's'}`;
-    }
-    const weeks = Math.round(hours / 40);
-    return `${weeks} week${weeks === 1 ? '' : 's'}`;
+  private formatDuration(hours: number): string {
+    const pluralize = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+
+    if (hours < 8) return pluralize(hours, 'hour');
+    if (hours < 40) return pluralize(Math.round(hours / 8), 'day');
+    return pluralize(Math.round(hours / 40), 'week');
   }
 
   /**
@@ -643,81 +682,27 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
    * @param additionalContext Optional additional context (e.g., human feedback from previous iteration)
    */
   async research(issue: IssueTemplate, additionalContext?: string): Promise<ResearchState> {
-    console.log('\n========================================');
-    console.log('RESEARCH SUPERVISOR - Starting Research Phase');
-    console.log('========================================');
-    console.log(`Issue: ${issue.issue.title}`);
-    console.log(`Domain: ${issue.issue.technical_context.domain}`);
-    console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
-    if (additionalContext) {
-      console.log(`Additional Context: ${additionalContext}`);
-    }
-    console.log('========================================\n');
+    logResearchStart(issue, additionalContext);
+    this.initResearchTodos();
+    const initialState = buildInitialResearchState(issue, additionalContext);
 
-    // Initialize todos for the research workflow
+    let result: typeof ResearchStateAnnotation.State;
+    try {
+      result = await this.graph.invoke(initialState);
+    } catch (error) {
+      return handleResearchError(error, initialState);
+    }
+
+    logResearchComplete(result);
+    return result;
+  }
+
+  private initResearchTodos(): void {
     this.todos.clear();
     this.todos.addMany([
       { content: 'Search documentation', activeForm: 'Searching documentation' },
       { content: 'Analyze context', activeForm: 'Analyzing context' },
       { content: 'Generate orchestration plan', activeForm: 'Generating orchestration plan' },
     ]);
-
-    const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; timestamp: string }> = [
-      {
-        role: 'user',
-        content: `Research issue: ${issue.issue.title}`,
-        timestamp: new Date().toISOString(),
-      },
-    ];
-
-    // Add additional context as a system message if provided
-    if (additionalContext) {
-      messages.push({
-        role: 'system',
-        content: `Additional context from human feedback: ${additionalContext}`,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    const initialState: typeof ResearchStateAnnotation.State = {
-      messages,
-      issue: issue,
-      researchFindings: undefined,
-      contextAnalysis: undefined,
-      orchestrationPlan: undefined,
-      currentPhase: 'init',
-      errors: [],
-    };
-
-    let result: typeof ResearchStateAnnotation.State;
-    try {
-      result = await this.graph.invoke(initialState);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error during graph execution';
-      console.error('\n========================================');
-      console.error('RESEARCH SUPERVISOR - Error during execution');
-      console.error('========================================');
-      console.error(`Error: ${errorMessage}`);
-      console.error('========================================\n');
-
-      // Return state with error recorded
-      return {
-        ...initialState,
-        currentPhase: 'error',
-        errors: [errorMessage],
-      };
-    }
-
-    console.log('\n========================================');
-    console.log('RESEARCH SUPERVISOR - Research Phase Complete');
-    console.log('========================================');
-    console.log(`Final Phase: ${result.currentPhase}`);
-    console.log(`Errors: ${result.errors.length}`);
-    if (result.errors.length > 0) {
-      console.log(`Error details: ${result.errors.join(', ')}`);
-    }
-    console.log('========================================\n');
-
-    return result;
   }
 }

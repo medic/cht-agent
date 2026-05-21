@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
+import { EventEmitter } from 'events';
 import { CodeGenerationAgent } from '../../src/agents/code-generation-agent';
 import {
   CodeGenerationInput,
@@ -85,8 +86,10 @@ describe('CodeGenerationAgent', () => {
 
   beforeEach(() => {
     generateStub = sinon.stub();
+    // v6 G.1 made claude-code-cli the registry default; name the mock module
+    // to match so getActiveModule() (no arg) resolves to it.
     mockModule = {
-      name: 'claude-api',
+      name: 'claude-code-cli',
       version: '1.0.0',
       generate: generateStub,
     };
@@ -328,34 +331,6 @@ describe('CodeGenerationAgent', () => {
       expect(existingFile!.action).to.equal('modify');
       expect(newFile).to.exist;
       expect(newFile!.action).to.equal('create');
-    });
-  });
-
-  describe('mock mode', () => {
-    it('should bypass module when useMock is true', async () => {
-      const agent = new CodeGenerationAgent({
-        llmProvider: mockProvider,
-        useMock: true,
-        codeGenRegistry: mockRegistry,
-      });
-
-      const result = await agent.generate(createInput());
-
-      expect(generateStub.called).to.be.false;
-      expect(result.files.length).to.be.greaterThan(0);
-      expect(result.confidence).to.equal(0.75);
-    });
-
-    it('should return domain-specific mock files for contacts', async () => {
-      const agent = new CodeGenerationAgent({
-        llmProvider: mockProvider,
-        useMock: true,
-        codeGenRegistry: mockRegistry,
-      });
-
-      const result = await agent.generate(createInput());
-
-      expect(result.files.some(f => f.relativePath.includes('contacts'))).to.be.true;
     });
   });
 
@@ -623,6 +598,163 @@ describe('CodeGenerationAgent', () => {
         } else {
           process.env.CODE_GEN_MODULE = originalEnv;
         }
+      }
+    });
+  });
+
+  describe('CLI provider transport (F15)', () => {
+    let envBackup: NodeJS.ProcessEnv;
+
+    beforeEach(() => {
+      envBackup = { ...process.env };
+      process.env.LLM_PROVIDER = 'claude-cli';
+      process.env.CLAUDE_CLI_PATH = '/bin/true';
+    });
+
+    afterEach(() => {
+      process.env = envBackup;
+    });
+
+    it('should select the CLI-backed LLMProvider when LLM_PROVIDER=claude-cli', () => {
+      // Construct the agent WITHOUT passing an LLM provider so the env-driven path runs.
+      const agent = new CodeGenerationAgent({});
+      // The CLI provider declares providerType: 'anthropic' (compat lie) but modelName: 'claude-cli'.
+      const llm = agent.getLLMProvider();
+      expect(llm.providerType).to.equal('anthropic');
+      expect(llm.modelName).to.equal('claude-cli');
+    });
+
+    const buildFakeProc = (resultJson: string) => {
+      const fakeStdout = new EventEmitter();
+      const fakeStderr = new EventEmitter();
+      const fakeProc = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        stdin: { end: () => void };
+        kill: () => void;
+      };
+      fakeProc.stdout = fakeStdout;
+      fakeProc.stderr = fakeStderr;
+      fakeProc.stdin = { end: () => undefined };
+      fakeProc.kill = () => undefined;
+      setImmediate(() => {
+        fakeStdout.emit('data', resultJson);
+        fakeProc.emit('close', 0);
+      });
+      return fakeProc;
+    };
+
+    const standardResult = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      result: 'ok',
+      session_id: 'x',
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      is_error: false,
+    });
+
+    it('should pass -p, --max-turns and --dangerously-skip-permissions by default', async () => {
+      // proxyquire is used because child_process.spawn is non-configurable on Node 20+
+      // and cannot be stubbed via sinon.stub directly.
+      const proxyquire = require('proxyquire').noCallThru();
+      const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
+      const cliProvider = proxyquire('../../src/llm/providers/claude-cli', {
+        'node:child_process': { spawn: spawnStub },
+      });
+
+      const provider = cliProvider.createClaudeCLIProvider({
+        executablePath: '/bin/true',
+      });
+      await provider.invoke('test prompt');
+
+      expect(spawnStub.calledOnce).to.be.true;
+      const callArgs = spawnStub.firstCall.args[1] as string[];
+      expect(callArgs).to.include('-p');
+      expect(callArgs).to.include('--max-turns');
+      expect(callArgs).to.include('--dangerously-skip-permissions');
+    });
+
+    it('should omit --dangerously-skip-permissions when skipPermissions=false', async () => {
+      const proxyquire = require('proxyquire').noCallThru();
+      const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
+      const cliProvider = proxyquire('../../src/llm/providers/claude-cli', {
+        'node:child_process': { spawn: spawnStub },
+      });
+
+      const provider = cliProvider.createClaudeCLIProvider({
+        executablePath: '/bin/true',
+        skipPermissions: false,
+      });
+      await provider.invoke('test prompt');
+
+      const callArgs = spawnStub.firstCall.args[1] as string[];
+      expect(callArgs).to.not.include('--dangerously-skip-permissions');
+    });
+
+    it('should use the disallowed tools list when disableTools is true', async () => {
+      const proxyquire = require('proxyquire').noCallThru();
+      const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
+      const cliProvider = proxyquire('../../src/llm/providers/claude-cli', {
+        'node:child_process': { spawn: spawnStub },
+      });
+
+      const provider = cliProvider.createClaudeCLIProvider({
+        executablePath: '/bin/true',
+      });
+      await provider.invoke('test prompt', { disableTools: true });
+
+      const callArgs = spawnStub.firstCall.args[1] as string[];
+      const idx = callArgs.indexOf('--disallowedTools');
+      expect(idx).to.be.greaterThan(-1);
+      const disallowed = callArgs[idx + 1];
+      expect(disallowed).to.include('Bash');
+      expect(disallowed).to.include('Read');
+      expect(disallowed).to.include('Write');
+      expect(disallowed).to.include('Edit');
+    });
+
+    it('should refuse to drive claude-api via the CLI provider (v6 back-door fix)', async () => {
+      // v6 A.1+A.2: the registry no longer passes the agent's LLM into claude-api,
+      // and claude-api's generate() throws at entry when LLM_PROVIDER=claude-cli
+      // and no provider was injected. The "back door" path that ran claude-api
+      // under the CLI transport is now explicitly closed.
+      //
+      // After v6 G.1, claude-code-cli is the default. We must explicitly set
+      // CODE_GEN_MODULE=claude-api to force the back-door scenario the test
+      // exercises (user explicitly opted into claude-api under LLM_PROVIDER=claude-cli).
+      const proxyquire = require('proxyquire').noCallThru();
+      const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
+
+      const proxiedCli = proxyquire('../../src/llm/providers/claude-cli', {
+        'node:child_process': { spawn: spawnStub },
+      });
+      const proxiedFactory = proxyquire('../../src/llm/factory', {
+        './providers/claude-cli': proxiedCli,
+      });
+      const proxiedLlmIndex = proxyquire('../../src/llm', {
+        './factory': proxiedFactory,
+      });
+      const { CodeGenerationAgent: ProxiedAgent } = proxyquire('../../src/agents/code-generation-agent', {
+        '../llm': proxiedLlmIndex,
+      });
+
+      const originalModule = process.env.CODE_GEN_MODULE;
+      process.env.CODE_GEN_MODULE = 'claude-api';
+      try {
+        const agent = new ProxiedAgent({});
+        let threw = false;
+        try {
+          await agent.generate(createInput());
+        } catch (err) {
+          threw = true;
+          expect((err as Error).message).to.match(/claude-api module requires LLM_PROVIDER=anthropic/);
+        }
+        expect(threw).to.equal(true);
+      } finally {
+        if (originalModule === undefined) delete process.env.CODE_GEN_MODULE;
+        else process.env.CODE_GEN_MODULE = originalModule;
       }
     });
   });

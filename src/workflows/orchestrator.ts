@@ -160,17 +160,20 @@ export const displayFullWorkflowSummary = (result: FullWorkflowResult): void => 
   console.log(`   Approved: ${result.research.approved ? '✅' : '❌'}`);
 
   if (result.development) {
-    console.log('\n📊 Development Phase:');
-    console.log(`   Iterations: ${result.development.iterationCount}`);
-    console.log(`   Approved: ${result.development.approved ? '✅' : '❌'}`);
-    console.log(`   Files Written: ${result.development.filesWritten.length}`);
-
-    if (result.development.result?.validationResult) {
-      console.log(`   Validation Score: ${result.development.result.validationResult.overallScore}%`);
-    }
+    displayDevelopmentSummary(result.development);
   } else {
     console.log('\n📊 Development Phase: Not executed');
   }
 
   console.log();
 };
+
+function displayDevelopmentSummary(development: NonNullable<FullWorkflowResult['development']>): void {
+  console.log('\n📊 Development Phase:');
+  console.log(`   Iterations: ${development.iterationCount}`);
+  console.log(`   Approved: ${development.approved ? '✅' : '❌'}`);
+  console.log(`   Files Written: ${development.filesWritten.length}`);
+  if (development.result?.validationResult) {
+    console.log(`   Validation Score: ${development.result.validationResult.overallScore}%`);
+  }
+}

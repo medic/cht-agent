@@ -28,7 +28,7 @@ import { gatherDomainContext } from '../utils/cht-core-context';
 import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 
 export class ContextAnalysisAgent {
-  private todos: TodoTracker;
+  private readonly todos: TodoTracker;
 
   constructor(_options: { modelName?: string } = {}) {
     // Model will be used for advanced pattern analysis in future iterations
@@ -112,13 +112,13 @@ export class ContextAnalysisAgent {
     const recommendations = await this.todos.run(
       'Generate recommendations',
       'Generating recommendations',
-      async () => this.generateRecommendations(
+      async () => this.generateRecommendations({
         issue,
         similarContexts,
         patterns,
-        domainOverview?.content,
-        codeContext
-      )
+        domainOverview: domainOverview?.content,
+        codeContext,
+      })
     );
     console.log(`[Context Analysis Agent] Generated ${recommendations.length} recommendations`);
 
@@ -160,10 +160,10 @@ export class ContextAnalysisAgent {
         availableFiles: context.availableFiles,
         missingFiles: context.missingFiles,
       };
-    } else {
-      console.log('[Context Analysis Agent] No code context available (CHT_CORE_PATH not set?)');
-      return null;
-    }
+    } 
+    console.log('[Context Analysis Agent] No code context available (CHT_CORE_PATH not set?)');
+    return null;
+    
   }
 
   /**
@@ -184,11 +184,10 @@ export class ContextAnalysisAgent {
       score: this.calculateSimilarityScore(issue, resolved),
     }));
 
-    // Sort by score and return top 5
     return scoredIssues
-      .sort((a, b) => b.score - a.score)
+      .toSorted((a, b) => b.score - a.score)
       .slice(0, 5)
-      .filter((item) => item.score > 0.3) // Minimum similarity threshold
+      .filter((item) => item.score > 0.3)
       .map((item) => item.issue);
   }
 
@@ -232,7 +231,7 @@ export class ContextAnalysisAgent {
       score += 0.3 * (componentOverlap / currentComponents.length);
     }
 
-    return Math.min(score, 1.0);
+    return Math.min(score, 1);
   }
 
   /**
@@ -291,7 +290,7 @@ export class ContextAnalysisAgent {
     // In production, these would be extracted from the full context files
 
     contexts.forEach((context) => {
-      if (context.tech_stack && context.tech_stack.length > 0) {
+      if (context.tech_stack?.length) {
         decisions.push({
           decision: `Use ${context.tech_stack.join(', ')} for ${context.category}`,
           rationale: `Successfully used in ${context.id}`,
@@ -306,77 +305,75 @@ export class ContextAnalysisAgent {
   }
 
   /**
-   * Generate recommendations based on analysis
+   * Generate recommendations based on analysis.
    */
-  private generateRecommendations(
-    issue: IssueTemplate,
-    similarContexts: ResolvedIssueContext[],
-    patterns: CodePattern[],
-    domainOverview?: string,
-    codeContext?: CodeContext | null
-  ): string[] {
-    const recommendations: string[] = [];
+  private generateRecommendations(opts: {
+    issue: IssueTemplate;
+    similarContexts: ResolvedIssueContext[];
+    patterns: CodePattern[];
+    domainOverview?: string;
+    codeContext?: CodeContext | null;
+  }): string[] {
+    const { issue, similarContexts, patterns, domainOverview, codeContext } = opts;
+    return [
+      ...this.recommendationsFromSimilarContexts(similarContexts),
+      ...this.recommendationsFromPatterns(patterns),
+      ...this.recommendationsFromCodeContext(codeContext),
+      ...(domainOverview ? ['Review domain overview for key concepts and technologies'] : []),
+      ...this.getIssueTypeRecommendations(issue),
+    ];
+  }
 
-    // Recommendations from similar contexts
-    if (similarContexts.length > 0) {
-      recommendations.push(
-        `Review ${similarContexts.length} similar past implementation(s) for guidance`
-      );
-
-      // Component-specific recommendations
-      const commonComponents = this.findCommonComponents(similarContexts);
-      if (commonComponents.length > 0) {
-        recommendations.push(
-          `Focus on these frequently modified components: ${commonComponents.join(', ')}`
-        );
-      }
+  private recommendationsFromSimilarContexts(similarContexts: ResolvedIssueContext[]): string[] {
+    if (similarContexts.length === 0) return [];
+    const recs: string[] = [
+      `Review ${similarContexts.length} similar past implementation(s) for guidance`,
+    ];
+    const commonComponents = this.findCommonComponents(similarContexts);
+    if (commonComponents.length > 0) {
+      recs.push(`Focus on these frequently modified components: ${commonComponents.join(', ')}`);
     }
+    return recs;
+  }
 
-    // Pattern-based recommendations
-    if (patterns.length > 0) {
-      const topPattern = patterns.sort((a, b) => b.frequency - a.frequency)[0];
-      recommendations.push(
-        `Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`
-      );
-    }
+  private recommendationsFromPatterns(patterns: CodePattern[]): string[] {
+    if (patterns.length === 0) return [];
+    const topPattern = patterns.toSorted((a, b) => b.frequency - a.frequency)[0];
+    return [`Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`];
+  }
 
-    // Code context recommendations
-    if (codeContext && codeContext.codeSnippets.length > 0) {
-      const highRelevanceFiles = codeContext.codeSnippets
-        .filter((s) => s.relevance === 'high')
-        .map((s) => s.filePath);
-      if (highRelevanceFiles.length > 0) {
-        recommendations.push(
-          `Key files to review/modify: ${highRelevanceFiles.slice(0, 3).join(', ')}`
-        );
-      }
-    }
+  private recommendationsFromCodeContext(codeContext: CodeContext | null | undefined): string[] {
+    if (!codeContext?.codeSnippets.length) return [];
+    const highRelevanceFiles = codeContext.codeSnippets
+      .filter(s => s.relevance === 'high')
+      .map(s => s.filePath);
+    if (highRelevanceFiles.length === 0) return [];
+    return [`Key files to review/modify: ${highRelevanceFiles.slice(0, 3).join(', ')}`];
+  }
 
-    // Domain-specific recommendations
-    if (domainOverview) {
-      recommendations.push(`Review domain overview for key concepts and technologies`);
-    }
+  private getIssueTypeRecommendations(issue: IssueTemplate): string[] {
+    const typeRecs: Record<string, string[]> = {
+      feature: [
+        'Ensure comprehensive test coverage for new feature',
+        'Update documentation and configuration examples',
+      ],
+      bug: [
+        'Add regression tests to prevent recurrence',
+        'Check for similar issues in related components',
+      ],
+      improvement: [
+        'Add or extend tests around the improved behavior',
+        'Confirm no regressions in related workflows',
+      ],
+    };
 
-    // Issue type recommendations (only if no better recommendations exist)
-    if (recommendations.length < 2) {
-      if (issue.issue.type === 'feature') {
-        recommendations.push('Ensure comprehensive test coverage for new feature');
-        recommendations.push('Update documentation and configuration examples');
-      } else if (issue.issue.type === 'bug') {
-        recommendations.push('Add regression tests to prevent recurrence');
-        recommendations.push('Check for similar issues in related components');
-      } else if (issue.issue.type === 'improvement') {
-        recommendations.push('Add or extend tests around the improved behavior');
-        recommendations.push('Confirm no regressions in related workflows');
-      }
-    }
+    const recs = typeRecs[issue.issue.type] || [];
 
-    // Priority-based recommendations
     if (issue.issue.priority === 'high') {
-      recommendations.push('Validate changes with integration tests before deployment');
+      recs.push('Validate changes with integration tests before deployment');
     }
 
-    return recommendations;
+    return recs;
   }
 
   /**
@@ -400,7 +397,7 @@ export class ContextAnalysisAgent {
     // Return components that appear in at least 2 contexts
     return Array.from(componentCounts.entries())
       .filter(([_, count]) => count >= 2)
-      .sort((a, b) => b[1] - a[1])
+      .toSorted((a, b) => b[1] - a[1])
       .map(([component]) => component)
       .slice(0, 3);
   }

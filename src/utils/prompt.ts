@@ -5,7 +5,7 @@
  * Uses Node.js built-in readline/promises module (Node 17+)
  */
 
-import * as readline from 'readline/promises';
+import * as readline from 'node:readline/promises';
 
 /**
  * Ask a question and get user input
@@ -76,37 +76,27 @@ export const askForFeedback = async (prompt: string): Promise<string> => {
 /**
  * Display a confirmation prompt with options
  */
+function matchOption(answer: string, options: string[]): string | null {
+  const num = Number.parseInt(answer, 10);
+  if (!Number.isNaN(num) && num >= 1 && num <= options.length) {
+    return options[num - 1];
+  }
+  return options.find(opt => opt.toLowerCase() === answer.toLowerCase()) ?? null;
+}
+
 export const askWithOptions = async (
   question: string,
   options: string[]
 ): Promise<string> => {
   const optionsDisplay = options.map((opt, i) => `  ${i + 1}. ${opt}`).join('\n');
-  let selectedOption: string | null = null;
-
-  while (selectedOption === null) {
+  for (;;) {
     console.log(`\n${question}`);
     console.log(optionsDisplay);
-
     const answer = await askQuestion('\nEnter your choice (number or text): ');
-
-    // Check if it's a number
-    const num = parseInt(answer, 10);
-    if (!isNaN(num) && num >= 1 && num <= options.length) {
-      selectedOption = options[num - 1];
-    } else {
-      // Check if it matches an option (case insensitive)
-      const match = options.find(
-        (opt) => opt.toLowerCase() === answer.toLowerCase()
-      );
-      if (match) {
-        selectedOption = match;
-      } else {
-        console.log(`Invalid choice. Please select 1-${options.length} or type an option.`);
-      }
-    }
+    const match = matchOption(answer, options);
+    if (match !== null) return match;
+    console.log(`Invalid choice. Please select 1-${options.length} or type an option.`);
   }
-
-  return selectedOption;
 };
 
 /**

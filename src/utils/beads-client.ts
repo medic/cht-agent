@@ -1,7 +1,7 @@
-import { execFile } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 export interface BeadsIssue {
   id: string;
@@ -41,12 +41,22 @@ export interface BeadsUpdateOptions {
 
 const COMMENT_FILE_THRESHOLD = 4096;
 
+function buildUpdateArgs(options: BeadsUpdateOptions): string[] {
+  const args: string[] = [];
+  if (options.status) args.push('-s', options.status);
+  if (options.description) args.push('-d', options.description);
+  if (options.notes) args.push('--notes', options.notes);
+  for (const label of options.addLabels ?? []) args.push('--add-label', label);
+  for (const label of options.removeLabels ?? []) args.push('--remove-label', label);
+  return args;
+}
+
 /**
  * Low-level wrapper around the bd (Beads) CLI.
  * All read commands append --json and parse stdout.
  */
 export class BeadsClient {
-  private cwd: string;
+  private readonly cwd: string;
 
   constructor(cwd?: string) {
     this.cwd = cwd ?? process.cwd();
@@ -63,20 +73,7 @@ export class BeadsClient {
   }
 
   async update(id: string, options: BeadsUpdateOptions): Promise<void> {
-    const args = ['update', id];
-    if (options.status) args.push('-s', options.status);
-    if (options.description) args.push('-d', options.description);
-    if (options.notes) args.push('--notes', options.notes);
-    if (options.addLabels?.length) {
-      for (const label of options.addLabels) {
-        args.push('--add-label', label);
-      }
-    }
-    if (options.removeLabels?.length) {
-      for (const label of options.removeLabels) {
-        args.push('--remove-label', label);
-      }
-    }
+    const args = ['update', id, ...buildUpdateArgs(options)];
     await this.exec(args);
   }
 
@@ -129,7 +126,8 @@ export class BeadsClient {
     return new Promise((resolve, reject) => {
       execFile('bd', args, { cwd: this.cwd, timeout: 15000 }, (error, stdout, stderr) => {
         if (error) {
-          reject(new Error(`bd ${args[0]} failed: ${error.message}${stderr ? ` (${stderr.trim()})` : ''}`));
+          const stderrSuffix = stderr ? ` (${stderr.trim()})` : '';
+          reject(new Error(`bd ${args[0]} failed: ${error.message}${stderrSuffix}`));
           return;
         }
         const trimmed = stdout.trim();
@@ -152,9 +150,9 @@ export class BeadsClient {
  * Creates a root epic issue and child task issues for each plan item.
  */
 export class BeadsCodeGenSession {
-  private client: BeadsClient;
+  private readonly client: BeadsClient;
   private sessionId: string | null = null;
-  private planItemIds: Map<string, string> = new Map();
+  private readonly planItemIds: Map<string, string> = new Map();
 
   constructor(client?: BeadsClient) {
     this.client = client ?? new BeadsClient();

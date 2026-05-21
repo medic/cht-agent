@@ -18,6 +18,48 @@ import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 /**
  * Options for DocumentationSearchAgent
  */
+const INCOMPLETE_STARTER_WORDS: ReadonlySet<string> = new Set([
+  'and', 'or', 'but', 'the', 'a', 'an',
+  'with', 'for', 'to', 'of', 'in', 'on', 'at', 'by', 'from', 'as',
+  'into', 'through', 'during', 'before', 'after',
+  'above', 'below', 'between', 'under',
+]);
+
+const INCOMPLETE_STARTER_PUNCTUATION: ReadonlySet<string> = new Set([',', ';', ':', '.']);
+
+/**
+ * Find the content ranges (start/end offsets) for each bullet in `text`.
+ * A bullet starts at line-start whitespace + marker (- * • or N.) + whitespace.
+ * Content extends until the next bullet's marker, a blank line, or EOF.
+ */
+function findBulletContentRanges(text: string): { start: number; end: number }[] {
+  const bulletStartRe = /(?:^|\n)([ \t]*)(?:[-*•]|\d+\.)[ \t]+/g;
+  const markers: { markerStart: number; contentStart: number }[] = [];
+  for (const m of text.matchAll(bulletStartRe)) {
+    const markerStart = m.index + (m[0].startsWith('\n') ? 1 : 0);
+    markers.push({ markerStart, contentStart: m.index + m[0].length });
+  }
+  return markers.map((mk, i) => ({
+    start: mk.contentStart,
+    end: computeBulletContentEnd(text, mk.contentStart, markers[i + 1]?.markerStart),
+  }));
+}
+
+function computeBulletContentEnd(text: string, contentStart: number, nextMarkerStart?: number): number {
+  const blankLineIdx = text.indexOf('\n\n', contentStart);
+  const limit = nextMarkerStart ?? text.length;
+  if (blankLineIdx !== -1 && blankLineIdx < limit) return blankLineIdx;
+  return limit;
+}
+
+function startsWithIncompleteToken(text: string): boolean {
+  // Mirror the original regex: token followed by whitespace; require something after.
+  const match = /^(\S+)\s/.exec(text);
+  if (!match) return false;
+  const first = match[1].toLowerCase();
+  return INCOMPLETE_STARTER_WORDS.has(first) || INCOMPLETE_STARTER_PUNCTUATION.has(first);
+}
+
 export interface DocumentationSearchAgentOptions {
   /** Custom MCP client (useful for testing) */
   mcpClient?: MCPClient;
@@ -26,9 +68,9 @@ export interface DocumentationSearchAgentOptions {
 }
 
 export class DocumentationSearchAgent {
-  private mcpClient: MCPClient;
-  private useMockMCP: boolean;
-  private todos: TodoTracker;
+  private readonly mcpClient: MCPClient;
+  private readonly useMockMCP: boolean;
+  private readonly todos: TodoTracker;
 
   constructor(options: DocumentationSearchAgentOptions = {}) {
     this.useMockMCP = options.useMockMCP === true; // Default to false (use real MCP)
@@ -226,23 +268,11 @@ export class DocumentationSearchAgent {
    * Extract code examples from document content
    */
   private extractCodeExamples(content: string): string[] {
-    const examples: string[] = [];
-
-    // Look for code blocks
-    const codeBlockRegex = /```[\s\S]*?```/g;
-    const matches = content.match(codeBlockRegex);
-
-    if (matches) {
-      for (const match of matches.slice(0, 3)) { // Limit to 3 examples
-        // Extract a brief description of the code
-        const firstLine = match.split('\n')[1]?.trim().substring(0, 50);
-        if (firstLine) {
-          examples.push(firstLine);
-        }
-      }
-    }
-
-    return examples;
+    const matches = content.match(/```[\s\S]*?```/g) ?? [];
+    return matches
+      .slice(0, 3)
+      .map(block => block.split('\n')[1]?.trim().substring(0, 50))
+      .filter((line): line is string => !!line);
   }
 
   /**
@@ -253,41 +283,38 @@ export class DocumentationSearchAgent {
     _issue: IssueTemplate,
     answer: string
   ): string[] {
-    const approaches: string[] = [];
-
-    // Extract complete bullet points from the answer (handle multi-line bullets)
-    const bulletPoints = this.extractBulletPoints(answer);
-    for (const bullet of bulletPoints.slice(0, 3)) {
-      // Only add if it's a meaningful, complete sentence/thought
-      if (bullet.length > 20 && this.isCompleteSentence(bullet)) {
-        approaches.push(bullet);
-      }
-    }
-
-    // If no good bullet points found, try to extract key sentences from the answer
+    const approaches = this.approachesFromBullets(answer);
     if (approaches.length === 0) {
-      const sentences = this.extractKeySentences(answer);
-      for (const sentence of sentences.slice(0, 3)) {
-        if (sentence.length > 20) {
-          approaches.push(sentence);
-        }
-      }
+      approaches.push(...this.approachesFromSentences(answer));
     }
-
-    // Extract relevant sections as approaches (only if we don't have enough)
     if (approaches.length < 3) {
-      for (const ref of references) {
-        if (ref.relevantSections) {
-          for (const section of ref.relevantSections) {
-            if (section && approaches.length < 5) {
-              approaches.push(`Follow ${section} pattern from ${ref.title}`);
-            }
-          }
-        }
+      this.appendApproachesFromSections(approaches, references);
+    }
+    return approaches.slice(0, 5); // Limit to top 5
+  }
+
+  private approachesFromBullets(answer: string): string[] {
+    return this.extractBulletPoints(answer)
+      .slice(0, 3)
+      .filter(bullet => bullet.length > 20 && this.isCompleteSentence(bullet));
+  }
+
+  private approachesFromSentences(answer: string): string[] {
+    return this.extractKeySentences(answer).slice(0, 3).filter(s => s.length > 20);
+  }
+
+  private appendApproachesFromSections(approaches: string[], references: DocumentationReference[]): void {
+    for (const ref of references) {
+      this.appendApproachesFromOneReference(approaches, ref);
+    }
+  }
+
+  private appendApproachesFromOneReference(approaches: string[], ref: DocumentationReference): void {
+    for (const section of ref.relevantSections ?? []) {
+      if (section && approaches.length < 5) {
+        approaches.push(`Follow ${section} pattern from ${ref.title}`);
       }
     }
-
-    return approaches.slice(0, 5); // Limit to top 5
   }
 
   /**
@@ -295,23 +322,14 @@ export class DocumentationSearchAgent {
    */
   private extractBulletPoints(text: string): string[] {
     const bullets: string[] = [];
-
-    // Match bullet points: starts with -, *, or number. followed by content until next bullet or end
-    // This regex captures multi-line bullet points
-    const bulletRegex = /(?:^|\n)\s*(?:[-*•]|\d+\.)\s+([\s\S]*?)(?=\n\s*(?:[-*•]|\d+\.)\s+|\n\n|$)/g;
-
-    let match;
-    while ((match = bulletRegex.exec(text)) !== null) {
-      const content = match[1]
-        .replace(/\n\s+/g, ' ') // Join continuation lines
-        .replace(/\s+/g, ' ')   // Normalize whitespace
+    const ranges = findBulletContentRanges(text);
+    for (const { start, end } of ranges) {
+      const content = text.slice(start, end)
+        .replace(/\n\s+/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
-
-      if (content.length > 10) {
-        bullets.push(content);
-      }
+      if (content.length > 10) bullets.push(content);
     }
-
     return bullets;
   }
 
@@ -323,10 +341,7 @@ export class DocumentationSearchAgent {
     if (/^[a-z]/.test(text)) {
       return false;
     }
-
-    // Incomplete if starts with conjunction or continuation words
-    const incompleteStarters = /^(and|or|but|the|a|an|,|;|:|\.|with|for|to|of|in|on|at|by|from|as|into|through|during|before|after|above|below|between|under)\s/i;
-    if (incompleteStarters.test(text)) {
+    if (startsWithIncompleteToken(text)) {
       return false;
     }
 
@@ -345,27 +360,25 @@ export class DocumentationSearchAgent {
    */
   private extractKeySentences(text: string): string[] {
     const sentences: string[] = [];
-
-    // Look for sentences that contain action words or recommendations
+    // Sentences containing action words or recommendations.
     const actionPatterns = [
       /you (?:can|could|should|need to|must|might|may)\s+[^.!?]+[.!?]/gi,
       /(?:implement|configure|set up|create|add|modify|update|use|enable|disable)\s+[^.!?]+[.!?]/gi,
       /the (?:recommended|suggested|best|proper)\s+[^.!?]+[.!?]/gi,
     ];
-
     for (const pattern of actionPatterns) {
-      const matches = text.match(pattern);
-      if (matches) {
-        for (const match of matches) {
-          const cleaned = match.trim();
-          if (cleaned.length > 20 && cleaned.length < 300 && !sentences.includes(cleaned)) {
-            sentences.push(cleaned);
-          }
-        }
+      this.appendKeySentencesForPattern(text, pattern, sentences);
+    }
+    return sentences;
+  }
+
+  private appendKeySentencesForPattern(text: string, pattern: RegExp, sentences: string[]): void {
+    for (const m of text.matchAll(pattern)) {
+      const cleaned = m[0].trim();
+      if (cleaned.length > 20 && cleaned.length < 300 && !sentences.includes(cleaned)) {
+        sentences.push(cleaned);
       }
     }
-
-    return sentences;
   }
 
   /**

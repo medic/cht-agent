@@ -13,11 +13,15 @@ async function main() {
   console.log('Claude Code CLI Validation');
   console.log('='.repeat(60));
   console.log('');
+  await step1CheckInstallation();
+  await step2BasicInvocation();
+  await step3JsonParsing();
+  printSuccessBanner();
+}
 
-  // Step 1: Check CLI installation
+async function step1CheckInstallation(): Promise<void> {
   console.log('Step 1: Checking CLI installation...');
   const validation = await validateClaudeCLI();
-
   if (!validation.valid) {
     console.error('');
     console.error('❌ CLI validation failed:', validation.error);
@@ -30,25 +34,17 @@ async function main() {
     console.error('');
     process.exit(1);
   }
-
   console.log('✅ Claude Code CLI found:', validation.version);
   console.log('');
+}
 
-  // Step 2: Test basic invocation
+async function step2BasicInvocation(): Promise<void> {
   console.log('Step 2: Testing basic invocation...');
   console.log('   (This may take a few seconds)');
   console.log('');
-
   try {
-    const provider = createClaudeCLIProvider({
-      timeout: 60000, // 1 minute for test
-      maxTurns: 1,
-    });
-
-    const response = await provider.invoke(
-      'Reply with exactly: "CLI test successful". Nothing else.'
-    );
-
+    const provider = createClaudeCLIProvider({ timeout: 60000, maxTurns: 1 });
+    const response = await provider.invoke('Reply with exactly: "CLI test successful". Nothing else.');
     if (response.content.toLowerCase().includes('successful')) {
       console.log('✅ CLI invocation successful');
       console.log('   Response:', response.content.substring(0, 100));
@@ -64,27 +60,20 @@ async function main() {
     console.error('');
     process.exit(1);
   }
-
   console.log('');
+}
 
-  // Step 3: Test JSON parsing
+async function step3JsonParsing(): Promise<void> {
   console.log('Step 3: Testing JSON response parsing...');
-
   try {
-    const provider = createClaudeCLIProvider({
-      timeout: 60000,
-      maxTurns: 1,
-    });
-
+    const provider = createClaudeCLIProvider({ timeout: 60000, maxTurns: 1 });
     interface TestResponse {
       status: string;
       message: string;
     }
-
     const response = await provider.invokeForJSON<TestResponse>(
       'Return a JSON object with two fields: "status" set to "ok" and "message" set to "JSON parsing works". Only output the JSON, nothing else.'
     );
-
     if (response.status === 'ok') {
       console.log('✅ JSON parsing successful');
       console.log('   Parsed object:', JSON.stringify(response));
@@ -95,7 +84,9 @@ async function main() {
     console.error('❌ JSON parsing failed:', error);
     process.exit(1);
   }
+}
 
+function printSuccessBanner(): void {
   console.log('');
   console.log('='.repeat(60));
   console.log('✅ All validations passed!');

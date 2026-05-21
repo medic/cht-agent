@@ -6,7 +6,6 @@ import {
   CodeGenModuleRegistry,
   createDefaultCodeGenRegistry,
 } from '../../../src/layers/code-gen/registry';
-import { LLMProvider, LLMResponse, LLMMessage, InvokeOptions } from '../../../src/llm';
 
 describe('CodeGenModuleRegistry', () => {
   const makeModule = (name: string): CodeGenModule => ({
@@ -51,14 +50,53 @@ describe('CodeGenModuleRegistry', () => {
     expect(active.name).to.equal('claude-api');
   });
 
-  it('should resolve claude-cli alias to claude-code-cli', () => {
-    const registry = new CodeGenModuleRegistry();
-    const module = makeModule('claude-code-cli');
-    registry.register(module);
+  it('should resolve claude-cli alias to claude-code-cli via default registry', () => {
+    const registry = createDefaultCodeGenRegistry();
 
     const active = registry.getActiveModule('claude-cli');
 
     expect(active.name).to.equal('claude-code-cli');
+    // claude-code-cli is now a real module (v5 A.2); we no longer assert it throws "not yet implemented".
+    // The presence + correct name resolution is the production-meaningful part of the alias contract.
+  });
+
+  it('should register claude-code-cli stub in default registry', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    expect(registry.list()).to.include('claude-code-cli');
+  });
+
+  it('should register opencode stub in default registry', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    expect(registry.list()).to.include('opencode');
+  });
+
+  it('should throw a clear error when claude-code-cli generate is called without targetDirectory', async () => {
+    const registry = createDefaultCodeGenRegistry();
+    const module = registry.getActiveModule('claude-code-cli');
+    let threw = false;
+    try {
+      await module.generate({} as never);
+    } catch (err) {
+      threw = true;
+      // The real module (v5 A.2) requires targetDirectory; bare empty input should fail fast.
+      expect((err as Error).message).to.match(/targetDirectory|cht-core/i);
+    }
+    expect(threw).to.equal(true);
+  });
+
+  it('should throw a not-yet-implemented error when generate is called on opencode stub', async () => {
+    const registry = createDefaultCodeGenRegistry();
+    const module = registry.getActiveModule('opencode');
+    let threw = false;
+    try {
+      await module.generate({} as never);
+    } catch (err) {
+      threw = true;
+      expect((err as Error).message).to.match(/not yet implemented/);
+    }
+    expect(threw).to.equal(true);
   });
 
   it('should pass through unknown aliases as-is', () => {
@@ -85,7 +123,7 @@ describe('CodeGenModuleRegistry', () => {
     }
   });
 
-  it('should fall back to claude-api when no argument and no env var', () => {
+  it('should fall back to claude-code-cli when no argument and no env var (v6 G.1)', () => {
     const originalEnv = process.env.CODE_GEN_MODULE;
     try {
       delete process.env.CODE_GEN_MODULE;
@@ -93,7 +131,7 @@ describe('CodeGenModuleRegistry', () => {
 
       const active = registry.getActiveModule();
 
-      expect(active.name).to.equal('claude-api');
+      expect(active.name).to.equal('claude-code-cli');
     } finally {
       if (originalEnv !== undefined) {
         process.env.CODE_GEN_MODULE = originalEnv;
@@ -123,23 +161,13 @@ describe('CodeGenModuleRegistry', () => {
     expect(registry.list()).to.include('claude-api');
   });
 
-  it('should pass LLM provider through to module via factory', () => {
-    const mockProvider: LLMProvider = {
-      providerType: 'anthropic',
-      modelName: 'test-model',
-      async invoke(): Promise<LLMResponse> {
-        return { content: '{}', model: 'test-model' };
-      },
-      async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
-        return { content: '{}', model: 'test-model' };
-      },
-      async invokeForJSON<T>(): Promise<T> {
-        return {} as T;
-      },
-    };
-
-    const registry = createDefaultCodeGenRegistry(mockProvider);
-
+  it('should construct claude-api without an LLM pass-through (v6 A.2)', () => {
+    // v6 A.2 dropped the LLMProvider parameter from createDefaultCodeGenRegistry.
+    // The agent no longer pipes its own LLM into claude-api; claude-api now lazily
+    // builds its own Anthropic provider at generate() time. This test pins the
+    // factory's no-arg signature so a future regression that re-adds the parameter
+    // fails here.
+    const registry = createDefaultCodeGenRegistry();
     const module = registry.getActiveModule('claude-api');
     expect(module.name).to.equal('claude-api');
     expect(module.version).to.equal('0.6.0');

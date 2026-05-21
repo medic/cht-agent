@@ -16,12 +16,13 @@ import {
   MCPParsedAnswer,
   MCPParsedSource,
 } from '../types';
+import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
 /**
  * Default configuration values
  */
 const DEFAULT_CONFIG: MCPClientConfig = {
-  serverUrl: 'https://mcp-docs.dev.medicmobile.org/mcp',
+  serverUrl: DEFAULT_MCP_SERVER_URL,
   timeout: 30000, // 30 seconds
 };
 
@@ -54,11 +55,34 @@ interface MCPRPCResponse {
   };
 }
 
+function matchAndCapture(re: RegExp, content: string): string | undefined {
+  const m = re.exec(content);
+  return m ? m[1].trim() : undefined;
+}
+
+function extractDocumentBody(section: string): string {
+  const contentStart = section.indexOf('##');
+  const contentEnd = section.lastIndexOf('Source:');
+  return contentStart !== -1 && contentEnd !== -1
+    ? section.substring(contentStart, contentEnd).trim()
+    : section;
+}
+
+function extractSources(content: string): MCPParsedAnswer['sources'] {
+  const sources: MCPParsedAnswer['sources'] = [];
+  const sectionMatch = /\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/.exec(content);
+  if (!sectionMatch) return sources;
+  for (const m of sectionMatch[1].matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    sources.push({ title: m[1], url: m[2] });
+  }
+  return sources;
+}
+
 /**
  * MCP Client for CHT documentation
  */
 export class MCPClient {
-  private config: MCPClientConfig;
+  private readonly config: MCPClientConfig;
   private requestId: number = 0;
 
   constructor(config?: Partial<MCPClientConfig>) {
@@ -74,7 +98,7 @@ export class MCPClient {
   static fromEnv(): MCPClient {
     const serverUrl = process.env.MCP_SERVER_URL || DEFAULT_CONFIG.serverUrl;
     const timeout = process.env.MCP_TIMEOUT
-      ? parseInt(process.env.MCP_TIMEOUT, 10)
+      ? Number.parseInt(process.env.MCP_TIMEOUT, 10)
       : DEFAULT_CONFIG.timeout;
 
     return new MCPClient({ serverUrl, timeout });
@@ -144,43 +168,12 @@ export class MCPClient {
    */
   parseAskQuestionResponse(response: MCPAskQuestionResponse): MCPParsedAnswer {
     const content = response.content;
-    const result: MCPParsedAnswer = {
-      answer: '',
-      sources: [],
+    return {
+      threadId: matchAndCapture(/\*\*Thread ID:\*\*\s*([^\n]+)/, content),
+      questionAnswerId: matchAndCapture(/\*\*Question Answer ID:\*\*\s*([^\n]+)/, content),
+      sources: extractSources(content),
+      answer: matchAndCapture(/^([\s\S]*?)(?=\*\*Sources:\*\*|$)/, content) ?? '',
     };
-
-    // Extract thread ID
-    const threadIdMatch = content.match(/\*\*Thread ID:\*\*\s*([^\n]+)/);
-    if (threadIdMatch) {
-      result.threadId = threadIdMatch[1].trim();
-    }
-
-    // Extract question answer ID
-    const qaIdMatch = content.match(/\*\*Question Answer ID:\*\*\s*([^\n]+)/);
-    if (qaIdMatch) {
-      result.questionAnswerId = qaIdMatch[1].trim();
-    }
-
-    // Extract sources
-    const sourcesMatch = content.match(/\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/);
-    if (sourcesMatch) {
-      const sourcesText = sourcesMatch[1];
-      const sourceLinks = sourcesText.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g);
-      for (const match of sourceLinks) {
-        result.sources.push({
-          title: match[1],
-          url: match[2],
-        });
-      }
-    }
-
-    // Extract answer (everything before Sources section)
-    const answerMatch = content.match(/^([\s\S]*?)(?=\*\*Sources:\*\*|$)/);
-    if (answerMatch) {
-      result.answer = answerMatch[1].trim();
-    }
-
-    return result;
   }
 
   /**
@@ -193,7 +186,7 @@ export class MCPClient {
     // Parse lines like "- source_type: description"
     const lines = content.split('\n');
     for (const line of lines) {
-      const match = line.match(/^-\s*([^:]+):\s*(.+)$/);
+      const match = /^-\s*([^:]+):\s*(.+)$/.exec(line);
       if (match) {
         sources.push({
           type: match[1].trim(),
@@ -263,34 +256,12 @@ export class MCPClient {
    * Parse a single document section from search results
    */
   private parseDocumentSection(section: string): MCPParsedDocument | null {
-    // Extract title (first bold line like **Title|Title**)
-    const titleMatch = section.match(/\*\*([^|*]+)\|([^*]+)\*\*/);
-    const title = titleMatch ? titleMatch[1].trim() : '';
-
-    // Extract section path (like # Section > Subsection)
-    const sectionMatch = section.match(/^#\s*([^\n]+)/m);
-    const sectionPath = sectionMatch ? sectionMatch[1].trim() : '';
-
-    // Extract source URL
-    const sourceMatch = section.match(/Source:\s*(https?:\/\/[^\s]+)/);
-    const sourceUrl = sourceMatch ? sourceMatch[1].trim() : '';
-
-    if (!sourceUrl) {
-      return null;
-    }
-
-    // Content is everything between title/section and source
-    const contentStart = section.indexOf('##');
-    const contentEnd = section.lastIndexOf('Source:');
-    const content =
-      contentStart !== -1 && contentEnd !== -1
-        ? section.substring(contentStart, contentEnd).trim()
-        : section;
-
+    const sourceUrl = matchAndCapture(/Source:\s*(https?:\/\/[^\s]+)/, section);
+    if (!sourceUrl) return null;
     return {
-      title,
-      section: sectionPath,
-      content,
+      title: matchAndCapture(/\*\*([^|*]+)\|([^*]+)\*\*/, section) ?? '',
+      section: matchAndCapture(/^#\s*([^\n]+)/m, section) ?? '',
+      content: extractDocumentBody(section),
       sourceUrl,
     };
   }

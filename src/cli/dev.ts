@@ -10,9 +10,15 @@
  *   npm run dev <ticket-file>
  *
  * Environment Variables:
- *   ANTHROPIC_API_KEY - Required for Claude API access (unless using CLI provider)
- *   CHT_CORE_PATH    - Path to cht-core codebase (required)
- *   LLM_PROVIDER     - Optional: 'anthropic' (default) or 'claude-cli'
+ *   ANTHROPIC_API_KEY - Required when CODE_GEN_MODULE=claude-api
+ *   CHT_CORE_PATH     - Path to cht-core codebase (required)
+ *   CODE_GEN_MODULE   - Optional: 'claude-code-cli' (default; uses Claude Code CLI as a tool-using agent;
+ *                                 requires Claude MAX subscription + claude binary on PATH)
+ *                                 or 'claude-api' (uses Anthropic API directly; requires ANTHROPIC_API_KEY).
+ *                                 'claude-cli' is an alias for 'claude-code-cli'.
+ *   LLM_PROVIDER      - Optional: 'anthropic' (default) or 'claude-cli'. Affects research,
+ *                                 validation, test-env, and domain inference only. Does NOT
+ *                                 affect code-gen module selection (use CODE_GEN_MODULE for that).
  *
  * Examples:
  *   npm run dev tickets/10139.md
@@ -20,7 +26,7 @@
  */
 
 import * as dotenv from 'dotenv';
-import * as path from 'path';
+import * as path from 'node:path';
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { displayIssueDetails } from '../workflows/research-workflow';
@@ -69,33 +75,37 @@ function synthesizeContextAnalysis(ticket: IssueTemplate): ContextAnalysisResult
   };
 }
 
+function collectRealPathsFromDomain(domainData: Record<string, unknown>): string[] {
+  const realPaths: string[] = [];
+  for (const section of ['api', 'webapp', 'sentinel']) {
+    collectSectionStrings(domainData[section], realPaths);
+  }
+  return realPaths;
+}
+
+function collectSectionStrings(sectionData: unknown, out: string[]): void {
+  if (!sectionData || typeof sectionData !== 'object') return;
+  for (const [, entries] of Object.entries(sectionData)) {
+    if (Array.isArray(entries)) pushStringEntries(entries, out);
+  }
+}
+
+function pushStringEntries(entries: unknown[], out: string[]): void {
+  for (const entry of entries) {
+    if (typeof entry === 'string') out.push(entry);
+  }
+}
+
 function synthesizeOrchestrationPlan(ticket: IssueTemplate): OrchestrationPlan {
   // Load domain index to get real file paths instead of generic component strings
-  const domainIndex = loadIndex('domain-to-components');
+  const domainIndex = loadIndex('domain-to-components') as { domains?: Record<string, Record<string, unknown>> } | null;
   const domain = ticket.issue.technical_context.domain;
   let suggestedComponents = ticket.issue.technical_context.components;
 
-  if (domainIndex?.domains?.[domain]) {
-    const domainData = domainIndex.domains[domain];
-    const realPaths: string[] = [];
-
-    for (const section of ['api', 'webapp', 'sentinel']) {
-      const sectionData = domainData[section];
-      if (sectionData && typeof sectionData === 'object') {
-        for (const [, entries] of Object.entries(sectionData)) {
-          if (Array.isArray(entries)) {
-            for (const entry of entries) {
-              if (typeof entry === 'string') {
-                realPaths.push(entry);
-              }
-            }
-          }
-        }
-      }
-    }
-
+  const domainData = domainIndex?.domains?.[domain];
+  if (domainData) {
+    const realPaths = collectRealPathsFromDomain(domainData);
     if (realPaths.length > 0) {
-      // Use real file paths, plus any original components that look like file paths
       const originalPaths = suggestedComponents.filter(c => c.includes('/') && /\.\w+$/.test(c));
       suggestedComponents = [...new Set([...realPaths, ...originalPaths])];
     }
@@ -120,13 +130,7 @@ function synthesizeOrchestrationPlan(ticket: IssueTemplate): OrchestrationPlan {
   };
 }
 
-const main = async (): Promise<void> => {
-  console.log('╔════════════════════════════════════════════════════════════════╗');
-  console.log('║      CHT Multi-Agent System - Development Only CLI            ║');
-  console.log('║      (Research phase skipped — using synthesized stubs)        ║');
-  console.log('╚════════════════════════════════════════════════════════════════╝\n');
-
-  // Check for API key (not required in CLI mode)
+function ensureApiKey(): void {
   const usingCLI = isUsingCLIProvider();
   if (!usingCLI && !process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
@@ -136,12 +140,10 @@ const main = async (): Promise<void> => {
     console.log('LLM_PROVIDER=claude-cli\n');
     process.exit(1);
   }
+  if (usingCLI) console.log('🔧 Using Claude Code CLI provider (no API key required)\n');
+}
 
-  if (usingCLI) {
-    console.log('🔧 Using Claude Code CLI provider (no API key required)\n');
-  }
-
-  // Check for CHT_CORE_PATH
+function ensureChtCorePath(): string {
   const chtCorePath = process.env.CHT_CORE_PATH;
   if (!chtCorePath) {
     console.error('❌ Error: CHT_CORE_PATH not found in environment variables');
@@ -149,21 +151,33 @@ const main = async (): Promise<void> => {
     console.log('CHT_CORE_PATH=/path/to/cht-core\n');
     process.exit(1);
   }
+  return chtCorePath;
+}
+
+function ensureTicketPath(): string {
+  if (!process.argv[2]) {
+    console.error('❌ Error: No ticket file specified\n');
+    console.log('Usage:');
+    console.log('  npm run dev <ticket-file>\n');
+    console.log('Examples:');
+    console.log('  npm run dev tickets/10139.md');
+    console.log('  npm run dev /path/to/ticket.md\n');
+    process.exit(1);
+  }
+  return path.resolve(process.argv[2]);
+}
+
+const main = async (): Promise<void> => {
+  console.log('╔════════════════════════════════════════════════════════════════╗');
+  console.log('║      CHT Multi-Agent System - Development Only CLI            ║');
+  console.log('║      (Research phase skipped — using synthesized stubs)        ║');
+  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+
+  ensureApiKey();
+  const chtCorePath = ensureChtCorePath();
 
   try {
-    // Check if ticket file is provided
-    if (!process.argv[2]) {
-      console.error('❌ Error: No ticket file specified\n');
-      console.log('Usage:');
-      console.log('  npm run dev <ticket-file>\n');
-      console.log('Examples:');
-      console.log('  npm run dev tickets/10139.md');
-      console.log('  npm run dev /path/to/ticket.md\n');
-      process.exit(1);
-    }
-
-    // Get ticket file path
-    const ticketPath = path.resolve(process.argv[2]);
+    const ticketPath = ensureTicketPath();
     console.log(`📄 Loading ticket from: ${ticketPath}\n`);
 
     // Parse ticket file
@@ -181,7 +195,6 @@ const main = async (): Promise<void> => {
 
     // Create development supervisor
     const developmentSupervisor = new DevelopmentSupervisor({
-      useMock: false,
       skipTestEnvironment: true,
     });
 

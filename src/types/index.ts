@@ -17,9 +17,19 @@ export type CHTDomain =
   | 'interoperability';
 
 /**
- * CHT Services
+ * Issue type classification
  */
-export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+export type IssueType = 'feature' | 'bug' | 'improvement';
+
+/**
+ * Priority level
+ */
+export type Priority = 'high' | 'medium' | 'low';
+
+/**
+ * Complexity level
+ */
+export type Complexity = 'low' | 'medium' | 'high';
 
 /**
  * Issue template structure
@@ -27,8 +37,8 @@ export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 export interface IssueTemplate {
   issue: {
     title: string;
-    type: 'feature' | 'bug' | 'improvement';
-    priority: 'high' | 'medium' | 'low';
+    type: IssueType;
+    priority: Priority;
     description: string;
     technical_context: {
       domain: CHTDomain; // Required - must be specified in ticket frontmatter
@@ -94,6 +104,11 @@ export interface DomainOverviewMetadata {
   last_updated: string;
   related_domains: string[];
 }
+
+/**
+ * CHT Services
+ */
+export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 
 /**
  * Workflow step
@@ -250,11 +265,11 @@ export interface OrchestrationPlan {
   keyFindings: string[];
   /** Synthesized recommendation based on all research findings */
   recommendedApproach: string;
-  estimatedComplexity: 'low' | 'medium' | 'high';
+  estimatedComplexity: Complexity;
   phases: Array<{
     name: string;
     description: string;
-    estimatedComplexity: 'low' | 'medium' | 'high';
+    estimatedComplexity: Complexity;
     suggestedComponents: string[];
     dependencies: string[];
   }>;
@@ -301,7 +316,7 @@ export interface AgentMessage {
   message_type: AgentMessageType;
   payload: {
     task_id?: string;
-    content: any;
+    content: Record<string, unknown>;
     priority: number; // 1-10
     requires_response: boolean;
   };
@@ -405,33 +420,6 @@ export interface MCPClientConfig {
 }
 
 /**
- * Legacy MCP types (kept for backward compatibility)
- * @deprecated Use the new MCP* types instead
- */
-export interface MCPToolCall {
-  tool: 'search_docs' | 'get_context';
-  parameters: {
-    query: string;
-    domain?: CHTDomain;
-    max_results?: number;
-  };
-}
-
-/**
- * Legacy MCP Response (kept for backward compatibility)
- * @deprecated Use MCPSearchDocsResponse or MCPAskQuestionResponse instead
- */
-export interface MCPResponse {
-  success: boolean;
-  data?: {
-    references: DocumentationReference[];
-    summary: string;
-    relatedTopics: string[];
-  };
-  error?: string;
-}
-
-/**
  * Human feedback for validation checkpoints
  */
 export interface HumanFeedback {
@@ -476,6 +464,7 @@ export type FileLanguage =
   | 'json'
   | 'xml'
   | 'yaml'
+  | 'properties'
   | 'markdown'
   | 'html'
   | 'css'
@@ -518,6 +507,32 @@ export interface CodeGenerationInput {
 export type FailingFileRef = { path: string; action: 'create' | 'modify' };
 
 /**
+ * Cross-file issue surfaced by static validators OR runtime signals.
+ *
+ * Static validators (cross-file-validator, ast-validator) fill
+ * referencedIdentifier + expectedSource + reason.
+ *
+ * Runtime signals (partial generation, plan adherence, compile errors,
+ * LLM-flagged discoveries) fill issueType + description.
+ *
+ * Consumers should display the first non-empty of `reason` or `description`.
+ */
+export interface CrossFileIssue {
+  filePath: string;
+  referencedIdentifier?: string;
+  expectedSource?: string;
+  reason?: string;
+  /**
+   * Discriminator for non-static-validator issue kinds. Known values:
+   * 'compile-error', 'partial-completion', 'plan-adherence-missing',
+   * 'plan-adherence-extra', 'plan-discovered-missing'.
+   */
+  issueType?: string;
+  /** Human-readable description for runtime-signal issues. */
+  description?: string;
+}
+
+/**
  * Code Generation Agent output
  */
 export interface CodeGenerationResult {
@@ -528,6 +543,11 @@ export interface CodeGenerationResult {
   notes: string[];
   confidence: number; // 0-1
   beadsSessionId?: string;
+  crossFileIssues?: CrossFileIssue[];
+  /** True when the compile gate did not run (e.g., tsc unavailable). HC2 banner reads this. */
+  compileGateSkipped?: boolean;
+  /** Human-readable reason associated with {@link compileGateSkipped}. */
+  compileGateSkipReason?: string;
 }
 
 /**

@@ -26,9 +26,9 @@ interface TestEnvironmentAgentOptions {
 }
 
 export class TestEnvironmentAgent {
-  private llm: LLMProvider;
-  private useMock: boolean;
-  private todos: TodoTracker;
+  private readonly llm: LLMProvider;
+  private readonly useMock: boolean;
+  private readonly todos: TodoTracker;
 
   constructor(options: TestEnvironmentAgentOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
@@ -130,7 +130,7 @@ export class TestEnvironmentAgent {
     for (const file of codeGeneration.files) {
       if (file.type === 'source') {
         // Extract component names from paths
-        const match = file.relativePath.match(/([^/]+)\.(ts|js)$/);
+        const match = /([^/]+)\.(ts|js)$/.exec(file.relativePath);
         if (match) {
           components.push(match[1]);
         }
@@ -461,7 +461,7 @@ IMPORTANT: Output ONLY the code. Do not wrap in markdown code blocks. Do not inc
       let content = response.content.trim();
 
       // Remove markdown code blocks if the LLM added them anyway
-      const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
+      const codeBlockMatch = /^```(?:\w+)?\n([\s\S]*?)\n```$/.exec(content);
       if (codeBlockMatch) {
         content = codeBlockMatch[1];
       }
@@ -655,7 +655,7 @@ If generating JSON, output valid JSON only.`;
       let content = response.content.trim();
 
       // Remove markdown code blocks if the LLM added them anyway
-      const codeBlockMatch = content.match(/^```(?:\w+)?\n([\s\S]*?)\n```$/);
+      const codeBlockMatch = /^```(?:\w+)?\n([\s\S]*?)\n```$/.exec(content);
       if (codeBlockMatch) {
         content = codeBlockMatch[1];
       }

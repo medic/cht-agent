@@ -7,20 +7,49 @@
  */
 
 /**
- * Supported LLM providers
+ * Supported API-keyed LLM providers.
+ * Extend this by adding the key here, an APIProviderType entry in DEFAULT_MODELS,
+ * and a case in resolveAPIKey in factory.ts.
  */
-export type LLMProviderType = 'anthropic' | 'openai' | 'gemini';
+export type APIProviderType = 'anthropic' | 'openai' | 'gemini';
+
 
 /**
- * LLM configuration from environment
+ * Configuration for API-keyed LLM providers (Anthropic, OpenAI, Gemini, ...).
+ * Future API providers extend this variant by adding their key to APIProviderType
+ * and updating the apiKey resolution in factory.ts.
  */
-export interface LLMConfig {
-  provider: LLMProviderType;
-  model: string;
+export interface APIProviderConfig {
+  mode: 'api';
+  provider: APIProviderType;
   apiKey: string;
+  model: string;
   temperature?: number;
   maxTokens?: number;
 }
+
+/**
+ * Configuration for the Claude Code CLI provider.
+ * Distinct from APIProviderConfig: spawns a binary, no apiKey, has executablePath/timeout/maxTurns.
+ */
+export interface CLIProviderConfig {
+  mode: 'cli';
+  provider: 'claude-cli';
+  executablePath: string;
+  workingDirectory: string;
+  timeout: number;
+  maxTurns: number;
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+  /** Pass --dangerously-skip-permissions to the CLI. Default: true (preserves prior behavior). */
+  skipPermissions?: boolean;
+}
+
+/**
+ * Discriminated LLM configuration. Use config.mode to narrow.
+ */
+export type LLMConfig = APIProviderConfig | CLIProviderConfig;
 
 /**
  * Message role types
@@ -92,7 +121,7 @@ export interface LLMProvider {
   /**
    * Get the provider type
    */
-  readonly providerType: LLMProviderType;
+  readonly providerType: APIProviderType;
 
   /**
    * Get the model name
@@ -125,9 +154,9 @@ export const DEFAULT_CONFIG = {
 } as const;
 
 /**
- * Default models for each provider
+ * Default models for each API provider
  */
-export const DEFAULT_MODELS: Record<LLMProviderType, string> = {
+export const DEFAULT_MODELS: Record<APIProviderType, string> = {
   anthropic: 'claude-opus-4-6',
   openai: 'gpt-4-turbo-preview',
   gemini: 'gemini-pro',
@@ -175,9 +204,9 @@ export function capMaxTokens(model: string, requested: number): number {
  * Get the configured model name from environment or use default
  * Reads from LLM_MODEL environment variable
  */
-export function getConfiguredModel(provider: LLMProviderType = 'anthropic'): string {
+export function getConfiguredModel(provider: APIProviderType = 'anthropic'): string {
   const envModel = process.env.LLM_MODEL;
-  if (envModel && envModel.trim()) {
+  if (envModel?.trim()) {
     return envModel.trim();
   }
   return DEFAULT_MODELS[provider];

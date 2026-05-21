@@ -32,6 +32,7 @@ import {
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { TestEnvironmentAgent } from '../agents/test-environment-agent';
+import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
   createStagingDirectory,
@@ -40,15 +41,103 @@ import {
   clearStaging,
 } from '../utils/staging';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
+import { isShutdownRequested } from '../utils/shutdown';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 
 const MAX_ITERATIONS = 3;
 const REFINEMENT_THRESHOLD = 75;
 
+/**
+ * Render a "Heading:\n- bullet\n- bullet" section if `items` is non-empty.
+ * Returns `undefined` so the caller can skip empty sections without an `if`.
+ */
+function renderBulletSection<T>(heading: string, items: T[], format: (item: T) => string): string | undefined {
+  if (items.length === 0) return undefined;
+  const bulletList = items.map(item => `- ${format(item)}`).join('\n');
+  return `${heading}:\n${bulletList}`;
+}
+
+/**
+ * Shape the validateImpl resolver reads. Narrow on purpose so unit tests can
+ * exercise the decision logic without instantiating a full langgraph state.
+ */
+export interface ValidateImplEdgeState {
+  validationResult?: { overallScore?: number };
+  iterationCount?: number;
+  codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
+}
+
+/**
+ * Decide what edge the validateImpl node should take next. Pure function so
+ * it can be unit-tested without spinning up the workflow.
+ *
+ *  - Shutdown requested → '__end__'
+ *  - execute-no-op present → '__end__' (R17 v7: looping cannot help)
+ *  - Score below threshold OR any cross-file issue → 'generateCode' (refine) if iterations left
+ *  - Otherwise → '__end__'
+ */
+export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generateCode' | '__end__' {
+  if (isShutdownRequested()) {
+    console.log('[Development Supervisor] Shutdown requested; ending workflow');
+    return '__end__';
+  }
+  const score = state.validationResult?.overallScore ?? 0;
+  const iterations = state.iterationCount ?? 0;
+  const issues = state.codeGeneration?.crossFileIssues ?? [];
+  // R17 (v7): when the CLI abstained even after the relaxed retry, looping
+  // cannot help — it would just repeat the same abstain pattern with the
+  // same plan. End cleanly so the user sees the HC2 banner.
+  if (issues.some(i => i.issueType === 'execute-no-op')) {
+    console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
+    return '__end__';
+  }
+  const belowBar = score < REFINEMENT_THRESHOLD || issues.length > 0;
+  if (belowBar && iterations < MAX_ITERATIONS) {
+    logRefinementLoop(score, issues, iterations);
+    return 'generateCode';
+  }
+  if (belowBar) {
+    console.log(`[Development Supervisor] Below quality bar but max iterations (${MAX_ITERATIONS}) reached — proceeding to END`);
+  }
+
+  return '__end__';
+}
+
+function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
+  return issue.issue.requirements.map(req => {
+    const isImplemented = codeGen.implementedRequirements.includes(req);
+    return {
+      requirement: req,
+      met: isImplemented,
+      notes: isImplemented ? 'Appears to be implemented' : 'Not found in generated code',
+    };
+  });
+}
+
+function checkAcceptanceCriteria(issue: IssueTemplate, codeGen: CodeGenerationResult) {
+  const allCode = codeGen.files.map(f => f.content).join('\n').toLowerCase();
+  return issue.issue.acceptance_criteria.map(criteria => {
+    const keywords = criteria.toLowerCase().split(' ').filter(w => w.length > 4);
+    const hasMatches = keywords.some(kw => allCode.includes(kw));
+    return {
+      criteria,
+      passed: hasMatches,
+      notes: hasMatches ? 'Keywords found in implementation' : 'May need manual verification',
+    };
+  });
+}
+
+function logRefinementLoop(score: number, issues: { issueType?: string }[], iterations: number): void {
+  const reason = score < REFINEMENT_THRESHOLD
+    ? `Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold`
+    : `${issues.length} cross-file issue(s)`;
+  console.log(`[Development Supervisor] ${reason}, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
+}
+
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
-  useMock?: boolean;
   skipTestEnvironment?: boolean;
+  codeGenRegistry?: CodeGenModuleRegistry;
 }
 
 // Define the state annotation for type safety
@@ -114,27 +203,24 @@ const DevelopmentStateAnnotation = Annotation.Root({
 });
 
 export class DevelopmentSupervisor {
-  private graph: ReturnType<typeof this.buildGraph>;
-  private codeGenAgent: CodeGenerationAgent;
-  private testEnvAgent: TestEnvironmentAgent;
-  private llm: LLMProvider;
-  private useMock: boolean;
-  private skipTestEnvironment: boolean;
-  private todos: TodoTracker;
+  private readonly graph: ReturnType<typeof this.buildGraph>;
+  private readonly codeGenAgent: CodeGenerationAgent;
+  private readonly testEnvAgent: TestEnvironmentAgent;
+  private readonly llm: LLMProvider;
+  private readonly skipTestEnvironment: boolean;
+  private readonly todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
-    this.useMock = options.useMock ?? false;
     this.skipTestEnvironment = options.skipTestEnvironment ?? false;
 
     this.codeGenAgent = new CodeGenerationAgent({
       llmProvider: this.llm,
-      useMock: this.useMock,
+      codeGenRegistry: options.codeGenRegistry,
     });
 
     this.testEnvAgent = new TestEnvironmentAgent({
       llmProvider: this.llm,
-      useMock: this.useMock,
     });
 
     this.todos = createSupervisorTodoTracker('Development');
@@ -156,21 +242,7 @@ export class DevelopmentSupervisor {
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'setupTests')
       .addEdge('setupTests', 'validateImpl')
-      .addConditionalEdges('validateImpl', (state) => {
-        const score = state.validationResult?.overallScore ?? 0;
-        const iterations = state.iterationCount ?? 0;
-
-        if (score < REFINEMENT_THRESHOLD && iterations < MAX_ITERATIONS) {
-          console.log(`[Development Supervisor] Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
-          return 'generateCode';
-        }
-
-        if (score < REFINEMENT_THRESHOLD) {
-          console.log(`[Development Supervisor] Score ${score}% < ${REFINEMENT_THRESHOLD}% but max iterations (${MAX_ITERATIONS}) reached — proceeding to END`);
-        }
-
-        return '__end__';
-      });
+      .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
 
     return workflow.compile();
   }
@@ -179,10 +251,15 @@ export class DevelopmentSupervisor {
    * Node: Code Generation
    */
   private async codeGenerationNode(state: typeof DevelopmentStateAnnotation.State) {
+    if (isShutdownRequested()) {
+      console.log('[Development Supervisor] Shutdown requested; skipping code generation node');
+      return { currentPhase: 'complete' as const };
+    }
+
     const iteration = (state.iterationCount ?? 0) + 1;
     console.log(`\n=== CODE GENERATION NODE (iteration ${iteration}) ===`);
 
-    const todoId = 'development-1'; // First todo
+    const todoId = 'development-1';
     this.todos.start(todoId);
 
     if (!state.issue || !state.orchestrationPlan || !state.researchFindings ||
@@ -195,35 +272,16 @@ export class DevelopmentSupervisor {
     }
 
     try {
-      // On retry: pass validation feedback as additionalContext
-      const additionalContext = state.validationFeedback || undefined;
-
-      // Selective regeneration: if we have per-file feedback, only regenerate failing files
-      let passingFiles: GeneratedFile[] | undefined;
-      let failingFiles: FailingFileRef[] | undefined;
-      if (state.perFileFeedback && state.codeGeneration && iteration > 1) {
-        const passing = state.perFileFeedback.filter(f => f.passed);
-        const failing = state.perFileFeedback.filter(f => !f.passed);
-        passingFiles = state.codeGeneration.files.filter(
-          f => passing.some(p => p.filePath === f.relativePath)
-        );
-        failingFiles = failing.map(fb => {
-          const genFile = state.codeGeneration!.files.find(f => f.relativePath === fb.filePath);
-          return { path: fb.filePath, action: genFile?.action ?? 'modify' as const };
-        });
-
-        console.log(`[Development Supervisor] Selective regeneration: keeping ${passingFiles.length} passing file(s), regenerating ${failingFiles.length} failing file(s)`);
-      }
-
+      const selective = this.buildSelectiveRegenInput(state, iteration);
       const result = await this.codeGenAgent.generate({
         issue: state.issue,
         orchestrationPlan: state.orchestrationPlan,
         researchFindings: state.researchFindings,
         contextAnalysis: state.contextAnalysis,
         chtCorePath: state.options.chtCorePath,
-        additionalContext,
-        passingFiles,
-        failingFiles,
+        additionalContext: state.validationFeedback || undefined,
+        passingFiles: selective.passingFiles,
+        failingFiles: selective.failingFiles,
       });
 
       this.todos.complete(todoId);
@@ -252,6 +310,32 @@ export class DevelopmentSupervisor {
   }
 
   /**
+   * Selective regeneration helper: when we have per-file feedback from a
+   * prior iteration, partition files into "carry forward (passing)" and
+   * "regenerate (failing)". Returns empty when this is iter 1 or there is
+   * no per-file feedback yet.
+   */
+  private buildSelectiveRegenInput(
+    state: typeof DevelopmentStateAnnotation.State,
+    iteration: number,
+  ): { passingFiles?: GeneratedFile[]; failingFiles?: FailingFileRef[] } {
+    if (!state.perFileFeedback || !state.codeGeneration || iteration <= 1) {
+      return {};
+    }
+    const passing = state.perFileFeedback.filter(f => f.passed);
+    const failing = state.perFileFeedback.filter(f => !f.passed);
+    const passingFiles = state.codeGeneration.files.filter(
+      f => passing.some(p => p.filePath === f.relativePath),
+    );
+    const failingFiles: FailingFileRef[] = failing.map(fb => {
+      const genFile = state.codeGeneration!.files.find(f => f.relativePath === fb.filePath);
+      return { path: fb.filePath, action: genFile?.action ?? 'modify' as const };
+    });
+    console.log(`[Development Supervisor] Selective regeneration: keeping ${passingFiles.length} passing file(s), regenerating ${failingFiles.length} failing file(s)`);
+    return { passingFiles, failingFiles };
+  }
+
+  /**
    * Node: Test Environment Setup
    */
   private async testEnvironmentNode(state: typeof DevelopmentStateAnnotation.State) {
@@ -262,7 +346,7 @@ export class DevelopmentSupervisor {
 
     console.log('\n=== TEST ENVIRONMENT NODE ===');
 
-    const todoId = 'development-2'; // Second todo
+    const todoId = 'development-2';
     this.todos.start(todoId);
 
     if (!state.issue || !state.orchestrationPlan || !state.codeGeneration || !state.options) {
@@ -308,70 +392,58 @@ export class DevelopmentSupervisor {
    * Node: Validation
    */
   private async validationNode(state: typeof DevelopmentStateAnnotation.State) {
+    if (isShutdownRequested()) {
+      console.log('[Development Supervisor] Shutdown requested; skipping validation node');
+      return { currentPhase: 'complete' as const };
+    }
     console.log('\n=== VALIDATION NODE ===');
-
-    const todoId = 'development-3'; // Third todo
+    const todoId = 'development-3';
     this.todos.start(todoId);
 
     if (!state.issue || !state.codeGeneration) {
       this.todos.fail(todoId, 'Missing required data');
-      return {
-        errors: ['Missing required data for validation'],
-        currentPhase: 'validation' as const,
-      };
+      return { errors: ['Missing required data for validation'], currentPhase: 'validation' as const };
     }
-
-    // Skip validation if no files were generated — nothing to judge
-    if (state.codeGeneration.files.length === 0) {
-      console.log('[Development Supervisor] Skipping validation — no files generated');
-      this.todos.complete(todoId);
-      this.todos.printSummary();
-      return {
-        validationResult: this.heuristicValidation(state.issue, state.codeGeneration, state.testEnvironment),
-        currentPhase: 'complete' as const,
-      };
+    const { issue, codeGeneration, testEnvironment } = state;
+    if (codeGeneration.files.length === 0) {
+      return this.skipValidationForEmptyFiles({ issue, codeGeneration, testEnvironment, todoId });
     }
+    return await this.runValidationWithTodo({ issue, codeGeneration, testEnvironment, todoId });
+  }
 
+  private skipValidationForEmptyFiles(opts: {
+    issue: IssueTemplate;
+    codeGeneration: CodeGenerationResult;
+    testEnvironment?: TestEnvironmentResult;
+    todoId: string;
+  }): { validationResult: ImplementationValidation; currentPhase: 'complete' } {
+    console.log('[Development Supervisor] Skipping validation — no files generated');
+    this.todos.complete(opts.todoId);
+    this.todos.printSummary();
+    return {
+      validationResult: this.heuristicValidation(opts.issue, opts.codeGeneration, opts.testEnvironment),
+      currentPhase: 'complete' as const,
+    };
+  }
+
+  private async runValidationWithTodo(opts: {
+    issue: IssueTemplate;
+    codeGeneration: CodeGenerationResult;
+    testEnvironment?: TestEnvironmentResult;
+    todoId: string;
+  }) {
     try {
       const validation = await this.validateImplementation(
-        state.issue,
-        state.codeGeneration,
-        state.testEnvironment
+        opts.issue,
+        opts.codeGeneration,
+        opts.testEnvironment
       );
-
-      this.todos.complete(todoId);
+      this.todos.complete(opts.todoId);
       this.todos.printSummary();
-
-      // Extract feedback for potential retry
-      const feedbackUpdate: Record<string, unknown> = {
-        validationResult: validation,
-        currentPhase: 'complete' as const,
-        messages: [
-          {
-            role: 'assistant' as const,
-            content: `Validation completed. Overall score: ${validation.overallScore}%`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      };
-
-      // Store feedback for refinement loop
-      if (validation.feedbackForCodeGen) {
-        feedbackUpdate.validationFeedback = validation.feedbackForCodeGen;
-      } else if (validation.overallScore < REFINEMENT_THRESHOLD) {
-        // Synthesize feedback from recommendations if none was explicitly provided
-        feedbackUpdate.validationFeedback = this.synthesizeFeedback(validation);
-      }
-
-      // Store per-file feedback for selective regeneration
-      if (validation.perFileFeedback) {
-        feedbackUpdate.perFileFeedback = validation.perFileFeedback;
-      }
-
-      return feedbackUpdate;
+      return this.buildValidationStateUpdate(validation, opts.codeGeneration);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.todos.fail(todoId, errorMessage);
+      this.todos.fail(opts.todoId, errorMessage);
       this.todos.printSummary();
       return {
         errors: [`Validation failed: ${errorMessage}`],
@@ -381,38 +453,110 @@ export class DevelopmentSupervisor {
   }
 
   /**
+   * Build the state-update object after a successful validation pass.
+   * Combines the validation result with refinement feedback (if score is
+   * below threshold), folded cross-file issues, and per-file feedback for
+   * selective regeneration. Extracted from validationNode to keep that
+   * method's branching shallow.
+   */
+  private buildValidationStateUpdate(
+    validation: ImplementationValidation,
+    codeGeneration: CodeGenerationResult,
+  ): Record<string, unknown> {
+    const feedbackUpdate: Record<string, unknown> = {
+      validationResult: validation,
+      currentPhase: 'complete' as const,
+      messages: [
+        {
+          role: 'assistant' as const,
+          content: `Validation completed. Overall score: ${validation.overallScore}%`,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+
+    feedbackUpdate.validationFeedback = this.deriveValidationFeedback(validation, codeGeneration);
+
+    if (validation.perFileFeedback) {
+      feedbackUpdate.perFileFeedback = validation.perFileFeedback;
+    }
+
+    return feedbackUpdate;
+  }
+
+  /**
+   * Decide what `validationFeedback` (if any) to attach to the state for the
+   * next refinement iteration. Returns undefined when there's nothing to
+   * feed back (high score and no cross-file issues).
+   */
+  private deriveValidationFeedback(
+    validation: ImplementationValidation,
+    codeGeneration: CodeGenerationResult,
+  ): string | undefined {
+    const base = this.baseFeedbackForRetry(validation);
+    const crossFileText = this.formatCrossFileIssues(codeGeneration.crossFileIssues);
+    if (!crossFileText) return base;
+    return base
+      ? `${base}\n\nCross-file consistency issues:\n${crossFileText}`
+      : `Cross-file consistency issues found. The following identifiers do not have matching declarations:\n${crossFileText}\n\nFix each mismatch by either (a) using the correct identifier name from the declaring file, or (b) adding the missing declaration to the appropriate file.`;
+  }
+
+  private baseFeedbackForRetry(validation: ImplementationValidation): string | undefined {
+    if (validation.feedbackForCodeGen) return validation.feedbackForCodeGen;
+    if (validation.overallScore < REFINEMENT_THRESHOLD) return this.synthesizeFeedback(validation);
+    return undefined;
+  }
+
+  private formatCrossFileIssues(crossFileIssues?: CodeGenerationResult['crossFileIssues']): string | undefined {
+    if (!crossFileIssues || crossFileIssues.length === 0) return undefined;
+    return crossFileIssues
+      .map(i => `- ${i.filePath}: ${i.reason ?? i.description ?? '(no detail)'}`)
+      .join('\n');
+  }
+
+  /**
    * Synthesize actionable feedback from validation result when feedbackForCodeGen is not provided
    */
   private synthesizeFeedback(validation: ImplementationValidation): string {
     const parts: string[] = [];
 
-    const failedRequirements = validation.requirementsMet
-      .filter(r => !r.met)
-      .map(r => `${r.requirement}${r.notes ? ` (${r.notes})` : ''}`);
-    if (failedRequirements.length > 0) {
-      parts.push(`Unmet requirements:\n${failedRequirements.map(r => `- ${r}`).join('\n')}`);
-    }
+    const renderRequirement = (r: { requirement: string; notes?: string }): string => {
+      const notes = r.notes ? ` (${r.notes})` : '';
+      return `${r.requirement}${notes}`;
+    };
+    const unmet = renderBulletSection(
+      'Unmet requirements',
+      validation.requirementsMet.filter(r => !r.met),
+      renderRequirement,
+    );
+    if (unmet) parts.push(unmet);
 
-    const failedCriteria = validation.acceptanceCriteriaPassed
-      .filter(c => !c.passed)
-      .map(c => `${c.criteria}${c.notes ? ` (${c.notes})` : ''}`);
-    if (failedCriteria.length > 0) {
-      parts.push(`Failed acceptance criteria:\n${failedCriteria.map(c => `- ${c}`).join('\n')}`);
-    }
+    const renderCriteria = (c: { criteria: string; notes?: string }): string => {
+      const notes = c.notes ? ` (${c.notes})` : '';
+      return `${c.criteria}${notes}`;
+    };
+    const failed = renderBulletSection(
+      'Failed acceptance criteria',
+      validation.acceptanceCriteriaPassed.filter(c => !c.passed),
+      renderCriteria,
+    );
+    if (failed) parts.push(failed);
 
-    if (validation.recommendations.length > 0) {
-      parts.push(`Recommendations:\n${validation.recommendations.map(r => `- ${r}`).join('\n')}`);
-    }
+    const recs = renderBulletSection(
+      'Recommendations',
+      validation.recommendations,
+      r => r,
+    );
+    if (recs) parts.push(recs);
 
     // Include per-file feedback so the code gen module knows which files need fixing
-    if (validation.perFileFeedback && validation.perFileFeedback.length > 0) {
-      const failedFiles = validation.perFileFeedback.filter(f => !f.passed);
-      if (failedFiles.length > 0) {
-        parts.push(`Files that need fixing:\n${failedFiles.map(f =>
-          `- ${f.filePath}: ${f.issues.join('; ')}`
-        ).join('\n')}`);
-      }
-    }
+    const failedFiles = (validation.perFileFeedback ?? []).filter(f => !f.passed);
+    const filesSection = renderBulletSection(
+      'Files that need fixing',
+      failedFiles,
+      f => `${f.filePath}: ${f.issues.join('; ')}`,
+    );
+    if (filesSection) parts.push(filesSection);
 
     return parts.join('\n\n');
   }
@@ -432,9 +576,12 @@ export class DevelopmentSupervisor {
     const hasModifyFiles = codeGen.files.some(f => f.action === 'modify' && f.originalContent);
 
     // Test coverage section — omit entirely when test generation was skipped
+    const testCoverageBody = testEnv
+      ? `Estimated coverage: ${testEnv.estimatedCoverage}%\nTest files: ${testEnv.testFiles.length}`
+      : 'No test information available';
     const testSection = this.skipTestEnvironment
       ? '' // Tests intentionally skipped — don't include in prompt at all
-      : `\n## Test Coverage\n${testEnv ? `Estimated coverage: ${testEnv.estimatedCoverage}%\nTest files: ${testEnv.testFiles.length}` : 'No test information available'}\n`;
+      : `\n## Test Coverage\n${testCoverageBody}\n`;
 
     const prompt = `You are a code reviewer validating a CHT implementation. You MUST examine the actual code content below, not just infer quality from file names or descriptions.
 
@@ -516,40 +663,46 @@ Respond with a JSON object:
    */
   private buildCodeSection(files: GeneratedFile[], budgetChars: number): string {
     if (files.length === 0) return 'No files generated.';
-
     const sections: string[] = [];
     let remaining = budgetChars;
-
     for (const file of files) {
       if (remaining < 100) break;
-
-      let section: string;
-
-      if (file.action === 'modify' && file.originalContent) {
-        const { diff, changedLineCount } = this.generateContextDiff(file.originalContent, file.content, file.relativePath);
-        const origLineCount = file.originalContent.split('\n').length;
-        const changeRatio = origLineCount > 0 ? changedLineCount / origLineCount : 1;
-
-        if (changeRatio <= 0.6) {
-          section = `### ${file.relativePath} (MODIFY — diff only)\n\`\`\`diff\n${diff}\n\`\`\``;
-        } else {
-          section = this.formatFullContentSection(file.relativePath, file.content, remaining, 'MODIFY — full content, extensive changes');
-        }
-      } else {
-        const label = file.action === 'create' ? 'NEW FILE' : 'FULL CONTENT';
-        section = this.formatFullContentSection(file.relativePath, file.content, remaining, label);
-      }
-
-      if (section.length > remaining) {
-        // Truncate section to fit budget
-        section = section.substring(0, remaining - 20) + '\n... (truncated)\n```';
-      }
-
+      const section = this.renderAndFitSection(file, remaining);
       sections.push(section);
       remaining -= section.length;
     }
-
     return sections.join('\n\n');
+  }
+
+  private renderAndFitSection(file: GeneratedFile, remaining: number): string {
+    const section = this.renderFileSection(file, remaining);
+    if (section.length <= remaining) return section;
+    return section.substring(0, remaining - 20) + '\n... (truncated)\n```';
+  }
+
+  /**
+   * Render a single file as a code-section block. MODIFY files become a
+   * unified diff when the change ratio is small; CREATE files (and large
+   * MODIFY changes) become full content.
+   */
+  private renderFileSection(file: GeneratedFile, remaining: number): string {
+    if (file.action === 'modify' && file.originalContent) {
+      return this.renderModifySection(file, remaining);
+    }
+    const label = file.action === 'create' ? 'NEW FILE' : 'FULL CONTENT';
+    return this.formatFullContentSection(file.relativePath, file.content, remaining, label);
+  }
+
+  private renderModifySection(file: GeneratedFile, remaining: number): string {
+    const { diff, changedLineCount } = this.generateContextDiff(
+      file.originalContent!, file.content, file.relativePath,
+    );
+    const origLineCount = file.originalContent!.split('\n').length;
+    const changeRatio = origLineCount > 0 ? changedLineCount / origLineCount : 1;
+    if (changeRatio <= 0.6) {
+      return `### ${file.relativePath} (MODIFY — diff only)\n\`\`\`diff\n${diff}\n\`\`\``;
+    }
+    return this.formatFullContentSection(file.relativePath, file.content, remaining, 'MODIFY — full content, extensive changes');
   }
 
   private formatFullContentSection(filePath: string, content: string, remaining: number, label: string): string {
@@ -590,42 +743,46 @@ Respond with a JSON object:
     codeGen: CodeGenerationResult,
     testEnv?: TestEnvironmentResult
   ): ImplementationValidation {
-    const requirementsMet = issue.issue.requirements.map((req) => {
-      const isImplemented = codeGen.implementedRequirements.includes(req);
-      return {
-        requirement: req,
-        met: isImplemented,
-        notes: isImplemented ? 'Appears to be implemented' : 'Not found in generated code',
-      };
+    const requirementsMet = checkRequirements(issue, codeGen);
+    const acceptanceCriteriaPassed = checkAcceptanceCriteria(issue, codeGen);
+    const metCount = requirementsMet.filter(r => r.met).length;
+    const passedCount = acceptanceCriteriaPassed.filter(c => c.passed).length;
+    const overallScore = this.computeOverallScore({
+      metCount,
+      passedCount,
+      totalRequirements: requirementsMet.length,
+      totalCriteria: acceptanceCriteriaPassed.length,
+      testEnv,
     });
+    const recommendations = this.buildHeuristicRecommendations(metCount, requirementsMet.length, testEnv, overallScore);
+    return { requirementsMet, acceptanceCriteriaPassed, overallScore, recommendations };
+  }
 
-    const acceptanceCriteriaPassed = issue.issue.acceptance_criteria.map((criteria) => {
-      // Simple heuristic: check if related keywords exist in code
-      const keywords = criteria.toLowerCase().split(' ').filter((w) => w.length > 4);
-      const allCode = codeGen.files.map((f) => f.content).join('\n').toLowerCase();
-      const hasMatches = keywords.some((kw) => allCode.includes(kw));
-
-      return {
-        criteria,
-        passed: hasMatches,
-        notes: hasMatches ? 'Keywords found in implementation' : 'May need manual verification',
-      };
-    });
-
-    const metCount = requirementsMet.filter((r) => r.met).length;
-    const passedCount = acceptanceCriteriaPassed.filter((c) => c.passed).length;
-    const totalChecks = requirementsMet.length + acceptanceCriteriaPassed.length;
+  private computeOverallScore(opts: {
+    metCount: number;
+    passedCount: number;
+    totalRequirements: number;
+    totalCriteria: number;
+    testEnv?: TestEnvironmentResult;
+  }): number {
+    const { metCount, passedCount, totalRequirements, totalCriteria, testEnv } = opts;
+    const totalChecks = totalRequirements + totalCriteria;
     const passedChecks = metCount + passedCount;
-
-    let overallScore = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
-
-    // Bonus for having tests (only when test generation wasn't skipped)
+    let score = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
     if (!this.skipTestEnvironment && testEnv && testEnv.testFiles.length > 0) {
-      overallScore = Math.min(overallScore + 10, 100);
+      score = Math.min(score + 10, 100);
     }
+    return score;
+  }
 
+  private buildHeuristicRecommendations(
+    metCount: number,
+    totalRequirements: number,
+    testEnv: TestEnvironmentResult | undefined,
+    overallScore: number,
+  ): string[] {
     const recommendations: string[] = [];
-    if (metCount < requirementsMet.length) {
+    if (metCount < totalRequirements) {
       recommendations.push('Some requirements may not be fully implemented - manual review needed');
     }
     if (!this.skipTestEnvironment && (!testEnv || testEnv.testFiles.length === 0)) {
@@ -634,13 +791,7 @@ Respond with a JSON object:
     if (overallScore < 70) {
       recommendations.push('Implementation confidence is low - additional review recommended');
     }
-
-    return {
-      requirementsMet,
-      acceptanceCriteriaPassed,
-      overallScore,
-      recommendations,
-    };
+    return recommendations;
   }
 
   /**
@@ -733,8 +884,10 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
     if (state.testEnvironment) {
-      allFiles.push(...state.testEnvironment.testFiles);
-      allFiles.push(...state.testEnvironment.testDataFiles);
+      allFiles.push(
+        ...state.testEnvironment.testFiles,
+        ...state.testEnvironment.testDataFiles,
+      );
     }
 
     const writtenFiles = await writeToStaging(allFiles, stagingPath);
@@ -754,8 +907,10 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
     if (state.testEnvironment) {
-      allFiles.push(...state.testEnvironment.testFiles);
-      allFiles.push(...state.testEnvironment.testDataFiles);
+      allFiles.push(
+        ...state.testEnvironment.testFiles,
+        ...state.testEnvironment.testDataFiles,
+      );
     }
 
     const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
@@ -783,8 +938,10 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
     if (state.testEnvironment) {
-      allFiles.push(...state.testEnvironment.testFiles);
-      allFiles.push(...state.testEnvironment.testDataFiles);
+      allFiles.push(
+        ...state.testEnvironment.testFiles,
+        ...state.testEnvironment.testDataFiles,
+      );
     }
 
     return allFiles;

@@ -1,7 +1,7 @@
 /**
- * Todo Tracker Utility
+ * TodoTracker utility module.
  *
- * Provides todo tracking for agents and supervisors.
+ * Tracks task lifecycle for agents and supervisors.
  * Displays progress in the console for visibility and productivity tracking.
  */
 
@@ -30,10 +30,10 @@ export interface TodoTrackerOptions {
  * TodoTracker class for managing todos within an agent or supervisor
  */
 export class TodoTracker {
-  private todos: Map<string, Todo> = new Map();
-  private name: string;
-  private verbose: boolean;
-  private prefix: string;
+  private readonly todos: Map<string, Todo> = new Map();
+  private readonly name: string;
+  private readonly verbose: boolean;
+  private readonly prefix: string;
   private idCounter = 0;
 
   constructor(options: TodoTrackerOptions) {
@@ -43,7 +43,7 @@ export class TodoTracker {
   }
 
   /**
-   * Add a new todo
+   * Add a new tracked item.
    */
   add(content: string, activeForm: string): string {
     const id = `${this.name.toLowerCase().replace(/\s+/g, '-')}-${++this.idCounter}`;
@@ -70,7 +70,7 @@ export class TodoTracker {
   }
 
   /**
-   * Start working on a todo (set to in_progress)
+   * Mark a tracked item as in_progress.
    */
   start(id: string): void {
     const todo = this.todos.get(id);
@@ -88,7 +88,7 @@ export class TodoTracker {
   }
 
   /**
-   * Mark a todo as completed
+   * Mark a tracked item as completed.
    */
   complete(id: string): void {
     const todo = this.todos.get(id);
@@ -106,7 +106,7 @@ export class TodoTracker {
   }
 
   /**
-   * Mark a todo as failed
+   * Mark a tracked item as failed.
    */
   fail(id: string, error?: string): void {
     const todo = this.todos.get(id);
@@ -135,7 +135,7 @@ export class TodoTracker {
   }
 
   /**
-   * Convenience method: start a todo, run an async function, and mark complete/failed
+   * Convenience method: start a tracked item, run an async function, and mark complete/failed.
    */
   async run<T>(
     content: string,
@@ -179,7 +179,7 @@ export class TodoTracker {
     inProgress: number;
     completed: number;
     failed: number;
-  } {
+    } {
     const todos = this.getAll();
     return {
       total: todos.length,
@@ -207,7 +207,7 @@ export class TodoTracker {
   }
 
   /**
-   * Print a todo to the console
+   * Print a tracked item to the console.
    */
   private printTodo(todo: Todo, action: 'added' | 'started' | 'completed' | 'failed'): void {
     const statusIcons: Record<TodoStatus, string> = {
@@ -232,14 +232,15 @@ export class TodoTracker {
     } else if (action === 'completed') {
       console.log(`${this.prefix} ${icon} ${todo.content}`);
     } else if (action === 'failed') {
-      console.log(`${this.prefix} ${icon} ${todo.content} - FAILED${todo.error ? `: ${todo.error}` : ''}`);
+      const errorSuffix = todo.error ? `: ${todo.error}` : '';
+      console.log(`${this.prefix} ${icon} ${todo.content} - FAILED${errorSuffix}`);
     }
     // 'added' is silent to avoid noise
   }
 }
 
 /**
- * Create a todo tracker for an agent
+ * Create a TodoTracker for an agent.
  */
 export const createAgentTodoTracker = (agentName: string): TodoTracker => {
   return new TodoTracker({
@@ -249,7 +250,7 @@ export const createAgentTodoTracker = (agentName: string): TodoTracker => {
 };
 
 /**
- * Create a todo tracker for a supervisor
+ * Create a TodoTracker for a supervisor.
  */
 export const createSupervisorTodoTracker = (supervisorName: string): TodoTracker => {
   return new TodoTracker({
