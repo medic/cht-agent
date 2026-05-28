@@ -69,18 +69,26 @@ function writeSkipLog(entry: SkipLogEntry, logPath: string): void {
  * checkSkipRules({ author: 'dependabot[bot]', prTitle: 'bump deps', fileList: [], labels: [] } as any); // 'Bot PR: dependabot[bot]'
  * ```
  */
+function conventionalCommitType(prTitle: string): string {
+  return /^(\w+)/.exec(prTitle)?.[1] ?? 'chore';
+}
+
+function isLockfileOnly(pr: ScrapedPR): boolean {
+  return pr.fileList.length > 0 && pr.fileList.every(f => LOCKFILE_PATTERN.test(f));
+}
+
+function isTranslationOnly(pr: ScrapedPR): boolean {
+  return pr.fileList.length > 0 && pr.fileList.every(f => TRANSLATION_PATTERN.test(f));
+}
+
 function checkSkipRules(pr: ScrapedPR): string | null {
   if (pr.author.endsWith('[bot]')) return `Bot PR: ${pr.author}`;
   if (/^revert[\s(:]/i.test(pr.prTitle)) return 'Revert PR';
   if (/^(chore|docs|ci|build)(\(.+\))?(!)?\s*:/i.test(pr.prTitle)) {
-    const type = /^(\w+)/.exec(pr.prTitle)?.[1] ?? 'chore';
-    return `Conventional commit type: ${type}`;
+    return `Conventional commit type: ${conventionalCommitType(pr.prTitle)}`;
   }
-  const nonEmpty = pr.fileList.length > 0;
-  const isLockfileOnly = nonEmpty && pr.fileList.every(f => LOCKFILE_PATTERN.test(f));
-  const isTranslationOnly = nonEmpty && pr.fileList.every(f => TRANSLATION_PATTERN.test(f));
-  if (isLockfileOnly) return 'Lockfile-only changes';
-  if (isTranslationOnly) return 'Translation-only changes';
+  if (isLockfileOnly(pr)) return 'Lockfile-only changes';
+  if (isTranslationOnly(pr)) return 'Translation-only changes';
   return null;
 }
 
