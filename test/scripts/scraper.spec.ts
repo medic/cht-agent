@@ -599,7 +599,6 @@ describe('scrapePR', () => {
       // Exercises the String(err) path in the metadata catch block
       const { scrapePR } = loadScraper((_file, args) => {
         if (args[0] === 'pr' && args[1] === 'view') {
-          // eslint-disable-next-line @typescript-eslint/no-throw-literal
           throw 'non-error string rejection';
         }
         throw new Error(`Unexpected: ${args.join(' ')}`);
@@ -620,7 +619,6 @@ describe('scrapePR', () => {
       const { scrapePR } = loadScraper((_file, args) => {
         if (args[0] === 'pr' && args[1] === 'view') return VALID_META;
         if (args[0] === 'pr' && args[1] === 'diff') {
-          // eslint-disable-next-line @typescript-eslint/no-throw-literal
           throw 'plain string diff error';
         }
         throw new Error(`Unexpected: ${args.join(' ')}`);

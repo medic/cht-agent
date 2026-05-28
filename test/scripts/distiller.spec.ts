@@ -33,8 +33,8 @@ function normalizeFrontmatter(data: Record<string, unknown>): Record<string, unk
     out[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
   }
   if ('lastUpdated' in out && !('last_updated' in out)) {
-    out['last_updated'] = out['lastUpdated'];
-    delete out['lastUpdated'];
+    out.last_updated = out.lastUpdated;
+    delete out.lastUpdated;
   }
   return out;
 }
@@ -98,15 +98,15 @@ function tmpLogPath(): string {
 function loadDistiller(fakeInvoke?: (prompt: string) => Promise<unknown>) {
   const fakeLLMClass = fakeInvoke
     ? class FakeLLM {
-        constructor(_opts: unknown) {}
-        withStructuredOutput(_schema: unknown) { return { invoke: fakeInvoke }; }
-      }
+      constructor(_opts: unknown) {}
+      withStructuredOutput(_schema: unknown) { return { invoke: fakeInvoke }; }
+    }
     : class FakeLLM {
-        constructor(_opts: unknown) {}
-        withStructuredOutput(_schema: unknown) {
-          return { invoke: async () => makeDraft() };
-        }
-      };
+      constructor(_opts: unknown) {}
+      withStructuredOutput(_schema: unknown) {
+        return { invoke: async () => makeDraft() };
+      }
+    };
 
   return proxyquire('../../src/scripts/distiller', {
     '@langchain/anthropic': { ChatAnthropic: fakeLLMClass },
@@ -240,13 +240,13 @@ describe('distillPR', () => {
 
       const content = fs.readFileSync(result.outputPath!, 'utf8');
       const fm = matter(content).data as Record<string, unknown>;
-      expect(fm['source_pr']).to.equal('medic/cht-core#42');
-      expect(fm['source_sha']).to.equal('deadbeef');
-      expect(fm['distilled_at']).to.match(/^\d{4}-\d{2}-\d{2}$/);
-      expect(fm['reviewed_by']).to.equal(null);
-      expect(fm['reviewed_at']).to.equal(null);
-      expect(fm['confidence']).to.equal('medium');
-      expect(fm['stale']).to.equal(false);
+      expect(fm.source_pr).to.equal('medic/cht-core#42');
+      expect(fm.source_sha).to.equal('deadbeef');
+      expect(fm.distilled_at).to.match(/^\d{4}-\d{2}-\d{2}$/);
+      expect(fm.reviewed_by).to.equal(null);
+      expect(fm.reviewed_at).to.equal(null);
+      expect(fm.confidence).to.equal('medium');
+      expect(fm.stale).to.equal(false);
     });
   });
 
@@ -316,10 +316,10 @@ describe('distillPR', () => {
 
   describe('no API key configured', () => {
     it('should return flag-for-human when no LLM key is available', async () => {
-      const origOpenRouter = process.env['OPENROUTER_API_KEY'];
-      const origAnthropic = process.env['ANTHROPIC_API_KEY'];
-      delete process.env['OPENROUTER_API_KEY'];
-      delete process.env['ANTHROPIC_API_KEY'];
+      const origOpenRouter = process.env.OPENROUTER_API_KEY;
+      const origAnthropic = process.env.ANTHROPIC_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
 
       // Use proxyquire without distillFn to exercise the real LLM path (no-key branch)
       const { distillPR } = loadDistiller();
@@ -329,8 +329,8 @@ describe('distillPR', () => {
         // no distillFn — falls through to real LLM chain which is null when no key
       });
 
-      if (origOpenRouter !== undefined) process.env['OPENROUTER_API_KEY'] = origOpenRouter;
-      if (origAnthropic !== undefined) process.env['ANTHROPIC_API_KEY'] = origAnthropic;
+      if (origOpenRouter !== undefined) process.env.OPENROUTER_API_KEY = origOpenRouter;
+      if (origAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = origAnthropic;
 
       expect(result.status).to.equal('flag-for-human');
       expect(result.reason).to.include('API key');
@@ -363,13 +363,13 @@ describe('distillPR', () => {
 
 describe('LLM chain via OpenRouter (no distillFn)', () => {
   afterEach(() => {
-    delete process.env['OPENROUTER_API_KEY'];
-    delete process.env['ANTHROPIC_API_KEY'];
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
   });
 
   it('should call OpenRouter chain and write draft when OPENROUTER_API_KEY is set', async () => {
-    process.env['OPENROUTER_API_KEY'] = 'test-or-key';
-    delete process.env['ANTHROPIC_API_KEY'];
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
+    delete process.env.ANTHROPIC_API_KEY;
 
     const { distillPR } = loadDistiller(async () => makeDraft());
 
@@ -382,8 +382,8 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
   });
 
   it('should call Anthropic chain when only ANTHROPIC_API_KEY is set', async () => {
-    delete process.env['OPENROUTER_API_KEY'];
-    process.env['ANTHROPIC_API_KEY'] = 'test-anthr-key';
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.ANTHROPIC_API_KEY = 'test-anthr-key';
 
     const { distillPR } = loadDistiller(async () => makeDraft());
 
@@ -396,7 +396,7 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
   });
 
   it('should return flag-for-human when LLM invoke throws', async () => {
-    process.env['OPENROUTER_API_KEY'] = 'test-or-key';
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
 
     const { distillPR } = loadDistiller(async () => { throw new Error('rate limit'); });
 
@@ -410,7 +410,7 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
   });
 
   it('should include issue bodies in prompt context (covers issueContext branch)', async () => {
-    process.env['OPENROUTER_API_KEY'] = 'test-or-key';
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
 
     const capturedPrompts: string[] = [];
     const { distillPR } = loadDistiller(async (prompt: string) => {
@@ -427,7 +427,7 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
   });
 
   it('should include review comments in prompt context (covers reviewContext branch)', async () => {
-    process.env['OPENROUTER_API_KEY'] = 'test-or-key';
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
 
     const capturedPrompts: string[] = [];
     const { distillPR } = loadDistiller(async (prompt: string) => {
@@ -444,7 +444,7 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
   });
 
   it('should truncate file list to 50 in prompt (covers fileList slice branch)', async () => {
-    process.env['OPENROUTER_API_KEY'] = 'test-or-key';
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
 
     const capturedPrompts: string[] = [];
     const { distillPR } = loadDistiller(async (prompt: string) => {

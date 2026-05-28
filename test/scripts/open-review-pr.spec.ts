@@ -384,7 +384,6 @@ describe('openReviewPR (apply)', () => {
   it('switches back to original branch even when an error is thrown', () => {
     const originalBranch = 'feat/108';
     let switchBackCalled = false;
-    let callCount = 0;
 
     const exec = makeExecStub({
       'git-fetch': () => '',
@@ -393,7 +392,6 @@ describe('openReviewPR (apply)', () => {
         throw new Error('branch does not exist');
       },
       'git-switch': (args) => {
-        callCount++;
         if (args.includes('-c')) return '';
         // The switch-back call
         switchBackCalled = true;

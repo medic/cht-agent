@@ -39,19 +39,19 @@ const LINKED_ISSUE = { number: 10, body: 'Issue body', comments: [] };
 function loadFilter(fakeInvoke?: () => Promise<unknown>) {
   const fakeChatAnthropic = fakeInvoke
     ? class FakeChatAnthropic {
-        constructor(_opts: unknown) {}
-        withStructuredOutput(_schema: unknown) {
-          return { invoke: fakeInvoke };
-        }
+      constructor(_opts: unknown) {}
+      withStructuredOutput(_schema: unknown) {
+        return { invoke: fakeInvoke };
       }
+    }
     : class FakeChatAnthropic {
-        constructor(_opts: unknown) {}
-        withStructuredOutput(_schema: unknown) {
-          return {
-            invoke: async () => ({ decision: 'distill', reason: 'LLM says distill' }),
-          };
-        }
-      };
+      constructor(_opts: unknown) {}
+      withStructuredOutput(_schema: unknown) {
+        return {
+          invoke: async () => ({ decision: 'distill', reason: 'LLM says distill' }),
+        };
+      }
+    };
 
   return proxyquire('../../src/scripts/filter', {
     '@langchain/anthropic': { ChatAnthropic: fakeChatAnthropic },
@@ -340,15 +340,15 @@ describe('filterPR', () => {
     let savedKey: string | undefined;
 
     beforeEach(() => {
-      savedKey = process.env['ANTHROPIC_API_KEY'];
-      delete process.env['ANTHROPIC_API_KEY'];
+      savedKey = process.env.ANTHROPIC_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
     });
 
     afterEach(() => {
       if (savedKey !== undefined) {
-        process.env['ANTHROPIC_API_KEY'] = savedKey;
+        process.env.ANTHROPIC_API_KEY = savedKey;
       } else {
-        delete process.env['ANTHROPIC_API_KEY'];
+        delete process.env.ANTHROPIC_API_KEY;
       }
     });
 
@@ -367,8 +367,8 @@ describe('filterPR', () => {
 
   describe('llmTriage: ChatAnthropic invoke succeeds (via proxyquire)', () => {
     it('should return distill when LLM responds with distill decision', async () => {
-      const savedKey = process.env['ANTHROPIC_API_KEY'];
-      process.env['ANTHROPIC_API_KEY'] = 'test-key-fake';
+      const savedKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'test-key-fake';
 
       try {
         const { filterPR } = loadFilter(async () => ({
@@ -383,9 +383,9 @@ describe('filterPR', () => {
         expect(fs.existsSync(logPath)).to.equal(false);
       } finally {
         if (savedKey !== undefined) {
-          process.env['ANTHROPIC_API_KEY'] = savedKey;
+          process.env.ANTHROPIC_API_KEY = savedKey;
         } else {
-          delete process.env['ANTHROPIC_API_KEY'];
+          delete process.env.ANTHROPIC_API_KEY;
         }
       }
     });
@@ -393,8 +393,8 @@ describe('filterPR', () => {
 
   describe('llmTriage: ChatAnthropic invoke throws (via proxyquire)', () => {
     it('should return flag-for-human and write log when LLM call throws', async () => {
-      const savedKey = process.env['ANTHROPIC_API_KEY'];
-      process.env['ANTHROPIC_API_KEY'] = 'test-key-fake';
+      const savedKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'test-key-fake';
 
       try {
         const { filterPR } = loadFilter(async () => {
@@ -409,9 +409,9 @@ describe('filterPR', () => {
         expect(parsed.decision).to.equal('flag-for-human');
       } finally {
         if (savedKey !== undefined) {
-          process.env['ANTHROPIC_API_KEY'] = savedKey;
+          process.env.ANTHROPIC_API_KEY = savedKey;
         } else {
-          delete process.env['ANTHROPIC_API_KEY'];
+          delete process.env.ANTHROPIC_API_KEY;
         }
       }
     });
@@ -419,8 +419,8 @@ describe('filterPR', () => {
 
   describe('llmTriage: ChatAnthropic invoke returns skip (via proxyquire)', () => {
     it('should return skip and write log when LLM responds with skip decision', async () => {
-      const savedKey = process.env['ANTHROPIC_API_KEY'];
-      process.env['ANTHROPIC_API_KEY'] = 'test-key-fake';
+      const savedKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'test-key-fake';
 
       try {
         const { filterPR } = loadFilter(async () => ({
@@ -436,9 +436,9 @@ describe('filterPR', () => {
         expect(parsed.decision).to.equal('skip');
       } finally {
         if (savedKey !== undefined) {
-          process.env['ANTHROPIC_API_KEY'] = savedKey;
+          process.env.ANTHROPIC_API_KEY = savedKey;
         } else {
-          delete process.env['ANTHROPIC_API_KEY'];
+          delete process.env.ANTHROPIC_API_KEY;
         }
       }
     });
