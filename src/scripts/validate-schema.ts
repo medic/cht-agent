@@ -178,7 +178,7 @@ function main(): void {
   const files = collectMarkdownFiles(MEMORY_DIR);
   const counts = { pass: 0, fail: 0, skip: 0 };
 
-  for (const filePath of files.toSorted()) {
+  for (const filePath of files.toSorted((a, b) => a.localeCompare(b))) {
     const rel = path.relative(REPO_ROOT, filePath);
     const result = validateFile(filePath, validate);
     const outcome = logFileResult(rel, result);

@@ -1,7 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import * as os from 'os';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { scrapePR } from './scraper';
 import { filterPR } from './filter';
@@ -9,6 +9,26 @@ import { distillPR } from './distiller';
 
 // Mix: feat+linked issue (deterministic distill), fix no labels (LLM triage), test commit (LLM)
 const TEST_PRS = [11057, 11022, 11077];
+
+/**
+ * Filter and optionally distill a scraped PR, logging each stage.
+ *
+ * @example
+ * ```typescript
+ * await filterAndDistill(pr);
+ * ```
+ */
+async function filterAndDistill(pr: ReturnType<typeof scrapePR>): Promise<void> {
+  console.log('  filtering...');
+  const filterResult = await filterPR(pr, { logPath: path.join(os.tmpdir(), '_skipped_smoke.ndjson') });
+  console.log(`  filter:   ${filterResult.decision} — ${filterResult.reason}`);
+  if (filterResult.decision !== 'distill') return;
+
+  console.log('  distilling...');
+  const distillResult = await distillPR(pr, { outputDir: path.join(os.tmpdir(), 'smoke-pending') });
+  console.log(`  distill:  ${distillResult.status} — ${distillResult.reason}`);
+  if (distillResult.outputPath) console.log(`  output:   ${distillResult.outputPath}`);
+}
 
 /**
  * Runs the full scrape → filter → distill pipeline for a single PR number.
@@ -31,19 +51,7 @@ async function processPR(prNum: number): Promise<void> {
     console.log(`  labels:  ${pr.labels.join(', ') || '(none)'}`);
     console.log(`  files:   ${pr.fileList.length}`);
     console.log(`  issues:  ${pr.linkedIssues.length}`);
-
-    console.log('  filtering...');
-    const filterResult = await filterPR(pr, { logPath: path.join(os.tmpdir(), '_skipped_smoke.ndjson') });
-    console.log(`  filter:   ${filterResult.decision} — ${filterResult.reason}`);
-
-    if (filterResult.decision === 'distill') {
-      console.log('  distilling...');
-      const distillResult = await distillPR(pr, { outputDir: path.join(os.tmpdir(), 'smoke-pending') });
-      console.log(`  distill:  ${distillResult.status} — ${distillResult.reason}`);
-      if (distillResult.outputPath) {
-        console.log(`  output:   ${distillResult.outputPath}`);
-      }
-    }
+    await filterAndDistill(pr);
   } catch (err) {
     console.error(`  ERROR: ${err instanceof Error ? err.message : String(err)}`);
   }

@@ -70,23 +70,17 @@ function writeSkipLog(entry: SkipLogEntry, logPath: string): void {
  * ```
  */
 function checkSkipRules(pr: ScrapedPR): string | null {
-  // Bot author
   if (pr.author.endsWith('[bot]')) return `Bot PR: ${pr.author}`;
-  // Revert
   if (/^revert[\s(:]/i.test(pr.prTitle)) return 'Revert PR';
-  // Chore/docs/ci/build conventional commit
   if (/^(chore|docs|ci|build)(\(.+\))?(!)?\s*:/i.test(pr.prTitle)) {
     const type = /^(\w+)/.exec(pr.prTitle)?.[1] ?? 'chore';
     return `Conventional commit type: ${type}`;
   }
-  // Lockfile-only
-  if (pr.fileList.length > 0 && pr.fileList.every(f => LOCKFILE_PATTERN.test(f))) {
-    return 'Lockfile-only changes';
-  }
-  // Translation-only
-  if (pr.fileList.length > 0 && pr.fileList.every(f => TRANSLATION_PATTERN.test(f))) {
-    return 'Translation-only changes';
-  }
+  const nonEmpty = pr.fileList.length > 0;
+  const isLockfileOnly = nonEmpty && pr.fileList.every(f => LOCKFILE_PATTERN.test(f));
+  const isTranslationOnly = nonEmpty && pr.fileList.every(f => TRANSLATION_PATTERN.test(f));
+  if (isLockfileOnly) return 'Lockfile-only changes';
+  if (isTranslationOnly) return 'Translation-only changes';
   return null;
 }
 
@@ -100,16 +94,24 @@ function checkSkipRules(pr: ScrapedPR): string | null {
  * // 'Bug with linked issue affecting multiple services'
  * ```
  */
-function checkDistillRules(pr: ScrapedPR): string | null {
-  const labelsSet = new Set(pr.labels.map(l => l.toLowerCase()));
-  const hasBugWithIssue = labelsSet.has('type: bug') && pr.linkedIssues.length > 0;
-  const hasFeatureWithIssue = labelsSet.has('type: feature') && pr.linkedIssues.length > 0;
-  const hasSharedLibs = pr.fileList.some(f => f.startsWith('shared-libs/'));
-  const multiService = touchesMultipleServices(pr.fileList);
+function isBugWithLinkedIssueAndMultiService(pr: ScrapedPR): boolean {
+  const labels = new Set(pr.labels.map(l => l.toLowerCase()));
+  return labels.has('type: bug') && pr.linkedIssues.length > 0 && touchesMultipleServices(pr.fileList);
+}
 
-  if (hasBugWithIssue && multiService) return 'Bug with linked issue affecting multiple services';
-  if (hasFeatureWithIssue) return 'Feature with linked issue';
-  if (hasSharedLibs && multiService) return 'Shared library change affecting multiple consumers';
+function isFeatureWithLinkedIssue(pr: ScrapedPR): boolean {
+  const labels = new Set(pr.labels.map(l => l.toLowerCase()));
+  return labels.has('type: feature') && pr.linkedIssues.length > 0;
+}
+
+function isSharedLibsWithMultiService(pr: ScrapedPR): boolean {
+  return pr.fileList.some(f => f.startsWith('shared-libs/')) && touchesMultipleServices(pr.fileList);
+}
+
+function checkDistillRules(pr: ScrapedPR): string | null {
+  if (isBugWithLinkedIssueAndMultiService(pr)) return 'Bug with linked issue affecting multiple services';
+  if (isFeatureWithLinkedIssue(pr)) return 'Feature with linked issue';
+  if (isSharedLibsWithMultiService(pr)) return 'Shared library change affecting multiple consumers';
   return null;
 }
 

@@ -79,8 +79,9 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
     const parsed = matter(content);
     const fm = parsed.data as Record<string, unknown>;
     const title = String(fm.title ?? path.basename(draftPath));
-    const sourcePr = fm.source_pr
-      ? ` — [${String(fm.source_pr)}](https://github.com/${String(fm.source_pr)})`
+    const sourcePrStr = typeof fm.source_pr === 'string' ? fm.source_pr : '';
+    const sourcePr = sourcePrStr
+      ? ` — [${sourcePrStr}](https://github.com/${sourcePrStr})`
       : '';
     lines.push(`- **${title}**${sourcePr}`);
   }
