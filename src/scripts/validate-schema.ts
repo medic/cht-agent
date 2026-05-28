@@ -15,8 +15,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ValidateFunction, ErrorObject } from 'ajv';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const matter = require('gray-matter') as typeof import('gray-matter');
+import matter from 'gray-matter';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
 
 // ---------------------------------------------------------------------------
@@ -30,6 +29,26 @@ const MEMORY_DIR = path.join(REPO_ROOT, 'agent-memory');
 // ---------------------------------------------------------------------------
 
 /**
+ * Processes a single directory entry and returns matching file paths.
+ * Recurses into subdirectories, skipping `_pending`.
+ *
+ * @param dir   - Parent directory path.
+ * @param entry - Directory entry to process.
+ * @returns Array of matching absolute file paths.
+ *
+ * @example
+ * ```typescript
+ * // Typically called from collectMarkdownFiles; not called directly.
+ * ```
+ */
+function processEntry(dir: string, entry: import('node:fs').Dirent): string[] {
+  const fullPath = path.join(dir, entry.name);
+  if (entry.isDirectory() && entry.name !== '_pending') return collectMarkdownFiles(fullPath);
+  if (entry.isFile() && entry.name.endsWith('.md')) return [fullPath];
+  return [];
+}
+
+/**
  * Recursively collects all *.md file paths under `dir`,
  * excluding any path segment named `_pending`.
  *
@@ -37,24 +56,13 @@ const MEMORY_DIR = path.join(REPO_ROOT, 'agent-memory');
  * @returns Array of absolute file paths.
  *
  * @example
+ * ```typescript
  * const files = collectMarkdownFiles('/repo/agent-memory');
  * // => ['/repo/agent-memory/domains/messaging/issues/123-foo.md', ...]
+ * ```
  */
 function collectMarkdownFiles(dir: string): string[] {
-  const results: string[] = [];
-
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      if (entry.name === '_pending') continue;
-      results.push(...collectMarkdownFiles(fullPath));
-    } else if (entry.isFile() && entry.name.endsWith('.md')) {
-      results.push(fullPath);
-    }
-  }
-
-  return results;
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => processEntry(dir, entry));
 }
 
 // ---------------------------------------------------------------------------
@@ -129,42 +137,58 @@ function validateFile(filePath: string, validate: ValidateFunction): FileResult 
 // ---------------------------------------------------------------------------
 
 /**
+ * Logs a single file's validation result and returns its outcome category.
+ *
+ * @param rel    - Relative file path for display.
+ * @param result - Validation result for the file.
+ * @returns The outcome category: 'pass', 'fail', or 'skip'.
+ *
+ * @example
+ * ```typescript
+ * const outcome = logFileResult('domains/x/foo.md', { passed: true, skipped: false, errors: [], file: '' });
+ * // 'pass'
+ * ```
+ */
+function logFileResult(rel: string, result: FileResult): 'pass' | 'fail' | 'skip' {
+  if (result.skipped) {
+    console.log(`  (skip) ${rel}`);
+    return 'skip';
+  }
+  if (result.passed) {
+    console.log(`  ✓ ${rel}`);
+    return 'pass';
+  }
+  console.log(`  ✗ ${rel}`);
+  for (const err of result.errors) {
+    console.log(err);
+  }
+  return 'fail';
+}
+
+/**
  * Entry point: validates all agent-memory markdown files and reports results.
  *
  * @example
+ * ```typescript
  * // Invoked via: npx ts-node src/scripts/validate-schema.ts
+ * ```
  */
 function main(): void {
   const validate = buildValidator();
   const files = collectMarkdownFiles(MEMORY_DIR);
+  const counts = { pass: 0, fail: 0, skip: 0 };
 
-  let passCount = 0;
-  let failCount = 0;
-  let skipCount = 0;
-
-  for (const filePath of files.sort()) {
+  for (const filePath of files.toSorted()) {
     const rel = path.relative(REPO_ROOT, filePath);
     const result = validateFile(filePath, validate);
-
-    if (result.skipped) {
-      console.log(`  (skip) ${rel}`);
-      skipCount++;
-    } else if (result.passed) {
-      console.log(`  ✓ ${rel}`);
-      passCount++;
-    } else {
-      console.log(`  ✗ ${rel}`);
-      for (const err of result.errors) {
-        console.log(err);
-      }
-      failCount++;
-    }
+    const outcome = logFileResult(rel, result);
+    counts[outcome]++;
   }
 
   console.log('');
-  console.log(`Results: ${passCount} passed, ${failCount} failed, ${skipCount} skipped`);
+  console.log(`Results: ${counts.pass} passed, ${counts.fail} failed, ${counts.skip} skipped`);
 
-  if (failCount > 0) {
+  if (counts.fail > 0) {
     process.exitCode = 1;
   }
 }

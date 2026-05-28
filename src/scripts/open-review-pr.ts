@@ -15,9 +15,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'child_process';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const matter = require('gray-matter') as typeof import('gray-matter');
+import { execFileSync } from 'node:child_process';
+import matter from 'gray-matter';
 import type { SkipLogEntry, OpenReviewOptions, ReviewPRResult } from '../types/pipeline';
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
@@ -25,6 +24,9 @@ import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from 
 const DEFAULT_DOMAINS_DIR = path.join(REPO_ROOT, 'agent-memory', 'domains');
 
 const validate = buildValidator();
+
+/** Exec function type — wraps execFileSync or a test double. */
+type ExecFn = (file: string, args: string[]) => string;
 
 /**
  * Collect .md draft paths (excluding .gitkeep) grouped by domain.
@@ -78,7 +80,7 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
     const fm = parsed.data as Record<string, unknown>;
     const title = String(fm.title ?? path.basename(draftPath));
     const sourcePr = fm.source_pr
-      ? ` — [${fm.source_pr}](https://github.com/${fm.source_pr})`
+      ? ` — [${String(fm.source_pr)}](https://github.com/${String(fm.source_pr)})`
       : '';
     lines.push(`- **${title}**${sourcePr}`);
   }
@@ -98,11 +100,23 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
   return lines.join('\n');
 }
 
+/**
+ * Writes a skip entry to the audit log for a draft that failed validation.
+ *
+ * @param logPath   - Path to the NDJSON audit log file.
+ * @param draftPath - Absolute path to the draft file being skipped.
+ * @param reason    - Human-readable reason for skipping.
+ *
+ * @example
+ * ```typescript
+ * writeSkipEntry('/tmp/skipped.ndjson', '/tmp/drafts/42-foo.md', 'No frontmatter');
+ * ```
+ */
 function writeSkipEntry(logPath: string, draftPath: string, reason: string): void {
   const filename = path.basename(draftPath);
   const match = filename.match(/^(\d+)-/);
   const entry: SkipLogEntry = {
-    prNumber: match ? parseInt(match[1], 10) : 0,
+    prNumber: match ? Number.parseInt(match[1], 10) : 0,
     decision: 'flag-for-human',
     reason: `open-review-pr: ${reason} — ${filename}`,
     timestamp: new Date().toISOString(),
@@ -112,9 +126,22 @@ function writeSkipEntry(logPath: string, draftPath: string, reason: string): voi
 
 const MAX_BRANCH_SUFFIX = 99;
 
+/**
+ * Returns a unique branch name by appending a counter suffix if the base already exists.
+ *
+ * @param base - Base branch name.
+ * @param exec - Exec function used to call git.
+ * @returns A branch name that does not yet exist in the repository.
+ * @throws {Error} When no unique name can be found within MAX_BRANCH_SUFFIX attempts.
+ *
+ * @example
+ * ```typescript
+ * const branch = uniqueBranchName('memory/review/contacts-20240101', execFn);
+ * ```
+ */
 function uniqueBranchName(
   base: string,
-  exec: (file: string, args: string[]) => string
+  exec: ExecFn
 ): string {
   let branch = base;
   for (let counter = 2; counter <= MAX_BRANCH_SUFFIX; counter++) {
@@ -126,6 +153,203 @@ function uniqueBranchName(
     }
   }
   throw new Error(`Could not find a unique branch name for base: ${base}`);
+}
+
+/**
+ * Attempts to parse a draft file, returning null (and writing a skip entry) on failure.
+ *
+ * @param draftPath - Absolute path to the draft .md file.
+ * @param logPath   - Path to the NDJSON audit log file.
+ * @returns Parsed matter result, or null if parsing fails.
+ *
+ * @example
+ * ```typescript
+ * const parsed = parseDraft('/tmp/drafts/42-foo.md', '/tmp/skipped.ndjson');
+ * // null if no frontmatter or YAML parse error
+ * ```
+ */
+function parseDraft(draftPath: string, logPath: string): ReturnType<typeof matter> | null {
+  const content = fs.readFileSync(draftPath, 'utf8');
+  if (!hasFrontmatter(content)) {
+    writeSkipEntry(logPath, draftPath, 'No frontmatter');
+    return null;
+  }
+  try {
+    return matter(content);
+  } catch {
+    writeSkipEntry(logPath, draftPath, 'YAML parse error');
+    return null;
+  }
+}
+
+/**
+ * Filters a list of draft paths to those that pass schema validation.
+ *
+ * @param draftPaths - Array of absolute draft file paths to validate.
+ * @param logPath    - Path to the NDJSON audit log file.
+ * @returns Array of draft paths that passed schema validation.
+ *
+ * @example
+ * ```typescript
+ * const valid = findValidDrafts(['/tmp/drafts/42-foo.md'], '/tmp/skipped.ndjson');
+ * ```
+ */
+function findValidDrafts(draftPaths: string[], logPath: string): string[] {
+  const valid: string[] = [];
+  for (const draftPath of draftPaths) {
+    const parsed = parseDraft(draftPath, logPath);
+    if (parsed === null) continue;
+    const data = normalizeFrontmatter(parsed.data as Record<string, unknown>);
+    if (!validate(data)) {
+      const errors = (validate.errors ?? []).map(e => e.message ?? 'invalid').join('; ');
+      writeSkipEntry(logPath, draftPath, `Schema invalid: ${errors}`);
+      continue;
+    }
+    valid.push(draftPath);
+  }
+  return valid;
+}
+
+/**
+ * Collects valid draft plans per domain and separates skipped domains.
+ *
+ * @param byDomain - Map of domain to its discovered draft paths.
+ * @param logPath  - Path to the NDJSON audit log file.
+ * @returns Object with `plans` (valid domains) and `skipped` (ReviewPRResult for empty domains).
+ *
+ * @example
+ * ```typescript
+ * const { plans, skipped } = collectValidPlans(byDomain, '/tmp/skipped.ndjson');
+ * ```
+ */
+function collectValidPlans(
+  byDomain: Map<string, string[]>,
+  logPath: string
+): { plans: Map<string, string[]>; skipped: ReviewPRResult[] } {
+  const plans = new Map<string, string[]>();
+  const skipped: ReviewPRResult[] = [];
+  for (const [domain, draftPaths] of byDomain) {
+    const validDrafts = findValidDrafts(draftPaths, logPath);
+    if (validDrafts.length > 0) {
+      plans.set(domain, validDrafts);
+    } else {
+      skipped.push({ domain, branch: '', filesPromoted: 0, status: 'skipped' });
+    }
+  }
+  return { plans, skipped };
+}
+
+/**
+ * Builds dry-run ReviewPRResult entries for each planned domain.
+ *
+ * @param plans - Map of domain to valid draft paths.
+ * @param date  - Date string in YYYYMMDD format for branch naming.
+ * @returns Array of dry-run ReviewPRResult objects.
+ *
+ * @example
+ * ```typescript
+ * const results = buildDryRunResults(plans, '20240101');
+ * // [{ domain: 'contacts', branch: 'memory/review/contacts-20240101', status: 'dry-run', ... }]
+ * ```
+ */
+function buildDryRunResults(plans: Map<string, string[]>, date: string): ReviewPRResult[] {
+  return Array.from(plans.entries()).map(([domain, validDrafts]) => ({
+    domain,
+    branch: `memory/review/${domain}-${date}`,
+    filesPromoted: validDrafts.length,
+    status: 'dry-run' as const,
+  }));
+}
+
+/**
+ * Creates a branch, copies draft files, commits, pushes, and opens a GitHub PR for one domain.
+ *
+ * @param domain      - CHT domain name.
+ * @param validDrafts - Array of valid draft file paths to promote.
+ * @param opts        - Options including domainsDir, date, and exec function.
+ * @returns ReviewPRResult with status 'created' and the PR URL.
+ *
+ * @example
+ * ```typescript
+ * const result = promoteDomain('contacts', ['/tmp/drafts/42-foo.md'], { domainsDir, date, exec });
+ * // { domain: 'contacts', branch: '...', prUrl: 'https://...', status: 'created' }
+ * ```
+ */
+function promoteDomain(
+  domain: string,
+  validDrafts: string[],
+  opts: { domainsDir: string; date: string; exec: ExecFn }
+): ReviewPRResult {
+  const { domainsDir, date, exec } = opts;
+  const branchBase = `memory/review/${domain}-${date}`;
+  const branch = uniqueBranchName(branchBase, exec);
+
+  exec('git', ['switch', '-c', branch, 'origin/main']);
+
+  const targetDir = path.join(domainsDir, domain, 'issues');
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const addPaths: string[] = [];
+  for (const draftPath of validDrafts) {
+    const filename = path.basename(draftPath);
+    const targetPath = path.join(targetDir, filename);
+    fs.copyFileSync(draftPath, targetPath);
+    addPaths.push(path.relative(REPO_ROOT, targetPath));
+  }
+
+  exec('git', ['add', ...addPaths]);
+  exec('git', ['commit', '-m',
+    `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
+  exec('git', ['push', '-u', 'origin', branch]);
+
+  const prBody = buildPRBody(domain, validDrafts);
+  const prUrl = exec('gh', [
+    'pr', 'create',
+    '--title', `Memory review: ${domain}`,
+    '--body', prBody,
+    '--head', branch,
+    '--base', 'main',
+  ]).trim();
+
+  for (const draftPath of validDrafts) {
+    fs.unlinkSync(draftPath);
+  }
+
+  return { domain, branch, prUrl, filesPromoted: validDrafts.length, status: 'created' };
+}
+
+/**
+ * Applies all planned domain promotions: fetches origin/main, then promotes each domain.
+ * Restores the original branch in a finally block per domain.
+ *
+ * @param plans  - Map of domain to valid draft paths.
+ * @param config - Options including domainsDir, date, and exec function.
+ * @returns Array of ReviewPRResult objects for each promoted domain.
+ *
+ * @example
+ * ```typescript
+ * const results = executeApply(plans, { domainsDir, date, exec });
+ * ```
+ */
+function executeApply(
+  plans: Map<string, string[]>,
+  config: { domainsDir: string; date: string; exec: ExecFn }
+): ReviewPRResult[] {
+  const { exec } = config;
+  const results: ReviewPRResult[] = [];
+
+  exec('git', ['fetch', 'origin', 'main']);
+  const originalBranch = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+
+  for (const [domain, validDrafts] of plans) {
+    try {
+      results.push(promoteDomain(domain, validDrafts, config));
+    } finally {
+      exec('git', ['switch', originalBranch]);
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -149,106 +373,13 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
   const domainsDir = opts.domainsDir ?? DEFAULT_DOMAINS_DIR;
   const logPath = opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH;
   const apply = opts.apply ?? false;
-  const date = opts.date ?? new Date().toISOString().slice(0, 10).replace(/-/g, '');
-  const exec = opts.execFn ??
+  const date = opts.date ?? new Date().toISOString().slice(0, 10).replaceAll('-', '');
+  const exec: ExecFn = opts.execFn ??
     ((file: string, args: string[]) => execFileSync(file, args, { encoding: 'utf8' }) as string);
 
-  const byDomain = discoverDraftsByDomain(pendingDir);
-  const results: ReviewPRResult[] = [];
-  const plans = new Map<string, string[]>();
-  for (const [domain, draftPaths] of byDomain) {
-    const validDrafts: string[] = [];
-    for (const draftPath of draftPaths) {
-      const content = fs.readFileSync(draftPath, 'utf8');
-      if (!hasFrontmatter(content)) {
-        writeSkipEntry(logPath, draftPath, 'No frontmatter');
-        continue;
-      }
-      let parsed: ReturnType<typeof matter>;
-      try {
-        parsed = matter(content);
-      } catch {
-        writeSkipEntry(logPath, draftPath, 'YAML parse error');
-        continue;
-      }
-      const data = normalizeFrontmatter(parsed.data as Record<string, unknown>);
-      if (!validate(data)) {
-        const errors = (validate.errors ?? []).map(e => e.message ?? 'invalid').join('; ');
-        writeSkipEntry(logPath, draftPath, `Schema invalid: ${errors}`);
-        continue;
-      }
-      validDrafts.push(draftPath);
-    }
-    if (validDrafts.length > 0) {
-      plans.set(domain, validDrafts);
-    } else {
-      results.push({ domain, branch: '', filesPromoted: 0, status: 'skipped' });
-    }
-  }
-
-  if (!apply) {
-    for (const [domain, validDrafts] of plans) {
-      results.push({
-        domain,
-        branch: `memory/review/${domain}-${date}`,
-        filesPromoted: validDrafts.length,
-        status: 'dry-run',
-      });
-    }
-    return results;
-  }
-
-  if (plans.size === 0) return results;
-
-  exec('git', ['fetch', 'origin', 'main']);
-  const originalBranch = exec('git', ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
-
-  for (const [domain, validDrafts] of plans) {
-    const branchBase = `memory/review/${domain}-${date}`;
-    const branch = uniqueBranchName(branchBase, exec);
-
-    try {
-      exec('git', ['switch', '-c', branch, 'origin/main']);
-
-      const targetDir = path.join(domainsDir, domain, 'issues');
-      fs.mkdirSync(targetDir, { recursive: true });
-
-      const addPaths: string[] = [];
-      for (const draftPath of validDrafts) {
-        const filename = path.basename(draftPath);
-        const targetPath = path.join(targetDir, filename);
-        fs.copyFileSync(draftPath, targetPath);
-        addPaths.push(path.relative(REPO_ROOT, targetPath));
-      }
-
-      exec('git', ['add', ...addPaths]);
-      exec('git', ['commit', '-m',
-        `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
-      exec('git', ['push', '-u', 'origin', branch]);
-
-      const prBody = buildPRBody(domain, validDrafts);
-      const prUrl = exec('gh', [
-        'pr', 'create',
-        '--title', `Memory review: ${domain}`,
-        '--body', prBody,
-        '--head', branch,
-        '--base', 'main',
-      ]).trim();
-
-      exec('git', ['switch', originalBranch]);
-
-      for (const draftPath of validDrafts) {
-        fs.unlinkSync(draftPath);
-      }
-
-      results.push({ domain, branch, prUrl, filesPromoted: validDrafts.length, status: 'created' });
-    } catch (err) {
-      exec('git', ['switch', originalBranch]);
-      throw err;
-    }
-  }
-
-  return results;
+  const { plans, skipped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
+  if (!apply) return [...skipped, ...buildDryRunResults(plans, date)];
+  return [...skipped, ...executeApply(plans, { domainsDir, date, exec })];
 }
 
 // CLI entry point

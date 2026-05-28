@@ -18,7 +18,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import { scrapePR } from './scraper';
 import { filterPR } from './filter';
 import { distillPR } from './distiller';
@@ -45,21 +45,14 @@ interface CliArgs {
  */
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
-  let prNumber: number | undefined;
-  let repo = DEFAULT_REPO;
-  let lookbackHours = DEFAULT_LOOKBACK_HOURS;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--pr' && args[i + 1]) {
-      prNumber = parseInt(args[++i], 10);
-    } else if (args[i] === '--repo' && args[i + 1]) {
-      repo = args[++i];
-    } else if (args[i] === '--since' && args[i + 1]) {
-      lookbackHours = parseInt(args[++i], 10);
-    }
-  }
-
-  return { prNumber, repo, lookbackHours };
+  const prIdx = args.indexOf('--pr');
+  const repoIdx = args.indexOf('--repo');
+  const sinceIdx = args.indexOf('--since');
+  return {
+    prNumber: prIdx >= 0 ? Number.parseInt(args[prIdx + 1], 10) : undefined,
+    repo: repoIdx >= 0 ? args[repoIdx + 1] : DEFAULT_REPO,
+    lookbackHours: sinceIdx >= 0 ? Number.parseInt(args[sinceIdx + 1], 10) : DEFAULT_LOOKBACK_HOURS,
+  };
 }
 
 /**
@@ -89,6 +82,54 @@ function getRecentlyMergedPRs(repo: string, hours: number): number[] {
 }
 
 /**
+ * Returns a human-readable error message from an unknown thrown value.
+ *
+ * @param err - The caught error value.
+ * @returns The error message string.
+ *
+ * @example
+ * ```typescript
+ * errorMessage(new Error('boom')); // 'boom'
+ * errorMessage('raw string');      // 'raw string'
+ * ```
+ */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Runs scrape → filter → distill for a single PR number.
+ *
+ * @param prNum - The GitHub PR number to process.
+ * @param repo  - Repository in `owner/repo` format.
+ *
+ * @example
+ * ```typescript
+ * await processSinglePR(12345, 'medic/cht-core');
+ * ```
+ */
+async function processSinglePR(prNum: number, repo: string): Promise<void> {
+  console.log('  scraping...');
+  const pr = scrapePR(prNum, repo);
+  console.log(`  title:  ${pr.prTitle}`);
+  console.log(`  labels: ${pr.labels.join(', ') || '(none)'}`);
+  console.log(`  files:  ${pr.fileList.length}`);
+
+  console.log('  filtering...');
+  const filterResult = await filterPR(pr);
+  console.log(`  filter: ${filterResult.decision} — ${filterResult.reason}`);
+
+  if (filterResult.decision === 'distill') {
+    console.log('  distilling...');
+    const distillResult = await distillPR(pr);
+    console.log(`  distill: ${distillResult.status} — ${distillResult.reason}`);
+    if (distillResult.outputPath) {
+      console.log(`  output: ${distillResult.outputPath}`);
+    }
+  }
+}
+
+/**
  * Runs the full pipeline for each PR number in order.
  * Exits with code 1 if any PR fails processing.
  *
@@ -101,28 +142,10 @@ async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
   for (const prNum of prNumbers) {
     console.log(`\n${'─'.repeat(60)}`);
     console.log(`PR #${prNum} (${repo})`);
-
     try {
-      console.log('  scraping...');
-      const pr = scrapePR(prNum, repo);
-      console.log(`  title:  ${pr.prTitle}`);
-      console.log(`  labels: ${pr.labels.join(', ') || '(none)'}`);
-      console.log(`  files:  ${pr.fileList.length}`);
-
-      console.log('  filtering...');
-      const filterResult = await filterPR(pr);
-      console.log(`  filter: ${filterResult.decision} — ${filterResult.reason}`);
-
-      if (filterResult.decision === 'distill') {
-        console.log('  distilling...');
-        const distillResult = await distillPR(pr);
-        console.log(`  distill: ${distillResult.status} — ${distillResult.reason}`);
-        if (distillResult.outputPath) {
-          console.log(`  output: ${distillResult.outputPath}`);
-        }
-      }
+      await processSinglePR(prNum, repo);
     } catch (err) {
-      console.error(`  ERROR: ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`  ERROR: ${errorMessage(err)}`);
       failures++;
     }
   }
@@ -138,12 +161,12 @@ async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
 
   let prNumbers: number[];
 
-  if (prNumber !== undefined) {
-    prNumbers = [prNumber];
-  } else {
+  if (prNumber === undefined) {
     console.log(`Fetching PRs merged into ${repo} in the last ${lookbackHours}h...`);
     prNumbers = getRecentlyMergedPRs(repo, lookbackHours);
     console.log(`Found ${prNumbers.length} PR(s)${prNumbers.length ? ': ' + prNumbers.join(', ') : '.'}`);
+  } else {
+    prNumbers = [prNumber];
   }
 
   if (prNumbers.length === 0) {

@@ -10,7 +10,7 @@
  *    return 404 even for genuine members.
  */
 
-import { execFileSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import { LinkedIssue, ReviewComment, ScrapedPR, ScraperError } from '../types/pipeline';
 
 /** Options shared across all execFileSync calls. */
@@ -85,7 +85,7 @@ function fetchLinkedIssues(prBody: string, repo: string): LinkedIssue[] {
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(prBody)) !== null) {
-    seen.add(parseInt(match[1], 10));
+    seen.add(Number.parseInt(match[1], 10));
   }
 
   return Array.from(seen).map((issueNumber) => {
@@ -104,6 +104,108 @@ function fetchLinkedIssues(prBody: string, repo: string): LinkedIssue[] {
       return { number: issueNumber, body: '', comments: [] };
     }
   });
+}
+
+/**
+ * Fetches raw PR metadata JSON string from the gh CLI.
+ *
+ * @param prNumber - A positive integer GitHub PR number.
+ * @param repo     - Repository in `owner/repo` format.
+ * @returns Raw JSON string of PR metadata.
+ * @throws {ScraperError} On gh CLI failure.
+ *
+ * @example
+ * ```typescript
+ * // In production calls gh CLI; in tests mocked via proxyquire.
+ * const raw = fetchMetadata(1234, 'medic/cht-core');
+ * ```
+ */
+function fetchMetadata(prNumber: number, repo: string): string {
+  try {
+    return execFileSync(
+      'gh',
+      [
+        'pr',
+        'view',
+        String(prNumber),
+        '--repo',
+        repo,
+        '--json',
+        'number,title,body,labels,mergeCommit,mergedAt,files,author',
+      ],
+      EXEC_OPTS
+    );
+  } catch (err) {
+    throw new ScraperError(
+      `Failed to fetch PR #${prNumber} metadata: ${err instanceof Error ? err.message : String(err)}`,
+      prNumber,
+      { cause: err }
+    );
+  }
+}
+
+/**
+ * Fetches the unified diff for a PR from the gh CLI.
+ *
+ * @param prNumber - A positive integer GitHub PR number.
+ * @param repo     - Repository in `owner/repo` format.
+ * @returns The raw unified diff string.
+ * @throws {ScraperError} When the diff exceeds 50 MB (`ENOBUFS`).
+ * @throws {ScraperError} On any other gh CLI failure.
+ *
+ * @example
+ * ```typescript
+ * // In production calls gh CLI; in tests mocked via proxyquire.
+ * const diff = fetchDiff(1234, 'medic/cht-core');
+ * ```
+ */
+function fetchDiff(prNumber: number, repo: string): string {
+  try {
+    return execFileSync('gh', ['pr', 'diff', String(prNumber), '--repo', repo], EXEC_OPTS);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOBUFS') {
+      throw new ScraperError(`Diff for PR #${prNumber} exceeds 50 MB limit`, prNumber, {
+        cause: err,
+      });
+    }
+    throw new ScraperError(
+      `Failed to fetch diff for PR #${prNumber}: ${err instanceof Error ? err.message : String(err)}`,
+      prNumber,
+      { cause: err }
+    );
+  }
+}
+
+/**
+ * Fetches raw review JSON string for a PR from the gh CLI.
+ *
+ * @param prNumber - A positive integer GitHub PR number.
+ * @param repo     - Repository in `owner/repo` format.
+ * @returns Raw JSON string of reviews (may be concatenated arrays from --paginate).
+ * @throws {ScraperError} On gh CLI failure.
+ *
+ * @example
+ * ```typescript
+ * // In production calls gh CLI; in tests mocked via proxyquire.
+ * const raw = fetchReviews(1234, 'medic/cht-core');
+ * ```
+ */
+function fetchReviews(prNumber: number, repo: string): string {
+  const [owner, repoName] = repo.split('/');
+  try {
+    return execFileSync(
+      'gh',
+      ['api', `repos/${owner}/${repoName}/pulls/${prNumber}/reviews`, '--paginate'],
+      EXEC_OPTS
+    );
+  } catch (err) {
+    throw new ScraperError(
+      `Failed to fetch reviews for PR #${prNumber}: ${err instanceof Error ? err.message : String(err)}`,
+      prNumber,
+      { cause: err }
+    );
+  }
 }
 
 /**
@@ -130,35 +232,11 @@ function fetchLinkedIssues(prBody: string, repo: string): LinkedIssue[] {
  * ```
  */
 export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): ScrapedPR {
-  // --- Validate input ---
   if (!isPositiveInt(prNumber)) {
     throw new ScraperError(`Invalid PR number: ${prNumber}`, prNumber);
   }
 
-  // --- Step 1: Fetch PR metadata ---
-  let metaRaw: string;
-  try {
-    metaRaw = execFileSync(
-      'gh',
-      [
-        'pr',
-        'view',
-        String(prNumber),
-        '--repo',
-        repo,
-        '--json',
-        'number,title,body,labels,mergeCommit,mergedAt,files,author',
-      ],
-      EXEC_OPTS
-    );
-  } catch (err) {
-    throw new ScraperError(
-      `Failed to fetch PR #${prNumber} metadata: ${err instanceof Error ? err.message : String(err)}`,
-      prNumber,
-      { cause: err }
-    );
-  }
-
+  const metaRaw = fetchMetadata(prNumber, repo);
   const meta = JSON.parse(metaRaw);
 
   if (meta.mergedAt === null || meta.mergedAt === undefined) {
@@ -173,40 +251,9 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   const fileList: string[] = (meta.files ?? []).map((f: { path: string }) => f.path);
   const author: string = meta.author?.login ?? '';
 
-  // --- Step 2: Fetch diff ---
-  let diff: string;
-  try {
-    diff = execFileSync('gh', ['pr', 'diff', String(prNumber), '--repo', repo], EXEC_OPTS);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOBUFS') {
-      throw new ScraperError(`Diff for PR #${prNumber} exceeds 50 MB limit`, prNumber, {
-        cause: err,
-      });
-    }
-    throw new ScraperError(
-      `Failed to fetch diff for PR #${prNumber}: ${err instanceof Error ? err.message : String(err)}`,
-      prNumber,
-      { cause: err }
-    );
-  }
+  const diff = fetchDiff(prNumber, repo);
 
-  // --- Step 3: Fetch review summaries ---
-  const [owner, repoName] = repo.split('/');
-  let reviewsRaw: string;
-  try {
-    reviewsRaw = execFileSync(
-      'gh',
-      ['api', `repos/${owner}/${repoName}/pulls/${prNumber}/reviews`, '--paginate'],
-      EXEC_OPTS
-    );
-  } catch (err) {
-    throw new ScraperError(
-      `Failed to fetch reviews for PR #${prNumber}: ${err instanceof Error ? err.message : String(err)}`,
-      prNumber,
-      { cause: err }
-    );
-  }
+  const reviewsRaw = fetchReviews(prNumber, repo);
 
   // --paginate concatenates JSON arrays as `[...][...]` — merge into one array before parsing.
   const normalizedReviews = reviewsRaw.trim().replace(/\]\s*\[/g, ',');
@@ -230,7 +277,6 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
       };
     });
 
-  // --- Step 4: Fetch linked issues ---
   const linkedIssues: LinkedIssue[] = fetchLinkedIssues(prBody, repo);
 
   return {
@@ -250,7 +296,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
 
 /* istanbul ignore next */
 if (require.main === module) {
-  const prNumberArg = parseInt(process.argv[2], 10);
+  const prNumberArg = Number.parseInt(process.argv[2], 10);
   try {
     const result = scrapePR(prNumberArg);
     console.log(JSON.stringify(result, null, 2));

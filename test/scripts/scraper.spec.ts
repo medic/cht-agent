@@ -22,7 +22,7 @@ function makeExecFileSync(handler: ExecHandler) {
  */
 function loadScraper(execFileSync: ExecHandler) {
   return proxyquire('../../src/scripts/scraper', {
-    child_process: { execFileSync: makeExecFileSync(execFileSync) },
+    'node:child_process': { execFileSync: makeExecFileSync(execFileSync) },
   });
 }
 

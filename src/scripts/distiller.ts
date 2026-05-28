@@ -197,7 +197,7 @@ export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
     `domain: ${draft.domain}`,
     `title: ${draft.title}`,
     `last_updated: "${today}"`,
-    `summary: "${draft.summary.replace(/"/g, "'")}"`,
+    `summary: "${draft.summary.replaceAll('"', "'")}"`,
     `tags:`,
     ...draft.tags.map(t => `  - ${t}`),
     `source_pr: medic/cht-core#${pr.prNumber}`,

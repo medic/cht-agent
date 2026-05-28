@@ -71,12 +71,12 @@ function writeSkipLog(entry: SkipLogEntry, logPath: string): void {
  */
 function checkSkipRules(pr: ScrapedPR): string | null {
   // Bot author
-  if (/\[bot\]$/.test(pr.author)) return `Bot PR: ${pr.author}`;
+  if (pr.author.endsWith('[bot]')) return `Bot PR: ${pr.author}`;
   // Revert
   if (/^revert[\s(:]/i.test(pr.prTitle)) return 'Revert PR';
   // Chore/docs/ci/build conventional commit
   if (/^(chore|docs|ci|build)(\(.+\))?(!)?\s*:/i.test(pr.prTitle)) {
-    const type = pr.prTitle.match(/^(\w+)/)?.[1] ?? 'chore';
+    const type = /^(\w+)/.exec(pr.prTitle)?.[1] ?? 'chore';
     return `Conventional commit type: ${type}`;
   }
   // Lockfile-only
@@ -101,24 +101,15 @@ function checkSkipRules(pr: ScrapedPR): string | null {
  * ```
  */
 function checkDistillRules(pr: ScrapedPR): string | null {
-  const labels = pr.labels.map(l => l.toLowerCase());
-  // Bug + linked issue + multi-service
-  if (
-    labels.includes('type: bug') &&
-    pr.linkedIssues.length > 0 &&
-    touchesMultipleServices(pr.fileList)
-  ) {
-    return 'Bug with linked issue affecting multiple services';
-  }
-  // Feature + linked issue (substantive = has linked issue)
-  if (labels.includes('type: feature') && pr.linkedIssues.length > 0) {
-    return 'Feature with linked issue';
-  }
-  // shared-libs change touching ≥2 services
+  const labelsSet = new Set(pr.labels.map(l => l.toLowerCase()));
+  const hasBugWithIssue = labelsSet.has('type: bug') && pr.linkedIssues.length > 0;
+  const hasFeatureWithIssue = labelsSet.has('type: feature') && pr.linkedIssues.length > 0;
   const hasSharedLibs = pr.fileList.some(f => f.startsWith('shared-libs/'));
-  if (hasSharedLibs && touchesMultipleServices(pr.fileList)) {
-    return 'Shared library change affecting multiple consumers';
-  }
+  const multiService = touchesMultipleServices(pr.fileList);
+
+  if (hasBugWithIssue && multiService) return 'Bug with linked issue affecting multiple services';
+  if (hasFeatureWithIssue) return 'Feature with linked issue';
+  if (hasSharedLibs && multiService) return 'Shared library change affecting multiple consumers';
   return null;
 }
 
@@ -210,6 +201,33 @@ Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<
 }
 
 /**
+ * Calls the triage function with error handling, returning a flag-for-human result on failure.
+ *
+ * @param pr       - The PR to triage.
+ * @param triageFn - The triage function to invoke.
+ * @returns The triage FilterResult, or a flag-for-human result on error.
+ *
+ * @example
+ * ```typescript
+ * const result = await runLlmTriage(pr, llmTriage);
+ * // { decision: 'distill' | 'skip' | 'flag-for-human', reason: '...' }
+ * ```
+ */
+async function runLlmTriage(
+  pr: ScrapedPR,
+  triageFn: (pr: ScrapedPR) => Promise<FilterResult>
+): Promise<FilterResult> {
+  try {
+    return await triageFn(pr);
+  } catch (err) {
+    return {
+      decision: 'flag-for-human',
+      reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
  * Filter a scraped PR through deterministic rules, then LLM triage.
  * Writes to _skipped.ndjson for skip and flag-for-human decisions.
  *
@@ -256,16 +274,7 @@ export async function filterPR(
     return { decision: 'flag-for-human', reason: 'LLM triage skipped' };
   }
 
-  const triageFn = opts.triageFn ?? llmTriage;
-  let result: FilterResult;
-  try {
-    result = await triageFn(pr);
-  } catch (err) {
-    result = {
-      decision: 'flag-for-human',
-      reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  const result = await runLlmTriage(pr, opts.triageFn ?? llmTriage);
 
   if (result.decision !== 'distill') {
     const entry: SkipLogEntry = {
