@@ -46,6 +46,34 @@ No domain here.
 
 const NO_FRONTMATTER = `# Just markdown, no YAML\n\nSome content.`;
 
+// Frontmatter that uses camelCase `lastUpdated` — normalizeFrontmatter should alias it to `last_updated`
+const LASTUPDATE_CAMELCASE_FRONTMATTER = `---
+id: cht-core-43
+domain: contacts
+title: Fix duplicate detection with lastUpdated key
+lastUpdated: "2026-05-20"
+summary: "Tests normalizeFrontmatter lastUpdated aliasing"
+tags:
+  - contacts
+source_pr: medic/cht-core#43
+source_sha: def456
+distilled_at: "2026-05-20"
+reviewed_by: null
+reviewed_at: null
+confidence: medium
+entities:
+  - webapp/src/services/contacts.js
+concepts:
+  - idempotency
+related_issues: []
+stale: false
+---
+
+## Problem
+
+Duplicate contacts appear on slow networks.
+`;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -248,6 +276,17 @@ describe('openReviewPR — invalid draft handling', () => {
 
     const log = fs.readFileSync(logPath, 'utf8');
     expect(log).to.include('No frontmatter');
+  });
+
+  it('accepts draft with camelCase lastUpdated key (normalizeFrontmatter aliasing)', () => {
+    const pendingDir = setupPendingDir('contacts', { '43-camel.md': LASTUPDATE_CAMELCASE_FRONTMATTER });
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+
+    const results = openReviewPR({ pendingDir, logPath });
+
+    // normalizeFrontmatter should rename lastUpdated → last_updated, making schema valid
+    expect(results[0].status).to.equal('dry-run');
+    expect(results[0].filesPromoted).to.equal(1);
   });
 
   it('promotes valid drafts and skips invalid ones in the same domain', () => {

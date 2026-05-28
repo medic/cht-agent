@@ -409,6 +409,54 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
     expect(result.reason).to.include('rate limit');
   });
 
+  it('should handle non-Error thrown by LLM (covers err instanceof Error false branch)', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
+
+    const { distillPR } = loadDistiller(async () => { throw 'non-error failure'; });
+
+    const result: DistillResult = await distillPR(makePR(), {
+      outputDir: tmpOutputDir(),
+      logPath: tmpLogPath(),
+    });
+
+    expect(result.status).to.equal('flag-for-human');
+    expect(result.reason).to.include('non-error failure');
+  });
+
+  it('should build prompt without issue context when linkedIssues is empty (covers issueContext false branch)', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
+
+    const capturedPrompts: string[] = [];
+    const { distillPR } = loadDistiller(async (prompt: string) => {
+      capturedPrompts.push(prompt);
+      return makeDraft();
+    });
+
+    await distillPR(
+      makePR({ linkedIssues: [] }),
+      { outputDir: tmpOutputDir(), logPath: tmpLogPath() }
+    );
+
+    expect(capturedPrompts[0]).to.not.include('Linked issues:');
+  });
+
+  it('should build prompt with undefined prBody (covers prBody null-coalescing branch)', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
+
+    const capturedPrompts: string[] = [];
+    const { distillPR } = loadDistiller(async (prompt: string) => {
+      capturedPrompts.push(prompt);
+      return makeDraft();
+    });
+
+    await distillPR(
+      makePR({ prBody: undefined }),
+      { outputDir: tmpOutputDir(), logPath: tmpLogPath() }
+    );
+
+    expect(capturedPrompts[0]).to.include(`PR #42`);
+  });
+
   it('should include issue bodies in prompt context (covers issueContext branch)', async () => {
     process.env.OPENROUTER_API_KEY = 'test-or-key';
 
