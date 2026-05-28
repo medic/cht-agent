@@ -16,7 +16,8 @@
     "example:research": "node dist/examples/research-supervisor-example.js",
     "validate-ticket": "node dist/cli/validate-ticket.js",
     "validate-schema": "ts-node src/scripts/validate-schema.ts",
-    "open-review-pr": "ts-node src/scripts/open-review-pr.ts"
+    "open-review-pr": "ts-node src/scripts/open-review-pr.ts",
+    "run-pipeline": "ts-node src/scripts/run-pipeline.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",
