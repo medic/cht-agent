@@ -15,7 +15,6 @@ import {
   FileLanguage,
   FileType,
   GeneratedFile,
-  TestEnvironmentResult,
 } from '../../src/types';
 import { LLMProvider } from '../../src/llm';
 
@@ -42,14 +41,6 @@ const mkCodeGenResult = (files: GeneratedFile[] = []): CodeGenerationResult => (
   pendingRequirements: [],
   notes: [],
   confidence: 0.9,
-});
-
-const mkTestEnvResult = (files: GeneratedFile[] = []): TestEnvironmentResult => ({
-  configs: [],
-  testFiles: files,
-  testDataFiles: [],
-  setupInstructions: [],
-  estimatedCoverage: 80,
 });
 
 const mkMockLLM = (): LLMProvider => ({
@@ -127,33 +118,25 @@ describe('resolveValidateImplEdge (R17.4)', () => {
  */
 type SupervisorPrivateAccess = {
   codeGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
-  testEnvironmentNode: (state: unknown) => Promise<Record<string, unknown>>;
   validationNode: (state: unknown) => Promise<Record<string, unknown>>;
 };
 
 /**
- * Build a supervisor instance with the CodeGenerationAgent and
- * TestEnvironmentAgent classes substituted at the module level. Each agent's
- * primary method is a sinon stub the test can program per scenario.
+ * Build a supervisor instance with the CodeGenerationAgent class substituted at
+ * the module level. The agent's generate method is a sinon stub the test can
+ * program per scenario.
  */
 const buildSupervisorWithStubAgents = (
   generateImpl: sinon.SinonStub,
-  setupImpl: sinon.SinonStub,
-  options: { skipTestEnvironment?: boolean } = {},
 ) => {
   class FakeCodeGenAgent {
     generate = generateImpl;
   }
-  class FakeTestEnvAgent {
-    setup = setupImpl;
-  }
   const mod = proxyquire('../../src/supervisors/development-supervisor', {
     '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
-    '../agents/test-environment-agent': { TestEnvironmentAgent: FakeTestEnvAgent },
   });
   const supervisor = new mod.DevelopmentSupervisor({
     llmProvider: mkMockLLM(),
-    skipTestEnvironment: options.skipTestEnvironment ?? false,
   });
   return supervisor as unknown as SupervisorPrivateAccess & {
     writeToStaging: (state: DevelopmentState) => Promise<{ stagingPath: string; writtenFiles: string[] }>;
@@ -216,8 +199,7 @@ const baseValidInputFragment = {
 describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
   it('returns an error currentPhase when required state is missing', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     const out = await supervisor.codeGenerationNode({ /* nothing */ });
 
@@ -229,21 +211,19 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
   it('delegates to CodeGenerationAgent.generate and exposes the result', async () => {
     const result = mkCodeGenResult([mkFile('src/a.ts')]);
     const generate = sinon.stub().resolves(result);
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     const out = await supervisor.codeGenerationNode(mkDevState(baseValidInputFragment));
 
     expect(generate.calledOnce).to.equal(true);
     expect(out.codeGeneration).to.equal(result);
-    expect(out.currentPhase).to.equal('test-setup');
+    expect(out.currentPhase).to.equal('validation');
     expect(out.iterationCount).to.equal(1);
   });
 
   it('captures errors from the agent and returns a code-generation error phase', async () => {
     const generate = sinon.stub().rejects(new Error('LLM down'));
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     const out = await supervisor.codeGenerationNode(mkDevState(baseValidInputFragment));
 
@@ -254,8 +234,7 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
 
   it('passes validationFeedback as additionalContext on a retry iteration', async () => {
     const generate = sinon.stub().resolves(mkCodeGenResult());
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     await supervisor.codeGenerationNode(mkDevState({
       ...baseValidInputFragment,
@@ -268,8 +247,7 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
 
   it('routes selective regeneration when perFileFeedback is present and iteration > 1', async () => {
     const generate = sinon.stub().resolves(mkCodeGenResult());
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
     const priorCodeGen = mkCodeGenResult([
       mkFile('keep.ts'),
       Object.assign(mkFile('bad.ts'), { action: 'modify' as const }),
@@ -292,68 +270,10 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
   });
 });
 
-describe('DevelopmentSupervisor testEnvironmentNode (v9b.1)', () => {
-  it('skips the agent entirely when skipTestEnvironment=true and transitions to validation', async () => {
-    const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup, { skipTestEnvironment: true });
-
-    const out = await supervisor.testEnvironmentNode(mkDevState({
-      ...baseValidInputFragment,
-      codeGeneration: mkCodeGenResult(),
-    }));
-
-    expect(setup.called).to.equal(false);
-    expect(out.currentPhase).to.equal('validation');
-  });
-
-  it('returns an error when required state is missing', async () => {
-    const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
-
-    const out = await supervisor.testEnvironmentNode({ /* no codeGeneration */ });
-
-    expect(out.errors).to.be.an('array').that.includes('Missing required data for test environment setup');
-    expect(setup.called).to.equal(false);
-  });
-
-  it('delegates to TestEnvironmentAgent.setup and surfaces the result', async () => {
-    const result = mkTestEnvResult([mkFile('test/a.spec.ts', '', 'test')]);
-    const generate = sinon.stub();
-    const setup = sinon.stub().resolves(result);
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
-
-    const out = await supervisor.testEnvironmentNode(mkDevState({
-      ...baseValidInputFragment,
-      codeGeneration: mkCodeGenResult(),
-    }));
-
-    expect(setup.calledOnce).to.equal(true);
-    expect(out.testEnvironment).to.equal(result);
-    expect(out.currentPhase).to.equal('validation');
-  });
-
-  it('captures agent errors and stays in the test-setup phase', async () => {
-    const generate = sinon.stub();
-    const setup = sinon.stub().rejects(new Error('boom'));
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
-
-    const out = await supervisor.testEnvironmentNode(mkDevState({
-      ...baseValidInputFragment,
-      codeGeneration: mkCodeGenResult(),
-    }));
-
-    expect(out.currentPhase).to.equal('test-setup');
-    expect((out.errors as string[])[0]).to.match(/Test environment setup failed: boom/);
-  });
-});
-
 describe('DevelopmentSupervisor validationNode (v9b.1)', () => {
   it('returns an error when required state is missing', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     const out = await supervisor.validationNode({ /* nothing */ });
 
@@ -362,8 +282,7 @@ describe('DevelopmentSupervisor validationNode (v9b.1)', () => {
 
   it('skips validation and returns a heuristic complete-phase when no files were generated', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     const out = await supervisor.validationNode(mkDevState({
       ...baseValidInputFragment,
@@ -386,19 +305,17 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     await fs.rm(scratch, { recursive: true, force: true });
   });
 
-  it('writeToStaging writes codeGeneration + testEnvironment files to a fresh temp dir', async () => {
+  it('writeToStaging writes codeGeneration files to a fresh temp dir', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
     const state = mkDevState({
       ...baseValidInputFragment,
       codeGeneration: mkCodeGenResult([mkFile('src/a.ts', 'src-a\n')]),
-      testEnvironment: mkTestEnvResult([mkFile('test/a.spec.ts', 'spec-a\n', 'test')]),
     });
 
     const result = await supervisor.writeToStaging(state);
     try {
-      expect(result.writtenFiles).to.have.length(2);
+      expect(result.writtenFiles).to.have.length(1);
       expect(result.stagingPath.startsWith(os.tmpdir())).to.equal(true);
       const aContent = await fs.readFile(path.join(result.stagingPath, 'src/a.ts'), 'utf-8');
       expect(aContent).to.equal('src-a\n');
@@ -407,26 +324,23 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     }
   });
 
-  it('writeToChtCore writes both code and test files into the given path', async () => {
+  it('writeToChtCore writes code files into the given path', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
     const state = mkDevState({
       ...baseValidInputFragment,
       codeGeneration: mkCodeGenResult([mkFile('src/a.ts', 'A\n')]),
-      testEnvironment: mkTestEnvResult([mkFile('test/a.spec.ts', 'S\n', 'test')]),
     });
 
     const written = await supervisor.writeToChtCore(state, scratch);
 
-    expect(written.sort()).to.deep.equal(['src/a.ts', 'test/a.spec.ts'].sort());
+    expect(written.sort()).to.deep.equal(['src/a.ts'].sort());
     expect(await fs.readFile(path.join(scratch, 'src/a.ts'), 'utf-8')).to.equal('A\n');
   });
 
   it('clearStaging removes the staging directory and tolerates missing dirs', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
 
     const stagePath = path.join(scratch, 'to-remove');
     await fs.mkdir(stagePath);
@@ -443,23 +357,20 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     expect(threw).to.equal(false);
   });
 
-  it('getAllGeneratedFiles concatenates codeGeneration + testEnvironment files', async () => {
+  it('getAllGeneratedFiles returns codeGeneration files', async () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
     const state = mkDevState({
       ...baseValidInputFragment,
       codeGeneration: mkCodeGenResult([mkFile('src/a.ts')]),
-      testEnvironment: mkTestEnvResult([mkFile('test/a.spec.ts', '', 'test')]),
     });
     const all = supervisor.getAllGeneratedFiles(state);
-    expect(all.map(f => f.relativePath).sort()).to.deep.equal(['src/a.ts', 'test/a.spec.ts'].sort());
+    expect(all.map(f => f.relativePath).sort()).to.deep.equal(['src/a.ts'].sort());
   });
 
-  it('getAllGeneratedFiles returns an empty array when state has neither codeGen nor testEnv', () => {
+  it('getAllGeneratedFiles returns an empty array when state has no codeGen', () => {
     const generate = sinon.stub();
-    const setup = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate, setup);
+    const supervisor = buildSupervisorWithStubAgents(generate);
     const all = supervisor.getAllGeneratedFiles(mkDevState());
     expect(all).to.deep.equal([]);
   });
