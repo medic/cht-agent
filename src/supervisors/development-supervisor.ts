@@ -13,7 +13,7 @@
  * loops back to code generation with feedback (up to MAX_ITERATIONS).
  */
 
-import { StateGraph, START, Annotation } from '@langchain/langgraph';
+import { StateGraph, START, END, Annotation } from '@langchain/langgraph';
 import {
   IssueTemplate,
   DevelopmentState,
@@ -23,6 +23,7 @@ import {
   ResearchFindings,
   ContextAnalysisResult,
   CodeGenerationResult,
+  TestGenerationResult,
   ImplementationValidation,
   GeneratedFile,
   FileValidationFeedback,
@@ -170,6 +171,10 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
+  testGeneration: Annotation<TestGenerationResult | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
   currentPhase: Annotation<DevelopmentState['currentPhase']>({
     reducer: (_current, update) => update,
     default: () => 'init' as const,
@@ -221,11 +226,26 @@ export class DevelopmentSupervisor {
       // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
+      // Node name is 'generateTests' (not 'testGeneration'): LangGraph forbids a
+      // node name that collides with a state channel, and 'testGeneration' is the
+      // channel this node writes.
+      .addNode('generateTests', this.testGenerationNode.bind(this))
 
-      // Define edges with conditional routing from validation
+      // Define edges with conditional routing from validation. The resolver
+      // stays pure (returns 'generateCode' | END); the path map remaps its
+      // terminal branch through the (currently inert) test-generation node before
+      // END, while the refinement self-loop back to generateCode is unchanged.
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'validateImpl')
-      .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
+      .addConditionalEdges(
+        'validateImpl',
+        (state) => resolveValidateImplEdge(state),
+        {
+          generateCode: 'generateCode',
+          [END]: 'generateTests',
+        },
+      )
+      .addEdge('generateTests', END);
 
     return workflow.compile();
   }
@@ -392,7 +412,10 @@ export class DevelopmentSupervisor {
   ): Record<string, unknown> {
     const feedbackUpdate: Record<string, unknown> = {
       validationResult: validation,
-      currentPhase: 'complete' as const,
+      // Validation is done; the terminal testGeneration node owns 'complete'.
+      // The resolver routes on score/issues, not on currentPhase, so this is
+      // routing-inert. A refinement-loop iteration overwrites it on re-entry.
+      currentPhase: 'test-generation' as const,
       messages: [
         {
           role: 'assistant' as const,
@@ -409,6 +432,24 @@ export class DevelopmentSupervisor {
     }
 
     return feedbackUpdate;
+  }
+
+  /**
+   * Node: Test Generation (inert).
+   *
+   * Reachable after the validation terminal branch, outside the refinement loop.
+   * Iteration 5 leaves it inert: it returns an empty result and the terminal
+   * 'complete' phase. Iteration 6 makes it build input via buildTestGenModuleInput
+   * and call the test-gen registry. Test-gen output never feeds the validation
+   * score or the refinement loop.
+   */
+  private async testGenerationNode(
+    _state: typeof DevelopmentStateAnnotation.State,
+  ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
+    return {
+      testGeneration: { files: [], explanation: '', requirementsChecklist: [] },
+      currentPhase: 'complete' as const,
+    };
   }
 
   /**
@@ -725,6 +766,7 @@ Respond with a JSON object:
     this.todos.addMany([
       { content: 'Generate code', activeForm: 'Generating code' },
       { content: 'Validate implementation', activeForm: 'Validating implementation' },
+      { content: 'Generate tests', activeForm: 'Generating tests' },
     ]);
 
     const initialState: typeof DevelopmentStateAnnotation.State = {
@@ -741,6 +783,7 @@ Respond with a JSON object:
       contextAnalysis: input.contextAnalysis,
       options: input.options,
       codeGeneration: undefined,
+      testGeneration: undefined,
       validationResult: undefined,
       currentPhase: 'init',
       errors: [],

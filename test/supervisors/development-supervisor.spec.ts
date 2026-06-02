@@ -119,6 +119,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
 type SupervisorPrivateAccess = {
   codeGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
   validationNode: (state: unknown) => Promise<Record<string, unknown>>;
+  testGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
 };
 
 /**
@@ -139,6 +140,7 @@ const buildSupervisorWithStubAgents = (
     llmProvider: mkMockLLM(),
   });
   return supervisor as unknown as SupervisorPrivateAccess & {
+    develop: (input: unknown) => Promise<DevelopmentState>;
     writeToStaging: (state: DevelopmentState) => Promise<{ stagingPath: string; writtenFiles: string[] }>;
     writeToChtCore: (state: DevelopmentState, chtCorePath: string) => Promise<string[]>;
     clearStaging: (stagingPath: string) => Promise<void>;
@@ -373,5 +375,40 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     const supervisor = buildSupervisorWithStubAgents(generate);
     const all = supervisor.getAllGeneratedFiles(mkDevState());
     expect(all).to.deep.equal([]);
+  });
+});
+
+describe('DevelopmentSupervisor testGeneration node (iter5, inert)', () => {
+  it('returns an empty inert result and the complete phase', async () => {
+    const generate = sinon.stub();
+    const supervisor = buildSupervisorWithStubAgents(generate);
+
+    const out = await supervisor.testGenerationNode(mkDevState(baseValidInputFragment));
+
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal({
+      files: [],
+      explanation: '',
+      requirementsChecklist: [],
+    });
+  });
+
+  it('is reached once after the refinement loop exhausts, and the graph terminates', async () => {
+    // mkMockLLM.invokeForJSON returns {}, so every validation scores 0 and the
+    // resolver loops back to generateCode until iterations exhaust, then routes
+    // the terminal branch through testGeneration to END.
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile('src/a.ts')]));
+    const supervisor = buildSupervisorWithStubAgents(generate);
+
+    const finalState = await supervisor.develop(baseValidInputFragment);
+
+    expect(generate.callCount).to.equal(3); // refinement loop re-entered generateCode each iteration
+    expect(finalState.iterationCount).to.equal(3); // MAX_ITERATIONS — loop ran and exhausted
+    expect(finalState.currentPhase).to.equal('complete'); // testGeneration owns the terminal phase
+    expect(finalState.testGeneration).to.deep.equal({
+      files: [],
+      explanation: '',
+      requirementsChecklist: [],
+    });
   });
 });
