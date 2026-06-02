@@ -93,7 +93,6 @@ const runExample = async (): Promise<void> => {
 
     const developmentSupervisor = new DevelopmentSupervisor({
       codeGenRegistry: mockRegistry,
-      skipTestEnvironment: true, // Skip test-env in the demo; #63 will provide a registry path here.
     });
 
     // Display issue details

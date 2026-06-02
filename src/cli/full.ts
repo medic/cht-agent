@@ -105,7 +105,7 @@ const main = async (): Promise<void> => {
     console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);
 
     const researchSupervisor = new ResearchSupervisor({ modelName, useMockMCP: false });
-    const developmentSupervisor = new DevelopmentSupervisor({ skipTestEnvironment: true });
+    const developmentSupervisor = new DevelopmentSupervisor();
 
     displayIssueDetails(ticket);
     const developmentOptions = await askDevelopmentOptions(chtCorePath);

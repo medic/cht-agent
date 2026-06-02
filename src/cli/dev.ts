@@ -194,9 +194,7 @@ const main = async (): Promise<void> => {
     const orchestrationPlan = synthesizeOrchestrationPlan(ticket);
 
     // Create development supervisor
-    const developmentSupervisor = new DevelopmentSupervisor({
-      skipTestEnvironment: true,
-    });
+    const developmentSupervisor = new DevelopmentSupervisor();
 
     // Build development input
     const developmentInput: DevelopmentInput = {

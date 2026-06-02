@@ -24,14 +24,12 @@ import {
   ResearchFindings,
   ContextAnalysisResult,
   CodeGenerationResult,
-  TestEnvironmentResult,
   ImplementationValidation,
   GeneratedFile,
   FileValidationFeedback,
   FailingFileRef,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
-import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
@@ -136,7 +134,6 @@ function logRefinementLoop(score: number, issues: { issueType?: string }[], iter
 
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
-  skipTestEnvironment?: boolean;
   codeGenRegistry?: CodeGenModuleRegistry;
 }
 
@@ -167,10 +164,6 @@ const DevelopmentStateAnnotation = Annotation.Root({
     default: () => undefined,
   }),
   codeGeneration: Annotation<CodeGenerationResult | undefined>({
-    reducer: (_current, update) => update ?? _current,
-    default: () => undefined,
-  }),
-  testEnvironment: Annotation<TestEnvironmentResult | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -205,22 +198,15 @@ const DevelopmentStateAnnotation = Annotation.Root({
 export class DevelopmentSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly codeGenAgent: CodeGenerationAgent;
-  private readonly testEnvAgent: TestEnvironmentAgent;
   private readonly llm: LLMProvider;
-  private readonly skipTestEnvironment: boolean;
   private readonly todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
-    this.skipTestEnvironment = options.skipTestEnvironment ?? false;
 
     this.codeGenAgent = new CodeGenerationAgent({
       llmProvider: this.llm,
       codeGenRegistry: options.codeGenRegistry,
-    });
-
-    this.testEnvAgent = new TestEnvironmentAgent({
-      llmProvider: this.llm,
     });
 
     this.todos = createSupervisorTodoTracker('Development');
@@ -235,13 +221,11 @@ export class DevelopmentSupervisor {
     const workflow = new StateGraph(DevelopmentStateAnnotation)
       // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
-      .addNode('setupTests', this.testEnvironmentNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
 
       // Define edges with conditional routing from validation
       .addEdge(START, 'generateCode')
-      .addEdge('generateCode', 'setupTests')
-      .addEdge('setupTests', 'validateImpl')
+      .addEdge('generateCode', 'validateImpl')
       .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
 
     return workflow.compile();
@@ -288,7 +272,7 @@ export class DevelopmentSupervisor {
 
       return {
         codeGeneration: result,
-        currentPhase: 'test-setup' as const,
+        currentPhase: 'validation' as const,
         iterationCount: iteration,
         messages: [
           {
@@ -333,59 +317,6 @@ export class DevelopmentSupervisor {
     });
     console.log(`[Development Supervisor] Selective regeneration: keeping ${passingFiles.length} passing file(s), regenerating ${failingFiles.length} failing file(s)`);
     return { passingFiles, failingFiles };
-  }
-
-  /**
-   * Node: Test Environment Setup
-   */
-  private async testEnvironmentNode(state: typeof DevelopmentStateAnnotation.State) {
-    if (this.skipTestEnvironment) {
-      console.log('\n=== TEST ENVIRONMENT NODE (SKIPPED) ===');
-      return { currentPhase: 'validation' as const };
-    }
-
-    console.log('\n=== TEST ENVIRONMENT NODE ===');
-
-    const todoId = 'development-2';
-    this.todos.start(todoId);
-
-    if (!state.issue || !state.orchestrationPlan || !state.codeGeneration || !state.options) {
-      this.todos.fail(todoId, 'Missing required data');
-      return {
-        errors: ['Missing required data for test environment setup'],
-        currentPhase: 'test-setup' as const,
-      };
-    }
-
-    try {
-      const result = await this.testEnvAgent.setup({
-        issue: state.issue,
-        orchestrationPlan: state.orchestrationPlan,
-        codeGeneration: state.codeGeneration,
-        chtCorePath: state.options.chtCorePath,
-      });
-
-      this.todos.complete(todoId);
-
-      return {
-        testEnvironment: result,
-        currentPhase: 'validation' as const,
-        messages: [
-          {
-            role: 'assistant' as const,
-            content: `Test environment setup completed. Generated ${result.testFiles.length} test files with estimated ${result.estimatedCoverage}% coverage.`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.todos.fail(todoId, errorMessage);
-      return {
-        errors: [`Test environment setup failed: ${errorMessage}`],
-        currentPhase: 'test-setup' as const,
-      };
-    }
   }
 
   /**
