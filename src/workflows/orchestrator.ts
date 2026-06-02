@@ -4,7 +4,7 @@
  * Coordinates the full CHT development workflow:
  * 1. Research Phase - Documentation search, context analysis, orchestration plan
  * 2. Human Validation Checkpoint #1 - Approve research or provide feedback
- * 3. Development Phase - Code generation, test environment setup
+ * 3. Development Phase - Code generation and validation
  * 4. Human Validation Checkpoint #2 (preview mode) - Approve changes before writing
  *
  * This orchestrator chains independent workflows together.

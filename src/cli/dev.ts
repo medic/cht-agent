@@ -17,7 +17,7 @@
  *                                 or 'claude-api' (uses Anthropic API directly; requires ANTHROPIC_API_KEY).
  *                                 'claude-cli' is an alias for 'claude-code-cli'.
  *   LLM_PROVIDER      - Optional: 'anthropic' (default) or 'claude-cli'. Affects research,
- *                                 validation, test-env, and domain inference only. Does NOT
+ *                                 validation and domain inference only. Does NOT
  *                                 affect code-gen module selection (use CODE_GEN_MODULE for that).
  *
  * Examples:

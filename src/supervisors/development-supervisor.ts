@@ -3,8 +3,7 @@
  *
  * Orchestrates the development phase:
  * 1. Code Generation Agent - generates implementation code
- * 2. Test Environment Agent - sets up tests and fixtures
- * 3. Validation - validates implementation against requirements
+ * 2. Validation - validates implementation against requirements
  *
  * Supports two modes:
  * - Preview Mode: Writes to staging area, generates diffs, allows review
