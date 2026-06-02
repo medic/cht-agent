@@ -1,12 +1,17 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   buildTestGenModuleInput,
+  TestGenerationAgent,
   TestGenerationInput,
 } from '../../src/agents/test-generation-agent';
 import { CodeGenerationResult, GeneratedFile } from '../../src/types';
+import { TestGenModuleRegistry } from '../../src/layers/test-gen/registry';
+import { TestGenModule, TestGenModuleOutput } from '../../src/layers/test-gen/interface';
+import { LLMProvider, LLMResponse, LLMMessage, InvokeOptions } from '../../src/llm';
 
 const mkFile = (relativePath: string): GeneratedFile => ({
   relativePath,
@@ -114,5 +119,108 @@ describe('buildTestGenModuleInput', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+const cannedOutput: TestGenModuleOutput = {
+  files: [
+    { path: 'tests/unit/a.spec.ts', content: '// spec\n', purpose: 'unit tests for a' },
+    { path: 'tests/fixtures/data.json', content: '{}\n' },
+  ],
+  explanation: 'generated 2 test files',
+  tokensUsed: 321,
+  modelUsed: 'fake-model',
+  requirementsChecklist: [
+    { requirement: 'r1', scenarios: [{ name: 'covers r1', type: 'happy-path', description: 'd' }] },
+  ],
+  warnings: ['heads up'],
+};
+
+describe('TestGenerationAgent', () => {
+  let registry: TestGenModuleRegistry;
+  let generateStub: sinon.SinonStub;
+  let agent: TestGenerationAgent;
+
+  const mockProvider: LLMProvider = {
+    providerType: 'anthropic',
+    modelName: 'test-model',
+    async invoke(): Promise<LLMResponse> {
+      return { content: '', model: 'test-model' };
+    },
+    async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
+      return { content: '', model: 'test-model' };
+    },
+    async invokeForJSON<T>(): Promise<T> {
+      return {} as T;
+    },
+  };
+
+  beforeEach(() => {
+    registry = new TestGenModuleRegistry();
+    generateStub = sinon.stub().resolves(cannedOutput);
+    const fakeModule: TestGenModule = {
+      name: 'claude-api',
+      version: '0.0.0-test',
+      generate: generateStub,
+    };
+    sinon.stub(registry, 'getActiveModule').returns(fakeModule);
+    agent = new TestGenerationAgent({ llmProvider: mockProvider, testGenRegistry: registry });
+  });
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('converts module files to types-local GeneratedFile (type=test, action=create)', async () => {
+    const result = await agent.generate(baseInput());
+
+    expect(result.files).to.have.length(2);
+    expect(result.files[0]).to.deep.equal({
+      relativePath: 'tests/unit/a.spec.ts',
+      content: '// spec\n',
+      language: 'typescript',
+      type: 'test',
+      description: 'unit tests for a',
+      action: 'create',
+    });
+  });
+
+  it('defaults description to "" and infers language from the path extension', async () => {
+    const result = await agent.generate(baseInput());
+
+    expect(result.files[1]).to.deep.equal({
+      relativePath: 'tests/fixtures/data.json',
+      content: '{}\n',
+      language: 'json',
+      type: 'test',
+      description: '',
+      action: 'create',
+    });
+  });
+
+  it('passes the requirementsChecklist through unchanged', async () => {
+    const result = await agent.generate(baseInput());
+    expect(result.requirementsChecklist).to.deep.equal(cannedOutput.requirementsChecklist);
+  });
+
+  it('maps explanation, warnings, tokensUsed and modelUsed from the module output', async () => {
+    const result = await agent.generate(baseInput());
+
+    expect(result.explanation).to.equal('generated 2 test files');
+    expect(result.warnings).to.deep.equal(['heads up']);
+    expect(result.tokensUsed).to.equal(321);
+    expect(result.modelUsed).to.equal('fake-model');
+  });
+
+  it('builds the module input via buildTestGenModuleInput', async () => {
+    const input = baseInput();
+    await agent.generate(input);
+
+    expect(generateStub.calledOnce).to.equal(true);
+    const moduleInput = generateStub.firstCall.args[0];
+    expect(moduleInput.ticket).to.equal(input.issue);
+    expect(moduleInput.generatedCode).to.equal(input.codeGeneration.files);
+    expect(moduleInput.testTypes).to.deep.equal(['unit']);
+    expect(moduleInput.targetDirectory).to.equal('/tmp/cht-core');
   });
 });
