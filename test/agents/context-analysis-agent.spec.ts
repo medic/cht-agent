@@ -127,10 +127,10 @@ describe('ContextAnalysisAgent', () => {
   });
 
   describe('calculateSuccessRate', () => {
-    it('should return 0.5 for empty contexts', () => {
+    it('should return null for empty contexts', () => {
       const rate = (agent as any).calculateSuccessRate([]);
 
-      expect(rate).to.equal(0.5);
+      expect(rate).to.be.null;
     });
 
     it('should return 1.0 when all contexts are completed', () => {
@@ -218,12 +218,11 @@ describe('ContextAnalysisAgent', () => {
       const issue = createTestIssue();
       const similarContexts = [createResolvedContext(), createResolvedContext()];
 
-      const recommendations = (agent as any).generateRecommendations(
+      const recommendations = (agent as any).generateRecommendations({
         issue,
         similarContexts,
-        [],
-        undefined
-      );
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('similar past implementation'))).to.be
         .true;
@@ -232,7 +231,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add test coverage recommendation for features', () => {
       const issue = createTestIssue({ type: 'feature' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('test coverage'))).to.be.true;
     });
@@ -240,7 +243,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add regression test recommendation for bugs', () => {
       const issue = createTestIssue({ type: 'bug' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('regression'))).to.be.true;
     });
@@ -248,7 +255,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add validation recommendation for high priority issues', () => {
       const issue = createTestIssue({ priority: 'high' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('integration tests'))).to.be.true;
     });
@@ -273,7 +284,7 @@ describe('ContextAnalysisAgent', () => {
 
       expect(result.similarContexts).to.deep.equal([]);
       expect(result.recommendations).to.include('Domain not specified - unable to analyze context');
-      expect(result.historicalSuccessRate).to.equal(0.5);
+      expect(result.historicalSuccessRate).to.be.null;
     });
 
     it('should return related domains when domain overview exists', async () => {

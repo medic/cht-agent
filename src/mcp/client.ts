@@ -2,13 +2,19 @@
  * MCP Client for CHT Documentation Server
  *
  * Provides access to CHT documentation via the Kapa.AI MCP server.
+ * Supports search_docs, ask_question, and get_sources tools.
  */
 
 import {
   MCPClientConfig,
   MCPSearchDocsParams,
+  MCPAskQuestionParams,
   MCPSearchDocsResponse,
+  MCPAskQuestionResponse,
+  MCPGetSourcesResponse,
   MCPParsedDocument,
+  MCPParsedAnswer,
+  MCPParsedSource,
 } from '../types';
 import { DEFAULT_MCP_SERVER_URL } from '../constants';
 
@@ -47,6 +53,29 @@ interface MCPRPCResponse {
     code: number;
     message: string;
   };
+}
+
+function matchAndCapture(re: RegExp, content: string): string | undefined {
+  const m = re.exec(content);
+  return m ? m[1].trim() : undefined;
+}
+
+function extractDocumentBody(section: string): string {
+  const contentStart = section.indexOf('##');
+  const contentEnd = section.lastIndexOf('Source:');
+  return contentStart !== -1 && contentEnd !== -1
+    ? section.substring(contentStart, contentEnd).trim()
+    : section;
+}
+
+function extractSources(content: string): MCPParsedAnswer['sources'] {
+  const sources: MCPParsedAnswer['sources'] = [];
+  const sectionMatch = /\*\*Sources:\*\*\n([\s\S]*?)(?=\n\*\*Thread ID|\n\*\*Question Answer ID|$)/.exec(content);
+  if (!sectionMatch) return sources;
+  for (const m of sectionMatch[1].matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    sources.push({ title: m[1], url: m[2] });
+  }
+  return sources;
 }
 
 /**
@@ -94,6 +123,25 @@ export class MCPClient {
     return { content: response };
   }
 
+  /**
+   * Ask a question about CHT documentation
+   */
+  async askQuestion(params: MCPAskQuestionParams): Promise<MCPAskQuestionResponse> {
+    const response = await this.callTool('ask_question', {
+      question: params.question,
+      threadId: params.threadId,
+    });
+
+    return { content: response };
+  }
+
+  /**
+   * Get available documentation sources
+   */
+  async getSources(): Promise<MCPGetSourcesResponse> {
+    const response = await this.callTool('get_sources', {});
+    return { content: response };
+  }
 
   /**
    * Parse search_docs response into structured documents
@@ -115,6 +163,40 @@ export class MCPClient {
     return documents;
   }
 
+  /**
+   * Parse ask_question response into structured answer
+   */
+  parseAskQuestionResponse(response: MCPAskQuestionResponse): MCPParsedAnswer {
+    const content = response.content;
+    return {
+      threadId: matchAndCapture(/\*\*Thread ID:\*\*\s*([^\n]+)/, content),
+      questionAnswerId: matchAndCapture(/\*\*Question Answer ID:\*\*\s*([^\n]+)/, content),
+      sources: extractSources(content),
+      answer: matchAndCapture(/^([\s\S]*?)(?=\*\*Sources:\*\*|$)/, content) ?? '',
+    };
+  }
+
+  /**
+   * Parse get_sources response into structured sources
+   */
+  parseGetSourcesResponse(response: MCPGetSourcesResponse): MCPParsedSource[] {
+    const sources: MCPParsedSource[] = [];
+    const content = response.content;
+
+    // Parse lines like "- source_type: description"
+    const lines = content.split('\n');
+    for (const line of lines) {
+      const match = /^-\s*([^:]+):\s*(.+)$/.exec(line);
+      if (match) {
+        sources.push({
+          type: match[1].trim(),
+          description: match[2].trim(),
+        });
+      }
+    }
+
+    return sources;
+  }
 
   /**
    * Make a tool call to the MCP server
@@ -174,29 +256,12 @@ export class MCPClient {
    * Parse a single document section from search results
    */
   private parseDocumentSection(section: string): MCPParsedDocument | null {
-    const extract = (regex: RegExp, index = 1) => {
-      const match = regex.exec(section);
-      return match ? match[index].trim() : '';
-    };
-
-    const title = extract(/\*\*([^|*]+)\|([^*]+)\*\*/);
-    const sectionPath = extract(/^#\s*([^\n]+)/m);
-    const sourceUrl = extract(/Source:\s*(https?:\/\/[^\s]+)/);
-
+    const sourceUrl = matchAndCapture(/Source:\s*(https?:\/\/[^\s]+)/, section);
     if (!sourceUrl) return null;
-
-    const contentStart = section.indexOf('##');
-    const contentEnd = section.lastIndexOf('Source:');
-
-    let content = section;
-    if (contentStart !== -1 && contentEnd !== -1) {
-      content = section.substring(contentStart, contentEnd).trim();
-    }
-
     return {
-      title,
-      section: sectionPath,
-      content,
+      title: matchAndCapture(/\*\*([^|*]+)\|([^*]+)\*\*/, section) ?? '',
+      section: matchAndCapture(/^#\s*([^\n]+)/m, section) ?? '',
+      content: extractDocumentBody(section),
       sourceUrl,
     };
   }

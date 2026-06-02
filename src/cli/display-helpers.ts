@@ -1,6 +1,82 @@
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
-import { IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
+import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
+
+/**
+ * H.4 (v6): per-issueType headings for the HC2 unresolved-issues banner.
+ * Issues without a recognized `issueType` fall under {@link FALLBACK_HEADING}
+ * (the static validators don't emit issueType, so their entries land there).
+ */
+const ISSUE_TYPE_HEADINGS: Record<string, string> = {
+  'compile-error': 'TypeScript errors remain',
+  'partial-completion': 'Generation ended before completing the plan',
+  'plan-adherence-missing': 'Planned files were not modified',
+  'plan-adherence-extra': 'Unplanned files were modified',
+  'plan-discovered-missing': 'LLM flagged files it thinks are required but not in the approved plan',
+  'execute-no-op': 'CLI explored but produced no edits (abstained even after relaxed retry)',
+};
+
+const FALLBACK_HEADING = 'Other unresolved issues';
+const MAX_ENTRIES_PER_GROUP = 10;
+
+/**
+ * Render the HC2 unresolved-issues banner. Groups issues by issueType so each
+ * failure mode gets its own labeled section; up to 10 entries per group, with
+ * a "+ N more" footer for overflow. Returns an empty string when there are
+ * no issues so callers can unconditionally render the result.
+ */
+export const renderCrossFileIssueBanner = (issues: CrossFileIssue[] | undefined): string => {
+  if (!issues || issues.length === 0) return '';
+  const groups = groupIssuesByType(issues);
+  const lines: string[] = ['', '⚠️  UNRESOLVED ISSUES REMAIN AFTER REFINEMENT', '─'.repeat(70)];
+  for (const [type, items] of groups) appendIssueGroup(lines, type, items);
+  lines.push(
+    'You may still accept the diff (manual fix required), refine further, or abandon.',
+    '─'.repeat(70),
+  );
+  return lines.join('\n');
+};
+
+function groupIssuesByType(issues: CrossFileIssue[]): Map<string, CrossFileIssue[]> {
+  const groups = new Map<string, CrossFileIssue[]>();
+  for (const issue of issues) {
+    const key = issue.issueType ?? 'other';
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(issue);
+    else groups.set(key, [issue]);
+  }
+  return groups;
+}
+
+function appendIssueGroup(lines: string[], type: string, items: CrossFileIssue[]): void {
+  const heading = ISSUE_TYPE_HEADINGS[type] ?? FALLBACK_HEADING;
+  lines.push(`${heading} (${items.length}):`);
+  for (const item of items.slice(0, MAX_ENTRIES_PER_GROUP)) {
+    const detail = item.description ?? item.reason ?? '(no detail)';
+    lines.push(`  - ${item.filePath}: ${detail}`);
+  }
+  if (items.length > MAX_ENTRIES_PER_GROUP) {
+    lines.push(`  ... and ${items.length - MAX_ENTRIES_PER_GROUP} more`);
+  }
+  lines.push('');
+}
+
+/**
+ * Render a separate banner when the compile gate did not run (e.g., tsc
+ * unavailable in cht-core's node_modules). The user sees the remediation
+ * command alongside the diff so they know what to do.
+ */
+export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: string): string => {
+  return [
+    '',
+    '⚠️  COMPILE GATE NOT RUN',
+    '─'.repeat(70),
+    `Reason: ${skipReason}`,
+    `Remediation: cd ${chtCorePath} && npm install`,
+    'You may still accept the diff (compile not verified), refine, or abandon.',
+    '─'.repeat(70),
+  ].join('\n');
+};
 
 export const validateEnvironment = () => {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -42,7 +118,7 @@ export const displayResearchFindings = (result: ResearchState) => {
     console.log(`\n${i + 1}. ${ref.title}`);
     console.log(`   URL: ${ref.url}`);
     console.log(`   Topics: ${ref.topics.join(', ')}`);
-    if (ref.relevantSections && ref.relevantSections.length > 0) {
+    if (ref.relevantSections?.length) {
       console.log(`   Sections: ${ref.relevantSections.join(', ')}`);
     }
   });
@@ -65,9 +141,11 @@ export const displayContextAnalysis = (result: ResearchState) => {
   console.log(`Similar Past Issues: ${result.contextAnalysis.similarContexts.length}`);
   console.log(`Reusable Patterns: ${result.contextAnalysis.reusablePatterns.length}`);
   console.log(`Design Decisions: ${result.contextAnalysis.relevantDesignDecisions.length}`);
-  console.log(
-    `Historical Success Rate: ${(result.contextAnalysis.historicalSuccessRate * 100).toFixed(0)}%`
-  );
+  const successRate = result.contextAnalysis.historicalSuccessRate;
+  const successRateLabel = successRate === null
+    ? 'N/A (no historical data)'
+    : `${(successRate * 100).toFixed(0)}%`;
+  console.log(`Historical Success Rate: ${successRateLabel}`);
 
   if (result.contextAnalysis.recommendations.length > 0) {
     console.log('\nRecommendations:');
@@ -115,8 +193,8 @@ export const displayOrchestrationPlan = (result: ResearchState) => {
     `Estimated Complexity: ${result.orchestrationPlan.estimatedComplexity.toUpperCase()}`
   );
   console.log(`Estimated Effort: ${result.orchestrationPlan.estimatedEffort}`);
-  console.log('\nProposed Approach:');
-  console.log(`   ${result.orchestrationPlan.proposedApproach}`);
+  console.log('\nRecommended Approach:');
+  console.log(`   ${result.orchestrationPlan.recommendedApproach}`);
 
   console.log('\nKey Findings:');
   result.orchestrationPlan.keyFindings.forEach((finding, i) => {

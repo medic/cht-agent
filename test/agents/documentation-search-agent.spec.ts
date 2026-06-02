@@ -43,7 +43,7 @@ describe('DocumentationSearchAgent', () => {
 
       expect(result.documentationReferences).to.be.an('array');
       expect(result.documentationReferences.length).to.be.greaterThan(0);
-      expect(result.source).to.equal('cached');
+      expect(result.source).to.equal('mock');
       expect(result.confidence).to.be.greaterThan(0);
     });
 
@@ -179,7 +179,7 @@ describe('DocumentationSearchAgent', () => {
         technical_context: { domain: 'contacts', components: [] },
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       expect(query).to.include('contacts');
     });
@@ -192,7 +192,7 @@ describe('DocumentationSearchAgent', () => {
         },
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       expect(query).to.include('api/contacts-controller');
     });
@@ -202,7 +202,7 @@ describe('DocumentationSearchAgent', () => {
         title: 'Add contact search feature',
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       expect(query).to.include('Add contact search feature');
     });
@@ -213,7 +213,7 @@ describe('DocumentationSearchAgent', () => {
         description: longDescription,
       });
 
-      const query = (agent as any).buildSearchQuery(issue);
+      const query = agent.buildSearchQuery(issue);
 
       // Query should be shorter than full description
       expect(query.length).to.be.lessThan(700);
@@ -232,37 +232,28 @@ describe('DocumentationSearchAgent', () => {
       ];
       const issue = createTestIssue();
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
       expect(approaches.some((a: string) => a.includes('Contact Types'))).to.be.true;
       expect(approaches.some((a: string) => a.includes('Hierarchies'))).to.be.true;
     });
 
-    it('should add best practices recommendation for features', () => {
+    it('should return empty approaches for features with no answer and no references', () => {
       const references: any[] = [];
       const issue = createTestIssue({ type: 'feature' });
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
-      expect(approaches.some((a: string) => a.includes('best practices'))).to.be.true;
+      expect(approaches).to.deep.equal([]);
     });
 
-    it('should add debugging recommendation for bugs', () => {
+    it('should return empty approaches for bugs with no answer and no references', () => {
       const references: any[] = [];
       const issue = createTestIssue({ type: 'bug' });
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
-      expect(approaches.some((a: string) => a.includes('Debug'))).to.be.true;
-    });
-
-    it('should add refinement recommendation for improvements', () => {
-      const references: any[] = [];
-      const issue = createTestIssue({ type: 'improvement' });
-
-      const approaches = (agent as any).generateApproaches(references, issue);
-
-      expect(approaches.some((a: string) => a.includes('Refine'))).to.be.true;
+      expect(approaches).to.deep.equal([]);
     });
 
     it('should limit approaches to 5', () => {
@@ -276,9 +267,19 @@ describe('DocumentationSearchAgent', () => {
       ];
       const issue = createTestIssue();
 
-      const approaches = (agent as any).generateApproaches(references, issue);
+      const approaches = agent.generateApproaches(references, issue, '');
 
       expect(approaches.length).to.be.at.most(5);
+    });
+
+    it('should extract recommendations from answer text', () => {
+      const references: any[] = [];
+      const issue = createTestIssue();
+      const answer = '- Use the contact API to fetch and update person documents\n- Follow the hierarchy pattern when creating new places';
+
+      const approaches = agent.generateApproaches(references, issue, answer);
+
+      expect(approaches.some((a: string) => a.includes('contact API'))).to.be.true;
     });
   });
 
@@ -286,7 +287,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify contacts domain from topics', () => {
       const topics = ['contact', 'person'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('contacts');
     });
@@ -294,7 +295,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify forms-and-reports domain from topics', () => {
       const topics = ['form', 'enketo'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('forms-and-reports');
     });
@@ -302,7 +303,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify tasks-and-targets domain from topics', () => {
       const topics = ['task', 'target', 'rules'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('tasks-and-targets');
     });
@@ -310,7 +311,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify authentication domain from topics', () => {
       const topics = ['auth', 'permission', 'role'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('authentication');
     });
@@ -318,7 +319,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify messaging domain from topics', () => {
       const topics = ['sms', 'notification'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('messaging');
     });
@@ -326,7 +327,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify data-sync domain from topics', () => {
       const topics = ['sync', 'replication', 'offline'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('data-sync');
     });
@@ -334,7 +335,7 @@ describe('DocumentationSearchAgent', () => {
     it('should identify configuration domain from topics', () => {
       const topics = ['config', 'settings'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('configuration');
     });
@@ -342,7 +343,7 @@ describe('DocumentationSearchAgent', () => {
     it('should return empty array when no topics match', () => {
       const topics = ['random', 'unrelated'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.deep.equal([]);
     });
@@ -350,45 +351,10 @@ describe('DocumentationSearchAgent', () => {
     it('should identify multiple domains from mixed topics', () => {
       const topics = ['contact', 'hierarchy', 'form', 'submission'];
 
-      const domains = (agent as any).identifyRelatedDomains(topics);
+      const domains = agent.identifyRelatedDomains(topics);
 
       expect(domains).to.include('contacts');
       expect(domains).to.include('forms-and-reports');
-    });
-  });
-
-  describe('buildFindings', () => {
-    it('should return empty references and low confidence for empty doc list', () => {
-      const issue = createTestIssue();
-
-      const findings = (agent as any).buildFindings([], issue);
-
-      expect(findings.documentationReferences).to.deep.equal([]);
-      expect(findings.confidence).to.equal(0.3);
-    });
-
-    it('should use "cached" source when using mock MCP', () => {
-      const docs = [
-        { title: 'T1', section: 'S1', content: 'contact hierarchy', sourceUrl: 'https://1.com' },
-      ];
-      const issue = createTestIssue();
-
-      const findings = (agent as any).buildFindings(docs, issue);
-
-      expect(findings.source).to.equal('cached');
-    });
-
-    it('should build references from parsed documents', () => {
-      const docs = [
-        { title: 'T1', section: 'S1', content: 'form validation', sourceUrl: 'https://1.com' },
-        { title: 'T2', section: 'S2', content: 'task target',     sourceUrl: 'https://2.com' },
-      ];
-      const issue = createTestIssue();
-
-      const findings = (agent as any).buildFindings(docs, issue);
-
-      expect(findings.documentationReferences).to.have.lengthOf(2);
-      expect(findings.confidence).to.equal(0.85);
     });
   });
 
@@ -398,10 +364,10 @@ describe('DocumentationSearchAgent', () => {
       const stubClient = sinon.createStubInstance(MCPClient);
       stubClient.searchDocs.resolves({ content: '' });
       stubClient.parseSearchDocsResponse.returns([]);
+      stubClient.askQuestion.resolves({ content: '' });
+      stubClient.parseAskQuestionResponse.returns({ answer: '', sources: [] });
 
-      const agentWithRealMCP = new DocumentationSearchAgent({ useMockMCP: false });
-      // Overwrite the internal client with our stub
-      (agentWithRealMCP as any).mcpClient = stubClient;
+      const agentWithRealMCP = new DocumentationSearchAgent({ mcpClient: stubClient as any });
 
       const issue = createTestIssue();
       const result = await agentWithRealMCP.search(issue);
@@ -415,15 +381,14 @@ describe('DocumentationSearchAgent', () => {
       const stubClient = sinon.createStubInstance(MCPClient);
       stubClient.searchDocs.rejects(new Error('Network error'));
 
-      const agentWithRealMCP = new DocumentationSearchAgent({ useMockMCP: false });
-      (agentWithRealMCP as any).mcpClient = stubClient;
+      const agentWithRealMCP = new DocumentationSearchAgent({ mcpClient: stubClient as any });
 
       const issue = createTestIssue();
       const result = await agentWithRealMCP.search(issue);
 
       expect(result.documentationReferences).to.deep.equal([]);
       expect(result.confidence).to.equal(0);
-      expect(result.source).to.equal('kapa-ai');
+      expect(result.source).to.equal('error');
     });
   });
 });
