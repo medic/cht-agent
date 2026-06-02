@@ -3,8 +3,7 @@
  *
  * Orchestrates the development phase:
  * 1. Code Generation Agent - generates implementation code
- * 2. Test Environment Agent - sets up tests and fixtures
- * 3. Validation - validates implementation against requirements
+ * 2. Validation - validates implementation against requirements
  *
  * Supports two modes:
  * - Preview Mode: Writes to staging area, generates diffs, allows review
@@ -24,14 +23,12 @@ import {
   ResearchFindings,
   ContextAnalysisResult,
   CodeGenerationResult,
-  TestEnvironmentResult,
   ImplementationValidation,
   GeneratedFile,
   FileValidationFeedback,
   FailingFileRef,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
-import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
@@ -136,7 +133,6 @@ function logRefinementLoop(score: number, issues: { issueType?: string }[], iter
 
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
-  skipTestEnvironment?: boolean;
   codeGenRegistry?: CodeGenModuleRegistry;
 }
 
@@ -167,10 +163,6 @@ const DevelopmentStateAnnotation = Annotation.Root({
     default: () => undefined,
   }),
   codeGeneration: Annotation<CodeGenerationResult | undefined>({
-    reducer: (_current, update) => update ?? _current,
-    default: () => undefined,
-  }),
-  testEnvironment: Annotation<TestEnvironmentResult | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -205,22 +197,15 @@ const DevelopmentStateAnnotation = Annotation.Root({
 export class DevelopmentSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly codeGenAgent: CodeGenerationAgent;
-  private readonly testEnvAgent: TestEnvironmentAgent;
   private readonly llm: LLMProvider;
-  private readonly skipTestEnvironment: boolean;
   private readonly todos: TodoTracker;
 
   constructor(options: DevelopmentSupervisorOptions = {}) {
     this.llm = options.llmProvider || createLLMProviderFromEnv();
-    this.skipTestEnvironment = options.skipTestEnvironment ?? false;
 
     this.codeGenAgent = new CodeGenerationAgent({
       llmProvider: this.llm,
       codeGenRegistry: options.codeGenRegistry,
-    });
-
-    this.testEnvAgent = new TestEnvironmentAgent({
-      llmProvider: this.llm,
     });
 
     this.todos = createSupervisorTodoTracker('Development');
@@ -235,13 +220,11 @@ export class DevelopmentSupervisor {
     const workflow = new StateGraph(DevelopmentStateAnnotation)
       // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
-      .addNode('setupTests', this.testEnvironmentNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
 
       // Define edges with conditional routing from validation
       .addEdge(START, 'generateCode')
-      .addEdge('generateCode', 'setupTests')
-      .addEdge('setupTests', 'validateImpl')
+      .addEdge('generateCode', 'validateImpl')
       .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
 
     return workflow.compile();
@@ -288,7 +271,7 @@ export class DevelopmentSupervisor {
 
       return {
         codeGeneration: result,
-        currentPhase: 'test-setup' as const,
+        currentPhase: 'validation' as const,
         iterationCount: iteration,
         messages: [
           {
@@ -336,59 +319,6 @@ export class DevelopmentSupervisor {
   }
 
   /**
-   * Node: Test Environment Setup
-   */
-  private async testEnvironmentNode(state: typeof DevelopmentStateAnnotation.State) {
-    if (this.skipTestEnvironment) {
-      console.log('\n=== TEST ENVIRONMENT NODE (SKIPPED) ===');
-      return { currentPhase: 'validation' as const };
-    }
-
-    console.log('\n=== TEST ENVIRONMENT NODE ===');
-
-    const todoId = 'development-2';
-    this.todos.start(todoId);
-
-    if (!state.issue || !state.orchestrationPlan || !state.codeGeneration || !state.options) {
-      this.todos.fail(todoId, 'Missing required data');
-      return {
-        errors: ['Missing required data for test environment setup'],
-        currentPhase: 'test-setup' as const,
-      };
-    }
-
-    try {
-      const result = await this.testEnvAgent.setup({
-        issue: state.issue,
-        orchestrationPlan: state.orchestrationPlan,
-        codeGeneration: state.codeGeneration,
-        chtCorePath: state.options.chtCorePath,
-      });
-
-      this.todos.complete(todoId);
-
-      return {
-        testEnvironment: result,
-        currentPhase: 'validation' as const,
-        messages: [
-          {
-            role: 'assistant' as const,
-            content: `Test environment setup completed. Generated ${result.testFiles.length} test files with estimated ${result.estimatedCoverage}% coverage.`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.todos.fail(todoId, errorMessage);
-      return {
-        errors: [`Test environment setup failed: ${errorMessage}`],
-        currentPhase: 'test-setup' as const,
-      };
-    }
-  }
-
-  /**
    * Node: Validation
    */
   private async validationNode(state: typeof DevelopmentStateAnnotation.State) {
@@ -397,31 +327,30 @@ export class DevelopmentSupervisor {
       return { currentPhase: 'complete' as const };
     }
     console.log('\n=== VALIDATION NODE ===');
-    const todoId = 'development-3';
+    const todoId = 'development-2';
     this.todos.start(todoId);
 
     if (!state.issue || !state.codeGeneration) {
       this.todos.fail(todoId, 'Missing required data');
       return { errors: ['Missing required data for validation'], currentPhase: 'validation' as const };
     }
-    const { issue, codeGeneration, testEnvironment } = state;
+    const { issue, codeGeneration } = state;
     if (codeGeneration.files.length === 0) {
-      return this.skipValidationForEmptyFiles({ issue, codeGeneration, testEnvironment, todoId });
+      return this.skipValidationForEmptyFiles({ issue, codeGeneration, todoId });
     }
-    return await this.runValidationWithTodo({ issue, codeGeneration, testEnvironment, todoId });
+    return await this.runValidationWithTodo({ issue, codeGeneration, todoId });
   }
 
   private skipValidationForEmptyFiles(opts: {
     issue: IssueTemplate;
     codeGeneration: CodeGenerationResult;
-    testEnvironment?: TestEnvironmentResult;
     todoId: string;
   }): { validationResult: ImplementationValidation; currentPhase: 'complete' } {
     console.log('[Development Supervisor] Skipping validation — no files generated');
     this.todos.complete(opts.todoId);
     this.todos.printSummary();
     return {
-      validationResult: this.heuristicValidation(opts.issue, opts.codeGeneration, opts.testEnvironment),
+      validationResult: this.heuristicValidation(opts.issue, opts.codeGeneration),
       currentPhase: 'complete' as const,
     };
   }
@@ -429,14 +358,12 @@ export class DevelopmentSupervisor {
   private async runValidationWithTodo(opts: {
     issue: IssueTemplate;
     codeGeneration: CodeGenerationResult;
-    testEnvironment?: TestEnvironmentResult;
     todoId: string;
   }) {
     try {
       const validation = await this.validateImplementation(
         opts.issue,
-        opts.codeGeneration,
-        opts.testEnvironment
+        opts.codeGeneration
       );
       this.todos.complete(opts.todoId);
       this.todos.printSummary();
@@ -567,21 +494,12 @@ export class DevelopmentSupervisor {
   private async validateImplementation(
     issue: IssueTemplate,
     codeGen: CodeGenerationResult,
-    testEnv?: TestEnvironmentResult
   ): Promise<ImplementationValidation> {
     console.log('[Development Supervisor] Validating implementation...');
 
     // Build code section with actual file content (diff-based for MODIFY files)
     const codeSection = this.buildCodeSection(codeGen.files, 40000);
     const hasModifyFiles = codeGen.files.some(f => f.action === 'modify' && f.originalContent);
-
-    // Test coverage section — omit entirely when test generation was skipped
-    const testCoverageBody = testEnv
-      ? `Estimated coverage: ${testEnv.estimatedCoverage}%\nTest files: ${testEnv.testFiles.length}`
-      : 'No test information available';
-    const testSection = this.skipTestEnvironment
-      ? '' // Tests intentionally skipped — don't include in prompt at all
-      : `\n## Test Coverage\n${testCoverageBody}\n`;
 
     const prompt = `You are a code reviewer validating a CHT implementation. You MUST examine the actual code content below, not just infer quality from file names or descriptions.
 
@@ -599,7 +517,7 @@ ${hasModifyFiles ? 'MODIFY files are shown as unified diffs (changed lines with 
 
 ## Implementation Summary
 ${codeGen.summary}
-${testSection}
+
 ## Task
 Evaluate the implementation by examining the ACTUAL CODE above, not just file names.
 For each requirement and acceptance criterion, check if the code actually implements it.
@@ -615,7 +533,7 @@ Look for:
 ## Grounding Rules
 - Only evaluate code that is actually present in the "Actual Code Content" section above.
 - For MODIFY files shown as diffs: evaluate whether the diff correctly implements the requirement. The surrounding context lines (prefixed with space) show unchanged code for orientation. Lines prefixed with - are removed, + are added.
-- Do NOT comment on tests, files, or functionality that are not shown in the prompt.${this.skipTestEnvironment ? '\n- Test generation was intentionally skipped for this run. Do NOT penalize the score for missing tests or test coverage.' : ''}
+- Do NOT comment on tests, files, or functionality that are not shown in the prompt.
 - Every claim in your evaluation must be traceable to specific code content above.
 - Do NOT penalize for file truncation — if content appears complete up to a truncation marker, evaluate what is present.
 
@@ -645,7 +563,7 @@ Respond with a JSON object:
       return result;
     } catch {
       // Fallback validation based on heuristics
-      return this.heuristicValidation(issue, codeGen, testEnv);
+      return this.heuristicValidation(issue, codeGen);
     }
   }
 
@@ -741,7 +659,6 @@ Respond with a JSON object:
   private heuristicValidation(
     issue: IssueTemplate,
     codeGen: CodeGenerationResult,
-    testEnv?: TestEnvironmentResult
   ): ImplementationValidation {
     const requirementsMet = checkRequirements(issue, codeGen);
     const acceptanceCriteriaPassed = checkAcceptanceCriteria(issue, codeGen);
@@ -752,9 +669,8 @@ Respond with a JSON object:
       passedCount,
       totalRequirements: requirementsMet.length,
       totalCriteria: acceptanceCriteriaPassed.length,
-      testEnv,
     });
-    const recommendations = this.buildHeuristicRecommendations(metCount, requirementsMet.length, testEnv, overallScore);
+    const recommendations = this.buildHeuristicRecommendations(metCount, requirementsMet.length, overallScore);
     return { requirementsMet, acceptanceCriteriaPassed, overallScore, recommendations };
   }
 
@@ -763,30 +679,21 @@ Respond with a JSON object:
     passedCount: number;
     totalRequirements: number;
     totalCriteria: number;
-    testEnv?: TestEnvironmentResult;
   }): number {
-    const { metCount, passedCount, totalRequirements, totalCriteria, testEnv } = opts;
+    const { metCount, passedCount, totalRequirements, totalCriteria } = opts;
     const totalChecks = totalRequirements + totalCriteria;
     const passedChecks = metCount + passedCount;
-    let score = totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
-    if (!this.skipTestEnvironment && testEnv && testEnv.testFiles.length > 0) {
-      score = Math.min(score + 10, 100);
-    }
-    return score;
+    return totalChecks > 0 ? Math.round((passedChecks / totalChecks) * 100) : 50;
   }
 
   private buildHeuristicRecommendations(
     metCount: number,
     totalRequirements: number,
-    testEnv: TestEnvironmentResult | undefined,
     overallScore: number,
   ): string[] {
     const recommendations: string[] = [];
     if (metCount < totalRequirements) {
       recommendations.push('Some requirements may not be fully implemented - manual review needed');
-    }
-    if (!this.skipTestEnvironment && (!testEnv || testEnv.testFiles.length === 0)) {
-      recommendations.push('Consider adding more test coverage');
     }
     if (overallScore < 70) {
       recommendations.push('Implementation confidence is low - additional review recommended');
@@ -817,7 +724,6 @@ Respond with a JSON object:
     this.todos.clear();
     this.todos.addMany([
       { content: 'Generate code', activeForm: 'Generating code' },
-      { content: 'Setup test environment', activeForm: 'Setting up test environment' },
       { content: 'Validate implementation', activeForm: 'Validating implementation' },
     ]);
 
@@ -835,7 +741,6 @@ Respond with a JSON object:
       contextAnalysis: input.contextAnalysis,
       options: input.options,
       codeGeneration: undefined,
-      testEnvironment: undefined,
       validationResult: undefined,
       currentPhase: 'init',
       errors: [],
@@ -855,9 +760,6 @@ Respond with a JSON object:
 
     if (result.codeGeneration) {
       console.log(`Generated Files: ${result.codeGeneration.files.length}`);
-    }
-    if (result.testEnvironment) {
-      console.log(`Test Files: ${result.testEnvironment.testFiles.length}`);
     }
     if (result.validationResult) {
       console.log(`Validation Score: ${result.validationResult.overallScore}%`);
@@ -883,12 +785,6 @@ Respond with a JSON object:
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
     }
-    if (state.testEnvironment) {
-      allFiles.push(
-        ...state.testEnvironment.testFiles,
-        ...state.testEnvironment.testDataFiles,
-      );
-    }
 
     const writtenFiles = await writeToStaging(allFiles, stagingPath);
 
@@ -905,12 +801,6 @@ Respond with a JSON object:
 
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
-    }
-    if (state.testEnvironment) {
-      allFiles.push(
-        ...state.testEnvironment.testFiles,
-        ...state.testEnvironment.testDataFiles,
-      );
     }
 
     const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
@@ -936,12 +826,6 @@ Respond with a JSON object:
 
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
-    }
-    if (state.testEnvironment) {
-      allFiles.push(
-        ...state.testEnvironment.testFiles,
-        ...state.testEnvironment.testDataFiles,
-      );
     }
 
     return allFiles;

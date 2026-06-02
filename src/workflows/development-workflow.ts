@@ -41,7 +41,6 @@ const MAX_DEVELOPMENT_ITERATIONS = 3;
 export const displayDevelopmentResults = (state: DevelopmentState, duration: string): void => {
   displayDevelopmentHeader(state, duration);
   if (state.codeGeneration) displayCodeGenerationResults(state.codeGeneration);
-  if (state.testEnvironment) displayTestEnvironmentResults(state.testEnvironment);
   if (state.validationResult) displayValidationResults(state.validationResult);
 };
 
@@ -76,26 +75,6 @@ function displayCodeGenerationResults(codeGen: NonNullable<DevelopmentState['cod
       console.log(`      Type: ${file.type} | Language: ${file.language} | Action: ${file.action}`);
       if (file.description) console.log(`      ${file.description}`);
     });
-  }
-  console.log();
-}
-
-function displayTestEnvironmentResults(testEnv: NonNullable<DevelopmentState['testEnvironment']>): void {
-  console.log('🧪 TEST ENVIRONMENT RESULTS');
-  console.log('─'.repeat(70));
-  console.log(`Test Files: ${testEnv.testFiles.length}`);
-  console.log(`Fixture Files: ${testEnv.testDataFiles.length}`);
-  console.log(`Estimated Coverage: ${testEnv.estimatedCoverage}%`);
-  if (testEnv.configs.length > 0) {
-    console.log(`\nTest Configurations:`);
-    testEnv.configs.forEach((config, i) => {
-      console.log(`   ${i + 1}. ${config.type.toUpperCase()} (${config.framework})`);
-      console.log(`      Dependencies: ${config.dependencies.join(', ')}`);
-    });
-  }
-  if (testEnv.testFiles.length > 0) {
-    console.log(`\nTest Files:`);
-    testEnv.testFiles.forEach((file, i) => console.log(`   ${i + 1}. ${file.relativePath}`));
   }
   console.log();
 }
@@ -175,12 +154,6 @@ export const humanDevelopmentValidationCheckpoint = async (
 function collectAllGeneratedFiles(state: DevelopmentState): GeneratedFile[] {
   const allFiles: GeneratedFile[] = [];
   if (state.codeGeneration) allFiles.push(...state.codeGeneration.files);
-  if (state.testEnvironment) {
-    allFiles.push(
-      ...state.testEnvironment.testFiles,
-      ...state.testEnvironment.testDataFiles,
-    );
-  }
   return allFiles;
 }
 

@@ -551,39 +551,6 @@ export interface CodeGenerationResult {
 }
 
 /**
- * Test environment configuration
- */
-export interface TestEnvironmentConfig {
-  type: 'unit' | 'integration' | 'e2e';
-  framework: string;
-  setupCommands: string[];
-  teardownCommands: string[];
-  dependencies: string[];
-}
-
-/**
- * Test Environment Agent input
- */
-export interface TestEnvironmentInput {
-  issue: IssueTemplate;
-  orchestrationPlan: OrchestrationPlan;
-  codeGeneration: CodeGenerationResult;
-  chtCorePath: string;
-  additionalContext?: string;
-}
-
-/**
- * Test Environment Agent output
- */
-export interface TestEnvironmentResult {
-  configs: TestEnvironmentConfig[];
-  testFiles: GeneratedFile[];
-  testDataFiles: GeneratedFile[];
-  setupInstructions: string[];
-  estimatedCoverage: number; // 0-100
-}
-
-/**
  * Requirement validation status
  */
 export interface RequirementValidation {
@@ -628,7 +595,6 @@ export interface ImplementationValidation {
 export type DevelopmentPhase =
   | 'init'
   | 'code-generation'
-  | 'test-setup'
   | 'validation'
   | 'complete';
 
@@ -647,7 +613,6 @@ export interface DevelopmentState {
   contextAnalysis: ContextAnalysisResult;
   options: DevelopmentOptions;
   codeGeneration?: CodeGenerationResult;
-  testEnvironment?: TestEnvironmentResult;
   validationResult?: ImplementationValidation;
   currentPhase: DevelopmentPhase;
   errors: string[];

@@ -5,7 +5,7 @@
  * Command-line interface for running the complete workflow:
  * 1. Research Phase - Documentation search, context analysis, orchestration plan
  * 2. Human Validation Checkpoint #1 - Approve research or provide feedback
- * 3. Development Phase - Code generation, test environment setup
+ * 3. Development Phase - Code generation and validation
  * 4. Human Validation Checkpoint #2 (preview mode) - Approve changes before writing
  *
  * For research-only workflow, use:
@@ -22,7 +22,7 @@
  *                                 or 'claude-api' (uses Anthropic API directly; requires ANTHROPIC_API_KEY).
  *                                 'claude-cli' is an alias for 'claude-code-cli'.
  *   LLM_PROVIDER      - Optional: 'anthropic' (default) or 'claude-cli'. Affects research,
- *                                 validation, test-env, and domain inference only. Does NOT
+ *                                 validation and domain inference only. Does NOT
  *                                 affect code-gen module selection (use CODE_GEN_MODULE for that).
  *
  * Examples:
@@ -105,7 +105,7 @@ const main = async (): Promise<void> => {
     console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);
 
     const researchSupervisor = new ResearchSupervisor({ modelName, useMockMCP: false });
-    const developmentSupervisor = new DevelopmentSupervisor({ skipTestEnvironment: true });
+    const developmentSupervisor = new DevelopmentSupervisor();
 
     displayIssueDetails(ticket);
     const developmentOptions = await askDevelopmentOptions(chtCorePath);

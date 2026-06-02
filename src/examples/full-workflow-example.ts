@@ -4,7 +4,7 @@
  * Demonstrates the complete CHT development workflow:
  * 1. Research Phase - Documentation search, context analysis, orchestration plan
  * 2. Human Validation Checkpoint #1 - Approve research or provide feedback
- * 3. Development Phase - Code generation, test environment setup
+ * 3. Development Phase - Code generation and validation
  * 4. Human Validation Checkpoint #2 (preview mode) - Approve changes before writing
  *
  * For research-only workflow, use:
@@ -40,7 +40,7 @@ const runExample = async (): Promise<void> => {
   console.log('║       CHT Multi-Agent System - Full Workflow Demo              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
-  console.log('📌 Demo runs with zero LLM calls (mocked MCP + mock code-gen module + skipped test-env).\n');
+  console.log('📌 Demo runs with zero LLM calls (mocked MCP + mock code-gen module).\n');
 
   // Check for CHT_CORE_PATH
   const chtCorePath = process.env.CHT_CORE_PATH;
@@ -93,7 +93,6 @@ const runExample = async (): Promise<void> => {
 
     const developmentSupervisor = new DevelopmentSupervisor({
       codeGenRegistry: mockRegistry,
-      skipTestEnvironment: true, // Skip test-env in the demo; #63 will provide a registry path here.
     });
 
     // Display issue details
