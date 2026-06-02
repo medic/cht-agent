@@ -828,6 +828,9 @@ Respond with a JSON object:
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
     }
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
+    }
 
     const writtenFiles = await writeToStaging(allFiles, stagingPath);
 
@@ -844,6 +847,9 @@ Respond with a JSON object:
 
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
+    }
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
     }
 
     const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
@@ -869,6 +875,9 @@ Respond with a JSON object:
 
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
+    }
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
     }
 
     return allFiles;

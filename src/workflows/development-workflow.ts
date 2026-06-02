@@ -41,6 +41,7 @@ const MAX_DEVELOPMENT_ITERATIONS = 3;
 export const displayDevelopmentResults = (state: DevelopmentState, duration: string): void => {
   displayDevelopmentHeader(state, duration);
   if (state.codeGeneration) displayCodeGenerationResults(state.codeGeneration);
+  if (state.testGeneration) displayTestGenerationResults(state.testGeneration);
   if (state.validationResult) displayValidationResults(state.validationResult);
 };
 
@@ -76,6 +77,33 @@ function displayCodeGenerationResults(codeGen: NonNullable<DevelopmentState['cod
       if (file.description) console.log(`      ${file.description}`);
     });
   }
+  console.log();
+}
+
+function displayTestGenerationResults(testGen: NonNullable<DevelopmentState['testGeneration']>): void {
+  console.log('🧪 TEST GENERATION RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Generated Files: ${testGen.files.length}`);
+  if (testGen.explanation) {
+    console.log(`\nSummary:`);
+    console.log(`   ${testGen.explanation}`);
+  }
+  if (testGen.files.length > 0) {
+    console.log(`\nGenerated Files:`);
+    testGen.files.forEach((file, i) => {
+      console.log(`   ${i + 1}. ${file.relativePath}`);
+      console.log(`      Type: ${file.type} | Language: ${file.language} | Action: ${file.action}`);
+      if (file.description) console.log(`      ${file.description}`);
+    });
+  }
+  if (testGen.requirementsChecklist.length > 0) {
+    console.log(`\nRequirements Checklist:`);
+    testGen.requirementsChecklist.forEach((item, i) => {
+      const scenarios = item.scenarios.map(s => s.name).join(', ');
+      console.log(`   ${i + 1}. ${item.requirement}: ${scenarios}`);
+    });
+  }
+  printNumberedList('⚠️  Warnings:', testGen.warnings ?? []);
   console.log();
 }
 
@@ -154,6 +182,7 @@ export const humanDevelopmentValidationCheckpoint = async (
 function collectAllGeneratedFiles(state: DevelopmentState): GeneratedFile[] {
   const allFiles: GeneratedFile[] = [];
   if (state.codeGeneration) allFiles.push(...state.codeGeneration.files);
+  if (state.testGeneration) allFiles.push(...state.testGeneration.files);
   return allFiles;
 }
 
