@@ -149,12 +149,16 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     let totalTokens = planTokens + genResult.tokensUsed;
 
     let checklist: TestScenario[] = [];
-    try {
-      const checklistResult = await this.generateRequirementsChecklist(input, genResult.files);
-      checklist = checklistResult.checklist;
-      totalTokens += checklistResult.tokensUsed;
-    } catch (error) {
-      console.error('[Test Gen Module] Requirements checklist generation failed:', error);
+    if (genResult.files.length > 0) {
+      try {
+        const checklistResult = await this.generateRequirementsChecklist(input, genResult.files);
+        checklist = checklistResult.checklist;
+        totalTokens += checklistResult.tokensUsed;
+      } catch (error) {
+        console.error('[Test Gen Module] Requirements checklist generation failed:', error);
+      }
+    } else {
+      console.log('[Test Gen Module] Skipping requirements checklist (0 test files generated)');
     }
 
     const warnings = this.validateAgainstManifest(genResult.files, plan);

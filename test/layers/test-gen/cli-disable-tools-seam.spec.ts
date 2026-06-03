@@ -164,3 +164,43 @@ describe('test-gen CLI disableTools seam (iter7 A2/A4)', () => {
     expect(phase2.disableTools, 'Phase-2 must not disable tools on the API path').to.not.equal(true);
   });
 });
+
+describe('test-gen skips Phase-3 checklist when 0 files generated (iter7 C2/C3)', () => {
+  // The checklist invoke is the only call that uses temperature 0.2 (plan and
+  // per-file use 0.3), so its presence/absence is detectable without coupling to
+  // the retry count.
+  const CHECKLIST_TEMPERATURE = 0.2;
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('makes no checklist invoke when generation yields 0 files', async () => {
+    const invokeStub = sinon.stub();
+    invokeStub.onCall(0).resolves(PLAN_RESPONSE);
+    // Every per-file attempt returns prose that fails the content assertions
+    // (no import/describe/it), so all retries fail and 0 files are produced.
+    invokeStub.resolves(makeResponse('Unable to produce a test file for this source.'));
+    const provider: LLMProvider = {
+      providerType: 'anthropic',
+      modelName: 'test-model',
+      invoke: invokeStub,
+      async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
+        return { content: '', model: 'test-model' };
+      },
+      async invokeForJSON<T>(): Promise<T> {
+        return {} as T;
+      },
+    };
+
+    const module = new ClaudeApiTestGenModule(provider);
+    const out = await module.generate(makeToolBoundInput());
+
+    expect(out.files).to.have.length(0);
+    const checklistCalls = invokeStub
+      .getCalls()
+      .filter(c => (c.args[1] as InvokeOptions | undefined)?.temperature === CHECKLIST_TEMPERATURE);
+    expect(checklistCalls, 'no Phase-3 checklist invoke when 0 files').to.have.length(0);
+    expect(out.requirementsChecklist).to.deep.equal([]);
+  });
+});
