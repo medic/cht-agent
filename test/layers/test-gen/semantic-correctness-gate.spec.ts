@@ -155,6 +155,7 @@ describe('test-gen semantic-correctness gate (HARNESS 8.3)', () => {
     mockProvider = {
       providerType: 'anthropic',
       modelName: 'test-model',
+      honorsCustomTools: true,
       invoke: invokeStub,
       async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
         return { content: '', model: 'test-model' };

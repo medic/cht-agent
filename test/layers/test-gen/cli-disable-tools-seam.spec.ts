@@ -11,13 +11,13 @@ import { LLMProvider, LLMResponse, LLMMessage, InvokeOptions } from '../../../sr
  * The whole suite stubs at or above the provider boundary, so nothing else
  * exercises how the test-gen module's InvokeOptions behave per provider. This
  * drives ClaudeApiTestGenModule.generate() end to end with a fake LLMProvider
- * whose invoke records its InvokeOptions, gating on isUsingCLIProvider()
- * (process.env.LLM_PROVIDER === 'claude-cli').
+ * whose invoke records its InvokeOptions. The Phase-2 tool decision is gated on
+ * the provider's honorsCustomTools capability (iter8): false for the CLI.
  *
  * The input binds readFile/listDirectory, so buildTestGenTools returns a
- * non-undefined {tools, toolHandler}. Pre-fix the Phase-2 call would carry
- * those tools on every provider; post-fix it must carry disableTools instead
- * on the CLI path (the keystone fix). The API path must keep the tools (A8).
+ * non-undefined {tools, toolHandler}. On a provider that does not honor custom
+ * tools, the Phase-2 call must carry disableTools instead (the keystone fix);
+ * a provider that honors them must keep the tools (A8).
  */
 
 const makeResponse = (content: string, stopReason?: string): LLMResponse => ({
@@ -102,42 +102,38 @@ const makeToolBoundInput = (): TestGenModuleInput => {
   };
 };
 
-describe('test-gen CLI disableTools seam (iter7 A2/A4)', () => {
+const makeMockProvider = (
+  invoke: LLMProvider['invoke'],
+  honorsCustomTools: boolean,
+): LLMProvider => ({
+  providerType: 'anthropic',
+  modelName: 'test-model',
+  honorsCustomTools,
+  invoke,
+  async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
+    return { content: '', model: 'test-model' };
+  },
+  async invokeForJSON<T>(): Promise<T> {
+    return {} as T;
+  },
+});
+
+describe('test-gen tool-use gate keys on honorsCustomTools (iter8 A2/A4)', () => {
   let invokeStub: sinon.SinonStub;
-  let mockProvider: LLMProvider;
-  let savedProvider: string | undefined;
 
   beforeEach(() => {
-    savedProvider = process.env.LLM_PROVIDER;
     invokeStub = sinon.stub();
     invokeStub.onCall(0).resolves(PLAN_RESPONSE);
     invokeStub.onCall(1).resolves(PHASE2_RESPONSE);
     invokeStub.onCall(2).resolves(CHECKLIST_RESPONSE);
-    mockProvider = {
-      providerType: 'anthropic',
-      modelName: 'test-model',
-      invoke: invokeStub,
-      async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
-        return { content: '', model: 'test-model' };
-      },
-      async invokeForJSON<T>(): Promise<T> {
-        return {} as T;
-      },
-    };
   });
 
   afterEach(() => {
-    if (savedProvider === undefined) {
-      delete process.env.LLM_PROVIDER;
-    } else {
-      process.env.LLM_PROVIDER = savedProvider;
-    }
     sinon.restore();
   });
 
-  it('forces disableTools and no tools on every invoke on the CLI provider', async () => {
-    process.env.LLM_PROVIDER = 'claude-cli';
-    const module = new ClaudeApiTestGenModule(mockProvider);
+  it('forces disableTools and no tools on every invoke when the provider does not honor custom tools', async () => {
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, false));
     const out = await module.generate(makeToolBoundInput());
 
     // No retry / no continuation: plan, per-file, checklist.
@@ -152,16 +148,15 @@ describe('test-gen CLI disableTools seam (iter7 A2/A4)', () => {
     }
   });
 
-  it('keeps tools on the Phase-2 call on the API provider (no A8 regression)', async () => {
-    delete process.env.LLM_PROVIDER; // not the CLI provider -> API path
-    const module = new ClaudeApiTestGenModule(mockProvider);
+  it('keeps tools on the Phase-2 call when the provider honors custom tools (no A8 regression)', async () => {
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, true));
     await module.generate(makeToolBoundInput());
 
     expect(invokeStub.callCount).to.equal(3);
     const phase2 = invokeStub.getCall(1).args[1] as InvokeOptions;
-    expect(phase2.tools, 'Phase-2 must carry tools on the API path').to.be.an('array').that.is.not.empty;
-    expect(phase2.toolHandler, 'Phase-2 must carry a toolHandler on the API path').to.be.a('function');
-    expect(phase2.disableTools, 'Phase-2 must not disable tools on the API path').to.not.equal(true);
+    expect(phase2.tools, 'Phase-2 must carry tools when the provider honors them').to.be.an('array').that.is.not.empty;
+    expect(phase2.toolHandler, 'Phase-2 must carry a toolHandler when the provider honors tools').to.be.a('function');
+    expect(phase2.disableTools, 'Phase-2 must not disable tools when the provider honors them').to.not.equal(true);
   });
 });
 
@@ -181,17 +176,7 @@ describe('test-gen skips Phase-3 checklist when 0 files generated (iter7 C2/C3)'
     // Every per-file attempt returns prose that fails the content assertions
     // (no import/describe/it), so all retries fail and 0 files are produced.
     invokeStub.resolves(makeResponse('Unable to produce a test file for this source.'));
-    const provider: LLMProvider = {
-      providerType: 'anthropic',
-      modelName: 'test-model',
-      invoke: invokeStub,
-      async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
-        return { content: '', model: 'test-model' };
-      },
-      async invokeForJSON<T>(): Promise<T> {
-        return {} as T;
-      },
-    };
+    const provider = makeMockProvider(invokeStub, true);
 
     const module = new ClaudeApiTestGenModule(provider);
     const out = await module.generate(makeToolBoundInput());

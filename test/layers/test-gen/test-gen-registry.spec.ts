@@ -135,6 +135,7 @@ describe('TestGenModuleRegistry', () => {
     const mockProvider: LLMProvider = {
       providerType: 'anthropic',
       modelName: 'test-model',
+      honorsCustomTools: true,
       async invoke(): Promise<LLMResponse> {
         return { content: '{}', model: 'test-model' };
       },
