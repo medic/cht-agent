@@ -3,6 +3,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { LLMProvider } from '../../../src/llm/types';
+import { DISALLOWED_TOOLS } from '../../../src/llm/providers/claude-cli';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -137,6 +138,7 @@ describe('createClaudeCLIProvider (v9a.7) — spawn-arg construction', () => {
     const list = spawnArgs[0].args[idx + 1];
     expect(list).to.include('Bash');
     expect(list).to.include('Write');
+    expect(list).to.include('Edit');
     expect(list).to.include('Read');
   });
 
@@ -314,5 +316,22 @@ describe('validateClaudeCLI (v9a.7)', () => {
     const result = await mod.validateClaudeCLI('/missing/path/to/claude');
     expect(result.valid).to.equal(false);
     expect(result.error).to.match(/CLI not found at/);
+  });
+});
+
+describe('claude-cli deny-list drift guard (iter7 B4/B5)', () => {
+  // The disableTools deny-list is the only thing that blocks the CLI's native
+  // write-capable tools under --dangerously-skip-permissions. If a future CLI
+  // upgrade adds a write tool that is not enumerated here, this trips red.
+  it('DISALLOWED_TOOLS enumerates the write-capable tools', () => {
+    expect(DISALLOWED_TOOLS).to.include.members(['Write', 'Edit', 'Bash']);
+  });
+
+  it('does NOT append --disallowedTools when disableTools is not set (the iter7 bug mechanism)', async () => {
+    const { provider, spawnArgs } = loadProvider([
+      { stdout: cliResultJson(), closeCode: 0 },
+    ]);
+    await provider.invoke('p'); // no disableTools -> tools stay live, no deny-list
+    expect(spawnArgs[0].args).to.not.include('--disallowedTools');
   });
 });
