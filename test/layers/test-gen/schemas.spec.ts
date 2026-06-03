@@ -87,6 +87,29 @@ describe('TestContentAssertions', () => {
     });
   });
 
+  describe('parsesAsCode', () => {
+    it('returns no failures for a well-formed TS file', () => {
+      const content = `import { expect } from 'chai';\ndescribe('x', () => { it('works', () => { expect(1).to.equal(1); }); });`;
+      expect(TestContentAssertions.parsesAsCode(content, 'x.spec.ts')).to.deep.equal([]);
+    });
+
+    it('returns no failures for a well-formed JS file', () => {
+      const content = `const { expect } = require('chai');\ndescribe('x', () => { it('works', () => { expect(1).to.equal(1); }); });`;
+      expect(TestContentAssertions.parsesAsCode(content, 'x.spec.js')).to.deep.equal([]);
+    });
+
+    it('flags a file whose code is preceded by a leaked reasoning preamble', () => {
+      const content = [
+        `angular global is not directly available in this context. Here is the complete test file:`,
+        `import { expect } from 'chai';`,
+        `describe('version', () => { it('parses', () => { expect(1).to.equal(1); }); });`,
+      ].join('\n');
+      const failures = TestContentAssertions.parsesAsCode(content, 'version.spec.js');
+      expect(failures).to.have.length(1);
+      expect(failures[0]).to.include('does not parse');
+    });
+  });
+
   describe('validateTestFile', () => {
     it('should pass for a well-formed test file', () => {
       const content = [
@@ -109,6 +132,23 @@ describe('TestContentAssertions', () => {
       const content = `To test this module you need to check the contacts.`;
       const failures = TestContentAssertions.validateTestFile(content, 'test.spec.ts');
       expect(failures.length).to.be.greaterThan(1);
+    });
+
+    it('rejects an otherwise-valid file that fails to parse (leaked preamble, F6)', () => {
+      const content = [
+        `angular global is not directly available in this context. Here is the complete test file:`,
+        `import { expect } from 'chai';`,
+        `describe('version', () => { it('parses', () => { expect(1).to.equal(1); }); });`,
+      ].join('\n');
+      // The substring checks all pass (import/describe/it/expect present, no
+      // plaintext indicator), so only the parse check catches this.
+      expect(TestContentAssertions.hasProperImports(content, 'version.spec.js')).to.deep.equal([]);
+      expect(TestContentAssertions.hasTestStructure(content)).to.deep.equal([]);
+      expect(TestContentAssertions.hasAssertions(content)).to.deep.equal([]);
+      expect(TestContentAssertions.isNotPlaintext(content)).to.deep.equal([]);
+
+      const failures = TestContentAssertions.validateTestFile(content, 'version.spec.js');
+      expect(failures.some(f => f.includes('does not parse'))).to.equal(true);
     });
   });
 });

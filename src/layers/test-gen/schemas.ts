@@ -1,4 +1,12 @@
 import { z } from 'zod';
+import * as ts from 'typescript';
+
+function scriptKindFromPath(filePath: string): ts.ScriptKind {
+  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
+  if (/\.js$/i.test(filePath)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
 
 export const TestPlanItemSchema = z.object({
   filePath: z.string().min(3).regex(/\.spec\.\w+$|\.test\.\w+$/, 'Test file path must end with .spec.* or .test.*'),
@@ -107,8 +115,32 @@ export const TestContentAssertions = {
     return failures;
   },
 
+  /**
+   * Reject content that does not parse as JS/TS. The structure/import/assertion
+   * checks above only look for the PRESENCE of substrings (describe/it/require),
+   * so a file with a leaked LLM reasoning preamble ("...Here is the test file:")
+   * ahead of otherwise-valid code passes them while failing `node --check`. A
+   * syntactic parse (language-correct for .ts/.tsx/.js/.jsx via the script kind)
+   * catches that class, and the failure feeds the regenerate loop.
+   */
+  parsesAsCode(content: string, filePath: string): string[] {
+    const sourceFile = ts.createSourceFile(
+      filePath || 'test.ts',
+      content,
+      ts.ScriptTarget.Latest,
+      false,
+      scriptKindFromPath(filePath),
+    );
+    const diagnostics =
+      (sourceFile as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics ?? [];
+    if (diagnostics.length === 0) return [];
+    const message = ts.flattenDiagnosticMessageText(diagnostics[0].messageText, ' ');
+    return [`Test file ${filePath} does not parse as code (likely leaked prose/preamble): ${message}`];
+  },
+
   validateTestFile(content: string, filePath: string): string[] {
     return [
+      ...this.parsesAsCode(content, filePath),
       ...this.isNotPlaintext(content),
       ...this.hasProperImports(content, filePath),
       ...this.hasTestStructure(content),
