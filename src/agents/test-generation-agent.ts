@@ -121,7 +121,7 @@ function errorMessage(error: unknown): string {
  * non-fatal wrapper then surfaces it without crashing the run. clean/stashPop
  * failures warn but do not throw.
  */
-function handleTestGenRollbackOutcome(rollback: RollbackResult): void {
+export function handleTestGenRollbackOutcome(rollback: RollbackResult): void {
   const anyFailed =
     rollback.reset === 'failed' ||
     rollback.clean === 'failed' ||

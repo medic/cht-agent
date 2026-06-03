@@ -31,7 +31,7 @@ const makeResponse = (content: string, stopReason?: string): LLMResponse => ({
 const PLAN_RESPONSE = makeResponse(
   `=== TEST PLAN ===
 1. unit gen.spec.ts -> source.ts - Unit tests for formatListForPrompt numbering
-=== END TEST PLAN ===`,
+=== END TEST PLAN ===`
 );
 
 // Per-file (onCall 1): minimal content that passes the content assertions
@@ -45,7 +45,7 @@ describe('seam', () => {
   });
 });
 `,
-  'end_turn',
+  'end_turn'
 );
 
 // Checklist (onCall 2): valid JSON for RequirementsChecklistSchema.
@@ -104,13 +104,16 @@ const makeToolBoundInput = (): TestGenModuleInput => {
 
 const makeMockProvider = (
   invoke: LLMProvider['invoke'],
-  honorsCustomTools: boolean,
+  honorsCustomTools: boolean
 ): LLMProvider => ({
   providerType: 'anthropic',
   modelName: 'test-model',
   honorsCustomTools,
   invoke,
-  async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {
+  async invokeWithMessages(
+    _messages: LLMMessage[],
+    _options?: InvokeOptions
+  ): Promise<LLMResponse> {
     return { content: '', model: 'test-model' };
   },
   async invokeForJSON<T>(): Promise<T> {
@@ -154,9 +157,16 @@ describe('test-gen tool-use gate keys on honorsCustomTools (iter8 A2/A4)', () =>
 
     expect(invokeStub.callCount).to.equal(3);
     const phase2 = invokeStub.getCall(1).args[1] as InvokeOptions;
-    expect(phase2.tools, 'Phase-2 must carry tools when the provider honors them').to.be.an('array').that.is.not.empty;
-    expect(phase2.toolHandler, 'Phase-2 must carry a toolHandler when the provider honors tools').to.be.a('function');
-    expect(phase2.disableTools, 'Phase-2 must not disable tools when the provider honors them').to.not.equal(true);
+    expect(phase2.tools, 'Phase-2 must carry tools when the provider honors them').to.be.an('array')
+      .that.is.not.empty;
+    expect(
+      phase2.toolHandler,
+      'Phase-2 must carry a toolHandler when the provider honors tools'
+    ).to.be.a('function');
+    expect(
+      phase2.disableTools,
+      'Phase-2 must not disable tools when the provider honors them'
+    ).to.not.equal(true);
   });
 });
 
@@ -184,7 +194,9 @@ describe('test-gen skips Phase-3 checklist when 0 files generated (iter7 C2/C3)'
     expect(out.files).to.have.length(0);
     const checklistCalls = invokeStub
       .getCalls()
-      .filter(c => (c.args[1] as InvokeOptions | undefined)?.temperature === CHECKLIST_TEMPERATURE);
+      .filter(
+        (c) => (c.args[1] as InvokeOptions | undefined)?.temperature === CHECKLIST_TEMPERATURE
+      );
     expect(checklistCalls, 'no Phase-3 checklist invoke when 0 files').to.have.length(0);
     expect(out.requirementsChecklist).to.deep.equal([]);
   });

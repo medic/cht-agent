@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   buildTestGenModuleInput,
+  handleTestGenRollbackOutcome,
   TestGenerationAgent,
   TestGenerationInput,
 } from '../../src/agents/test-generation-agent';
@@ -324,5 +325,36 @@ describe('TestGenerationAgent containment (iter8 Fix 2a)', () => {
     } finally {
       fs.rmSync(nonGit, { recursive: true, force: true });
     }
+  });
+});
+
+describe('handleTestGenRollbackOutcome (iter8 polish)', () => {
+  beforeEach(() => {
+    sinon.stub(console, 'error');
+  });
+
+  afterEach(() => {
+    sinon.restore();
+  });
+
+  it('throws on a fatal reset failure, surfacing the joined errors and the recovery hint', () => {
+    const rollback = { reset: 'failed' as const, clean: 'ok' as const, stashPop: 'skipped' as const, errors: ['e1', 'e2'] };
+    expect(() => handleTestGenRollbackOutcome(rollback)).to.throw(/e1; e2/);
+    expect(() => handleTestGenRollbackOutcome(rollback)).to.throw(/Inspect the cht-core working tree/);
+  });
+
+  it('does not throw on a clean failure when reset succeeded (warn-only)', () => {
+    const rollback = { reset: 'ok' as const, clean: 'failed' as const, stashPop: 'skipped' as const, errors: ['clean failed'] };
+    expect(() => handleTestGenRollbackOutcome(rollback)).to.not.throw();
+  });
+
+  it('does not throw on a stashPop failure when reset succeeded (warn-only)', () => {
+    const rollback = { reset: 'ok' as const, clean: 'ok' as const, stashPop: 'failed' as const, errors: ['stash pop failed'] };
+    expect(() => handleTestGenRollbackOutcome(rollback)).to.not.throw();
+  });
+
+  it('does not throw when everything succeeded', () => {
+    const rollback = { reset: 'ok' as const, clean: 'ok' as const, stashPop: 'ok' as const, errors: [] };
+    expect(() => handleTestGenRollbackOutcome(rollback)).to.not.throw();
   });
 });
