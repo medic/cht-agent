@@ -3,6 +3,7 @@ import sinon from 'sinon';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   buildTestGenModuleInput,
   TestGenerationAgent,
@@ -223,5 +224,105 @@ describe('TestGenerationAgent', () => {
     expect(moduleInput.generatedCode).to.equal(input.codeGeneration.files);
     expect(moduleInput.testTypes).to.deep.equal(['unit']);
     expect(moduleInput.targetDirectory).to.equal('/tmp/cht-core');
+  });
+});
+
+const cliProvider = (): LLMProvider => ({
+  providerType: 'anthropic',
+  modelName: 'cli',
+  honorsCustomTools: false,
+  async invoke(): Promise<LLMResponse> {
+    return { content: '', model: 'cli' };
+  },
+  async invokeWithMessages(): Promise<LLMResponse> {
+    return { content: '', model: 'cli' };
+  },
+  async invokeForJSON<T>(): Promise<T> {
+    return {} as T;
+  },
+});
+
+const registryReturning = (module: TestGenModule): TestGenModuleRegistry => {
+  const registry = new TestGenModuleRegistry();
+  sinon.stub(registry, 'getActiveModule').returns(module);
+  return registry;
+};
+
+describe('TestGenerationAgent containment (iter8 Fix 2a)', () => {
+  let repo: string;
+  const git = (args: string[]): void => {
+    execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+  };
+
+  beforeEach(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-contain-'));
+    git(['init', '-q']);
+    git(['config', 'user.email', 'test@example.com']);
+    git(['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(repo, 'README.md'), '# repo\n', 'utf-8');
+    git(['add', '-A']);
+    git(['commit', '-q', '-m', 'init']);
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('rolls back an out-of-band write while preserving the in-memory result', async () => {
+    const strayModule: TestGenModule = {
+      name: 'claude-api',
+      version: '0.0.0-test',
+      generate: async (moduleInput) => {
+        // Simulate an uncontained subprocess write into the cht-core tree.
+        fs.writeFileSync(path.join(moduleInput.targetDirectory, 'stray.spec.js'), '// leaked\n', 'utf-8');
+        return {
+          files: [{ path: 'tests/unit/legit.spec.ts', content: '// legit\n', purpose: 'legit' }],
+          explanation: 'ok',
+          requirementsChecklist: [],
+        };
+      },
+    };
+    const agent = new TestGenerationAgent({
+      llmProvider: cliProvider(),
+      testGenRegistry: registryReturning(strayModule),
+    });
+
+    const result = await agent.generate(baseInput({ chtCorePath: repo }));
+
+    // The out-of-band write is reverted: working tree clean, stray file gone.
+    const status = execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf-8' });
+    expect(status.trim(), 'working tree must be clean after rollback').to.equal('');
+    expect(fs.existsSync(path.join(repo, 'stray.spec.js')), 'stray file must be removed').to.equal(false);
+
+    // The legitimate in-memory output is preserved (captured before rollback).
+    expect(result.files).to.have.length(1);
+    expect(result.files[0].relativePath).to.equal('tests/unit/legit.spec.ts');
+    expect(result.files[0].type).to.equal('test');
+  });
+
+  it('proceeds without containment when chtCorePath is not a git repo', async () => {
+    const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-nongit-'));
+    try {
+      const module: TestGenModule = {
+        name: 'claude-api',
+        version: '0.0.0-test',
+        generate: async () => ({
+          files: [{ path: 'tests/unit/legit.spec.ts', content: '// legit\n' }],
+          explanation: 'ok',
+          requirementsChecklist: [],
+        }),
+      };
+      const agent = new TestGenerationAgent({
+        llmProvider: cliProvider(),
+        testGenRegistry: registryReturning(module),
+      });
+
+      // Snapshot fails on a non-git path; generation still returns its output.
+      const result = await agent.generate(baseInput({ chtCorePath: nonGit }));
+      expect(result.files).to.have.length(1);
+    } finally {
+      fs.rmSync(nonGit, { recursive: true, force: true });
+    }
   });
 });

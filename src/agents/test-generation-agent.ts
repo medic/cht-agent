@@ -15,6 +15,12 @@ import {
 import { TestGenModuleRegistry, createDefaultTestGenRegistry } from '../layers/test-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import { readFromChtCore, listChtCoreDirectory } from '../utils/staging';
+import {
+  snapshotChtCore,
+  rollbackChtCore,
+  ChtCoreSnapshot,
+  RollbackResult,
+} from '../layers/code-gen/modules/claude-code-cli/workspace';
 
 /**
  * Focused agent-level input for building a TestGenModuleInput. Carries only what
@@ -104,6 +110,35 @@ function convertModuleFiles(files: LayerGeneratedFile[]): GeneratedFile[] {
   }));
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Inspect a RollbackResult and decide throw-vs-warn, mirroring code-gen's
+ * handleRollbackOutcome. A failed `reset` means cht-core could not be returned
+ * to its pre-run HEAD (a dangerous state), so it throws; the test-gen node's
+ * non-fatal wrapper then surfaces it without crashing the run. clean/stashPop
+ * failures warn but do not throw.
+ */
+function handleTestGenRollbackOutcome(rollback: RollbackResult): void {
+  const anyFailed =
+    rollback.reset === 'failed' ||
+    rollback.clean === 'failed' ||
+    rollback.stashPop === 'failed';
+  if (!anyFailed) return;
+
+  console.error('[Test Gen Agent] ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:');
+  for (const e of rollback.errors) console.error(`[Test Gen Agent]   - ${e}`);
+
+  if (rollback.reset === 'failed') {
+    throw new Error(
+      `test-gen rollback failed: ${rollback.errors.join('; ')}. ` +
+      'Inspect the cht-core working tree before retrying.',
+    );
+  }
+}
+
 /** Options for constructing a {@link TestGenerationAgent}. */
 export interface TestGenerationAgentOptions {
   llmProvider?: LLMProvider;
@@ -125,6 +160,18 @@ export class TestGenerationAgent {
   }
 
   async generate(input: TestGenerationInput): Promise<TestGenerationResult> {
+    // Containment (iter8 Fix 2a): a provider that does not honor custom tools
+    // (the claude-cli provider) runs its own agentic loop and can write into the
+    // cht-core tree outside staging/HC2. Snapshot before generation and roll back
+    // any out-of-band write afterward. A provider that honors custom tools runs
+    // in-process and never writes to the tree, so it is not wrapped.
+    if (this.llm.honorsCustomTools) {
+      return this.runGeneration(input);
+    }
+    return this.runContainedGeneration(input);
+  }
+
+  private async runGeneration(input: TestGenerationInput): Promise<TestGenerationResult> {
     const moduleInput = buildTestGenModuleInput(input);
     const out = await this.registry.getActiveModule().generate(moduleInput);
     return {
@@ -135,5 +182,37 @@ export class TestGenerationAgent {
       tokensUsed: out.tokensUsed,
       modelUsed: out.modelUsed,
     };
+  }
+
+  private async runContainedGeneration(input: TestGenerationInput): Promise<TestGenerationResult> {
+    let snapshot: ChtCoreSnapshot;
+    try {
+      snapshot = await snapshotChtCore(input.chtCorePath);
+    } catch (error) {
+      // chtCorePath is not a usable git working tree (or git failed). The
+      // non-fatal contract governs test-gen: log and proceed without
+      // containment rather than abort the run.
+      console.warn(
+        `[Test Gen Agent] Snapshot failed; proceeding without containment: ${errorMessage(error)}`,
+      );
+      return this.runGeneration(input);
+    }
+
+    // Capture the work outcome first so rollback runs even if generation threw,
+    // and so legitimate in-memory output is never reverted.
+    let result: TestGenerationResult | undefined;
+    let workError: unknown;
+    try {
+      result = await this.runGeneration(input);
+    } catch (error) {
+      workError = error;
+    }
+
+    // Explicit try/catch via the captured outcome (not finally): rollback runs
+    // after capture, and a rollback failure surfaces without masking a work error.
+    handleTestGenRollbackOutcome(await rollbackChtCore(input.chtCorePath, snapshot));
+
+    if (workError) throw workError;
+    return result as TestGenerationResult;
   }
 }
