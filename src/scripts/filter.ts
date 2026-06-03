@@ -19,8 +19,10 @@ import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
 // CHT service directory prefixes — a PR touching ≥2 of these is "multi-service"
 const SERVICE_PREFIXES = ['api/', 'webapp/', 'sentinel/', 'admin/', 'shared-libs/'];
 
-// Files matching these patterns are lockfiles
-const LOCKFILE_PATTERN = /(?:^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|.*\.lock)$/;
+// Files matching these patterns are lockfiles.
+// `[^/]*` (not `.*`) bounds backtracking to a single path segment, avoiding
+// super-linear ReDoS while still matching any `*.lock` file basename.
+const LOCKFILE_PATTERN = /(?:^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|[^/]*\.lock)$/;
 
 // Files matching these patterns are translation files
 const TRANSLATION_PATTERN = /(?:^|\/)translations\/.*|\.properties$|\.po$|\.pot$/;
