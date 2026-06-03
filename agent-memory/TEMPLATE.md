@@ -21,6 +21,17 @@ services:
   - api|webapp|sentinel|admin
 techStack:
   - typescript|javascript|angular|couchdb|pouchdb
+# --- Pipeline provenance (populated by distiller, not by hand) ---
+# source_pr: medic/cht-core#NNN
+# source_sha: <commit-sha>
+# distilled_at: <YYYY-MM-DD>
+# reviewed_by: null
+# reviewed_at: null
+# confidence: medium
+# entities: []
+# concepts: []
+# related_issues: []
+# stale: false
 ---
 
 ## Problem
@@ -72,6 +83,16 @@ techStack:
 | `summary` | Yes | 1-2 sentence overview |
 | `services` | Yes | Which CHT services are involved |
 | `techStack` | Yes | Technologies relevant to the fix |
+| `source_pr` | No | Source PR reference, format: `medic/cht-core#<number>` |
+| `source_sha` | No | Commit SHA of the PR at the time of distillation |
+| `distilled_at` | No | ISO date when this entry was machine-distilled (YYYY-MM-DD) |
+| `reviewed_by` | No | GitHub handle of the human reviewer, or `null` if unreviewed |
+| `reviewed_at` | No | ISO date when the entry was reviewed, or `null` if unreviewed |
+| `confidence` | No | Confidence level: `high`=reviewed, `medium`=unreviewed draft, `low`=stale |
+| `entities` | No | Referenced files, modules, or named patterns |
+| `concepts` | No | Referenced architectural or domain concepts |
+| `related_issues` | No | Links to related agent-memory entries |
+| `stale` | No | Set to `true` by the freshness process when source files have changed significantly |
 
 ## How to Find Good Issues to Document
 

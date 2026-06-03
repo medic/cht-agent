@@ -14,13 +14,20 @@
     "postinstall": "husky install",
     "research": "node dist/cli/research.js",
     "example:research": "node dist/examples/research-supervisor-example.js",
-    "validate-ticket": "node dist/cli/validate-ticket.js"
+    "validate-ticket": "node dist/cli/validate-ticket.js",
+    "validate-schema": "ts-node src/scripts/validate-schema.ts",
+    "open-review-pr": "ts-node src/scripts/open-review-pr.ts",
+    "run-pipeline": "ts-node src/scripts/run-pipeline.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",
     "@langchain/core": "^0.3.0",
     "@langchain/langgraph": "^0.2.0",
+    "@langchain/openai": "^0.6.17",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "dotenv": "^16.4.5",
+    "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.1",
     "zod": "^3.23.8"
   },

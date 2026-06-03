@@ -77,6 +77,51 @@
             "$ref": "#/definitions/CHTService"
           },
           "description": "Related CHT services"
+        },
+        "source_pr": {
+          "type": "string",
+          "description": "Source PR reference, format: medic/cht-core#<number>"
+        },
+        "source_sha": {
+          "type": "string",
+          "description": "Commit SHA of the PR at the time of distillation"
+        },
+        "distilled_at": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO date when this entry was machine-distilled (YYYY-MM-DD)"
+        },
+        "reviewed_by": {
+          "oneOf": [{"type": "string"}, {"type": "null"}],
+          "description": "GitHub handle of the human reviewer, or null if unreviewed"
+        },
+        "reviewed_at": {
+          "oneOf": [{"type": "string", "format": "date"}, {"type": "null"}],
+          "description": "ISO date when the entry was reviewed, or null if unreviewed"
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Confidence level: high=reviewed, medium=unreviewed draft, low=stale"
+        },
+        "entities": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Referenced files, modules, or named patterns"
+        },
+        "concepts": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Referenced architectural or domain concepts"
+        },
+        "related_issues": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Links to related agent-memory entries"
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Set to true by the freshness process when source files have changed significantly"
         }
       }
     },
