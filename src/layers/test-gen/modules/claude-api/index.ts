@@ -11,6 +11,7 @@ import {
   LLMToolDefinition,
   ToolHandler,
   createLLMProviderFromEnv,
+  isUsingCLIProvider,
 } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
@@ -534,7 +535,12 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       return await this.getProvider().invoke(prompt, {
         temperature: 0.3,
         maxTokens: 65536,
-        ...(testGenTools
+        // The claude-cli provider cannot honor custom tools; with tools "on" it
+        // appends no deny-list and runs its own agentic loop with native
+        // Write/Edit, writing into the target repo outside staging/HC2. Force
+        // text-only (disableTools) on the CLI path so the deny-list is applied
+        // and the response is capturable. Keep tools on the API path (A8).
+        ...(testGenTools && !isUsingCLIProvider()
           ? { tools: testGenTools.tools, toolHandler: testGenTools.toolHandler }
           : { disableTools: true }),
       });
