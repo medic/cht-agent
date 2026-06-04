@@ -439,7 +439,7 @@ export class DevelopmentSupervisor {
    * Node: Test Generation.
    *
    * Terminal node, reachable after the validation branch and outside the
-   * refinement loop, so it owns the final todo bookkeeping and printSummary.
+   * refinement loop, so it owns the final progress-tracker bookkeeping and printSummary.
    * It builds input via buildTestGenModuleInput and runs the test-gen agent.
    *
    * Failure is non-fatal: it logs a warning and returns an empty result. It
@@ -489,7 +489,7 @@ export class DevelopmentSupervisor {
   }
 
   /**
-   * Complete the test-generation todo, print the terminal run summary, and
+   * Complete the test-generation tracker entry, print the terminal run summary, and
    * return the terminal state update. Shared by every testGenerationNode path
    * so the summary fires exactly once and reads 3/3 at the end of a run.
    */

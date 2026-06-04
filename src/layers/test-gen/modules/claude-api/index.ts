@@ -296,7 +296,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   parseTestPlan(rawContent: string): TestPlanItem[] {
     const items: TestPlanItem[] = [];
 
-    const planMatch = new RegExp(`${TEST_PLAN_START}([\\s\\S]*?)${TEST_PLAN_END}`).exec(rawContent);
+    const planMatch = new RegExp(String.raw`${TEST_PLAN_START}([\s\S]*?)${TEST_PLAN_END}`).exec(rawContent);
     const content = planMatch ? planMatch[1] : rawContent;
 
     const lineRegex = new RegExp(TEST_PLAN_ITEM_RE.source, 'gim');
@@ -787,13 +787,15 @@ Output ONLY the plan section. Do not generate any test code.`;
       for (const prev of previouslyGenerated) {
         const lines = prev.content.split('\n');
         const preview = lines.slice(0, 10).join('\n');
-        previousContext += `\n### ${prev.path}\n\`\`\`\n${preview}\n${lines.length > 10 ? `... (${lines.length} lines)` : ''}\n\`\`\``;
+        const moreLinesNote = lines.length > 10 ? `... (${lines.length} lines)` : '';
+        previousContext += `\n### ${prev.path}\n\`\`\`\n${preview}\n${moreLinesNote}\n\`\`\``;
       }
     }
 
     let failureContext = '';
     if (previousFailures && previousFailures.length > 0) {
-      failureContext = `\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${previousFailures.map(f => `- ${f}`).join('\n')}\nFix these specific issues. Do not repeat the same mistakes.`;
+      const failureList = previousFailures.map(f => `- ${f}`).join('\n');
+      failureContext = `\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${failureList}\nFix these specific issues. Do not repeat the same mistakes.`;
     }
 
     return `You are a CHT (Community Health Toolkit) test engineer. Generate a complete test file.
@@ -867,7 +869,8 @@ ${lastLines}
       .map(f => {
         const itBlocks = f.content.match(/it\(['"`](.*?)['"`]/g) || [];
         const testNames = itBlocks.map(b => b.replace(/it\(['"`]/, '').replace(/['"`]$/, ''));
-        return `File: ${f.path}\nTests:\n${testNames.map(t => `  - ${t}`).join('\n')}`;
+        const testList = testNames.map(t => `  - ${t}`).join('\n');
+        return `File: ${f.path}\nTests:\n${testList}`;
       })
       .join('\n\n');
 
