@@ -5,7 +5,11 @@ dist/
 .env
 .DS_Store
 *.tmp
+*.bak
 
 # Test coverage
 .nyc_output/
 coverage/
+
+# Research output files
+outputs/

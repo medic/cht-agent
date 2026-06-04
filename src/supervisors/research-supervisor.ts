@@ -13,10 +13,12 @@ import {
   IssueTemplate,
   ResearchState,
   ResearchFindings,
+  CodeContextFindings,
   ContextAnalysisResult,
   OrchestrationPlan,
 } from '../types';
 import { DocumentationSearchAgent } from '../agents/documentation-search-agent';
+import { CodeContextAgent } from '../agents/code-context-agent';
 import { ContextAnalysisAgent } from '../agents/context-analysis-agent';
 
 // Define the state annotation for type safety
@@ -30,6 +32,10 @@ const ResearchStateAnnotation = Annotation.Root({
     default: () => undefined,
   }),
   researchFindings: Annotation<ResearchFindings | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  codeContextFindings: Annotation<CodeContextFindings | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -52,13 +58,19 @@ const ResearchStateAnnotation = Annotation.Root({
 });
 
 export class ResearchSupervisor {
-  private graph: ReturnType<typeof this.buildGraph>;
-  private docSearchAgent: DocumentationSearchAgent;
-  private contextAgent: ContextAnalysisAgent;
-  private plannerModel: ChatAnthropic;
+  private readonly graph: ReturnType<typeof this.buildGraph>;
+  private readonly docSearchAgent: DocumentationSearchAgent;
+  private readonly codeContextAgent: CodeContextAgent;
+  private readonly contextAgent: ContextAnalysisAgent;
+  private readonly plannerModel: ChatAnthropic;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
+      modelName: options.modelName,
+      useMockMCP: options.useMockMCP,
+    });
+
+    this.codeContextAgent = new CodeContextAgent({
       modelName: options.modelName,
       useMockMCP: options.useMockMCP,
     });
@@ -68,7 +80,7 @@ export class ResearchSupervisor {
     });
 
     this.plannerModel = new ChatAnthropic({
-      modelName: options.modelName || 'claude-sonnet-4-20250514',
+      model: options.modelName || 'claude-sonnet-4-20250514',
       temperature: 0.3,
     });
 
@@ -82,12 +94,14 @@ export class ResearchSupervisor {
     const workflow = new StateGraph(ResearchStateAnnotation)
       // Define nodes
       .addNode('documentationSearch', this.documentationSearchNode.bind(this))
+      .addNode('codeContextSearch', this.codeContextSearchNode.bind(this))
       .addNode('analyzeContext', this.contextAnalysisNode.bind(this))
       .addNode('generatePlan', this.generatePlanNode.bind(this))
 
       // Define edges
       .addEdge(START, 'documentationSearch')
-      .addEdge('documentationSearch', 'analyzeContext')
+      .addEdge('documentationSearch', 'codeContextSearch')
+      .addEdge('codeContextSearch', 'analyzeContext')
       .addEdge('analyzeContext', 'generatePlan')
       .addEdge('generatePlan', END);
 
@@ -103,7 +117,7 @@ export class ResearchSupervisor {
     if (!state.issue) {
       return {
         errors: ['No issue provided for documentation search'],
-        currentPhase: 'init' as const,
+        currentPhase: 'error' as const,
       };
     }
 
@@ -112,7 +126,7 @@ export class ResearchSupervisor {
 
       return {
         researchFindings: findings,
-        currentPhase: 'context-analysis' as const,
+        currentPhase: 'code-context' as const,
         messages: [
           {
             role: 'assistant' as const,
@@ -125,7 +139,48 @@ export class ResearchSupervisor {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         errors: [`Documentation search failed: ${errorMessage}`],
-        currentPhase: 'doc-search' as const,
+        currentPhase: 'error' as const,
+      };
+    }
+  }
+
+  /**
+   * Node: Code Context Search
+   */
+  private async codeContextSearchNode(state: typeof ResearchStateAnnotation.State) {
+    console.log('\n=== CODE CONTEXT SEARCH NODE ===');
+
+    if (state.currentPhase === 'error') {
+      console.log('[Code Context Search] Skipping — previous node failed');
+      return {};
+    }
+
+    if (!state.issue) {
+      return {
+        errors: ['No issue provided for code context search'],
+        currentPhase: 'error' as const,
+      };
+    }
+
+    try {
+      const findings = await this.codeContextAgent.search(state.issue);
+
+      return {
+        codeContextFindings: findings,
+        currentPhase: 'context-analysis' as const,
+        messages: [
+          {
+            role: 'assistant' as const,
+            content: `Code context search completed. Found ${findings.architectureInsights.length} architecture insights.`,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      return {
+        errors: [`Code context search failed: ${errorMessage}`],
+        currentPhase: 'error' as const,
       };
     }
   }
@@ -136,10 +191,15 @@ export class ResearchSupervisor {
   private async contextAnalysisNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== CONTEXT ANALYSIS NODE ===');
 
+    if (state.currentPhase === 'error') {
+      console.log('[Context Analysis] Skipping — previous node failed');
+      return {};
+    }
+
     if (!state.issue) {
       return {
         errors: ['No issue provided for context analysis'],
-        currentPhase: 'context-analysis' as const,
+        currentPhase: 'error' as const,
       };
     }
 
@@ -161,7 +221,7 @@ export class ResearchSupervisor {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         errors: [`Context analysis failed: ${errorMessage}`],
-        currentPhase: 'context-analysis' as const,
+        currentPhase: 'error' as const,
       };
     }
   }
@@ -172,10 +232,15 @@ export class ResearchSupervisor {
   private async generatePlanNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== GENERATE PLAN NODE ===');
 
+    if (state.currentPhase === 'error') {
+      console.log('[Generate Plan] Skipping — previous node failed');
+      return {};
+    }
+
     if (!state.issue || !state.researchFindings || !state.contextAnalysis) {
       return {
         errors: ['Missing required data for plan generation'],
-        currentPhase: 'plan-generation' as const,
+        currentPhase: 'error' as const,
       };
     }
 
@@ -183,7 +248,8 @@ export class ResearchSupervisor {
       const plan = await this.generateOrchestrationPlan(
         state.issue,
         state.researchFindings,
-        state.contextAnalysis
+        state.contextAnalysis,
+        state.codeContextFindings
       );
 
       return {
@@ -201,7 +267,7 @@ export class ResearchSupervisor {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return {
         errors: [`Plan generation failed: ${errorMessage}`],
-        currentPhase: 'plan-generation' as const,
+        currentPhase: 'error' as const,
       };
     }
   }
@@ -212,17 +278,20 @@ export class ResearchSupervisor {
   private async generateOrchestrationPlan(
     issue: IssueTemplate,
     findings: ResearchFindings,
-    analysis: ContextAnalysisResult
+    analysis: ContextAnalysisResult,
+    codeContext?: CodeContextFindings
   ): Promise<OrchestrationPlan> {
     console.log('[Research Supervisor] Generating orchestration plan...');
 
-    const prompt = this.buildPlanPrompt(issue, findings, analysis);
+    const prompt = this.buildPlanPrompt(issue, findings, analysis, codeContext);
 
     const response = await this.plannerModel.invoke(prompt);
-    const content = response.content.toString();
+    const content = typeof response.content === 'string'
+      ? response.content
+      : JSON.stringify(response.content);
 
     // Parse the response into structured plan
-    const plan = this.parsePlanResponse(content, issue, findings, analysis);
+    const plan = this.parsePlanResponse(content, issue, { findings, analysis, codeContext });
 
     console.log('[Research Supervisor] Plan generated successfully');
     return plan;
@@ -234,9 +303,26 @@ export class ResearchSupervisor {
   private buildPlanPrompt(
     issue: IssueTemplate,
     findings: ResearchFindings,
-    analysis: ContextAnalysisResult
+    analysis: ContextAnalysisResult,
+    codeContext?: CodeContextFindings
   ): string {
     const { issue: issueDetails } = issue;
+
+    let codeContextSection = '\n**Note**: Code architecture context was unavailable for this analysis.\n';
+    if (codeContext && codeContext.architectureInsights.length > 0) {
+      codeContextSection = `
+## Code Architecture Context
+**Repos Analyzed**: ${codeContext.relevantRepos.join(', ')}
+**Architecture Insights**: ${codeContext.architectureInsights.length}
+${codeContext.architectureInsights.map((insight) => `- **${insight.component}**: ${insight.description} (patterns: ${insight.patterns.join(', ')})`).join('\n')}
+
+**Module Relationships**: ${codeContext.moduleRelationships.length}
+${codeContext.moduleRelationships.map((rel) => `- ${rel.source} → ${rel.target} (${rel.relationship}): ${rel.description}`).join('\n')}
+
+**Confidence**: ${(codeContext.confidence * 100).toFixed(0)}%
+${codeContext.warnings.length > 0 ? `\n**Warnings**: ${codeContext.warnings.join(', ')}` : ''}
+`;
+    }
 
     return `You are a CHT development orchestration planner. Based on the research findings and context analysis, create a detailed implementation plan.
 
@@ -261,7 +347,7 @@ ${findings.documentationReferences.map((ref) => `- ${ref.title}: ${ref.url}`).jo
 ${findings.suggestedApproaches.map((approach, i) => `${i + 1}. ${approach}`).join('\n')}
 
 **Confidence**: ${(findings.confidence * 100).toFixed(0)}%
-
+${codeContextSection}
 ## Context Analysis
 **Similar Past Issues**: ${analysis.similarContexts.length}
 **Reusable Patterns**: ${analysis.reusablePatterns.length}
@@ -289,9 +375,13 @@ Format your response as a structured plan that will guide the development team.`
   private parsePlanResponse(
     content: string,
     issue: IssueTemplate,
-    findings: ResearchFindings,
-    analysis: ContextAnalysisResult
+    context: {
+      findings: ResearchFindings;
+      analysis: ContextAnalysisResult;
+      codeContext?: CodeContextFindings;
+    }
   ): OrchestrationPlan {
+    const { findings, analysis, codeContext } = context;
     // Extract key information from the response
     // Lines will be used for more detailed parsing in future iterations
 
@@ -303,6 +393,12 @@ Format your response as a structured plan that will guide the development team.`
       ...analysis.recommendations.slice(0, 2),
     ];
 
+    if (codeContext && codeContext.architectureInsights.length > 0) {
+      keyFindings.push(
+        `${codeContext.architectureInsights.length} code architecture insights from ${codeContext.relevantRepos.join(', ')}`
+      );
+    }
+
     // Estimate complexity based on requirements and constraints
     const complexity = this.estimateComplexity(issue, analysis);
 
@@ -310,7 +406,7 @@ Format your response as a structured plan that will guide the development team.`
     const phases = this.buildPhases(issue, findings, analysis);
 
     // Extract risk factors
-    const riskFactors = this.identifyRiskFactors(issue, findings, analysis);
+    const riskFactors = this.identifyRiskFactors(issue, findings, analysis, codeContext);
 
     return {
       summary: content.substring(0, 300) + '...', // First 300 chars as summary
@@ -330,26 +426,22 @@ Format your response as a structured plan that will guide the development team.`
     issue: IssueTemplate,
     analysis: ContextAnalysisResult
   ): 'low' | 'medium' | 'high' {
-    let score = 0;
-
-    // Priority factor
-    if (issue.issue.priority === 'high') score += 2;
-    else if (issue.issue.priority === 'medium') score += 1;
-
-    // Requirements count
-    if (issue.issue.requirements.length > 5) score += 2;
-    else if (issue.issue.requirements.length > 2) score += 1;
-
-    // Constraints
-    if (issue.issue.constraints.length > 2) score += 1;
-
-    // Lack of similar context increases complexity
-    if (analysis.similarContexts.length === 0) score += 2;
-    else if (analysis.similarContexts.length < 2) score += 1;
+    const priorityScores: Record<string, number> = { high: 2, medium: 1, low: 0 };
+    const score =
+      (priorityScores[issue.issue.priority] || 0) +
+      this.rangeScore(issue.issue.requirements.length, 2, 5) +
+      (issue.issue.constraints.length > 2 ? 1 : 0) +
+      this.rangeScore(2 - analysis.similarContexts.length, 1, 2);
 
     if (score >= 5) return 'high';
     if (score >= 3) return 'medium';
     return 'low';
+  }
+
+  private rangeScore(value: number, lowThreshold: number, highThreshold: number): number {
+    if (value > highThreshold) return 2;
+    if (value > lowThreshold) return 1;
+    return 0;
   }
 
   /**
@@ -360,7 +452,7 @@ Format your response as a structured plan that will guide the development team.`
     _findings: ResearchFindings,
     analysis: ContextAnalysisResult
   ) {
-    const phases = [
+    return [
       {
         name: 'Setup and Configuration',
         description: 'Set up development environment and review documentation',
@@ -390,8 +482,6 @@ Format your response as a structured plan that will guide the development team.`
         dependencies: ['Testing'],
       },
     ];
-
-    return phases;
   }
 
   /**
@@ -400,37 +490,55 @@ Format your response as a structured plan that will guide the development team.`
   private identifyRiskFactors(
     issue: IssueTemplate,
     findings: ResearchFindings,
+    analysis: ContextAnalysisResult,
+    codeContext?: CodeContextFindings
+  ): string[] {
+    return [
+      ...this.getResearchRisks(findings, analysis),
+      ...this.getIssueRisks(issue),
+      ...this.getCodeContextRisks(codeContext),
+    ];
+  }
+
+  private getResearchRisks(
+    findings: ResearchFindings,
     analysis: ContextAnalysisResult
   ): string[] {
     const risks: string[] = [];
-
-    // Low confidence from research
     if (findings.confidence < 0.5) {
       risks.push('Low confidence in documentation findings - may require additional research');
     }
-
-    // No similar past implementations
     if (analysis.similarContexts.length === 0) {
       risks.push('No similar past implementations found - breaking new ground');
     }
+    return risks;
+  }
 
-    // Complex constraints
+  private getIssueRisks(issue: IssueTemplate): string[] {
+    const risks: string[] = [];
     if (issue.issue.constraints.length > 2) {
       risks.push(`Multiple constraints to satisfy: ${issue.issue.constraints.join(', ')}`);
     }
-
-    // High priority
     if (issue.issue.priority === 'high') {
       risks.push('High priority issue - requires careful attention and thorough testing');
     }
-
-    // Multiple components
     if (issue.issue.technical_context.components.length > 3) {
       risks.push(
         'Changes span multiple components - requires coordination and integration testing'
       );
     }
+    return risks;
+  }
 
+  private getCodeContextRisks(codeContext?: CodeContextFindings): string[] {
+    if (!codeContext) return [];
+    const risks: string[] = [];
+    if (codeContext.warnings.length > 0) {
+      risks.push(`Code context warnings: ${codeContext.warnings.join('; ')}`);
+    }
+    if (codeContext.confidence < 0.5) {
+      risks.push('Low confidence in code architecture analysis - manual review recommended');
+    }
     return risks;
   }
 
@@ -438,21 +546,17 @@ Format your response as a structured plan that will guide the development team.`
    * Estimate effort based on complexity and phases
    */
   private estimateEffort(complexity: 'low' | 'medium' | 'high', phaseCount: number): string {
-    const baseHours = {
-      low: 4,
-      medium: 16,
-      high: 40,
-    };
-
+    const baseHours: Record<string, number> = { low: 4, medium: 16, high: 40 };
     const hours = baseHours[complexity] * (phaseCount / 4);
+    return this.formatDuration(hours);
+  }
 
-    if (hours < 8) return `${hours} hour${hours === 1 ? '' : 's'}`;
-    if (hours < 40) {
-      const days = Math.round(hours / 8);
-      return `${days} day${days === 1 ? '' : 's'}`;
-    }
-    const weeks = Math.round(hours / 40);
-    return `${weeks} week${weeks === 1 ? '' : 's'}`;
+  private formatDuration(hours: number): string {
+    const pluralize = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
+
+    if (hours < 8) return pluralize(hours, 'hour');
+    if (hours < 40) return pluralize(Math.round(hours / 8), 'day');
+    return pluralize(Math.round(hours / 40), 'week');
   }
 
   /**
@@ -477,6 +581,7 @@ Format your response as a structured plan that will guide the development team.`
       ],
       issue: issue,
       researchFindings: undefined,
+      codeContextFindings: undefined,
       contextAnalysis: undefined,
       orchestrationPlan: undefined,
       currentPhase: 'init',
