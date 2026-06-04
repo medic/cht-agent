@@ -145,20 +145,9 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     this.surfacePlan(plan);
 
     const genResult = await this.generateTestFilesSequentially(plan, input);
-    let totalTokens = planTokens + genResult.tokensUsed;
-
-    let checklist: TestScenario[] = [];
-    if (genResult.files.length > 0) {
-      try {
-        const checklistResult = await this.generateRequirementsChecklist(input, genResult.files);
-        checklist = checklistResult.checklist;
-        totalTokens += checklistResult.tokensUsed;
-      } catch (error) {
-        console.error('[Test Gen Module] Requirements checklist generation failed:', error);
-      }
-    } else {
-      console.log('[Test Gen Module] Skipping requirements checklist (0 test files generated)');
-    }
+    const checklistPhase = await this.runChecklistPhase(input, genResult.files);
+    const totalTokens = planTokens + genResult.tokensUsed + checklistPhase.tokensUsed;
+    const checklist = checklistPhase.checklist;
 
     const warnings = this.validateAgainstManifest(genResult.files, plan);
     this.logPostCallValidation(warnings);
@@ -176,6 +165,29 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       requirementsChecklist: checklist,
       warnings: combinedWarnings.length > 0 ? combinedWarnings : undefined,
     };
+  }
+
+  /**
+   * Phase 3: generate the requirements checklist, skipped when no files were
+   * produced (no source to checklist, and it avoids a wasted provider call).
+   * Non-fatal: a checklist error returns an empty checklist rather than failing
+   * the whole generation.
+   */
+  private async runChecklistPhase(
+    input: TestGenModuleInput,
+    files: GeneratedFile[],
+  ): Promise<{ checklist: TestScenario[]; tokensUsed: number }> {
+    if (files.length === 0) {
+      console.log('[Test Gen Module] Skipping requirements checklist (0 test files generated)');
+      return { checklist: [], tokensUsed: 0 };
+    }
+    try {
+      const checklistResult = await this.generateRequirementsChecklist(input, files);
+      return { checklist: checklistResult.checklist, tokensUsed: checklistResult.tokensUsed };
+    } catch (error) {
+      console.error('[Test Gen Module] Requirements checklist generation failed:', error);
+      return { checklist: [], tokensUsed: 0 };
+    }
   }
 
   async validate(): Promise<boolean> {
@@ -343,16 +355,25 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       });
 
       totalTokens += result.tokensUsed;
-      if (result.file) {
-        generatedFiles.push(result.file);
-        console.log(`[Test Gen Module]   OK ${planItem.filePath} (${result.file.content.length} chars)`);
-      } else {
-        console.log(`[Test Gen Module]   FAILED ${planItem.filePath} (no usable content after retries)`);
-        warnings.push(`Failed to generate ${planItem.filePath} after retries`);
-      }
+      this.collectGeneratedFile(result, planItem, generatedFiles, warnings);
     }
 
     return { files: generatedFiles, tokensUsed: totalTokens, warnings };
+  }
+
+  private collectGeneratedFile(
+    result: { file: GeneratedFile | null; tokensUsed: number },
+    planItem: TestPlanItem,
+    generatedFiles: GeneratedFile[],
+    warnings: string[],
+  ): void {
+    if (result.file) {
+      generatedFiles.push(result.file);
+      console.log(`[Test Gen Module]   OK ${planItem.filePath} (${result.file.content.length} chars)`);
+    } else {
+      console.log(`[Test Gen Module]   FAILED ${planItem.filePath} (no usable content after retries)`);
+      warnings.push(`Failed to generate ${planItem.filePath} after retries`);
+    }
   }
 
   /**
@@ -506,13 +527,13 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     previousFailures?: string[];
   }): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
     const { planItem, fullPlan, input, previouslyGenerated, testGenTools, previousFailures } = opts;
-    const prompt = this.buildSingleTestFilePrompt(
+    const prompt = this.buildSingleTestFilePrompt({
       planItem,
       fullPlan,
       input,
       previouslyGenerated,
       previousFailures,
-    );
+    });
     const response = await this.invokeLLM(prompt, testGenTools, planItem.filePath);
     if (!response) return { file: null, tokensUsed: 0, truncated: false };
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
@@ -745,58 +766,25 @@ ${TEST_PLAN_END}
 Output ONLY the plan section. Do not generate any test code.`;
   }
 
-  buildSingleTestFilePrompt(
-    planItem: TestPlanItem,
-    fullPlan: TestPlanItem[],
-    input: TestGenModuleInput,
-    previouslyGenerated: GeneratedFile[],
-    previousFailures?: string[],
-  ): string {
-    const { ticket, generatedCode, existingTestExamples } = input;
+  buildSingleTestFilePrompt(opts: {
+    planItem: TestPlanItem;
+    fullPlan: TestPlanItem[];
+    input: TestGenModuleInput;
+    previouslyGenerated: GeneratedFile[];
+    previousFailures?: string[];
+  }): string {
+    const { planItem, fullPlan, input, previouslyGenerated, previousFailures } = opts;
+    const { ticket } = input;
 
     const planSummary = fullPlan
       .map((p, i) => `${i + 1}. ${p.testType} ${p.filePath} -> ${p.targetSourceFile}`)
       .join('\n');
+    const requirementsList = ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n');
 
-    const targetFile = generatedCode.find(
-      f => f.relativePath === planItem.targetSourceFile ||
-        f.relativePath.endsWith(planItem.targetSourceFile)
-    );
-
-    let sourceContext = '';
-    if (targetFile) {
-      sourceContext = `\n## Source Code Under Test (${planItem.targetSourceFile})\n\`\`\`\n${targetFile.content}\n\`\`\``;
-    }
-
-    let patternContext = '';
-    if (existingTestExamples && existingTestExamples.length > 0) {
-      const relevant = existingTestExamples.find(
-        e => e.path.includes(planItem.testType) ||
-          (planItem.testType === 'unit' && !e.path.includes('integration') && !e.path.includes('e2e'))
-      ) ?? existingTestExamples[0];
-
-      if (relevant) {
-        const truncated = relevant.content.split('\n').slice(0, 50).join('\n');
-        patternContext = `\n## Example Test Pattern (follow this style)\n--- ${relevant.path} ---\n\`\`\`\n${truncated}\n\`\`\``;
-      }
-    }
-
-    let previousContext = '';
-    if (previouslyGenerated.length > 0) {
-      previousContext = '\n## Previously Generated Test Files (for consistency)';
-      for (const prev of previouslyGenerated) {
-        const lines = prev.content.split('\n');
-        const preview = lines.slice(0, 10).join('\n');
-        const moreLinesNote = lines.length > 10 ? `... (${lines.length} lines)` : '';
-        previousContext += `\n### ${prev.path}\n\`\`\`\n${preview}\n${moreLinesNote}\n\`\`\``;
-      }
-    }
-
-    let failureContext = '';
-    if (previousFailures && previousFailures.length > 0) {
-      const failureList = previousFailures.map(f => `- ${f}`).join('\n');
-      failureContext = `\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${failureList}\nFix these specific issues. Do not repeat the same mistakes.`;
-    }
+    const sourceContext = this.buildSourceContext(planItem, input);
+    const patternContext = this.buildPatternContext(planItem, input);
+    const previousContext = this.buildPreviousContext(previouslyGenerated);
+    const failureContext = this.buildFailureContext(previousFailures);
 
     return `You are a CHT (Community Health Toolkit) test engineer. Generate a complete test file.
 
@@ -815,7 +803,7 @@ Type: ${ticket.issue.type}
 Domain: ${ticket.issue.technical_context.domain}
 
 Requirements:
-${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+${requirementsList}
 ${sourceContext}
 ${patternContext}
 ${previousContext}
@@ -834,6 +822,45 @@ Generate the COMPLETE test file for ${planItem.filePath}.
 Output ONLY the raw file content. Do NOT wrap in markdown code fences.
 Do NOT include any explanations or commentary.
 NEVER say "I'm unable to" or ask questions. Just output the test code.`;
+  }
+
+  private buildSourceContext(planItem: TestPlanItem, input: TestGenModuleInput): string {
+    const targetFile = input.generatedCode.find(
+      f => f.relativePath === planItem.targetSourceFile ||
+        f.relativePath.endsWith(planItem.targetSourceFile)
+    );
+    if (!targetFile) return '';
+    return `\n## Source Code Under Test (${planItem.targetSourceFile})\n\`\`\`\n${targetFile.content}\n\`\`\``;
+  }
+
+  private buildPatternContext(planItem: TestPlanItem, input: TestGenModuleInput): string {
+    const examples = input.existingTestExamples;
+    if (!examples || examples.length === 0) return '';
+    const relevant = examples.find(
+      e => e.path.includes(planItem.testType) ||
+        (planItem.testType === 'unit' && !e.path.includes('integration') && !e.path.includes('e2e'))
+    ) ?? examples[0];
+    if (!relevant) return '';
+    const truncated = relevant.content.split('\n').slice(0, 50).join('\n');
+    return `\n## Example Test Pattern (follow this style)\n--- ${relevant.path} ---\n\`\`\`\n${truncated}\n\`\`\``;
+  }
+
+  private buildPreviousContext(previouslyGenerated: GeneratedFile[]): string {
+    if (previouslyGenerated.length === 0) return '';
+    let previousContext = '\n## Previously Generated Test Files (for consistency)';
+    for (const prev of previouslyGenerated) {
+      const lines = prev.content.split('\n');
+      const preview = lines.slice(0, 10).join('\n');
+      const moreLinesNote = lines.length > 10 ? `... (${lines.length} lines)` : '';
+      previousContext += `\n### ${prev.path}\n\`\`\`\n${preview}\n${moreLinesNote}\n\`\`\``;
+    }
+    return previousContext;
+  }
+
+  private buildFailureContext(previousFailures?: string[]): string {
+    if (!previousFailures || previousFailures.length === 0) return '';
+    const failureList = previousFailures.map(f => `- ${f}`).join('\n');
+    return `\n## PREVIOUS ATTEMPT FAILED\nYour previous output for this file failed these checks:\n${failureList}\nFix these specific issues. Do not repeat the same mistakes.`;
   }
 
   private buildContinuationPrompt(

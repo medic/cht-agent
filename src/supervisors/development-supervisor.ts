@@ -469,15 +469,28 @@ export class DevelopmentSupervisor {
       return this.finishTestGeneration(todoId, emptyResult);
     }
 
+    const input: TestGenerationInput = {
+      issue: state.issue,
+      researchFindings: state.researchFindings,
+      orchestrationPlan: state.orchestrationPlan,
+      codeGeneration: state.codeGeneration,
+      chtCorePath: state.options.chtCorePath,
+    };
+    return this.runTestGenWithFallback(input, todoId, emptyResult);
+  }
+
+  /**
+   * Run the test-gen agent and finish the node, with the non-fatal fallback: a
+   * generation failure logs a warning and returns an empty result so the run
+   * completes. Extracted from testGenerationNode to keep that method flat.
+   */
+  private async runTestGenWithFallback(
+    input: TestGenerationInput,
+    todoId: string,
+    emptyResult: TestGenerationResult,
+  ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
     this.todos.start(todoId);
     try {
-      const input: TestGenerationInput = {
-        issue: state.issue,
-        researchFindings: state.researchFindings,
-        orchestrationPlan: state.orchestrationPlan,
-        codeGeneration: state.codeGeneration,
-        chtCorePath: state.options.chtCorePath,
-      };
       const result = await this.testGenAgent.generate(input);
       console.log(`[Development Supervisor] Generated ${result.files.length} test file(s)`);
       return this.finishTestGeneration(todoId, result);
