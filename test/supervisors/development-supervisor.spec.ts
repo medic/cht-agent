@@ -46,6 +46,7 @@ const mkCodeGenResult = (files: GeneratedFile[] = []): CodeGenerationResult => (
 const mkMockLLM = (): LLMProvider => ({
   providerType: 'anthropic',
   modelName: 'test-model',
+  honorsCustomTools: true,
   invoke: async () => ({ content: '', model: 'test-model' }),
   invokeWithMessages: async () => ({ content: '', model: 'test-model' }),
   invokeForJSON: async <T>() => ({} as T),
@@ -119,6 +120,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
 type SupervisorPrivateAccess = {
   codeGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
   validationNode: (state: unknown) => Promise<Record<string, unknown>>;
+  testGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
 };
 
 /**
@@ -128,17 +130,32 @@ type SupervisorPrivateAccess = {
  */
 const buildSupervisorWithStubAgents = (
   generateImpl: sinon.SinonStub,
+  opts: { testGenImpl?: sinon.SinonStub; shutdownRequested?: boolean } = {},
 ) => {
   class FakeCodeGenAgent {
     generate = generateImpl;
   }
-  const mod = proxyquire('../../src/supervisors/development-supervisor', {
-    '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
+  const testGenerate = opts.testGenImpl ?? sinon.stub().resolves({
+    files: [],
+    explanation: '',
+    requirementsChecklist: [],
   });
+  class FakeTestGenAgent {
+    generate = testGenerate;
+  }
+  const stubs: Record<string, unknown> = {
+    '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
+    '../agents/test-generation-agent': { TestGenerationAgent: FakeTestGenAgent },
+  };
+  if (opts.shutdownRequested) {
+    stubs['../utils/shutdown'] = { isShutdownRequested: () => true };
+  }
+  const mod = proxyquire('../../src/supervisors/development-supervisor', stubs);
   const supervisor = new mod.DevelopmentSupervisor({
     llmProvider: mkMockLLM(),
   });
   return supervisor as unknown as SupervisorPrivateAccess & {
+    develop: (input: unknown) => Promise<DevelopmentState>;
     writeToStaging: (state: DevelopmentState) => Promise<{ stagingPath: string; writtenFiles: string[] }>;
     writeToChtCore: (state: DevelopmentState, chtCorePath: string) => Promise<string[]>;
     clearStaging: (stagingPath: string) => Promise<void>;
@@ -373,5 +390,88 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     const supervisor = buildSupervisorWithStubAgents(generate);
     const all = supervisor.getAllGeneratedFiles(mkDevState());
     expect(all).to.deep.equal([]);
+  });
+});
+
+describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
+  const emptyResult = { files: [], explanation: '', requirementsChecklist: [] };
+  const cannedTestGen = {
+    files: [mkFile('tests/unit/a.spec.ts', '// spec\n', 'test')],
+    explanation: 'generated tests',
+    requirementsChecklist: [],
+  };
+  const stateWithCode = () => mkDevState({
+    ...baseValidInputFragment,
+    codeGeneration: mkCodeGenResult([mkFile('src/a.ts')]),
+  });
+
+  it('runs the agent and returns its result on the happy path', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.calledOnce).to.equal(true);
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(cannedTestGen);
+  });
+
+  it('no-ops on shutdown without calling the agent', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), {
+      testGenImpl: testGen,
+      shutdownRequested: true,
+    });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.notCalled).to.equal(true);
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+  });
+
+  it('no-ops on empty code-gen without calling the agent', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([]),
+    });
+    const out = await supervisor.testGenerationNode(state);
+
+    expect(testGen.notCalled).to.equal(true);
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+  });
+
+  it('is non-fatal when the agent throws: empty result, complete, no errors written', async () => {
+    const testGen = sinon.stub().rejects(new Error('boom'));
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.calledOnce).to.equal(true);
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+    expect(out.errors).to.equal(undefined);
+    expect(out.validationFeedback).to.equal(undefined);
+    expect(out.perFileFeedback).to.equal(undefined);
+  });
+
+  it('is reached once after the refinement loop exhausts and populates testGeneration', async () => {
+    // mkMockLLM.invokeForJSON returns {}, so every validation scores 0 and the
+    // resolver loops back to generateCode until iterations exhaust, then routes
+    // the terminal branch through generateTests to END.
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile('src/a.ts')]));
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(generate, { testGenImpl: testGen });
+
+    const finalState = await supervisor.develop(baseValidInputFragment);
+
+    expect(generate.callCount).to.equal(3); // refinement loop re-entered generateCode each iteration
+    expect(finalState.iterationCount).to.equal(3); // MAX_ITERATIONS — loop ran and exhausted
+    expect(finalState.currentPhase).to.equal('complete'); // generateTests owns the terminal phase
+    expect(testGen.calledOnce).to.equal(true);
+    expect(finalState.testGeneration).to.deep.equal(cannedTestGen);
   });
 });

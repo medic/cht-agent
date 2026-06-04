@@ -13,7 +13,7 @@
  * loops back to code generation with feedback (up to MAX_ITERATIONS).
  */
 
-import { StateGraph, START, Annotation } from '@langchain/langgraph';
+import { StateGraph, START, END, Annotation } from '@langchain/langgraph';
 import {
   IssueTemplate,
   DevelopmentState,
@@ -23,12 +23,14 @@ import {
   ResearchFindings,
   ContextAnalysisResult,
   CodeGenerationResult,
+  TestGenerationResult,
   ImplementationValidation,
   GeneratedFile,
   FileValidationFeedback,
   FailingFileRef,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
+import { TestGenerationAgent, TestGenerationInput } from '../agents/test-generation-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
@@ -170,6 +172,10 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
+  testGeneration: Annotation<TestGenerationResult | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
   currentPhase: Annotation<DevelopmentState['currentPhase']>({
     reducer: (_current, update) => update,
     default: () => 'init' as const,
@@ -197,6 +203,7 @@ const DevelopmentStateAnnotation = Annotation.Root({
 export class DevelopmentSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly codeGenAgent: CodeGenerationAgent;
+  private readonly testGenAgent: TestGenerationAgent;
   private readonly llm: LLMProvider;
   private readonly todos: TodoTracker;
 
@@ -207,6 +214,8 @@ export class DevelopmentSupervisor {
       llmProvider: this.llm,
       codeGenRegistry: options.codeGenRegistry,
     });
+
+    this.testGenAgent = new TestGenerationAgent({ llmProvider: this.llm });
 
     this.todos = createSupervisorTodoTracker('Development');
 
@@ -221,11 +230,26 @@ export class DevelopmentSupervisor {
       // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
+      // Node name is 'generateTests' (not 'testGeneration'): LangGraph forbids a
+      // node name that collides with a state channel, and 'testGeneration' is the
+      // channel this node writes.
+      .addNode('generateTests', this.testGenerationNode.bind(this))
 
-      // Define edges with conditional routing from validation
+      // Define edges with conditional routing from validation. The resolver
+      // stays pure (returns 'generateCode' | END); the path map remaps its
+      // terminal branch through the (currently inert) test-generation node before
+      // END, while the refinement self-loop back to generateCode is unchanged.
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'validateImpl')
-      .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
+      .addConditionalEdges(
+        'validateImpl',
+        (state) => resolveValidateImplEdge(state),
+        {
+          generateCode: 'generateCode',
+          [END]: 'generateTests',
+        },
+      )
+      .addEdge('generateTests', END);
 
     return workflow.compile();
   }
@@ -348,7 +372,6 @@ export class DevelopmentSupervisor {
   }): { validationResult: ImplementationValidation; currentPhase: 'complete' } {
     console.log('[Development Supervisor] Skipping validation — no files generated');
     this.todos.complete(opts.todoId);
-    this.todos.printSummary();
     return {
       validationResult: this.heuristicValidation(opts.issue, opts.codeGeneration),
       currentPhase: 'complete' as const,
@@ -366,12 +389,10 @@ export class DevelopmentSupervisor {
         opts.codeGeneration
       );
       this.todos.complete(opts.todoId);
-      this.todos.printSummary();
       return this.buildValidationStateUpdate(validation, opts.codeGeneration);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.todos.fail(opts.todoId, errorMessage);
-      this.todos.printSummary();
       return {
         errors: [`Validation failed: ${errorMessage}`],
         currentPhase: 'validation' as const,
@@ -392,7 +413,10 @@ export class DevelopmentSupervisor {
   ): Record<string, unknown> {
     const feedbackUpdate: Record<string, unknown> = {
       validationResult: validation,
-      currentPhase: 'complete' as const,
+      // Validation is done; the terminal testGeneration node owns 'complete'.
+      // The resolver routes on score/issues, not on currentPhase, so this is
+      // routing-inert. A refinement-loop iteration overwrites it on re-entry.
+      currentPhase: 'test-generation' as const,
       messages: [
         {
           role: 'assistant' as const,
@@ -409,6 +433,86 @@ export class DevelopmentSupervisor {
     }
 
     return feedbackUpdate;
+  }
+
+  /**
+   * Node: Test Generation.
+   *
+   * Terminal node, reachable after the validation branch and outside the
+   * refinement loop, so it owns the final progress-tracker bookkeeping and printSummary.
+   * It builds input via buildTestGenModuleInput and runs the test-gen agent.
+   *
+   * Failure is non-fatal: it logs a warning and returns an empty result. It
+   * never writes errors/validationFeedback/perFileFeedback, so test generation
+   * cannot feed the validation score or trip the refinement loop. It no-ops on
+   * shutdown and when there is no generated code to test.
+   */
+  private async testGenerationNode(
+    state: typeof DevelopmentStateAnnotation.State,
+  ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
+    const todoId = 'development-3';
+    const emptyResult: TestGenerationResult = { files: [], explanation: '', requirementsChecklist: [] };
+
+    if (isShutdownRequested()) {
+      console.log('[Development Supervisor] Shutdown requested; skipping test generation node');
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+
+    console.log('\n=== TEST GENERATION NODE ===');
+
+    if (!state.issue || !state.options || !state.researchFindings || !state.orchestrationPlan) {
+      console.log('[Development Supervisor] Skipping test generation — missing required data');
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+    if (!state.codeGeneration || state.codeGeneration.files.length === 0) {
+      console.log('[Development Supervisor] Skipping test generation — no generated code to test');
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+
+    const input: TestGenerationInput = {
+      issue: state.issue,
+      researchFindings: state.researchFindings,
+      orchestrationPlan: state.orchestrationPlan,
+      codeGeneration: state.codeGeneration,
+      chtCorePath: state.options.chtCorePath,
+    };
+    return this.runTestGenWithFallback(input, todoId, emptyResult);
+  }
+
+  /**
+   * Run the test-gen agent and finish the node, with the non-fatal fallback: a
+   * generation failure logs a warning and returns an empty result so the run
+   * completes. Extracted from testGenerationNode to keep that method flat.
+   */
+  private async runTestGenWithFallback(
+    input: TestGenerationInput,
+    todoId: string,
+    emptyResult: TestGenerationResult,
+  ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
+    this.todos.start(todoId);
+    try {
+      const result = await this.testGenAgent.generate(input);
+      console.log(`[Development Supervisor] Generated ${result.files.length} test file(s)`);
+      return this.finishTestGeneration(todoId, result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.warn(`[Development Supervisor] Test generation failed (non-fatal): ${message}`);
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+  }
+
+  /**
+   * Complete the test-generation tracker entry, print the terminal run summary, and
+   * return the terminal state update. Shared by every testGenerationNode path
+   * so the summary fires exactly once and reads 3/3 at the end of a run.
+   */
+  private finishTestGeneration(
+    todoId: string,
+    result: TestGenerationResult,
+  ): { testGeneration: TestGenerationResult; currentPhase: 'complete' } {
+    this.todos.complete(todoId);
+    this.todos.printSummary();
+    return { testGeneration: result, currentPhase: 'complete' as const };
   }
 
   /**
@@ -725,6 +829,7 @@ Respond with a JSON object:
     this.todos.addMany([
       { content: 'Generate code', activeForm: 'Generating code' },
       { content: 'Validate implementation', activeForm: 'Validating implementation' },
+      { content: 'Generate tests', activeForm: 'Generating tests' },
     ]);
 
     const initialState: typeof DevelopmentStateAnnotation.State = {
@@ -741,6 +846,7 @@ Respond with a JSON object:
       contextAnalysis: input.contextAnalysis,
       options: input.options,
       codeGeneration: undefined,
+      testGeneration: undefined,
       validationResult: undefined,
       currentPhase: 'init',
       errors: [],
@@ -785,6 +891,9 @@ Respond with a JSON object:
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
     }
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
+    }
 
     const writtenFiles = await writeToStaging(allFiles, stagingPath);
 
@@ -801,6 +910,9 @@ Respond with a JSON object:
 
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
+    }
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
     }
 
     const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
@@ -826,6 +938,9 @@ Respond with a JSON object:
 
     if (state.codeGeneration) {
       allFiles.push(...state.codeGeneration.files);
+    }
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
     }
 
     return allFiles;

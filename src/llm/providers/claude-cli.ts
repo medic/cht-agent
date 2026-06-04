@@ -373,9 +373,12 @@ IMPORTANT: Respond with valid JSON only. Do not include any text before or after
   };
 
   // CLI provider declares itself as 'anthropic' for compatibility with LLMProvider consumers.
+  // honorsCustomTools is false: the CLI ignores custom tool definitions and runs its own
+  // agentic loop, which is the explicit capability the providerType shim hides.
   const provider: LLMProvider = {
     providerType: 'anthropic',
     modelName,
+    honorsCustomTools: false,
     invoke,
     invokeWithMessages,
     invokeForJSON,

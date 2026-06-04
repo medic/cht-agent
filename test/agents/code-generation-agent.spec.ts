@@ -100,6 +100,7 @@ describe('CodeGenerationAgent', () => {
     mockProvider = {
       providerType: 'anthropic',
       modelName: 'test-model',
+      honorsCustomTools: true,
       async invoke(): Promise<LLMResponse> {
         return { content: '', model: 'test-model' };
       },

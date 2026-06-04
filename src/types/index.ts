@@ -551,6 +551,34 @@ export interface CodeGenerationResult {
 }
 
 /**
+ * One requirement mapped to the test scenarios that cover it. Mirrors the
+ * test-gen layer's TestScenario shape but declared here to keep `src/types`
+ * free of any import from `src/layers/*` (which would close a dependency cycle).
+ */
+export interface TestScenarioChecklistItem {
+  requirement: string;
+  scenarios: Array<{
+    name: string;
+    type: 'happy-path' | 'error' | 'edge-case' | 'boundary';
+    description: string;
+  }>;
+}
+
+/**
+ * Test Generation result, as consumed by the Development Supervisor. `files`
+ * is the types-local GeneratedFile (same as CodeGenerationResult.files); the
+ * adapter converts the layer's LayerGeneratedFile output to this shape.
+ */
+export interface TestGenerationResult {
+  files: GeneratedFile[];
+  explanation: string;
+  requirementsChecklist: TestScenarioChecklistItem[];
+  warnings?: string[];
+  tokensUsed?: number;
+  modelUsed?: string;
+}
+
+/**
  * Requirement validation status
  */
 export interface RequirementValidation {
@@ -595,6 +623,7 @@ export interface ImplementationValidation {
 export type DevelopmentPhase =
   | 'init'
   | 'code-generation'
+  | 'test-generation'
   | 'validation'
   | 'complete';
 
@@ -613,6 +642,7 @@ export interface DevelopmentState {
   contextAnalysis: ContextAnalysisResult;
   options: DevelopmentOptions;
   codeGeneration?: CodeGenerationResult;
+  testGeneration?: TestGenerationResult;
   validationResult?: ImplementationValidation;
   currentPhase: DevelopmentPhase;
   errors: string[];

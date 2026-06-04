@@ -282,6 +282,7 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
   return {
     providerType: 'anthropic',
     modelName: config.model,
+    honorsCustomTools: true,
     invoke,
     invokeWithMessages,
     invokeForJSON,

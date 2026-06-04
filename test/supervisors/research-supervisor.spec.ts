@@ -390,6 +390,7 @@ const v9b2mkAnalysis = (overrides: Partial<ContextAnalysisResult> = {}): Context
 const v9b2mkLLM = (invokeContent: string): LLMProvider => ({
   providerType: 'anthropic',
   modelName: 'test-model',
+  honorsCustomTools: true,
   invoke: sinon.stub().resolves({ content: invokeContent, model: 'test-model' }),
   invokeWithMessages: async () => ({ content: '', model: 'test-model' }),
   invokeForJSON: async <T>() => ({} as T),
@@ -553,6 +554,7 @@ describe('ResearchSupervisor generatePlanNode (v9b.2)', () => {
     const failingLLM: LLMProvider = {
       providerType: 'anthropic',
       modelName: 'test-model',
+      honorsCustomTools: true,
       invoke: sinon.stub().rejects(new Error('LLM exploded')),
       invokeWithMessages: async () => ({ content: '', model: 't' }),
       invokeForJSON: async <T>() => ({} as T),
