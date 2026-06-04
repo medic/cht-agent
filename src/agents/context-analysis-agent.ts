@@ -117,11 +117,10 @@ export class ContextAnalysisAgent {
       score: this.calculateSimilarityScore(issue, resolved),
     }));
 
-    // Sort by score and return top 5
     return scoredIssues
-      .sort((a, b) => b.score - a.score)
+      .toSorted((a, b) => b.score - a.score)
       .slice(0, 5)
-      .filter((item) => item.score > 0.3) // Minimum similarity threshold
+      .filter((item) => item.score > 0.3)
       .map((item) => item.issue);
   }
 
@@ -165,7 +164,7 @@ export class ContextAnalysisAgent {
       score += 0.3 * (componentOverlap / currentComponents.length);
     }
 
-    return Math.min(score, 1.0);
+    return Math.min(score, 1);
   }
 
   /**
@@ -266,7 +265,7 @@ export class ContextAnalysisAgent {
 
     // Pattern-based recommendations
     if (patterns.length > 0) {
-      const topPattern = patterns.sort((a, b) => b.frequency - a.frequency)[0];
+      const topPattern = patterns.toSorted((a, b) => b.frequency - a.frequency)[0];
       recommendations.push(
         `Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`
       );
@@ -277,21 +276,34 @@ export class ContextAnalysisAgent {
       recommendations.push(`Review domain overview for key concepts and technologies`);
     }
 
-    // Issue type recommendations
-    if (issue.issue.type === 'feature') {
-      recommendations.push('Ensure comprehensive test coverage for new feature');
-      recommendations.push('Update documentation and configuration examples');
-    } else if (issue.issue.type === 'bug') {
-      recommendations.push('Add regression tests to prevent recurrence');
-      recommendations.push('Check for similar issues in related components');
-    }
-
-    // Priority-based recommendations
-    if (issue.issue.priority === 'high') {
-      recommendations.push('Validate changes with integration tests before deployment');
-    }
+    recommendations.push(...this.getIssueTypeRecommendations(issue));
 
     return recommendations;
+  }
+
+  private getIssueTypeRecommendations(issue: IssueTemplate): string[] {
+    const typeRecs: Record<string, string[]> = {
+      feature: [
+        'Ensure comprehensive test coverage for new feature',
+        'Update documentation and configuration examples',
+      ],
+      bug: [
+        'Add regression tests to prevent recurrence',
+        'Check for similar issues in related components',
+      ],
+      improvement: [
+        'Add or extend tests around the improved behavior',
+        'Confirm no regressions in related workflows',
+      ],
+    };
+
+    const recs = typeRecs[issue.issue.type] || [];
+
+    if (issue.issue.priority === 'high') {
+      recs.push('Validate changes with integration tests before deployment');
+    }
+
+    return recs;
   }
 
   /**
@@ -315,7 +327,7 @@ export class ContextAnalysisAgent {
     // Return components that appear in at least 2 contexts
     return Array.from(componentCounts.entries())
       .filter(([_, count]) => count >= 2)
-      .sort((a, b) => b[1] - a[1])
+      .toSorted((a, b) => b[1] - a[1])
       .map(([component]) => component)
       .slice(0, 3);
   }

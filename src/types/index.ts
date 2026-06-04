@@ -13,12 +13,23 @@ export type CHTDomain =
   | 'tasks-and-targets'
   | 'messaging'
   | 'data-sync'
-  | 'configuration';
+  | 'configuration'
+  | 'interoperability';
 
 /**
- * CHT Services
+ * Issue type classification
  */
-export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+export type IssueType = 'feature' | 'bug' | 'improvement';
+
+/**
+ * Priority level
+ */
+export type Priority = 'high' | 'medium' | 'low';
+
+/**
+ * Complexity level
+ */
+export type Complexity = 'low' | 'medium' | 'high';
 
 /**
  * Issue template structure
@@ -26,8 +37,8 @@ export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 export interface IssueTemplate {
   issue: {
     title: string;
-    type: 'feature' | 'bug' | 'enhancement';
-    priority: 'high' | 'medium' | 'low';
+    type: IssueType;
+    priority: Priority;
     description: string;
     technical_context: {
       domain: CHTDomain; // Required - must be specified in ticket frontmatter
@@ -93,6 +104,11 @@ export interface DomainOverviewMetadata {
   last_updated: string;
   related_domains: string[];
 }
+
+/**
+ * CHT Services
+ */
+export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
 
 /**
  * Workflow step
@@ -215,6 +231,78 @@ export interface ContextAnalysisResult {
   recommendations: string[];
   historicalSuccessRate: number; // 0-1
   relatedDomains: CHTDomain[];
+  codeArchitectureSummary?: string;
+}
+
+/**
+ * Architecture insight from OpenDeepWiki code analysis
+ */
+export interface ArchitectureInsight {
+  component: string;
+  description: string;
+  patterns: string[];
+  dependencies: string[];
+}
+
+/**
+ * Module relationship from code structure analysis
+ */
+export interface ModuleRelationship {
+  source: string;
+  target: string;
+  relationship: 'imports' | 'extends' | 'implements' | 'calls' | 'depends-on';
+  description: string;
+}
+
+/**
+ * Code context findings from OpenDeepWiki Code Context Agent
+ */
+export interface CodeContextFindings {
+  architectureInsights: ArchitectureInsight[];
+  moduleRelationships: ModuleRelationship[];
+  diagrams: string[]; // Mermaid diagram strings
+  relevantRepos: string[];
+  warnings: string[];
+  confidence: number; // 0-1
+  source: 'opendeepwiki' | 'mock';
+}
+
+/**
+ * Wiki structure entry from OpenDeepWiki
+ */
+export interface WikiStructureEntry {
+  path: string;
+  title: string;
+  description: string;
+  children?: WikiStructureEntry[];
+}
+
+/**
+ * MCP (Model Context Protocol) tool call for OpenDeepWiki
+ */
+export interface OpenDeepWikiMCPToolCall {
+  tool: 'get_wiki_structure' | 'search_code' | 'get_architecture';
+  parameters: {
+    repo: string;
+    query?: string;
+    domain?: CHTDomain;
+    max_results?: number;
+  };
+}
+
+/**
+ * MCP Response from OpenDeepWiki
+ */
+export interface OpenDeepWikiMCPResponse {
+  success: boolean;
+  data?: {
+    architectureInsights: ArchitectureInsight[];
+    moduleRelationships: ModuleRelationship[];
+    diagrams: string[];
+    structure: WikiStructureEntry[];
+  };
+  error?: string;
+  rateLimited?: boolean;
 }
 
 /**
@@ -224,11 +312,11 @@ export interface OrchestrationPlan {
   summary: string;
   keyFindings: string[];
   proposedApproach: string;
-  estimatedComplexity: 'low' | 'medium' | 'high';
+  estimatedComplexity: Complexity;
   phases: Array<{
     name: string;
     description: string;
-    estimatedComplexity: 'low' | 'medium' | 'high';
+    estimatedComplexity: Complexity;
     suggestedComponents: string[];
     dependencies: string[];
   }>;
@@ -247,9 +335,10 @@ export interface ResearchState {
   }>;
   issue?: IssueTemplate;
   researchFindings?: ResearchFindings;
+  codeContextFindings?: CodeContextFindings;
   contextAnalysis?: ContextAnalysisResult;
   orchestrationPlan?: OrchestrationPlan;
-  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
+  currentPhase: 'init' | 'doc-search' | 'code-context' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
   errors: string[];
 }
 
@@ -275,7 +364,7 @@ export interface AgentMessage {
   message_type: AgentMessageType;
   payload: {
     task_id?: string;
-    content: any;
+    content: Record<string, unknown>;
     priority: number; // 1-10
     requires_response: boolean;
   };
@@ -286,27 +375,43 @@ export interface AgentMessage {
   };
 }
 
+// ============================================================================
+// MCP (Model Context Protocol) Types for CHT Documentation Server
+// ============================================================================
+
 /**
- * MCP (Model Context Protocol) tool call for Kapa.AI
+ * Parameters for search_docs MCP tool
  */
-export interface MCPToolCall {
-  tool: 'search_docs' | 'get_context';
-  parameters: {
-    query: string;
-    domain?: CHTDomain;
-    max_results?: number;
-  };
+export interface MCPSearchDocsParams {
+  query: string;
+  maxResults?: number;
 }
 
 /**
- * MCP Response from Kapa.AI
+ * Raw response from search_docs MCP tool
+ * Returns markdown-formatted document snippets
  */
-export interface MCPResponse {
-  success: boolean;
-  data?: {
-    references: DocumentationReference[];
-    summary: string;
-    relatedTopics: string[];
-  };
-  error?: string;
+export interface MCPSearchDocsResponse {
+  /** Markdown content with document snippets, titles, and source URLs */
+  content: string;
+}
+
+/**
+ * Parsed document from search_docs response
+ */
+export interface MCPParsedDocument {
+  title: string;
+  section: string;
+  content: string;
+  sourceUrl: string;
+}
+
+/**
+ * MCP Client configuration
+ */
+export interface MCPClientConfig {
+  /** MCP server URL */
+  serverUrl: string;
+  /** Request timeout in milliseconds */
+  timeout?: number;
 }

@@ -4,9 +4,12 @@ dist/
 *.log
 .env
 .DS_Store
-agent-memory/
 *.tmp
+*.bak
 
 # Test coverage
 .nyc_output/
 coverage/
+
+# Research output files
+outputs/
