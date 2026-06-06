@@ -37,6 +37,15 @@ QA Supervisor  (runs inside the cht-agent container)
 
 The Development Supervisor's **Test Generation Layer** *writes* test code. This layer writes *no code* — it provisions the infrastructure those tests run on.
 
+> **Precondition — who provides cht-core:** the cht-core working copy (a standing local clone, modified in place by the Development Supervisor's Code Generation Layer in the internal pipeline) is an **input** to this layer. The Test Environment Layer never clones or edits code — it builds, runs, and seeds the copy it's handed. Only standalone/PR-review mode performs a checkout, since no Dev Supervisor ran first.
+>
+> | Mode | Who provides the working copy | This layer's job |
+> |------|------------------------------|------------------|
+> | Internal pipeline | Dev Supervisor (clones + writes generated code in place) | build + run + seed the already-present copy |
+> | Standalone / PR-review | The CLI invocation (`--cht-core-path` points at it, or `--pr` checks a branch out) | checkout *only in PR mode*, then build + run + seed |
+>
+> *Status:* this is design intent. The Development Supervisor is not yet started, and no clone step / `CHT_CORE_PATH` contract exists in code today — the working copy's origin is a shared assumption across the layer recommendations, not a built handoff.
+
 ### The container topology
 
 ```
@@ -300,7 +309,7 @@ Our design matches this: the Test Environment Layer is the service; the QA Super
 > Detailed in the working plan; summarized here so the doc is self-contained.
 
 - **Phase 0 — Scaffolding & types.** Add `TestEnvironmentState`, `DiscoveredConfig`, environment-handle types to `src/types/index.ts`. Stub `src/agents/test-environment-agent.ts` with a **mock mode** mirroring the other agents (this is what #43 tests). Add `test-env` npm script + `src/cli/test-env.ts`.
-- **Phase 1 — Lifecycle (Model A).** Orchestrate the target repo's bring-up (`local-images` for local code, `cht-docker-compose.sh` for published versions) + thin compose override to join `cht-agent-net`. Readiness polling (`/api/v2/monitoring`), phase gates for the human-gated rebuild, three-tier reset, teardown. **No hot-reload, no spike.**
+- **Phase 1 — Lifecycle (Model A).** Build + run + seed the **already-present** cht-core working copy (build via `local-images`; for standalone/published use `cht-docker-compose.sh`) + thin compose override to join `cht-agent-net`. Readiness polling (`/api/v2/monitoring`), phase gates for the human-gated rebuild, three-tier reset, teardown. **No clone, no hot-reload, no spike** — the working copy is an input (see Precondition).
 - **Phase 2 — Config discovery.** `/api/v1/settings` + `/forms` parsing into `DiscoveredConfig`.
 - **Phase 3 — Test data prep.** cht-conf child_process wrappers, config-driven generation, harness shortcut detection.
 - **Phase 4 — Handle + LangGraph node + CLI.** Write handle file; wire the node into the QA Supervisor graph; finish the standalone CLI.
