@@ -49,11 +49,13 @@ flowchart TB
     ContextLayer[Code Context Layer<br/>Local context files]
     HC1{{"HUMAN CHECKPOINT #1<br/>Validate research findings<br/>Approve orchestration plan"}}
     Dev[Development Supervisor]
-    CodeGen[Code Generation Layer<br/>Claude Code CLI / Claude API]
-    TestGen[Test Generation Layer<br/>Unit, Integration, E2E tests]
+    CodeGen[Code Generation Layer<br/>Claude Code CLI / Claude API<br/>self-check lint/tsc]
+    TestGen[Test Generation Layer<br/>Unit, Integration, E2E tests<br/>self-check lint/tsc]
+    Validation[Code Validation Layer<br/>ESLint, tsc, Prettier<br/>deterministic gate + retry]
+    Review[LLM Review<br/>score vs requirements / acceptance criteria]
     QA[QA Supervisor]
-    Validation[Code Validation Layer<br/>ESLint, Shellcheck]
-    TestOrch[Test Orchestration Layer<br/>npm scripts, Mocha/Jest]
+    TestEnv[Test Environment Layer<br/>build/start/seed CHT instance]
+    TestOrch[Test Orchestration Layer<br/>run tests, verify, coverage]
     HC2{{"HUMAN CHECKPOINT #2<br/>Review generated code<br/>Verify test results<br/>Approve for completion"}}
 
     CLI --> Master
@@ -65,11 +67,13 @@ flowchart TB
     HC1 --> Dev
     Dev --> CodeGen
     Dev --> TestGen
-    CodeGen --> QA
-    TestGen --> QA
-    QA --> Validation
-    QA --> TestOrch
-    Validation --> HC2
+    CodeGen --> Validation
+    TestGen --> Validation
+    Validation -->|fail| CodeGen
+    Validation -->|pass| Review
+    Review --> QA
+    QA --> TestEnv
+    TestEnv --> TestOrch
     TestOrch --> HC2
 ```
 
@@ -99,10 +103,16 @@ flowchart TB
 
 > **Note**: Tools like DeepWiki can be used separately to auto-generate code documentation (architecture docs, component diagrams) which can then feed into the context layer.
 
+> **Layer placement update (2026-06-05):** Per the [Test Environment Layer discovery findings](https://github.com/medic/cht-agent/issues/16#issuecomment-4238272374), two layers moved between supervisors and one was added:
+> - **Test Environment Layer** moved from Development → **QA Supervisor** (the QA Supervisor needs a running CHT instance to do its work; the Development Supervisor only produces code and tests).
+> - **Code Validation Layer** moved from QA → **Development Supervisor** as a deterministic gate that runs *before* an LLM Review step, looping failures back to Code Generation without spending LLM tokens.
+> - **LLM Review** added under the Development Supervisor (score generated code against requirements / acceptance criteria).
+> - Code Generation and Test Generation agents now **self-check lint/tsc** (like a developer running `npm run lint` before pushing) to catch trivial issues before the gate.
+
 ### Development Supervisor Layers
 
 #### Code Generation Layer
-**Purpose**: Generate code following CHT patterns and standards
+**Purpose**: Generate code following CHT patterns and standards. Self-checks lint/tsc before handing off.
 
 | Pluggable Options | Notes |
 |-------------------|-------|
@@ -113,7 +123,7 @@ flowchart TB
 | Cursor / Windsurf | IDE-based alternatives |
 
 #### Test Generation Layer
-**Purpose**: Write tests following CHT testing patterns
+**Purpose**: Write tests following CHT testing patterns. Self-checks lint/tsc before handing off.
 
 | Test Type | Description | Tools |
 |-----------|-------------|-------|
@@ -123,29 +133,36 @@ flowchart TB
 
 Based on [CHT Automated Tests documentation](https://docs.communityhealthtoolkit.org/community/contributing/code/core/automated-tests/).
 
-#### Test Environment Layer
-**Purpose**: Set up test data and environments
+#### Code Validation Layer
+**Purpose**: Static analysis and standards compliance — a deterministic gate run against the generated code before LLM Review. On failure, the structured errors loop back to Code Generation (max retries) without spending LLM tokens. See [Code Validation Layer recommendation](../layer_recommendations/code-validation-layer.md).
 
 | Pluggable Options | Notes |
 |-------------------|-------|
-| **cht-conf** | Configuration compilation |
-| **cht-toolbox** | Utility functions |
-| **cht-datasource** | Data pipeline configs |
-| k3d/Docker | Container orchestration for integration tests |
+| **ESLint** | JavaScript/TypeScript linting (against target project's config) |
+| **TypeScript (tsc)** | Type checking against target's per-directory tsconfig |
+| **Prettier** | Conditional — only when target project uses it |
+| **Shellcheck** | Shell script validation (`.sh` files only) |
+| CHT coding standards | Pattern matching against existing code |
+
+#### LLM Review
+**Purpose**: Score the generated code against the ticket's requirements and acceptance criteria once it has passed the deterministic Code Validation gate. Only validated code reaches this step.
 
 ### QA Supervisor Layers
 
-#### Code Validation Layer
-**Purpose**: Static analysis and standards compliance
+#### Test Environment Layer
+**Purpose**: Provide a live, configured, data-populated CHT instance the QA Supervisor can test against. Deterministic orchestration of existing tools — no LLM. See [Test Environment Layer recommendation](../layer_recommendations/test-environment-layer.md).
 
 | Pluggable Options | Notes |
 |-------------------|-------|
-| **ESLint** | JavaScript/TypeScript linting |
-| **Shellcheck** | Shell script validation |
-| CHT coding standards | Pattern matching against existing code |
+| **cht-core `scripts/docker-helper/cht-docker-compose.sh`** | Target repo's own helper — published-version bring-up, network/env/stop/destroy |
+| **`npm run local-images`** | Build images from local code changes (hybrid hot-reload for api/sentinel) |
+| **cht-conf** | Config compilation/upload, user creation, doc seeding |
+| **cht-conf-test-harness** | Config-level tests (tasks/targets/forms) without a full instance |
+| **cht-datasource** | Typed read/verify of seeded data |
+| CHT API / CouchDB API | Config discovery, data seeding, verification |
 
 #### Test Orchestration Layer
-**Purpose**: Run tests and analyze coverage
+**Purpose**: Run tests and analyze coverage against the environment the Test Environment Layer provides.
 
 | Pluggable Options | Notes |
 |-------------------|-------|
