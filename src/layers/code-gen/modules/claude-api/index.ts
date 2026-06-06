@@ -34,10 +34,16 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     const title = ticket.issue.title;
 
     const phaseComponents = orchestrationPlan.phases.flatMap((phase) => phase.suggestedComponents);
-    const components =
-      phaseComponents.length > 0 ? phaseComponents : ticket.issue.technical_context.components.slice(0, 1);
-
-    return components
+    const fromPhases = phaseComponents
+      .map((component) => this.buildComponentFile(component, title, domain, targetDir))
+      .filter((file): file is GeneratedFile => file !== null);
+    if (fromPhases.length > 0) {
+      return fromPhases;
+    }
+    // Fall back to the first ticket component whenever the phases produced no files,
+    // regardless of why (matches the original "if no phases produced files" intent).
+    return ticket.issue.technical_context.components
+      .slice(0, 1)
       .map((component) => this.buildComponentFile(component, title, domain, targetDir))
       .filter((file): file is GeneratedFile => file !== null);
   }
