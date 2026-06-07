@@ -21,7 +21,7 @@ The "walk into a secure room and bounce off the walls until tests pass" behaviou
 | **Layer identity** | Deterministic provisioning service consumed by the *already-containerized* cht-agent | No LLM in this layer. Iteration intelligence lives in the QA Supervisor, which runs in the cht-agent container. |
 | **Code iteration model** | **Model A — rebuild-on-change** | Agent edits the working copy → human-gated `local-images` rebuild → restart. cht-core has **no in-container hot-reload** today, so the live-mount "Model B" is deferred. No spike for this build. |
 | **PR-review mode** | **Design now, build later** | Interfaces and flow are specified here; implementation lands after the internal-pipeline path. |
-| **Sandbox** | **Replicate the PoC's 5-layer git/credential sandbox**, around the cht-agent container | Claude can run autonomous loops in the room with no remote/credential access. |
+| **Sandbox** | **PoC 5-layer git/credential sandbox**, around the cht-agent container | Claude runs autonomous loops with **read-only** remote access (public repos), **no write credentials, no Docker socket**, and a hard push block — only the host user pushes. |
 
 ---
 
@@ -76,7 +76,7 @@ The Development Supervisor's **Test Generation Layer** *writes* test code. This 
 ```
 
 **Why this shape:**
-- **No docker-in-docker.** The cht-agent does not build/run Docker inside itself. Either the host operator brings services up (PoC model, human-gated) or the cht-agent uses a **mounted host Docker socket** to manage *sibling* containers. Both keep us out of DinD. The recommendation is to start with the human-gated host model and treat the socket-mount as an opt-in convenience (see [Open Questions](#open-questions)).
+- **No docker-in-docker, and no Docker socket.** The cht-agent does not run Docker at all. The **host operator** brings services up (human-gated). A mounted host Docker socket was considered and **rejected** — it grants host-root (see [Sandbox Model](#sandbox-model-adapted-from-the-poc) and the resolved note in [Open Questions](#open-questions)).
 - **Shared network** means the agent reaches CHT at a stable hostname (e.g. `https://nginx` / `https://haproxy`) with no port juggling.
 - **Shared code volume** (host ↔ cht-agent container) is the working copy the agent edits and the host builds from. Under **Model A** (chosen), code changes reach the running CHT env via a rebuild (`local-images`), *not* a live mount into api/sentinel. Live-mount hot-reload (Model B) is a deferred optimization — see [Code-iteration model](#code-iteration-model-the-re-test-problem).
 
@@ -90,6 +90,63 @@ This layer **orchestrates the target repo's own launch tooling** rather than shi
 | `npm run local-images` + generated `local-build/` compose | **Local-code bring-up.** Builds branch-tagged images from the working copy so the agent tests *its own* changes. Used for the internal pipeline. |
 
 cht-agent contributes only a **thin compose override** that joins the running stack to `cht-agent-net` so the agent container can reach the services. The override layers on top of the target repo's compose files via `docker compose -f <target> -f <override>`. The `CHT_NETWORK` variable the helper already exposes is the seam we attach to. (A future Model B override would additionally mount source into api/sentinel for hot-reload.)
+
+---
+
+## Internal Pipeline Flow (where this layer fits, and where humans gate)
+
+The cht-agent runs on a ticket template. The dockerized agent clones cht-core (read-only — public repo), branches off `main` locally, runs the agentic layers to complete the ticket, and invokes this layer when it needs a live environment. Docker and remote `git push` are **human-only**.
+
+```mermaid
+flowchart TB
+    Ticket([ticket template])
+
+    subgraph Master["Master Supervisor"]
+      Checkout["clone cht-core (read-only)<br/>git checkout -b cht-agent/&lt;ticket&gt; — local, off main"]
+    end
+
+    subgraph Research["Research Supervisor — built (POC)"]
+      Doc[Documentation Search] --> Code[Code Context] --> Ctx[Context Analysis] --> Plan[Generate Plan]
+    end
+
+    HC1{{"HUMAN CHECKPOINT #1<br/>approve research &amp; plan"}}
+
+    subgraph Dev["Development Supervisor — not started"]
+      Gen["Code Generation<br/>(self-check lint/tsc)"] --> TGen[Test Generation]
+      TGen --> Val["Code Validation gate<br/>eslint / tsc / prettier"]
+      Val -->|fail| Gen
+      Val -->|pass| Rev[LLM Review]
+    end
+
+    subgraph QA["QA Supervisor — not started"]
+      subgraph TEL["Test Environment Layer — #43 mock done / #66 real"]
+        Prov[provision] --> Apply[applyConfig] --> Disc[discoverConfig] --> Seed[prepareTestData]
+      end
+      Seed --> Orch["Test Orchestration<br/>run tests, verify"]
+    end
+
+    HGate{{"HUMAN GATE — env bring-up<br/>npm run local-images + docker compose up<br/>(agent runs NO docker)"}}
+    HC2{{"HUMAN CHECKPOINT #2<br/>review code &amp; test results"}}
+    Push[["host user pushes / opens PR<br/>(agent reads remote, never pushes)"]]
+
+    Ticket --> Checkout --> Doc
+    Plan --> HC1 --> Gen
+    Rev --> Prov
+    Prov -. "request bring-up,<br/>poll /api/v2/monitoring" .-> HGate
+    HGate -. "healthy on cht-agent-net" .-> Prov
+    Orch --> HC2 --> Push
+
+    classDef human fill:#ffe8cc,stroke:#d9480f,color:#000;
+    class HC1,HC2,HGate,Push human;
+```
+
+**Human-involvement points (orange):**
+
+1. **Bootstrap clone** — read-only. The agent (or operator) clones the public cht-core and makes a **local** branch off `main`; it never pushes.
+2. **HUMAN CHECKPOINT #1** — after Research: approve findings + plan before any code is generated.
+3. **HUMAN GATE — env bring-up** — inside this layer's `provision`: the agent *requests* the environment and polls `/api/v2/monitoring`; the **human** runs `local-images` + `docker compose up` (the agent runs no Docker — a mounted socket would be host-root). CouchDB-tier resets are the exception — the agent does those over the CouchDB HTTP API.
+4. **HUMAN CHECKPOINT #2** — after QA: review generated code + test results.
+5. **Push** — only the host user pushes / opens the PR; the agent has read-only remote access and a hard push block.
 
 ---
 
@@ -274,17 +331,17 @@ This layer's responsibility stops at **provision + run-existing-tests + write-re
 
 ---
 
-## Sandbox Model (replicated from the PoC)
+## Sandbox Model (adapted from the PoC)
 
-Because Claude runs autonomous loops *inside the cht-agent container*, the container is hardened with the PoC's five independent layers (any one sufficient; all active):
+Because Claude runs autonomous loops *inside the cht-agent container*, the container is hardened so it can **read** public repos but **never push or reach the host**. cht-core and the cht-agent repos are public, so clone/fetch (read) is allowed; write access to any remote is hard-blocked, and **only the host user pushes**. Five independent layers (any one sufficient; all active):
 
-1. **No credentials mounted** — no SSH keys, no `~/.gitconfig`, no `GH_TOKEN`, no host Docker socket *unless* explicitly opted in for lifecycle management.
-2. **System-level git config** (baked in the image) — `pushInsteadOf` rewrites all GitHub URLs to `error://`, requires root to change.
-3. **Hardened, read-only `.git/config`** — remotes → `/dev/null`, mounted `:ro`.
-4. **Pre-push hook + dummy identity** — installed on container start.
-5. **Agent instructions** (`CLAUDE.md`) — explicit "local git only, no remote, no external network except CHT services on the shared net."
+1. **No write credentials, no Docker socket.** No SSH keys, no `~/.gitconfig`, no `GH_TOKEN`, and **no host Docker socket** — a mounted socket grants host-root (launch any image, bind-mount `/`), so it is rejected. The agent never runs Docker; env bring-up is human-gated.
+2. **Push hard-blocked at system git config** (baked in the image) — `pushInsteadOf` rewrites GitHub *push* URLs to `error://` and `push.default=nothing`; requires root to change. **Fetch/clone stay allowed** for public repos.
+3. **No way to authenticate a push** — even past layer 2, there are no tokens/keys in the container, so no remote write can succeed.
+4. **Pre-push hook + dummy identity** — installed on container start as defense in depth.
+5. **Agent instructions** (`CLAUDE.md`) — "reading remotes is fine; never `git push` or change a remote; the host user owns pushing; no external network except CHT services on `cht-agent-net`."
 
-`.claude/settings.json` additionally allow/deny-lists tools (allow: npm, local git, curl, cht-conf, docker compose *if socket mounted*; deny: `git push/fetch/pull/remote`, `ssh`, `rm -rf`). The PoC's **ralph loop** (command-on-repeat with a hard timeout, because Claude stalls indefinitely on rate limits) and **file-based signals** (`stop`/`pause`/`build-request`) are reused for autonomous operation.
+`.claude/settings.json` allow/deny-lists tools — allow: `npm`, read-only/local `git` (`clone`/`fetch`/`pull`/branch/commit), `curl`, `cht-conf`; deny: `git push`, `git remote set-url`, `ssh`, `rm -rf`, and Docker. The PoC's **ralph loop** (command-on-repeat with a hard timeout, because Claude stalls indefinitely on rate limits) and **file-based signals** (`stop`/`pause`/`build-request`) are reused for autonomous operation.
 
 ---
 
@@ -325,7 +382,7 @@ Our design matches this: the Test Environment Layer is the service; the QA Super
 
 ## Notes
 
-1. **Who runs `docker compose`?** Host operator (human-gated, PoC model) vs cht-agent via mounted host Docker socket (sibling containers). Recommendation: human-gated first, socket-mount as opt-in. Decide in Phase 1.
+1. **Who runs `docker`? — RESOLVED: human-gated.** The agent never runs Docker. A mounted host Docker socket grants host-root (launch any image, bind-mount `/`), so it is **rejected on security grounds**. The human brings the env up/down (`local-images`, `compose up/down`); the agent requests bring-up and polls `/api/v2/monitoring`. CouchDB-tier reset is the one exception — done by the agent over the CouchDB HTTP API, no Docker.
 2. **Model B feasibility (deferred).** Whether cht-core's `run-watch` survives containerization with mounted `node_modules` + shared CouchDB. Its own spike, only after Model A works.
 3. **Resource constraints.** `local-images` builds need ~8GB RAM / 50GB disk / 4 cores. Behaviour when unavailable?
 4. **Image caching.** Cache baked images per git SHA to skip webapp rebuilds when unchanged.
