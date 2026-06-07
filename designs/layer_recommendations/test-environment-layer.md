@@ -306,15 +306,19 @@ Our design matches this: the Test Environment Layer is the service; the QA Super
 
 ## Implementation Plan (the step-by-step for #66 + #43)
 
-> Detailed in the working plan; summarized here so the doc is self-contained.
+> Detailed in the working plan; summarized here so the doc is self-contained. The mock-mode agent and its tests are **#43**; all real orchestration is **#66**.
 
-- **Phase 0 — Scaffolding & types.** Add `TestEnvironmentState`, `DiscoveredConfig`, environment-handle types to `src/types/index.ts`. Stub `src/agents/test-environment-agent.ts` with a **mock mode** mirroring the other agents (this is what #43 tests). Add `test-env` npm script + `src/cli/test-env.ts`.
-- **Phase 1 — Lifecycle (Model A).** Build + run + seed the **already-present** cht-core working copy (build via `local-images`; for standalone/published use `cht-docker-compose.sh`) + thin compose override to join `cht-agent-net`. Readiness polling (`/api/v2/monitoring`), phase gates for the human-gated rebuild, three-tier reset, teardown. **No clone, no hot-reload, no spike** — the working copy is an input (see Precondition).
-- **Phase 2 — Config discovery.** `/api/v1/settings` + `/forms` parsing into `DiscoveredConfig`.
-- **Phase 3 — Test data prep.** cht-conf child_process wrappers, config-driven generation, harness shortcut detection.
-- **Phase 4 — Handle + LangGraph node + CLI.** Write handle file; wire the node into the QA Supervisor graph; finish the standalone CLI.
-- **Phase 5 — Mock tests (#43).** `test/agents/test-environment-agent.spec.ts`: constructor/init, mock-mode structure, config generation, fixture generation, error handling — no real LLM, no real Docker.
-- **Phase 6 (later) — PR-review mode & sandbox container.** `--pr` flow; port the PoC `.devcontainer` security layers.
+- **#43 (DONE) — Mock-mode agent + tests.** (Agent + spec land together, per repo convention.)
+  - Types in `src/types/index.ts`: `DiscoveredConfig` (+ `ContactTypeConfig`, `RoleConfig`, `TransitionConfig`), `ProvisionOptions`, `EnvironmentHandle`, `TestDataResult`, `ResetTier`.
+  - `src/agents/test-environment-agent.ts` with **mock mode** mirroring the other agents — six methods (`provision`, `applyConfig`, `discoverConfig`, `prepareTestData`, `reset`, `teardown`): mock paths return cloned fixtures, real mode throws "not yet implemented".
+  - `src/agents/test-environment-agent.mock-data.ts` fixtures; `test/agents/test-environment-agent.spec.ts`.
+  - **Not in #43:** real Docker, the CLI, the LangGraph node, `TestEnvironmentState`.
+- **#66 — real orchestration** (fills in each method's real path):
+  - **Phase 1 — Lifecycle (Model A).** Build + run + seed the **already-present** cht-core working copy (build via `local-images`; for standalone/published use `cht-docker-compose.sh`) + thin compose override to join `cht-agent-net`. Readiness polling (`/api/v2/monitoring`), phase gates for the human-gated rebuild, three-tier reset, teardown. **No clone, no hot-reload, no spike** — the working copy is an input (see Precondition).
+  - **Phase 2 — Config discovery.** Real `/api/v1/settings` + `/forms` parsing into `DiscoveredConfig`.
+  - **Phase 3 — Test data prep.** cht-conf child_process wrappers, config-driven generation, harness shortcut detection.
+  - **Phase 4 — Handle + LangGraph node + CLI.** Add `TestEnvironmentState`; write the handle file; wire the node into the QA Supervisor graph; add the `npm run test-env` CLI (`src/cli/test-env.ts`).
+- **#66+ (later) — PR-review mode & sandbox container.** `--pr` flow; port the PoC `.devcontainer` security layers.
 - **Deferred — Model B hot-reload.** Containerize cht-core's `run-watch` (needs its own spike). Only after Model A is working end-to-end.
 
 ---
