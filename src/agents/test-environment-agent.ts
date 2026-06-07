@@ -37,18 +37,18 @@ export class TestEnvironmentAgent {
       throw new Error('provision requires either chtCorePath or version');
     }
 
+    if (!this.useMockDocker) {
+      throw new Error(NOT_IMPLEMENTED);
+    }
+
     console.log('\n[Test Environment Agent] Provisioning environment...');
     console.log(
       `[Test Environment Agent] Source: ${options.chtCorePath ? `local code (${options.chtCorePath})` : `published version ${options.version}`}`
     );
 
-    if (!this.useMockDocker) {
-      throw new Error(NOT_IMPLEMENTED);
-    }
-
     const handle: EnvironmentHandle = {
       url: MOCK_TEST_ENV_DATA.url,
-      auth: MOCK_TEST_ENV_DATA.auth,
+      auth: { ...MOCK_TEST_ENV_DATA.auth },
       network: options.network ?? MOCK_TEST_ENV_DATA.network,
       chtCorePath: options.chtCorePath,
       source: 'mock',
@@ -63,12 +63,11 @@ export class TestEnvironmentAgent {
    * instance. Defaults to cht-core's in-repo `config/default` project.
    */
   async applyConfig(handle: EnvironmentHandle, configPath = 'config/default'): Promise<void> {
-    console.log(`[Test Environment Agent] Applying config: ${configPath} -> ${handle.url}`);
-
     if (!this.useMockDocker) {
       throw new Error(NOT_IMPLEMENTED);
     }
 
+    console.log(`[Test Environment Agent] Applying config: ${configPath} -> ${handle.url}`);
     console.log('[Test Environment Agent] (mock) config applied');
   }
 
@@ -77,13 +76,12 @@ export class TestEnvironmentAgent {
    * can be generated to conform to it.
    */
   async discoverConfig(handle: EnvironmentHandle): Promise<DiscoveredConfig> {
-    console.log(`[Test Environment Agent] Discovering config from ${handle.url}...`);
-
     if (!this.useMockDocker) {
       throw new Error(NOT_IMPLEMENTED);
     }
 
-    const config = MOCK_TEST_ENV_DATA.config;
+    console.log(`[Test Environment Agent] Discovering config from ${handle.url}...`);
+    const config = structuredClone(MOCK_TEST_ENV_DATA.config);
     console.log(
       `[Test Environment Agent] Discovered ${config.contactTypes.length} contact types, ` +
         `${Object.keys(config.roles).length} roles, ${config.forms.length} forms`
@@ -99,15 +97,14 @@ export class TestEnvironmentAgent {
     handle: EnvironmentHandle,
     config: DiscoveredConfig
   ): Promise<TestDataResult> {
-    console.log(
-      `[Test Environment Agent] Preparing test data for ${config.contactTypes.length} contact types -> ${handle.url}`
-    );
-
     if (!this.useMockDocker) {
       throw new Error(NOT_IMPLEMENTED);
     }
 
-    const result = MOCK_TEST_ENV_DATA.testData;
+    console.log(
+      `[Test Environment Agent] Preparing test data for ${config.contactTypes.length} contact types -> ${handle.url}`
+    );
+    const result = structuredClone(MOCK_TEST_ENV_DATA.testData);
     console.log(
       `[Test Environment Agent] Seeded ${result.placesCreated} places, ` +
         `${result.peopleCreated} people, ${result.reportsCreated} reports, ` +
@@ -121,12 +118,11 @@ export class TestEnvironmentAgent {
    * in the recommendation doc.
    */
   async reset(handle: EnvironmentHandle, tier: ResetTier): Promise<void> {
-    console.log(`[Test Environment Agent] Reset (${tier}) -> ${handle.url}`);
-
     if (!this.useMockDocker) {
       throw new Error(NOT_IMPLEMENTED);
     }
 
+    console.log(`[Test Environment Agent] Reset (${tier}) -> ${handle.url}`);
     console.log('[Test Environment Agent] (mock) reset complete');
   }
 
@@ -134,12 +130,11 @@ export class TestEnvironmentAgent {
    * Tear the environment down and clean up volumes.
    */
   async teardown(handle: EnvironmentHandle): Promise<void> {
-    console.log(`[Test Environment Agent] Teardown -> ${handle.url}`);
-
     if (!this.useMockDocker) {
       throw new Error(NOT_IMPLEMENTED);
     }
 
+    console.log(`[Test Environment Agent] Teardown -> ${handle.url}`);
     console.log('[Test Environment Agent] (mock) teardown complete');
   }
 }

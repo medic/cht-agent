@@ -39,7 +39,7 @@ describe('TestEnvironmentAgent', () => {
 
       expect(handle.url).to.be.a('string').and.not.empty;
       expect(handle.auth).to.have.keys(['user', 'password']);
-      expect(handle.network).to.be.a('string').and.not.empty;
+      expect(handle.network).to.equal('cht-agent-net'); // default branch (no network override)
       expect(handle.source).to.equal('mock');
     });
 
@@ -120,10 +120,13 @@ describe('TestEnvironmentAgent', () => {
 
       const config = await agent.discoverConfig(handle);
 
-      expect(config.contactTypes).to.be.an('array').with.length.greaterThan(0);
-      expect(config.roles).to.be.an('object');
-      expect(Object.keys(config.roles)).to.have.length.greaterThan(0);
-      expect(config.forms).to.be.an('array').with.length.greaterThan(0);
+      expect(config.contactTypes).to.have.lengthOf(4);
+      expect(Object.keys(config.roles)).to.have.members(['chw', 'supervisor']);
+      expect(config.forms).to.deep.equal(['delivery', 'pregnancy', 'assessment']);
+      expect(config.permissions.can_edit).to.deep.equal(['chw', 'supervisor']);
+      // transitions exercises both arms of the TransitionConfig union
+      expect(config.transitions.update_clinics).to.equal(true);
+      expect(config.transitions.death_reporting).to.deep.equal({ disable: false });
     });
 
     it('should include a person contact type in the hierarchy', async () => {
@@ -132,6 +135,19 @@ describe('TestEnvironmentAgent', () => {
       const config = await agent.discoverConfig(handle);
 
       expect(config.contactTypes.some(ct => ct.person === true)).to.equal(true);
+    });
+
+    it('should return an isolated copy (mutation does not leak to later calls)', async () => {
+      const handle = await provisionMock();
+
+      const first = await agent.discoverConfig(handle);
+      first.forms.push('INJECTED');
+      first.contactTypes.push({ id: 'INJECTED' });
+
+      const second = await agent.discoverConfig(handle);
+
+      expect(second.forms).to.deep.equal(['delivery', 'pregnancy', 'assessment']);
+      expect(second.contactTypes).to.have.lengthOf(4);
     });
 
     it('should throw not-implemented in real mode', async () => {
@@ -161,24 +177,29 @@ describe('TestEnvironmentAgent', () => {
       forms: ['assessment'],
     };
 
-    it('should return a test data result with numeric counts', async () => {
+    it('should return the deterministic seeded counts', async () => {
       const handle = await provisionMock();
 
       const result = await agent.prepareTestData(handle, sampleConfig);
 
-      expect(result.placesCreated).to.be.a('number');
-      expect(result.peopleCreated).to.be.a('number');
-      expect(result.reportsCreated).to.be.a('number');
-      expect(result.usersCreated).to.be.a('number');
-      expect(result.warnings).to.be.an('array');
+      expect(result.placesCreated).to.equal(3);
+      expect(result.peopleCreated).to.equal(5);
+      expect(result.reportsCreated).to.equal(4);
+      expect(result.usersCreated).to.equal(2);
+      expect(result.warnings).to.deep.equal([]);
     });
 
-    it('should report no warnings for a successful mock seed', async () => {
+    it('should return an isolated copy (mutation does not leak to later calls)', async () => {
       const handle = await provisionMock();
 
-      const result = await agent.prepareTestData(handle, sampleConfig);
+      const first = await agent.prepareTestData(handle, sampleConfig);
+      first.warnings.push('leak');
+      first.placesCreated = 999;
 
-      expect(result.warnings).to.have.lengthOf(0);
+      const second = await agent.prepareTestData(handle, sampleConfig);
+
+      expect(second.warnings).to.deep.equal([]);
+      expect(second.placesCreated).to.equal(3);
     });
 
     it('should throw not-implemented in real mode', async () => {
