@@ -41,10 +41,12 @@ export class TestEnvironmentAgent {
       throw new Error(NOT_IMPLEMENTED);
     }
 
+    const source = options.chtCorePath
+      ? `local code (${options.chtCorePath})`
+      : `published version ${options.version}`;
+
     console.log('\n[Test Environment Agent] Provisioning environment...');
-    console.log(
-      `[Test Environment Agent] Source: ${options.chtCorePath ? `local code (${options.chtCorePath})` : `published version ${options.version}`}`
-    );
+    console.log(`[Test Environment Agent] Source: ${source}`);
 
     const handle: EnvironmentHandle = {
       url: MOCK_TEST_ENV_DATA.url,

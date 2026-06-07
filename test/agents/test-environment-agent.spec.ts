@@ -87,13 +87,13 @@ describe('TestEnvironmentAgent', () => {
     it('should resolve in mock mode with the default config path', async () => {
       const handle = await provisionMock();
 
-      await agent.applyConfig(handle);
+      expect(await agent.applyConfig(handle)).to.equal(undefined);
     });
 
     it('should resolve in mock mode with an explicit config path', async () => {
       const handle = await provisionMock();
 
-      await agent.applyConfig(handle, 'config/standard');
+      expect(await agent.applyConfig(handle, 'config/standard')).to.equal(undefined);
     });
 
     it('should throw not-implemented in real mode', async () => {
@@ -227,7 +227,7 @@ describe('TestEnvironmentAgent', () => {
       it(`should resolve in mock mode for the "${tier}" tier`, async () => {
         const handle = await provisionMock();
 
-        await agent.reset(handle, tier);
+        expect(await agent.reset(handle, tier)).to.equal(undefined);
       });
     });
 
@@ -253,7 +253,7 @@ describe('TestEnvironmentAgent', () => {
     it('should resolve in mock mode', async () => {
       const handle = await provisionMock();
 
-      await agent.teardown(handle);
+      expect(await agent.teardown(handle)).to.equal(undefined);
     });
 
     it('should throw not-implemented in real mode', async () => {
