@@ -1,5 +1,4 @@
 ---
-
 id: cht-core-8296
 category: improvement
 domain: data-sync
@@ -9,15 +8,15 @@ issueUrl: https://github.com/medic/cht-core/issues/8296
 title: Refactor downwards continuous replication following the Nairobi protocol
 lastUpdated: 2023-07-28
 summary: Replaced the existing filtered replication mechanism with the Nairobi replication protocol, reducing expensive database queries, simplifying synchronization logic, and enabling support for CouchDB shard replicas.
+
 services:
+  - api
+  - webapp
 
-* api
-* webapp
-  techStack:
-* javascript
-* couchdb
-* pouchdb
-
+techStack:
+  - javascript
+  - couchdb
+  - pouchdb
 ---
 
 ## Problem
