@@ -4,8 +4,9 @@
  * Deterministic provisioning orchestrator for the Test Environment Layer
  * (QA Supervisor). It provisions a live CHT instance, applies a config,
  * discovers the deployed config, and seeds conforming test data. No LLM is
- * involved. This file implements mock mode only; the real Docker / cht-conf /
- * CouchDB orchestration lands in #66.
+ * involved. provision()'s real path (human-gated bring-up + readiness polling)
+ * is implemented; applyConfig/discoverConfig/prepareTestData/reset/teardown
+ * real paths are not yet implemented (later #66 phases).
  *
  * See: designs/layer_recommendations/test-environment-layer.md
  */
@@ -59,14 +60,21 @@ export class TestEnvironmentAgent {
       const auth = options.auth ?? DEFAULT_AUTH;
 
       // The agent runs no Docker — the human brings the environment up.
-      console.log('[Test Environment Agent] HUMAN GATE — bring the env up (the agent runs no Docker):');
-      console.log(`    scripts/test-env-up.sh ${options.chtCorePath ?? '<cht-core>'}   # build + start on ${network}`);
+      const target = options.chtCorePath ?? '<cht-core>';
+      console.log('[Test Environment Agent] HUMAN GATE — bring the env up (agent runs no Docker):');
+      console.log(`    scripts/test-env-up.sh ${target}   # build + start on ${network}`);
       console.log(`[Test Environment Agent] Polling ${url}/api/v2/monitoring until healthy...`);
 
       await waitForReady(url, { maxWaitMs: DEFAULT_PROVISION_WAIT_MS, ...options.readiness });
 
       console.log(`[Test Environment Agent] Ready at ${url} (network: ${network})`);
-      return { url, auth: { ...auth }, network, chtCorePath: options.chtCorePath, source: 'docker' };
+      return {
+        url,
+        auth: { ...auth },
+        network,
+        chtCorePath: options.chtCorePath,
+        source: 'docker',
+      };
     }
 
     const handle: EnvironmentHandle = {

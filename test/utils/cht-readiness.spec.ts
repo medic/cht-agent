@@ -32,8 +32,9 @@ describe('cht-readiness', () => {
       fetchStub.onCall(1).resolves({ ok: false, status: 503 });
       fetchStub.onCall(2).resolves({ ok: true, status: 200 });
 
-      await waitForReady('https://nginx', fast);
+      const result = await waitForReady('https://nginx', fast);
 
+      expect(result).to.equal(undefined);
       expect(fetchStub.callCount).to.equal(3);
     });
 
@@ -41,8 +42,9 @@ describe('cht-readiness', () => {
       fetchStub.onCall(0).rejects(new Error('ECONNREFUSED'));
       fetchStub.onCall(1).resolves({ ok: true, status: 200 });
 
-      await waitForReady('https://nginx', fast);
+      const result = await waitForReady('https://nginx', fast);
 
+      expect(result).to.equal(undefined);
       expect(fetchStub.callCount).to.equal(2);
     });
 
