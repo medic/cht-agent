@@ -18,8 +18,17 @@ import {
   TestDataResult,
 } from '../types';
 import { MOCK_TEST_ENV_DATA } from './test-environment-agent.mock-data';
+import { waitForReady } from '../utils/cht-readiness';
 
 const NOT_IMPLEMENTED = 'Docker orchestration not yet implemented';
+
+// Real-path defaults: the human brings CHT up on cht-agent-net; the agent
+// reaches it at the nginx service hostname with the cht-docker-compose.sh creds.
+const DEFAULT_ENV_URL = 'https://nginx';
+const DEFAULT_NETWORK = 'cht-agent-net';
+const DEFAULT_AUTH = { user: 'medic', password: 'password' };
+// Humans may take minutes to run local-images + compose up.
+const DEFAULT_PROVISION_WAIT_MS = 300_000;
 
 export class TestEnvironmentAgent {
   private readonly useMockDocker: boolean;
@@ -37,21 +46,33 @@ export class TestEnvironmentAgent {
       throw new Error('provision requires either chtCorePath or version');
     }
 
-    if (!this.useMockDocker) {
-      throw new Error(NOT_IMPLEMENTED);
-    }
-
     const source = options.chtCorePath
       ? `local code (${options.chtCorePath})`
       : `published version ${options.version}`;
+    const network = options.network ?? DEFAULT_NETWORK;
 
     console.log('\n[Test Environment Agent] Provisioning environment...');
     console.log(`[Test Environment Agent] Source: ${source}`);
 
+    if (!this.useMockDocker) {
+      const url = options.url ?? DEFAULT_ENV_URL;
+      const auth = options.auth ?? DEFAULT_AUTH;
+
+      // The agent runs no Docker — the human brings the environment up.
+      console.log('[Test Environment Agent] HUMAN GATE — bring the env up (the agent runs no Docker):');
+      console.log(`    scripts/test-env-up.sh ${options.chtCorePath ?? '<cht-core>'}   # build + start on ${network}`);
+      console.log(`[Test Environment Agent] Polling ${url}/api/v2/monitoring until healthy...`);
+
+      await waitForReady(url, { maxWaitMs: DEFAULT_PROVISION_WAIT_MS, ...options.readiness });
+
+      console.log(`[Test Environment Agent] Ready at ${url} (network: ${network})`);
+      return { url, auth: { ...auth }, network, chtCorePath: options.chtCorePath, source: 'docker' };
+    }
+
     const handle: EnvironmentHandle = {
-      url: MOCK_TEST_ENV_DATA.url,
-      auth: { ...MOCK_TEST_ENV_DATA.auth },
-      network: options.network ?? MOCK_TEST_ENV_DATA.network,
+      url: options.url ?? MOCK_TEST_ENV_DATA.url,
+      auth: { ...(options.auth ?? MOCK_TEST_ENV_DATA.auth) },
+      network,
       chtCorePath: options.chtCorePath,
       source: 'mock',
     };
