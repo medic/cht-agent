@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import * as sinon from 'sinon';
 import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
 import { DiscoveredConfig, EnvironmentHandle, ProvisionOptions, ResetTier } from '../../src/types';
 
@@ -71,15 +72,55 @@ describe('TestEnvironmentAgent', () => {
       }
     });
 
-    it('should throw not-implemented in real mode', async () => {
-      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+    describe('real mode (useMockDocker: false)', () => {
+      let fetchStub: sinon.SinonStub;
 
-      try {
-        await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('not yet implemented');
-      }
+      beforeEach(() => {
+        fetchStub = sinon.stub(globalThis, 'fetch' as any);
+      });
+
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      it('returns a docker handle once the environment is healthy', async () => {
+        fetchStub.resolves({ ok: true, status: 200 });
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+
+        expect(handle.source).to.equal('docker');
+        expect(handle.url).to.equal('https://nginx');
+        expect(handle.auth).to.deep.equal({ user: 'medic', password: 'password' });
+        expect(handle.network).to.equal('cht-agent-net');
+        expect(handle.chtCorePath).to.equal('/workspace/cht-core');
+      });
+
+      it('rejects if the environment never becomes ready', async () => {
+        fetchStub.resolves({ ok: false, status: 503 });
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        try {
+          await realAgent.provision({
+            chtCorePath: '/workspace/cht-core',
+            readiness: { maxWaitMs: 30, initialDelayMs: 0, maxDelayMs: 0 },
+          });
+          expect.fail('expected provision to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('did not become ready');
+        }
+      });
+
+      it('validates input before polling', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        try {
+          await realAgent.provision({});
+          expect.fail('expected provision to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('requires either chtCorePath or version');
+        }
+      });
     });
   });
 

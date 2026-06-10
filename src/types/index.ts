@@ -775,12 +775,30 @@ export interface DiscoveredConfig {
 }
 
 /**
+ * Tuning for readiness polling (see src/utils/cht-readiness.ts)
+ */
+export interface ReadinessOptions {
+  /** Maximum total time to wait before giving up (ms). */
+  maxWaitMs?: number;
+  /** Initial delay between polls (ms). */
+  initialDelayMs?: number;
+  /** Upper bound on the exponential backoff delay (ms). */
+  maxDelayMs?: number;
+}
+
+/**
  * Inputs to provision an environment (need a local code path OR a published version)
  */
 export interface ProvisionOptions {
   chtCorePath?: string;
   version?: string;
   network?: string;
+  /** Target URL of the running instance (default: https://nginx on cht-agent-net). */
+  url?: string;
+  /** Credentials for the instance (default: medic/password — cht-docker-compose.sh defaults). */
+  auth?: { user: string; password: string };
+  /** Readiness polling tuning (the human may take minutes to bring the env up). */
+  readiness?: ReadinessOptions;
 }
 
 /**
