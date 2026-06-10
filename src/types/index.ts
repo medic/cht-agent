@@ -784,6 +784,8 @@ export interface ReadinessOptions {
   initialDelayMs?: number;
   /** Upper bound on the exponential backoff delay (ms). */
   maxDelayMs?: number;
+  /** Per-request timeout so a hung connection can't block past maxWaitMs (ms). */
+  requestTimeoutMs?: number;
 }
 
 /**
