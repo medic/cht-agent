@@ -51,9 +51,8 @@ This ensured upward replication continued from the last synchronized sequence ra
 
 ## Related Files
 
-- replication checkpoint handling code
-- upgrade migration logic
-- synchronization services
+- webapp/src/ts/services/db-sync.service.ts
+- webapp/src/ts/services/migrations/target-checkpointer.migration.ts
 
 ## Testing
 

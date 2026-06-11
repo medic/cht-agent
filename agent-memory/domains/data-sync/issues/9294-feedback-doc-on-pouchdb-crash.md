@@ -70,8 +70,8 @@ This allowed feedback documents to be generated independently of database state 
 
 - webapp/src/ts/services/version.service.ts
 - webapp/src/ts/services/feedback.service.ts
-- service worker deployment metadata handling
-- feedback document generation logic
+- api/src/services/deploy-info.js
+- api/src/generate-service-worker.js
 
 ## Testing
 

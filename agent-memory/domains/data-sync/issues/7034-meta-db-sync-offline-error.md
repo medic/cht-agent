@@ -1,5 +1,4 @@
 ---
-
 id: cht-core-7034
 category: bug
 domain: data-sync
@@ -9,13 +8,13 @@ issueUrl: https://github.com/medic/cht-core/issues/7034
 title: Meta database sync throws empty error message while offline
 lastUpdated: 2021-09-08
 summary: Meta database synchronization generated feedback documents containing empty error messages when users were offline. The fix replaced PouchDB.sync with explicit replication calls to prevent Zone.js from generating uncaught promise rejections.
+
 services:
+  - webapp
 
-* webapp
-  techStack:
-* javascript
-* pouchdb
-
+techStack:
+  - javascript
+  - pouchdb
 ---
 
 ## Problem
