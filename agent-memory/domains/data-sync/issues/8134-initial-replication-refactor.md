@@ -65,9 +65,9 @@ This greatly reduced the number of expensive `_changes` requests during initial 
 
 ## Related Files
 
-- webapp replication services
-- API replication endpoints
-- initial replication workflow implementation
+- webapp/src/js/bootstrapper/initial-replication.js
+- api/src/controllers/replication.js
+- api/src/services/replication/replication.js
 
 ## Testing
 

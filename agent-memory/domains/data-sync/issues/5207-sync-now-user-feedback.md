@@ -68,7 +68,7 @@ The implementation reused the existing snackbar component instead of introducing
 - webapp/src/ts/services/db-sync.service.ts
 - webapp/src/ts/components/snackbar/snackbar.component.ts
 - webapp/tests/karma/ts/components/snackbar.component.spec.ts
-- webapp/tests/e2e/
+
 
 ## Testing
 

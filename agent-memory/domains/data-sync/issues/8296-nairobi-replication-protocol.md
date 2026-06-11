@@ -65,10 +65,10 @@ This approach eliminates the need for filtered changes feed replication and sign
 
 ## Related Files
 
-* API replication endpoints implementing the Nairobi protocol
-* Webapp synchronization services
-* Client-side replication logic
-* PR #8314
+- api/src/controllers/replication.js
+- api/src/services/replication/replication.js
+- webapp/src/ts/services/db-sync.service.ts
+- webapp/src/ts/services/replication.service.ts
 
 ## Testing
 

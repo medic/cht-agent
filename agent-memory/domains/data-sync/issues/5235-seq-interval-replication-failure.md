@@ -48,9 +48,9 @@ This prevented incorrect sequence handling and allowed replication checkpoints t
 
 ## Related Files
 
-- api replication endpoint handling
-- changes request proxy logic
-- CouchDB `_changes` integration code
+## Related Files
+
+- api/src/controllers/changes.js
 
 ## Testing
 

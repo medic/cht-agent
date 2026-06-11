@@ -59,9 +59,8 @@ This moves the document to the end of the changes feed so it can be retried afte
 
 ## Related Files
 
-- webapp replication services
-- PouchDB replication handlers
-- denied event handling logic
+- webapp/src/ts/services/db-sync.service.ts
+- webapp/src/ts/services/db-sync-retry.service.ts
 
 ## Testing
 

@@ -6,13 +6,15 @@ subDomain: pouchdb
 issueNumber: 9294
 issueUrl: https://github.com/medic/cht-core/issues/9294
 title: Feedback document generation fails when PouchDB database crashes
-lastUpdated: 2024-03-01
+lastUpdated: 2024-08-15
 summary: Feedback documents could not be generated when the main PouchDB database connection was unavailable because crash reporting depended on information stored in that database. The fix moved required metadata outside the database dependency.
 services:
   - webapp
+  - api
 techStack:
   - javascript
-  - pouchdb
+  - typescript
+  - angular
 ---
 
 ## Problem

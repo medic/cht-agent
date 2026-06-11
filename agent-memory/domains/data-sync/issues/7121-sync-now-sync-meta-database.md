@@ -46,8 +46,7 @@ This ensured that manual synchronization behaved consistently with the applicati
 
 ## Related Files
 
-- webapp synchronization services
-- database replication management code
+- webapp/src/ts/services/db-sync.service.ts
 
 ## Testing
 

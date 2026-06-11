@@ -48,8 +48,7 @@ The fix ensured cleanup logic runs for both existing and non-existent databases,
 
 ## Related Files
 
-- api synchronization and purging database handling code
-- PouchDB database initialization utilities
+- api/src/db.js
 
 ## Testing
 
