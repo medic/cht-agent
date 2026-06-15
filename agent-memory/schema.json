@@ -41,16 +41,21 @@
       "enum": ["api", "webapp", "sentinel", "admin"],
       "description": "CHT services"
     },
+    "CHTConfidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "Distillation confidence: high=reviewed, medium=unreviewed draft, low=stale"
+    },
     "frontmatter": {
       "type": "object",
       "description": "YAML frontmatter for markdown context files",
       "required": ["id", "category", "domain", "issueNumber", "issueUrl", "title", "lastUpdated", "summary", "services", "techStack"],
-      "additionalProperties": true,
+      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^cht-core-\\d+$",
-          "description": "Unique identifier, format: cht-core-<issue-number>"
+          "pattern": "^cht-(core|interoperability)-[1-9][0-9]*$",
+          "description": "Unique identifier, format: cht-(core|interoperability)-<issue-number>"
         },
         "category": {
           "$ref": "#/definitions/CHTCategory"
@@ -65,12 +70,12 @@
         "issueNumber": {
           "type": "integer",
           "minimum": 1,
-          "description": "The cht-core GitHub issue number"
+          "description": "The source GitHub issue number"
         },
         "issueUrl": {
           "type": "string",
-          "pattern": "^https://github\\.com/medic/cht-core/issues/\\d+$",
-          "description": "Full URL to the cht-core issue"
+          "pattern": "^https://github\\.com/medic/(cht-core|cht-interoperability)/issues/[1-9][0-9]*$",
+          "description": "Full URL to the source issue"
         },
         "title": {
           "type": "string",
@@ -80,7 +85,7 @@
         },
         "lastUpdated": {
           "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "format": "date",
           "description": "Date of last update (YYYY-MM-DD)"
         },
         "summary": {
@@ -103,6 +108,67 @@
           },
           "minItems": 1,
           "description": "Technologies relevant to the fix"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 50 },
+          "description": "Optional freeform tags for searchability"
+        },
+        "related_workflows": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CHTWorkflow" },
+          "description": "Related cross-domain workflows"
+        },
+        "related_services": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CHTService" },
+          "description": "Related CHT services"
+        },
+        "source_pr": {
+          "type": "string",
+          "pattern": "^medic/(cht-core|cht-interoperability)#[1-9][0-9]*$",
+          "description": "Source PR reference, format: medic/<repo>#<number>"
+        },
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "Commit SHA of the PR at the time of distillation"
+        },
+        "distilled_at": {
+          "type": "string",
+          "format": "date",
+          "description": "ISO date when this entry was machine-distilled (YYYY-MM-DD)"
+        },
+        "reviewed_by": {
+          "type": ["string", "null"],
+          "description": "GitHub handle of the human reviewer, or null if unreviewed"
+        },
+        "reviewed_at": {
+          "type": ["string", "null"],
+          "format": "date",
+          "description": "ISO date when the entry was reviewed, or null if unreviewed"
+        },
+        "confidence": {
+          "$ref": "#/definitions/CHTConfidence"
+        },
+        "entities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Referenced files, modules, or named patterns"
+        },
+        "concepts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Referenced architectural or domain concepts"
+        },
+        "related_issues": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Links to related agent-memory entries"
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Set to true by the freshness process when source files have changed significantly"
         }
       }
     },
