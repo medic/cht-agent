@@ -272,21 +272,32 @@ describe('TestEnvironmentAgent', () => {
       });
     });
 
-    it('should throw not-implemented in real mode', async () => {
+    describe('real mode (useMockDocker: false)', () => {
       const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
-      const handle: EnvironmentHandle = {
+      const dockerHandle: EnvironmentHandle = {
         url: 'https://nginx',
         auth: { user: 'medic', password: 'password' },
         network: 'cht-agent-net',
+        chtCorePath: '/workspace/cht-core',
         source: 'docker',
       };
 
-      try {
-        await realAgent.reset(handle, 'full');
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('not yet implemented');
-      }
+      it('resolves the restart tier (human-gated, agent runs no Docker)', async () => {
+        expect(await realAgent.reset(dockerHandle, 'restart')).to.equal(undefined);
+      });
+
+      it('resolves the full tier (human-gated, agent runs no Docker)', async () => {
+        expect(await realAgent.reset(dockerHandle, 'full')).to.equal(undefined);
+      });
+
+      it('defers the couchdb tier to a later phase', async () => {
+        try {
+          await realAgent.reset(dockerHandle, 'couchdb');
+          expect.fail('expected reset to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('Phase 3');
+        }
+      });
     });
   });
 
@@ -297,21 +308,17 @@ describe('TestEnvironmentAgent', () => {
       expect(await agent.teardown(handle)).to.equal(undefined);
     });
 
-    it('should throw not-implemented in real mode', async () => {
+    it('resolves in real mode (prints the human teardown gate)', async () => {
       const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
       const handle: EnvironmentHandle = {
         url: 'https://nginx',
         auth: { user: 'medic', password: 'password' },
         network: 'cht-agent-net',
+        chtCorePath: '/workspace/cht-core',
         source: 'docker',
       };
 
-      try {
-        await realAgent.teardown(handle);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('not yet implemented');
-      }
+      expect(await realAgent.teardown(handle)).to.equal(undefined);
     });
   });
 });
