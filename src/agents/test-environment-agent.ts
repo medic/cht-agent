@@ -150,7 +150,22 @@ export class TestEnvironmentAgent {
    */
   async reset(handle: EnvironmentHandle, tier: ResetTier): Promise<void> {
     if (!this.useMockDocker) {
-      throw new Error(NOT_IMPLEMENTED);
+      // couchdb-tier wipe/reseed operates on the docs prepareTestData seeds,
+      // so it lands with test-data prep in a later phase.
+      if (tier === 'couchdb') {
+        throw new Error('couchdb-tier reset requires seeded-data tracking (lands in #66 Phase 3)');
+      }
+
+      // restart/full are Docker operations — human-gated, the agent runs none.
+      const target = handle.chtCorePath ?? '<cht-core>';
+      console.log(`[Test Environment Agent] HUMAN GATE — reset (${tier}); the agent runs no Docker:`);
+      if (tier === 'restart') {
+        console.log(`    (in ${target}/local-build) docker compose restart`);
+      } else {
+        console.log(`    scripts/test-env-down.sh ${target} && scripts/test-env-up.sh ${target}`);
+      }
+      console.log('[Test Environment Agent] Re-confirm health with provision()/waitForReady after.');
+      return;
     }
 
     console.log(`[Test Environment Agent] Reset (${tier}) -> ${handle.url}`);
@@ -162,7 +177,11 @@ export class TestEnvironmentAgent {
    */
   async teardown(handle: EnvironmentHandle): Promise<void> {
     if (!this.useMockDocker) {
-      throw new Error(NOT_IMPLEMENTED);
+      // Teardown is `docker compose down -v` — human-gated, the agent runs none.
+      const target = handle.chtCorePath ?? '<cht-core>';
+      console.log('[Test Environment Agent] HUMAN GATE — teardown (the agent runs no Docker):');
+      console.log(`    scripts/test-env-down.sh ${target}   # docker compose down -v`);
+      return;
     }
 
     console.log(`[Test Environment Agent] Teardown -> ${handle.url}`);
