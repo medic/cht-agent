@@ -14,13 +14,16 @@
     "postinstall": "husky install",
     "research": "node dist/cli/research.js",
     "example:research": "node dist/examples/research-supervisor-example.js",
-    "validate-context": "node dist/cli/validate-context.js"
+    "validate-schema": "node dist/scripts/validate-schema.js"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",
     "@langchain/core": "^0.3.0",
     "@langchain/langgraph": "^0.2.0",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "dotenv": "^16.4.5",
+    "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.1",
     "zod": "^3.23.8"
   },
