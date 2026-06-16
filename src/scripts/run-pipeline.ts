@@ -45,32 +45,41 @@ interface CliArgs {
  * parseArgs(); // { prNumber: 123, repo: 'medic/cht-core', lookbackHours: 24 }
  * ```
  */
+/**
+ * Parses a CLI flag's raw value as a strictly positive integer.
+ *
+ * Uses a full-string match (`/^[1-9]\d*$/`) rather than `Number.parseInt`,
+ * which would silently truncate `'123abc'` → 123 or `'1.5'` → 1 and let
+ * partially-numeric input through.
+ *
+ * @param raw  - The raw argument value (may be undefined when the flag is last).
+ * @param flag - The flag name, used in the error message.
+ * @returns The parsed positive integer.
+ * @throws {Error} When `raw` is not a bare positive integer.
+ *
+ * @example
+ * ```typescript
+ * parsePositiveIntArg('48', '--since'); // 48
+ * parsePositiveIntArg('1.5', '--since'); // throws Error
+ * ```
+ */
+function parsePositiveIntArg(raw: string | undefined, flag: string): number {
+  if (raw === undefined || !/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`Invalid ${flag} value: ${JSON.stringify(raw)} (expected a positive integer)`);
+  }
+  return Number.parseInt(raw, 10);
+}
+
 export function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   const prIdx = args.indexOf('--pr');
   const repoIdx = args.indexOf('--repo');
   const sinceIdx = args.indexOf('--since');
 
-  let prNumber: number | undefined;
-  if (prIdx >= 0) {
-    prNumber = Number.parseInt(args[prIdx + 1], 10);
-    if (!Number.isInteger(prNumber) || prNumber <= 0) {
-      throw new Error(`Invalid --pr value: ${JSON.stringify(args[prIdx + 1])} (expected a positive integer)`);
-    }
-  }
-
-  let lookbackHours = DEFAULT_LOOKBACK_HOURS;
-  if (sinceIdx >= 0) {
-    lookbackHours = Number.parseInt(args[sinceIdx + 1], 10);
-    if (!Number.isInteger(lookbackHours) || lookbackHours <= 0) {
-      throw new Error(`Invalid --since value: ${JSON.stringify(args[sinceIdx + 1])} (expected a positive integer number of hours)`);
-    }
-  }
-
   return {
-    prNumber,
+    prNumber: prIdx >= 0 ? parsePositiveIntArg(args[prIdx + 1], '--pr') : undefined,
     repo: repoIdx >= 0 ? args[repoIdx + 1] : DEFAULT_REPO,
-    lookbackHours,
+    lookbackHours: sinceIdx >= 0 ? parsePositiveIntArg(args[sinceIdx + 1], '--since') : DEFAULT_LOOKBACK_HOURS,
   };
 }
 

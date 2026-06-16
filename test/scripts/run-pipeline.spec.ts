@@ -95,6 +95,24 @@ describe('run-pipeline parseArgs', () => {
     const { parseArgs } = loadPipeline();
     expect(() => parseArgs()).to.throw(/Invalid --pr value/);
   });
+
+  it('rejects a partially-numeric --since (no parseInt truncation)', () => {
+    withArgv(['--since', '12abc']);
+    const { parseArgs } = loadPipeline();
+    expect(() => parseArgs()).to.throw(/Invalid --since value/);
+  });
+
+  it('rejects a decimal --since', () => {
+    withArgv(['--since', '1.5']);
+    const { parseArgs } = loadPipeline();
+    expect(() => parseArgs()).to.throw(/Invalid --since value/);
+  });
+
+  it('rejects a partially-numeric --pr', () => {
+    withArgv(['--pr', '123abc']);
+    const { parseArgs } = loadPipeline();
+    expect(() => parseArgs()).to.throw(/Invalid --pr value/);
+  });
 });
 
 describe('run-pipeline errorMessage', () => {
