@@ -66,7 +66,7 @@ export function discoverDraftsByDomain(pendingDir: string): Map<string, string[]
  * ```
  */
 function escapeMarkdown(text: string): string {
-  return text.replace(/[\\`*_[\]<>]/g, '\\$&');
+  return text.replace(/[\\`*_[\]<>]/g, String.raw`\$&`);
 }
 
 /**
@@ -86,7 +86,7 @@ function escapeMarkdown(text: string): string {
  * ```
  */
 export function sourcePrUrl(ref: string): string {
-  const match = ref.match(/^([^#]+)#(\d+)$/);
+  const match = /^([^#]+)#(\d+)$/.exec(ref);
   if (match) {
     return `https://github.com/${match[1]}/pull/${match[2]}`;
   }
@@ -314,60 +314,74 @@ function buildDryRunResults(plans: Map<string, string[]>, date: string): ReviewP
  * // { domain: 'contacts', branch: '...', prUrl: 'https://...', status: 'created' }
  * ```
  */
+/**
+ * Copy each draft into the domain's issues directory, returning the repo-relative
+ * paths to stage with `git add`.
+ *
+ * @example
+ * ```typescript
+ * const paths = stageDrafts(['/tmp/pending/contacts/42-foo.md'], '/repo/agent-memory/domains/contacts/issues');
+ * ```
+ */
+function stageDrafts(validDrafts: string[], targetDir: string): string[] {
+  fs.mkdirSync(targetDir, { recursive: true });
+  return validDrafts.map(draftPath => {
+    const targetPath = path.join(targetDir, path.basename(draftPath));
+    fs.copyFileSync(draftPath, targetPath);
+    return path.relative(REPO_ROOT, targetPath);
+  });
+}
+
+/**
+ * Best-effort deletion of a pushed branch whose promotion later failed, so a
+ * failure doesn't leave an orphan branch behind. Swallows its own errors — the
+ * original failure is what matters.
+ *
+ * @example
+ * ```typescript
+ * deleteRemoteBranch(exec, 'memory/review/contacts-20240101');
+ * ```
+ */
+function deleteRemoteBranch(exec: ExecFn, branch: string): void {
+  try {
+    exec('git', ['push', 'origin', '--delete', branch]);
+  } catch {
+    // Ignore cleanup failure — the original error is what matters.
+  }
+}
+
 function promoteDomain(
   domain: string,
   validDrafts: string[],
   opts: { domainsDir: string; date: string; exec: ExecFn }
 ): ReviewPRResult {
   const { domainsDir, date, exec } = opts;
-  const branchBase = `memory/review/${domain}-${date}`;
-  const branch = uniqueBranchName(branchBase, exec);
+  const branch = uniqueBranchName(`memory/review/${domain}-${date}`, exec);
 
   exec('git', ['switch', '-c', branch, 'origin/main']);
 
   let pushed = false;
   try {
-    const targetDir = path.join(domainsDir, domain, 'issues');
-    fs.mkdirSync(targetDir, { recursive: true });
-
-    const addPaths: string[] = [];
-    for (const draftPath of validDrafts) {
-      const filename = path.basename(draftPath);
-      const targetPath = path.join(targetDir, filename);
-      fs.copyFileSync(draftPath, targetPath);
-      addPaths.push(path.relative(REPO_ROOT, targetPath));
-    }
-
+    const addPaths = stageDrafts(validDrafts, path.join(domainsDir, domain, 'issues'));
     exec('git', ['add', ...addPaths]);
     exec('git', ['commit', '-m',
       `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
     exec('git', ['push', '-u', 'origin', branch]);
     pushed = true;
 
-    const prBody = buildPRBody(domain, validDrafts);
     const prUrl = exec('gh', [
       'pr', 'create',
       '--title', `Memory review: ${domain}`,
-      '--body', prBody,
+      '--body', buildPRBody(domain, validDrafts),
       '--head', branch,
       '--base', 'main',
     ]).trim();
 
-    for (const draftPath of validDrafts) {
-      fs.unlinkSync(draftPath);
-    }
+    validDrafts.forEach(draftPath => fs.unlinkSync(draftPath));
 
     return { domain, branch, prUrl, filesPromoted: validDrafts.length, status: 'created' };
   } catch (err) {
-    // Best-effort cleanup: if we pushed the branch but a later step failed,
-    // delete the remote branch so the failure doesn't leave an orphan behind.
-    if (pushed) {
-      try {
-        exec('git', ['push', 'origin', '--delete', branch]);
-      } catch {
-        // Ignore cleanup failure — the original error is what matters.
-      }
-    }
+    if (pushed) deleteRemoteBranch(exec, branch);
     throw err;
   }
 }
@@ -386,6 +400,34 @@ function promoteDomain(
  * const results = executeApply(plans, { domainsDir, date, exec });
  * ```
  */
+/**
+ * Promote one domain, converting any thrown error into a 'failed' result so a
+ * single domain's failure never aborts the whole run.
+ *
+ * @example
+ * ```typescript
+ * const r = promoteDomainSafely('contacts', ['/tmp/drafts/42-foo.md'], { domainsDir, date, exec });
+ * // r.status is 'created' on success or 'failed' (with r.error) on error
+ * ```
+ */
+function promoteDomainSafely(
+  domain: string,
+  validDrafts: string[],
+  config: { domainsDir: string; date: string; exec: ExecFn }
+): ReviewPRResult {
+  try {
+    return promoteDomain(domain, validDrafts, config);
+  } catch (err) {
+    return {
+      domain,
+      branch: '',
+      filesPromoted: 0,
+      status: 'failed',
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 function executeApply(
   plans: Map<string, string[]>,
   config: { domainsDir: string; date: string; exec: ExecFn }
@@ -398,18 +440,9 @@ function executeApply(
 
   for (const [domain, validDrafts] of plans) {
     try {
-      results.push(promoteDomain(domain, validDrafts, config));
-    } catch (err) {
-      // Isolate per domain: record the failure and keep promoting the rest
-      // rather than aborting the whole run on one domain's error.
-      results.push({
-        domain,
-        branch: '',
-        filesPromoted: 0,
-        status: 'failed',
-        error: err instanceof Error ? err.message : String(err),
-      });
+      results.push(promoteDomainSafely(domain, validDrafts, config));
     } finally {
+      // Always restore the original branch, even if a promotion threw unexpectedly.
       exec('git', ['switch', originalBranch]);
     }
   }

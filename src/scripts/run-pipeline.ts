@@ -66,9 +66,9 @@ interface CliArgs {
  * ```
  */
 function parsePositiveIntArg(raw: string | undefined, flag: string): number {
-  const value = raw !== undefined && /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+  const value = raw !== undefined && /^[1-9]\d*$/.test(raw) ? Number(raw) : Number.NaN;
   if (!Number.isSafeInteger(value)) {
-    throw new Error(`Invalid ${flag} value: ${JSON.stringify(raw)} (expected a positive integer)`);
+    throw new TypeError(`Invalid ${flag} value: ${JSON.stringify(raw)} (expected a positive integer)`);
   }
   return value;
 }
