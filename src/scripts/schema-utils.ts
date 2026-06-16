@@ -1,6 +1,9 @@
 /**
- * Shared utilities for agent-memory pipeline scripts: schema validation,
- * frontmatter normalization, and common path constants.
+ * Shared schema/validator helpers for context-file validation.
+ *
+ * One AJV validator compiled from agent-memory/schema.json's frontmatter
+ * definition. This is the converged validator stack for #11/#87 and #109; both
+ * PRs build their validator here so the repo ends with a single implementation.
  */
 
 import * as fs from 'node:fs';
@@ -13,11 +16,9 @@ export const REPO_ROOT = path.resolve(__dirname, '..', '..');
 export const SCHEMA_PATH = path.join(REPO_ROOT, 'agent-memory', 'schema.json');
 
 /**
- * Loads schema.json and compiles the frontmatter sub-schema with AJV.
- *
- * @example
- * const validate = buildValidator();
- * const ok = validate({ domain: 'messaging', title: 'Foo', last_updated: '2025-01-01' });
+ * Compile a validator for the frontmatter definition. `addFormats` enables
+ * `format: date` (real calendar validation, not a bare regex). `strict: false`
+ * tolerates the schema's annotation keywords and unreferenced definitions.
  */
 export function buildValidator(): ValidateFunction {
   const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf8')) as {
@@ -25,7 +26,6 @@ export function buildValidator(): ValidateFunction {
   };
   const ajv = new Ajv({ strict: false, allErrors: true });
   addFormats(ajv);
-  // Embed definitions so $ref resolution works within the frontmatter sub-schema
   return ajv.compile({
     ...schema.definitions.frontmatter,
     definitions: schema.definitions,
@@ -33,34 +33,20 @@ export function buildValidator(): ValidateFunction {
 }
 
 /**
- * Normalizes raw gray-matter frontmatter data for schema validation:
- * converts Date objects to ISO date strings and aliases `lastUpdated` → `last_updated`.
- *
- * @example
- * normalizeFrontmatter({ lastUpdated: new Date('2025-01-01'), title: 'X' });
- * // => { last_updated: '2025-01-01', title: 'X' }
+ * Coerce gray-matter's parsed frontmatter for AJV. gray-matter turns an
+ * unquoted `lastUpdated: 2025-01-01` into a JS Date; `format: date` needs a
+ * YYYY-MM-DD string. No `lastUpdated -> last_updated` alias: the reconciled
+ * schema's canonical date field is camelCase `lastUpdated`.
  */
 export function normalizeFrontmatter(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
     out[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
   }
-  if ('lastUpdated' in out && !('last_updated' in out)) {
-    out.last_updated = out.lastUpdated;
-    delete out.lastUpdated;
-  }
   return out;
 }
 
-/**
- * Returns true if the content string begins with a YAML front-matter fence.
- * Strips a leading BOM before checking. Avoids relying on gray-matter's
- * non-enumerable `.matter` property, which is unreliable after cache hits.
- *
- * @example
- * hasFrontmatter('---\ntitle: Foo\n---\n'); // true
- * hasFrontmatter('No front matter here');    // false
- */
+/** True if the content opens with a YAML frontmatter fence (tolerating a BOM). */
 export function hasFrontmatter(content: string): boolean {
   const s = content.replace(/^\uFEFF/, '');
   return s.startsWith('---\n') || s.startsWith('---\r\n');

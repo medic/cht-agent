@@ -11,14 +11,21 @@ import { discoverDraftsByDomain, buildPRBody, openReviewPR } from '../../src/scr
 
 const VALID_FRONTMATTER = `---
 id: cht-core-42
+category: bug
 domain: contacts
+issueNumber: 42
+issueUrl: https://github.com/medic/cht-core/issues/42
 title: Prevent duplicate contact creation
-last_updated: "2026-05-20"
+lastUpdated: "2026-05-20"
 summary: "Race condition caused duplicate contacts"
+services:
+  - webapp
+techStack:
+  - javascript
 tags:
   - contacts
 source_pr: medic/cht-core#42
-source_sha: abc123
+source_sha: abc1234
 distilled_at: "2026-05-20"
 reviewed_by: null
 reviewed_at: null
@@ -46,17 +53,25 @@ No domain here.
 
 const NO_FRONTMATTER = `# Just markdown, no YAML\n\nSome content.`;
 
-// Frontmatter that uses camelCase `lastUpdated` — normalizeFrontmatter should alias it to `last_updated`
-const LASTUPDATE_CAMELCASE_FRONTMATTER = `---
+// A second complete draft using the canonical camelCase `lastUpdated` field —
+// confirms the converged schema validates camelCase natively (no aliasing).
+const CAMELCASE_FRONTMATTER = `---
 id: cht-core-43
+category: improvement
 domain: contacts
-title: Fix duplicate detection with lastUpdated key
+issueNumber: 43
+issueUrl: https://github.com/medic/cht-core/issues/43
+title: Fix duplicate detection using the canonical lastUpdated field
 lastUpdated: "2026-05-20"
-summary: "Tests normalizeFrontmatter lastUpdated aliasing"
+summary: "Confirms a full camelCase draft validates without aliasing"
+services:
+  - webapp
+techStack:
+  - javascript
 tags:
   - contacts
 source_pr: medic/cht-core#43
-source_sha: def456
+source_sha: def4567
 distilled_at: "2026-05-20"
 reviewed_by: null
 reviewed_at: null
@@ -278,13 +293,13 @@ describe('openReviewPR — invalid draft handling', () => {
     expect(log).to.include('No frontmatter');
   });
 
-  it('accepts draft with camelCase lastUpdated key (normalizeFrontmatter aliasing)', () => {
-    const pendingDir = setupPendingDir('contacts', { '43-camel.md': LASTUPDATE_CAMELCASE_FRONTMATTER });
+  it('accepts a draft using the canonical camelCase lastUpdated field', () => {
+    const pendingDir = setupPendingDir('contacts', { '43-camel.md': CAMELCASE_FRONTMATTER });
     const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
 
     const results = openReviewPR({ pendingDir, logPath });
 
-    // normalizeFrontmatter should rename lastUpdated → last_updated, making schema valid
+    // The converged schema's canonical date field is camelCase lastUpdated — validates directly.
     expect(results[0].status).to.equal('dry-run');
     expect(results[0].filesPromoted).to.equal(1);
   });

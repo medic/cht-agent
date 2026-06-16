@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as yaml from 'js-yaml';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
@@ -21,6 +22,13 @@ import type {
   SkipLogEntry,
 } from '../types/pipeline';
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
+import { buildValidator } from './schema-utils';
+
+const CHT_SERVICES = ['api', 'webapp', 'sentinel', 'admin'] as const;
+
+// Compiled once — the same validator open-review-pr re-runs before promotion.
+// Validating here means malformed drafts never reach committed _pending/.
+const validateFrontmatter = buildValidator();
 
 const DEFAULT_DISTILL_MODEL = 'anthropic/claude-sonnet-4-5';
 const ANTHROPIC_DISTILL_MODEL = 'claude-sonnet-4-5-20251015';
@@ -37,9 +45,11 @@ const REVIEW_BODY_LIMIT = 300;
 
 const draftSchema = z.object({
   domain: z.enum(CHT_DOMAINS),
-  title: z.string().min(1).max(100),
+  title: z.string().min(1).max(200),
   category: z.enum(['bug', 'feature', 'improvement']),
   summary: z.string().min(1),
+  services: z.array(z.enum(CHT_SERVICES)).min(1),
+  techStack: z.array(z.string().min(1)).min(1),
   tags: z.array(z.string()),
   entities: z.array(z.string()),
   concepts: z.array(z.string()),
@@ -125,9 +135,11 @@ ${reviewContext ? `\nReview comments:\n${reviewContext}` : ''}
 Respond with a JSON object matching this structure exactly:
 {
   "domain": "<one of the 8 domains above>",
-  "title": "<concise title ≤100 chars describing the change>",
+  "title": "<concise title ≤200 chars describing the change>",
   "category": "bug" | "feature" | "improvement",
   "summary": "<1-2 sentence summary of the problem and resolution>",
+  "services": ["<one or more of: api, webapp, sentinel, admin>"],
+  "techStack": ["<technologies touched, e.g. typescript, couchdb, angular>"],
   "tags": ["<tag1>", "<tag2>"],
   "entities": ["<file or module path>"],
   "concepts": ["<architectural concept>"],
@@ -179,48 +191,62 @@ export function slugify(text: string): string {
 }
 
 /**
- * Assemble a schema-valid markdown string from a DistillDraft and PR metadata.
+ * Build the camelCase frontmatter object for a draft, matching agent-memory/schema.json.
+ *
+ * The pipeline is PR-driven but the schema is issue-centric, so issueNumber/issueUrl/id
+ * are derived from the first linked issue, falling back to the PR number when the PR
+ * closes no issue (keeps id, issueNumber, and issueUrl mutually consistent).
  *
  * @example
  * ```typescript
- * const md = assembleDraft(draft, { prNumber: 42, mergeSha: 'abc' } as ScrapedPR);
- * // md starts with '---\n' (YAML frontmatter)
+ * const fm = buildFrontmatter(draft, pr);
+ * // { id: 'cht-core-99', issueNumber: 99, lastUpdated: '2025-01-15', ... }
  * ```
  */
-export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
+export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<string, unknown> {
   const today = new Date().toISOString().slice(0, 10);
+  const issueNumber = pr.linkedIssues[0]?.number ?? pr.prNumber;
 
-  const frontmatter = [
-    '---',
-    `id: cht-core-${pr.prNumber}`,
-    `category: ${draft.category}`,
-    `domain: ${draft.domain}`,
-    `title: ${draft.title}`,
-    `last_updated: "${today}"`,
-    `summary: "${draft.summary.replaceAll('"', "'")}"`,
-    `tags:`,
-    ...draft.tags.map(t => `  - ${t}`),
-    `source_pr: medic/cht-core#${pr.prNumber}`,
-    `source_sha: ${pr.mergeSha}`,
-    `distilled_at: "${today}"`,
-    `reviewed_by: null`,
-    `reviewed_at: null`,
-    `confidence: medium`,
-    `entities:`,
-    ...draft.entities.map(e => `  - ${e}`),
-    `concepts:`,
-    ...draft.concepts.map(c => `  - ${c}`),
-    `related_issues: []`,
-    `stale: false`,
-    '---',
-  ].join('\n');
+  return {
+    id: `cht-core-${issueNumber}`,
+    category: draft.category,
+    domain: draft.domain,
+    issueNumber,
+    issueUrl: `https://github.com/medic/cht-core/issues/${issueNumber}`,
+    title: draft.title,
+    lastUpdated: today,
+    summary: draft.summary,
+    services: draft.services,
+    techStack: draft.techStack,
+    tags: draft.tags,
+    source_pr: `medic/cht-core#${pr.prNumber}`,
+    source_sha: pr.mergeSha,
+    distilled_at: today,
+    reviewed_by: null,
+    reviewed_at: null,
+    confidence: 'medium',
+    entities: draft.entities,
+    concepts: draft.concepts,
+    related_issues: [],
+    stale: false,
+  };
+}
+
+/**
+ * Render a markdown draft from a frontmatter object and draft body.
+ * Serializes frontmatter with js-yaml (correct quoting/escaping — no manual interpolation).
+ */
+function renderMarkdown(frontmatter: Record<string, unknown>, draft: DistillDraft): string {
+  const yamlBlock = yaml.dump(frontmatter, { lineWidth: -1 }).trimEnd();
 
   const relatedFilesSection = draft.relatedFiles.length > 0
     ? draft.relatedFiles.map(f => `- ${f}`).join('\n')
     : '_none_';
 
   return [
-    frontmatter,
+    '---',
+    yamlBlock,
+    '---',
     '',
     `## Problem`,
     '',
@@ -247,6 +273,19 @@ export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
     relatedFilesSection,
     '',
   ].join('\n');
+}
+
+/**
+ * Assemble a schema-valid markdown string from a DistillDraft and PR metadata.
+ *
+ * @example
+ * ```typescript
+ * const md = assembleDraft(draft, { prNumber: 42, mergeSha: 'abc' } as ScrapedPR);
+ * // md starts with '---\n' (YAML frontmatter)
+ * ```
+ */
+export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
+  return renderMarkdown(buildFrontmatter(draft, pr), draft);
 }
 
 /**
@@ -283,7 +322,25 @@ export async function distillPR(
     return { status: 'flag-for-human', reason };
   }
 
-  const markdown = assembleDraft(draft, pr);
+  // Validate the assembled frontmatter against schema.json before writing, so a
+  // malformed draft is logged and skipped rather than committed to _pending/.
+  const frontmatter = buildFrontmatter(draft, pr);
+  if (!validateFrontmatter(frontmatter)) {
+    const errors = (validateFrontmatter.errors ?? [])
+      .map(e => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`)
+      .join('; ');
+    const reason = `Distilled draft failed schema validation: ${errors}`;
+    const entry: SkipLogEntry = {
+      prNumber: pr.prNumber,
+      decision: 'flag-for-human',
+      reason,
+      timestamp: new Date().toISOString(),
+    };
+    await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
+    return { status: 'flag-for-human', reason };
+  }
+
+  const markdown = renderMarkdown(frontmatter, draft);
   const slug = slugify(pr.prTitle);
   const filename = `${pr.prNumber}-${slug}.md`;
   const domainDir = path.join(outputDir, draft.domain);

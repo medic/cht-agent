@@ -32,10 +32,6 @@ function normalizeFrontmatter(data: Record<string, unknown>): Record<string, unk
   for (const [k, v] of Object.entries(data)) {
     out[k] = v instanceof Date ? v.toISOString().slice(0, 10) : v;
   }
-  if ('lastUpdated' in out && !('last_updated' in out)) {
-    out.last_updated = out.lastUpdated;
-    delete out.lastUpdated;
-  }
   return out;
 }
 
@@ -51,7 +47,7 @@ function makePR(overrides: Partial<ScrapedPR> = {}): ScrapedPR {
     prBody: 'Fixes a race condition where slow networks caused duplicate contacts.',
     author: 'alice',
     labels: ['Type: Bug'],
-    mergeSha: 'abc123',
+    mergeSha: 'abc1234',
     mergedAt: '2025-01-15T10:00:00Z',
     fileList: ['webapp/src/services/contacts.js', 'api/src/controllers/people.js'],
     diff: '',
@@ -68,6 +64,8 @@ function makeDraft(overrides: Partial<DistillDraft> = {}): DistillDraft {
     title: 'Prevent duplicate contact creation on slow networks',
     category: 'bug',
     summary: 'Race condition in contact creation caused duplicates on slow networks.',
+    services: ['webapp', 'api'],
+    techStack: ['javascript'],
     tags: ['contacts', 'race-condition'],
     entities: ['webapp/src/services/contacts.js', 'api/src/controllers/people.js'],
     concepts: ['optimistic-locking', 'idempotency'],
@@ -228,6 +226,39 @@ describe('distillPR', () => {
       }
     });
 
+    it('should emit camelCase issue fields derived from the linked issue', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+
+      const result: DistillResult = await distillPR(makePR({ prNumber: 42, linkedIssues: [{ number: 99, body: 'x', comments: [] }] }), {
+        outputDir,
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft(),
+      });
+
+      const fm = matter(fs.readFileSync(result.outputPath!, 'utf8')).data as Record<string, unknown>;
+      expect(fm.id).to.equal('cht-core-99');
+      expect(fm.issueNumber).to.equal(99);
+      expect(fm.issueUrl).to.equal('https://github.com/medic/cht-core/issues/99');
+      expect(fm.lastUpdated).to.match(/^\d{4}-\d{2}-\d{2}$/);
+      expect(fm).to.not.have.property('last_updated');
+      expect(fm.services).to.deep.equal(['webapp', 'api']);
+      expect(fm.techStack).to.deep.equal(['javascript']);
+    });
+
+    it('should fall back to the PR number for issue fields when no issue is linked', async () => {
+      const { distillPR } = loadDistiller();
+      const result: DistillResult = await distillPR(makePR({ prNumber: 500, linkedIssues: [] }), {
+        outputDir: tmpOutputDir(),
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft(),
+      });
+
+      const fm = matter(fs.readFileSync(result.outputPath!, 'utf8')).data as Record<string, unknown>;
+      expect(fm.id).to.equal('cht-core-500');
+      expect(fm.issueNumber).to.equal(500);
+    });
+
     it('should populate provenance frontmatter fields', async () => {
       const { distillPR } = loadDistiller();
       const outputDir = tmpOutputDir();
@@ -247,6 +278,43 @@ describe('distillPR', () => {
       expect(fm.reviewed_at).to.equal(null);
       expect(fm.confidence).to.equal('medium');
       expect(fm.stale).to.equal(false);
+    });
+  });
+
+  // --- Validate-before-write ---
+
+  describe('invalid draft (fails schema)', () => {
+    it('should return flag-for-human and not write when frontmatter is schema-invalid', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+      const logPath = tmpLogPath();
+
+      // services:[] violates the schema's minItems:1 — should be caught before writing
+      const result: DistillResult = await distillPR(makePR(), {
+        outputDir,
+        logPath,
+        distillFn: async () => makeDraft({ services: [] }),
+      });
+
+      expect(result.status).to.equal('flag-for-human');
+      expect(result.reason).to.include('schema validation');
+      expect(result.outputPath).to.be.undefined;
+    });
+
+    it('should write a skip log entry when the draft is schema-invalid', async () => {
+      const { distillPR } = loadDistiller();
+      const logPath = tmpLogPath();
+
+      await distillPR(makePR({ prNumber: 77 }), {
+        outputDir: tmpOutputDir(),
+        logPath,
+        distillFn: async () => makeDraft({ techStack: [] }),
+      });
+
+      expect(fs.existsSync(logPath)).to.equal(true);
+      const entry = JSON.parse(fs.readFileSync(logPath, 'utf8').trim());
+      expect(entry.prNumber).to.equal(77);
+      expect(entry.decision).to.equal('flag-for-human');
     });
   });
 

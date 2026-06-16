@@ -108,6 +108,9 @@ export type CHTDomain =
   | 'configuration'
   | 'interoperability';
 
+/** CHT services — matches the CHTService enum in schema.json */
+export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+
 /**
  * The structured output the LLM returns when distilling a PR.
  * Assembled into markdown by distiller.ts — not written raw.
@@ -117,6 +120,10 @@ export interface DistillDraft {
   title: string;
   category: 'bug' | 'feature' | 'improvement';
   summary: string;
+  /** CHT services involved in the change (schema-required, min 1) */
+  services: CHTService[];
+  /** Technologies relevant to the fix (schema-required, min 1) */
+  techStack: string[];
   tags: string[];
   /** Referenced files, modules, or named patterns */
   entities: string[];
