@@ -61,7 +61,8 @@ What was tested.
 const buildMarkdown = (frontmatter: Record<string, unknown>, body: string) => {
   const lines = Object.entries(frontmatter).map(([key, value]) => {
     if (Array.isArray(value)) {
-      return `${key}:\n${value.map(v => `  - ${v}`).join('\n')}`;
+      const items = value.map((v) => `  - ${v}`).join('\n');
+      return `${key}:\n${items}`;
     }
     return `${key}: ${value}`;
   });
@@ -232,6 +233,23 @@ describe('validate-schema (AJV)', () => {
         expect(result.passed).to.equal(false);
         expect(result.skipped).to.equal(false);
         expect(result.errors[0]).to.match(/Missing YAML frontmatter/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('reports an issue file with unparseable YAML as failed (does not crash)', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vs-bad-yaml-'));
+      try {
+        const issueDir = path.join(dir, 'domains', 'messaging', 'issues');
+        fs.mkdirSync(issueDir, { recursive: true });
+        const f = path.join(issueDir, '1-bad-yaml.md');
+        // Unquoted summary with an embedded colon: invalid YAML mapping.
+        fs.writeFileSync(f, '---\nsummary: Fixed SMS parser: string list bug.\n---\n## Problem\n', 'utf8');
+        const result = validateFile(f, validate);
+        expect(result.passed).to.equal(false);
+        expect(result.skipped).to.equal(false);
+        expect(result.errors[0]).to.match(/Invalid YAML frontmatter/);
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }

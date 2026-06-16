@@ -71,31 +71,54 @@ function formatError(e: ErrorObject): string {
   return `${field}: ${e.message ?? 'invalid'}`;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Result for a file with no frontmatter: issue entries fail, other markdown is skipped. */
+function missingFrontmatterResult(filePath: string, issue: boolean): FileResult {
+  return issue
+    ? {
+      file: filePath,
+      passed: false,
+      skipped: false,
+      errors: ['Missing YAML frontmatter (expected --- delimiters)'],
+    }
+    : { file: filePath, passed: true, skipped: true, errors: [] };
+}
+
+/** AJV errors for the frontmatter, formatted for display (empty when valid). */
+function collectFrontmatterErrors(
+  data: Record<string, unknown>,
+  validate: ValidateFunction
+): string[] {
+  if (validate(data)) return [];
+  return (validate.errors ?? []).map(formatError);
+}
+
 export function validateFile(filePath: string, validate: ValidateFunction): FileResult {
   const content = fs.readFileSync(filePath, 'utf8');
   const issue = isIssueFile(filePath);
 
   if (!hasFrontmatter(content)) {
-    // Issue entries must carry frontmatter; indexes/other markdown may not.
-    return issue
-      ? {
-        file: filePath,
-        passed: false,
-        skipped: false,
-        errors: ['Missing YAML frontmatter (expected --- delimiters)'],
-      }
-      : { file: filePath, passed: true, skipped: true, errors: [] };
+    return missingFrontmatterResult(filePath, issue);
   }
 
-  const parsed = matter(content);
+  let parsed: matter.GrayMatterFile<string>;
+  try {
+    parsed = matter(content);
+  } catch (err) {
+    // Unparseable YAML must be reported as a failed file, not crash the run.
+    return {
+      file: filePath,
+      passed: false,
+      skipped: false,
+      errors: [`Invalid YAML frontmatter: ${errorMessage(err)}`],
+    };
+  }
+
   const data = normalizeFrontmatter(parsed.data as Record<string, unknown>);
-  const errors: string[] = [];
-
-  if (!validate(data)) {
-    for (const e of validate.errors ?? []) {
-      errors.push(formatError(e));
-    }
-  }
+  const errors = collectFrontmatterErrors(data, validate);
   if (issue) {
     errors.push(...validateBody(parsed.content));
   }
@@ -103,41 +126,59 @@ export function validateFile(filePath: string, validate: ValidateFunction): File
   return { file: filePath, passed: errors.length === 0, skipped: false, errors };
 }
 
+/** A .md file we validate (README.md and TEMPLATE.md are excluded). */
+function isValidatableMarkdown(name: string): boolean {
+  return name.endsWith('.md') && name !== 'README.md' && name !== 'TEMPLATE.md';
+}
+
+/** The validatable files contributed by a single directory entry. */
+function filesForEntry(dir: string, entry: fs.Dirent): string[] {
+  if (entry.name === '_pending') return [];
+  const full = path.join(dir, entry.name);
+  if (entry.isDirectory()) return collectMarkdownFiles(full);
+  if (isValidatableMarkdown(entry.name)) return [full];
+  return [];
+}
+
 /** Recursively collect *.md under a directory, skipping _pending, README, TEMPLATE. */
 export function collectMarkdownFiles(dir: string): string[] {
-  const out: string[] = [];
-  if (!fs.existsSync(dir)) return out;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === '_pending') continue;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...collectMarkdownFiles(full));
-    } else if (
-      entry.name.endsWith('.md') &&
-      entry.name !== 'README.md' &&
-      entry.name !== 'TEMPLATE.md'
-    ) {
-      out.push(full);
-    }
+  if (!fs.existsSync(dir)) return [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const out = entries.flatMap((entry) => filesForEntry(dir, entry));
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
+/** The file list to validate: a single CLI-specified file, or the full corpus. */
+function resolveFiles(specificFile: string | undefined): string[] {
+  if (!specificFile) return collectMarkdownFiles(DOMAINS_DIR);
+  const resolved = path.resolve(specificFile);
+  if (!fs.existsSync(resolved)) {
+    console.error(`File not found: ${resolved}`);
+    process.exit(1);
   }
-  return out.sort();
+  return [resolved];
+}
+
+/** Print one file's status line (and its errors when it failed). */
+function printResult(result: FileResult): void {
+  const relative = path.relative(REPO_ROOT, result.file);
+  if (result.skipped) {
+    console.log(`  SKIP  ${relative}`);
+    return;
+  }
+  if (result.passed) {
+    console.log(`  PASS  ${relative}`);
+    return;
+  }
+  console.log(`  FAIL  ${relative}`);
+  for (const error of result.errors) {
+    console.log(`        ${error}`);
+  }
 }
 
 function main(): void {
   const validate = buildValidator();
-  const specificFile = process.argv[2];
-
-  let files: string[];
-  if (specificFile) {
-    const resolved = path.resolve(specificFile);
-    if (!fs.existsSync(resolved)) {
-      console.error(`File not found: ${resolved}`);
-      process.exit(1);
-    }
-    files = [resolved];
-  } else {
-    files = collectMarkdownFiles(DOMAINS_DIR);
-  }
+  const files = resolveFiles(process.argv[2]);
 
   if (files.length === 0) {
     console.log('No context files found to validate.');
@@ -146,25 +187,11 @@ function main(): void {
 
   console.log(`Validating ${files.length} context file(s)...\n`);
 
-  let failed = 0;
-  let skipped = 0;
-  for (const file of files) {
-    const result = validateFile(file, validate);
-    const relative = path.relative(REPO_ROOT, file);
-    if (result.skipped) {
-      console.log(`  SKIP  ${relative}`);
-      skipped++;
-    } else if (result.passed) {
-      console.log(`  PASS  ${relative}`);
-    } else {
-      console.log(`  FAIL  ${relative}`);
-      for (const error of result.errors) {
-        console.log(`        ${error}`);
-      }
-      failed++;
-    }
-  }
+  const results = files.map((file) => validateFile(file, validate));
+  results.forEach(printResult);
 
+  const skipped = results.filter((r) => r.skipped).length;
+  const failed = results.filter((r) => !r.skipped && !r.passed).length;
   const passed = files.length - failed - skipped;
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped (of ${files.length}).`);
 
