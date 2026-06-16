@@ -659,6 +659,37 @@ describe('scrapePR', () => {
     });
   });
 
+  describe('review from a deleted GitHub account (user is null)', () => {
+    it('should fall back to the ghost author instead of throwing', () => {
+      const meta = JSON.stringify({
+        number: 15,
+        title: 'Deleted reviewer',
+        body: '',
+        labels: [],
+        mergeCommit: { oid: 'sha15' },
+        mergedAt: '2024-10-02T00:00:00Z',
+        files: [],
+      });
+      // GitHub returns user: null for reviews left by since-deleted accounts.
+      const reviewsWithNullUser = JSON.stringify([
+        { user: null, body: 'Looks fine', state: 'APPROVED' },
+      ]);
+
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return meta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return reviewsWithNullUser;
+        if (args[0] === 'api' && args[1].includes('/members/ghost')) return '';
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      const result = scrapePR(15);
+      expect(result.reviewComments).to.have.lengthOf(1);
+      expect(result.reviewComments[0].author).to.equal('ghost');
+      expect(result.reviewComments[0].body).to.equal('Looks fine');
+    });
+  });
+
   describe('null/undefined fields in API responses (fallback branches)', () => {
     it('should use empty-string/array fallbacks when PR metadata fields are null', () => {
       // Exercises the ?? fallbacks for title, body, labels, mergeCommit, files

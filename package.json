@@ -17,7 +17,8 @@
     "validate-ticket": "node dist/cli/validate-ticket.js",
     "validate-schema": "ts-node src/scripts/validate-schema.ts",
     "open-review-pr": "ts-node src/scripts/open-review-pr.ts",
-    "run-pipeline": "ts-node src/scripts/run-pipeline.ts"
+    "run-pipeline": "ts-node src/scripts/run-pipeline.ts",
+    "smoke-test": "ts-node src/scripts/smoke-test.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.0",

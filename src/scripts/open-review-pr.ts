@@ -70,6 +70,30 @@ function escapeMarkdown(text: string): string {
 }
 
 /**
+ * Resolve a `source_pr` reference to a clickable GitHub PR URL.
+ *
+ * The distiller writes references in `owner/repo#number` form (e.g.
+ * `medic/cht-core#42`). A naive `https://github.com/<ref>` only yields
+ * `https://github.com/medic/cht-core#42` — a fragment anchor on the repo home
+ * page, not the PR. This converts the `#number` suffix into a real `/pull/number`
+ * path. References that don't match the expected shape fall back to a plain
+ * `https://github.com/<ref>` link so nothing is silently dropped.
+ *
+ * @example
+ * ```typescript
+ * sourcePrUrl('medic/cht-core#42'); // 'https://github.com/medic/cht-core/pull/42'
+ * sourcePrUrl('medic/cht-core');    // 'https://github.com/medic/cht-core'
+ * ```
+ */
+export function sourcePrUrl(ref: string): string {
+  const match = ref.match(/^([^#]+)#(\d+)$/);
+  if (match) {
+    return `https://github.com/${match[1]}/pull/${match[2]}`;
+  }
+  return `https://github.com/${ref}`;
+}
+
+/**
  * Build a GitHub PR body that lists each draft with its source PR and a review checklist.
  *
  * @example
@@ -95,7 +119,7 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
     const title = escapeMarkdown(String(fm.title ?? path.basename(draftPath)));
     const sourcePrStr = typeof fm.source_pr === 'string' ? fm.source_pr : '';
     const sourcePr = sourcePrStr
-      ? ` — [${escapeMarkdown(sourcePrStr)}](https://github.com/${sourcePrStr})`
+      ? ` — [${escapeMarkdown(sourcePrStr)}](${sourcePrUrl(sourcePrStr)})`
       : '';
     lines.push(`- **${title}**${sourcePr}`);
   }

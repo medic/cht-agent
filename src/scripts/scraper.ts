@@ -274,7 +274,8 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   // page's response. The reviews endpoint returns an array per page, so this is
   // an array of arrays — flatten one level. `.flat()` is a no-op if gh ever
   // returns a single already-flat array, so this is robust either way.
-  type RawReview = { user: { login: string }; body: string | null; state: string };
+  // `user` can be null when the reviewer's GitHub account has been deleted.
+  type RawReview = { user: { login: string } | null; body: string | null; state: string };
   let reviews: RawReview[];
   try {
     const parsed = JSON.parse(reviewsRaw.trim() || '[]');
@@ -289,7 +290,9 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   const reviewComments: ReviewComment[] = reviews
     .filter((r) => r.state !== 'PENDING')
     .map((r) => {
-      const author = r.user.login;
+      // GitHub returns `user: null` for reviews left by since-deleted accounts;
+      // fall back to its 'ghost' sentinel rather than dereferencing null.
+      const author = r.user?.login ?? 'ghost';
       if (!membershipCache.has(author)) {
         membershipCache.set(author, checkOrgMembership(author));
       }

@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'node:fs';
 import type { ReviewPRResult } from '../../src/types/pipeline';
-import { discoverDraftsByDomain, buildPRBody, openReviewPR } from '../../src/scripts/open-review-pr';
+import { discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -195,9 +195,12 @@ describe('buildPRBody', () => {
     expect(body).to.include('Prevent duplicate contact creation');
   });
 
-  it('includes the source_pr link', () => {
+  it('includes the source_pr link with a working /pull/ URL', () => {
     const body = buildPRBody('contacts', [draftPath]);
-    expect(body).to.include('medic/cht-core#42');
+    // Link text keeps the GitHub shorthand; the href resolves to the actual PR.
+    expect(body).to.include('[medic/cht-core#42](https://github.com/medic/cht-core/pull/42)');
+    // The broken anchor form must not be emitted.
+    expect(body).to.not.include('(https://github.com/medic/cht-core#42)');
   });
 
   it('includes the review checklist', () => {
@@ -226,6 +229,25 @@ describe('buildPRBody', () => {
     expect(body).to.include('\\*bold\\*');
     expect(body).to.include('\\_under\\_');
     expect(body).to.include('\\[link\\]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sourcePrUrl
+// ---------------------------------------------------------------------------
+
+describe('sourcePrUrl', () => {
+  it('converts an owner/repo#number reference into a /pull/ URL', () => {
+    expect(sourcePrUrl('medic/cht-core#42')).to.equal('https://github.com/medic/cht-core/pull/42');
+  });
+
+  it('falls back to a plain repo URL when there is no #number suffix', () => {
+    expect(sourcePrUrl('medic/cht-core')).to.equal('https://github.com/medic/cht-core');
+  });
+
+  it('falls back to a plain link for malformed references', () => {
+    // No numeric id after the hash — must not produce a /pull/ path.
+    expect(sourcePrUrl('medic/cht-core#abc')).to.equal('https://github.com/medic/cht-core#abc');
   });
 });
 

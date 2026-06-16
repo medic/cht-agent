@@ -36,6 +36,8 @@ interface CliArgs {
  * Parses CLI arguments into a typed options object.
  *
  * @returns Parsed CLI args with defaults applied.
+ * @throws {Error} When `--since` is given a non-positive or non-numeric value,
+ *   or when `--pr` is given a non-positive or non-numeric value.
  *
  * @example
  * ```typescript
@@ -43,15 +45,32 @@ interface CliArgs {
  * parseArgs(); // { prNumber: 123, repo: 'medic/cht-core', lookbackHours: 24 }
  * ```
  */
-function parseArgs(): CliArgs {
+export function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   const prIdx = args.indexOf('--pr');
   const repoIdx = args.indexOf('--repo');
   const sinceIdx = args.indexOf('--since');
+
+  let prNumber: number | undefined;
+  if (prIdx >= 0) {
+    prNumber = Number.parseInt(args[prIdx + 1], 10);
+    if (!Number.isInteger(prNumber) || prNumber <= 0) {
+      throw new Error(`Invalid --pr value: ${JSON.stringify(args[prIdx + 1])} (expected a positive integer)`);
+    }
+  }
+
+  let lookbackHours = DEFAULT_LOOKBACK_HOURS;
+  if (sinceIdx >= 0) {
+    lookbackHours = Number.parseInt(args[sinceIdx + 1], 10);
+    if (!Number.isInteger(lookbackHours) || lookbackHours <= 0) {
+      throw new Error(`Invalid --since value: ${JSON.stringify(args[sinceIdx + 1])} (expected a positive integer number of hours)`);
+    }
+  }
+
   return {
-    prNumber: prIdx >= 0 ? Number.parseInt(args[prIdx + 1], 10) : undefined,
+    prNumber,
     repo: repoIdx >= 0 ? args[repoIdx + 1] : DEFAULT_REPO,
-    lookbackHours: sinceIdx >= 0 ? Number.parseInt(args[sinceIdx + 1], 10) : DEFAULT_LOOKBACK_HOURS,
+    lookbackHours,
   };
 }
 
@@ -68,7 +87,7 @@ function parseArgs(): CliArgs {
  * getRecentlyMergedPRs('medic/cht-core', 24);
  * ```
  */
-function getRecentlyMergedPRs(repo: string, hours: number): number[] {
+export function getRecentlyMergedPRs(repo: string, hours: number): number[] {
   const since = new Date(Date.now() - hours * 60 * 60 * 1000);
   const raw = execFileSync(
     'gh',
@@ -93,7 +112,7 @@ function getRecentlyMergedPRs(repo: string, hours: number): number[] {
  * errorMessage('raw string');      // 'raw string'
  * ```
  */
-function errorMessage(err: unknown): string {
+export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
@@ -108,7 +127,7 @@ function errorMessage(err: unknown): string {
  * await processSinglePR(12345, 'medic/cht-core');
  * ```
  */
-async function processSinglePR(prNum: number, repo: string): Promise<void> {
+export async function processSinglePR(prNum: number, repo: string): Promise<void> {
   console.log('  scraping...');
   const pr = scrapePR(prNum, repo);
   console.log(`  title:  ${pr.prTitle}`);
@@ -136,7 +155,7 @@ async function processSinglePR(prNum: number, repo: string): Promise<void> {
  * @param prNumbers - List of PR numbers to process.
  * @param repo      - Repository in `owner/repo` format.
  */
-async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
+export async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
   let failures = 0;
 
   for (const prNum of prNumbers) {
@@ -156,7 +175,8 @@ async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
   if (failures > 0) process.exit(1);
 }
 
-(async () => {
+/* istanbul ignore next */
+async function main(): Promise<void> {
   const { prNumber, repo, lookbackHours } = parseArgs();
 
   let prNumbers: number[];
@@ -175,4 +195,12 @@ async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
   }
 
   await runPipeline(prNumbers, repo);
-})();
+}
+
+/* istanbul ignore next */
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(errorMessage(err));
+    process.exit(1);
+  });
+}
