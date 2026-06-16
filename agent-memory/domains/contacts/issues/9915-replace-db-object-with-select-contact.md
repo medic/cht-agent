@@ -9,7 +9,7 @@ title: Replace deprecated db-object appearance with select-contact
 lastUpdated: 2026-03-16
 summary: Migrated all XML forms in config/default and config/covid-19 from the deprecated db-object appearance and db:type bind to the modern select-contact appearance with string bind type. Also replaced deprecated horizontal-compact and horizontal appearances.
 services:
-  - config
+  - webapp
 techStack:
   - xml
   - xlsform

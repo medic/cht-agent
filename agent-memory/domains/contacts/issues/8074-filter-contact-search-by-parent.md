@@ -10,7 +10,6 @@ lastUpdated: 2026-03-16
 summary: Added a descendant-of-current-contact appearance keyword for form fields that scopes contact search to only contacts under the currently viewed place, using the existing contacts_by_parent CouchDB view.
 services:
   - webapp
-  - shared-libs
 techStack:
   - typescript
   - angular
