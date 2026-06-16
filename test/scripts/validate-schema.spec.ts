@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import * as sinon from 'sinon';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -8,6 +9,10 @@ import {
   validateBody,
   isIssueFile,
   collectMarkdownFiles,
+  resolveFiles,
+  printResult,
+  run,
+  FileResult,
 } from '../../src/scripts/validate-schema';
 
 const VALID_FRONTMATTER = {
@@ -71,6 +76,8 @@ const buildMarkdown = (frontmatter: Record<string, unknown>, body: string) => {
 
 describe('validate-schema (AJV)', () => {
   const validate = buildValidator();
+
+  afterEach(() => sinon.restore());
 
   /** Field names AJV flagged (required-miss, additionalProperties, or the failing field). */
   const offending = (fm: Record<string, unknown>): string[] => {
@@ -282,6 +289,26 @@ describe('validate-schema (AJV)', () => {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     });
+
+    it('fails an issue file whose frontmatter violates the schema and formats each error', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vs-bad-fm-'));
+      try {
+        const issueDir = path.join(dir, 'domains', 'contacts', 'issues');
+        fs.mkdirSync(issueDir, { recursive: true });
+        const f = path.join(issueDir, '1-bad-fm.md');
+        // Missing required fields + an out-of-enum domain + an unknown field:
+        // exercises the required, additionalProperties, and field-path branches of formatError.
+        fs.writeFileSync(f, buildMarkdown({ domain: 'not-a-domain', bogus: 'x' }, VALID_BODY), 'utf8');
+        const result = validateFile(f, validate);
+        expect(result.passed).to.equal(false);
+        const joined = result.errors.join('\n');
+        expect(joined).to.match(/missing required field/);
+        expect(joined).to.match(/unexpected field "bogus"/);
+        expect(result.errors.some(e => e.startsWith('domain:'))).to.equal(true);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('collectMarkdownFiles', () => {
@@ -298,6 +325,111 @@ describe('validate-schema (AJV)', () => {
 
     it('returns an empty array for a non-existent directory', () => {
       expect(collectMarkdownFiles('/nonexistent/path')).to.deep.equal([]);
+    });
+
+    it('excludes files under a _pending directory', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vs-pending-'));
+      try {
+        fs.mkdirSync(path.join(dir, '_pending'), { recursive: true });
+        fs.writeFileSync(path.join(dir, '_pending', 'draft.md'), '# draft\n', 'utf8');
+        fs.writeFileSync(path.join(dir, 'real.md'), '# real\n', 'utf8');
+        const files = collectMarkdownFiles(dir);
+        expect(files.some(f => f.includes('_pending'))).to.equal(false);
+        expect(files.some(f => f.endsWith('real.md'))).to.equal(true);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('resolveFiles', () => {
+    it('returns the full corpus when no specific file is given', () => {
+      const files = resolveFiles(undefined);
+      expect(files.length).to.be.greaterThan(0);
+      expect(files.every(f => f.endsWith('.md'))).to.equal(true);
+    });
+
+    it('returns the single resolved path for an existing file', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vs-resolve-'));
+      try {
+        const f = path.join(dir, 'a.md');
+        fs.writeFileSync(f, '# a\n', 'utf8');
+        expect(resolveFiles(f)).to.deep.equal([path.resolve(f)]);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('logs an error and exits 1 when the specified file does not exist', () => {
+      const exitStub = sinon.stub(process, 'exit');
+      const errStub = sinon.stub(console, 'error');
+      resolveFiles('/no/such/context-file.md');
+      expect(exitStub.calledWith(1)).to.equal(true);
+      expect(errStub.called).to.equal(true);
+    });
+  });
+
+  describe('printResult', () => {
+    const result = (over: Partial<FileResult>): FileResult => ({
+      file: '/repo/agent-memory/domains/x/issues/1.md',
+      passed: true,
+      skipped: false,
+      errors: [],
+      ...over,
+    });
+
+    it('prints SKIP for a skipped file', () => {
+      const log = sinon.stub(console, 'log');
+      printResult(result({ skipped: true }));
+      expect(log.calledOnce).to.equal(true);
+      expect(log.firstCall.args[0]).to.match(/SKIP/);
+    });
+
+    it('prints PASS for a passed file', () => {
+      const log = sinon.stub(console, 'log');
+      printResult(result({ passed: true }));
+      expect(log.firstCall.args[0]).to.match(/PASS/);
+    });
+
+    it('prints FAIL and one line per error for a failed file', () => {
+      const log = sinon.stub(console, 'log');
+      printResult(result({ passed: false, errors: ['err one', 'err two'] }));
+      expect(log.firstCall.args[0]).to.match(/FAIL/);
+      expect(log.callCount).to.equal(3); // FAIL line + 2 error lines
+      expect(log.getCall(1).args[0]).to.match(/err one/);
+    });
+  });
+
+  describe('run', () => {
+    it('returns 0 when the full corpus validates', () => {
+      sinon.stub(console, 'log');
+      expect(run([])).to.equal(0);
+    });
+
+    it('returns 1 when a target file fails validation', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vs-run-fail-'));
+      try {
+        const issueDir = path.join(dir, 'domains', 'contacts', 'issues');
+        fs.mkdirSync(issueDir, { recursive: true });
+        const f = path.join(issueDir, '1-no-frontmatter.md');
+        fs.writeFileSync(f, '# no frontmatter here\n', 'utf8');
+        sinon.stub(console, 'log');
+        expect(run([f])).to.equal(1);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('returns 0 and reports nothing to validate when the corpus is empty', () => {
+      // node:fs is a read-only namespace import, so inject a fake existsSync via
+      // proxyquire (callThru keeps the real fs for buildValidator's readFileSync).
+      const proxyquire = require('proxyquire');
+      const { run: runEmpty } = proxyquire('../../src/scripts/validate-schema', {
+        'node:fs': { existsSync: () => false },
+      });
+      const log = sinon.stub(console, 'log');
+      expect(runEmpty([])).to.equal(0);
+      expect(log.calledWith('No context files found to validate.')).to.equal(true);
     });
   });
 });

@@ -149,7 +149,7 @@ export function collectMarkdownFiles(dir: string): string[] {
 }
 
 /** The file list to validate: a single CLI-specified file, or the full corpus. */
-function resolveFiles(specificFile: string | undefined): string[] {
+export function resolveFiles(specificFile: string | undefined): string[] {
   if (!specificFile) return collectMarkdownFiles(DOMAINS_DIR);
   const resolved = path.resolve(specificFile);
   if (!fs.existsSync(resolved)) {
@@ -160,7 +160,7 @@ function resolveFiles(specificFile: string | undefined): string[] {
 }
 
 /** Print one file's status line (and its errors when it failed). */
-function printResult(result: FileResult): void {
+export function printResult(result: FileResult): void {
   const relative = path.relative(REPO_ROOT, result.file);
   if (result.skipped) {
     console.log(`  SKIP  ${relative}`);
@@ -176,13 +176,17 @@ function printResult(result: FileResult): void {
   }
 }
 
-function main(): void {
+/**
+ * Validate the selected files and return a process exit code (0 = all passed,
+ * 1 = at least one failure). Free of process.exit so it is testable in-process.
+ */
+export function run(argv: string[]): number {
   const validate = buildValidator();
-  const files = resolveFiles(process.argv[2]);
+  const files = resolveFiles(argv[0]);
 
   if (files.length === 0) {
     console.log('No context files found to validate.');
-    process.exit(0);
+    return 0;
   }
 
   console.log(`Validating ${files.length} context file(s)...\n`);
@@ -195,11 +199,11 @@ function main(): void {
   const passed = files.length - failed - skipped;
   console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped (of ${files.length}).`);
 
-  if (failed > 0) {
-    process.exit(1);
-  }
+  return failed > 0 ? 1 : 0;
 }
 
+// Thin CLI entry: all logic lives in the covered run().
+/* istanbul ignore next */
 if (require.main === module) {
-  main();
+  process.exit(run(process.argv.slice(2)));
 }
