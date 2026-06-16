@@ -1,6 +1,7 @@
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
+import { saveResearchResults } from '../utils/research-results';
 
 export const validateEnvironment = () => {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -51,6 +52,45 @@ export const displayResearchFindings = (result: ResearchState) => {
     console.log('\nSuggested Approaches:');
     result.researchFindings.suggestedApproaches.forEach((approach, i) => {
       console.log(`   ${i + 1}. ${approach}`);
+    });
+  }
+
+  console.log();
+};
+
+export const displayCodeContextFindings = (result: ResearchState) => {
+  if (!result.codeContextFindings) return;
+
+  console.log('🏗️  CODE CONTEXT RESULTS');
+  console.log('─'.repeat(70));
+  console.log(`Source: ${result.codeContextFindings.source}`);
+  console.log(`Confidence: ${(result.codeContextFindings.confidence * 100).toFixed(0)}%`);
+  console.log(`Repos: ${result.codeContextFindings.relevantRepos.join(', ')}`);
+  console.log(
+    `\nArchitecture Insights (${result.codeContextFindings.architectureInsights.length}):`
+  );
+
+  result.codeContextFindings.architectureInsights.forEach((insight, i) => {
+    console.log(`\n${i + 1}. ${insight.component}`);
+    console.log(`   ${insight.description}`);
+    console.log(`   Patterns: ${insight.patterns.join(', ')}`);
+    console.log(`   Dependencies: ${insight.dependencies.join(', ')}`);
+  });
+
+  if (result.codeContextFindings.moduleRelationships.length > 0) {
+    console.log(
+      `\nModule Relationships (${result.codeContextFindings.moduleRelationships.length}):`
+    );
+    result.codeContextFindings.moduleRelationships.forEach((rel, i) => {
+      console.log(`   ${i + 1}. ${rel.source} → ${rel.target} (${rel.relationship})`);
+      console.log(`      ${rel.description}`);
+    });
+  }
+
+  if (result.codeContextFindings.warnings.length > 0) {
+    console.log('\n⚠️  Warnings:');
+    result.codeContextFindings.warnings.forEach(warning => {
+      console.log(`   - ${warning}`);
     });
   }
 
@@ -193,8 +233,16 @@ export const displayResults = (result: ResearchState, duration: string) => {
   }
 
   displayResearchFindings(result);
+  displayCodeContextFindings(result);
   displayContextAnalysis(result);
   displayOrchestrationPlan(result);
+
+  try {
+    const outputPath = saveResearchResults(result);
+    console.log(`💾 Results saved to: ${outputPath}\n`);
+  } catch (saveError) {
+    console.warn('⚠️  Could not save results to file:', saveError);
+  }
 
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║                  Research Phase Complete! ✅                   ║');

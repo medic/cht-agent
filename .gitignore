@@ -12,3 +12,8 @@ dist/
 coverage/
 .beads/
 .claude
+
+
+# Research output files
+outputs/
+

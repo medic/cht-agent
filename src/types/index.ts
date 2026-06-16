@@ -231,6 +231,78 @@ export interface ContextAnalysisResult {
   recommendations: string[];
   historicalSuccessRate: number; // 0-1
   relatedDomains: CHTDomain[];
+  codeArchitectureSummary?: string;
+}
+
+/**
+ * Architecture insight from OpenDeepWiki code analysis
+ */
+export interface ArchitectureInsight {
+  component: string;
+  description: string;
+  patterns: string[];
+  dependencies: string[];
+}
+
+/**
+ * Module relationship from code structure analysis
+ */
+export interface ModuleRelationship {
+  source: string;
+  target: string;
+  relationship: 'imports' | 'extends' | 'implements' | 'calls' | 'depends-on';
+  description: string;
+}
+
+/**
+ * Code context findings from OpenDeepWiki Code Context Agent
+ */
+export interface CodeContextFindings {
+  architectureInsights: ArchitectureInsight[];
+  moduleRelationships: ModuleRelationship[];
+  diagrams: string[]; // Mermaid diagram strings
+  relevantRepos: string[];
+  warnings: string[];
+  confidence: number; // 0-1
+  source: 'opendeepwiki' | 'mock';
+}
+
+/**
+ * Wiki structure entry from OpenDeepWiki
+ */
+export interface WikiStructureEntry {
+  path: string;
+  title: string;
+  description: string;
+  children?: WikiStructureEntry[];
+}
+
+/**
+ * MCP (Model Context Protocol) tool call for OpenDeepWiki
+ */
+export interface OpenDeepWikiMCPToolCall {
+  tool: 'get_wiki_structure' | 'search_code' | 'get_architecture';
+  parameters: {
+    repo: string;
+    query?: string;
+    domain?: CHTDomain;
+    max_results?: number;
+  };
+}
+
+/**
+ * MCP Response from OpenDeepWiki
+ */
+export interface OpenDeepWikiMCPResponse {
+  success: boolean;
+  data?: {
+    architectureInsights: ArchitectureInsight[];
+    moduleRelationships: ModuleRelationship[];
+    diagrams: string[];
+    structure: WikiStructureEntry[];
+  };
+  error?: string;
+  rateLimited?: boolean;
 }
 
 /**
@@ -263,9 +335,10 @@ export interface ResearchState {
   }>;
   issue?: IssueTemplate;
   researchFindings?: ResearchFindings;
+  codeContextFindings?: CodeContextFindings;
   contextAnalysis?: ContextAnalysisResult;
   orchestrationPlan?: OrchestrationPlan;
-  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
+  currentPhase: 'init' | 'doc-search' | 'code-context' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
   errors: string[];
 }
 
@@ -342,3 +415,77 @@ export interface MCPClientConfig {
   /** Request timeout in milliseconds */
   timeout?: number;
 }
+
+// ============================================================================
+// Test Environment Layer Types (#16, #66)
+// ============================================================================
+
+/**
+ * A single contact_types entry from /api/v1/settings
+ */
+export interface ContactTypeConfig {
+  id: string;
+  parents?: string[];
+  person?: boolean;
+}
+
+/**
+ * A role entry from settings.roles, keyed by role name
+ */
+export interface RoleConfig {
+  name?: string;
+  offline?: boolean;
+}
+
+/**
+ * A transition entry from settings.transitions
+ */
+export type TransitionConfig = boolean | { disable?: boolean };
+
+/**
+ * Deployed configuration discovered from a running CHT instance
+ */
+export interface DiscoveredConfig {
+  contactTypes: ContactTypeConfig[];
+  roles: Record<string, RoleConfig>;
+  permissions: Record<string, string[]>;
+  transitions: Record<string, TransitionConfig>;
+  forms: string[];
+}
+
+/**
+ * Inputs to provision an environment (need a local code path OR a published version)
+ */
+export interface ProvisionOptions {
+  chtCorePath?: string;
+  version?: string;
+  network?: string;
+}
+
+/**
+ * Handle to a provisioned, reachable CHT environment
+ */
+export interface EnvironmentHandle {
+  url: string;
+  auth: { user: string; password: string };
+  network: string;
+  /** Working copy backing this env (set when source-built; needed by applyConfig/rebuild) */
+  chtCorePath?: string;
+  source: 'mock' | 'docker';
+}
+
+/**
+ * Result of seeding test data into the environment
+ */
+export interface TestDataResult {
+  placesCreated: number;
+  peopleCreated: number;
+  reportsCreated: number;
+  usersCreated: number;
+  warnings: string[];
+}
+
+/**
+ * Reset granularity (see Test Environment Layer recommendation, three-tier reset)
+ */
+export type ResetTier = 'couchdb' | 'restart' | 'full';
