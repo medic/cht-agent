@@ -9,54 +9,45 @@
  * 2. Claude LLM reasoning as fallback
  */
 
-// import * as fs from 'fs';
-// import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
 
-/**
- * Load domain mapping indices if they exist
- * TODO: Use this function when implementing index-based inference
- */
-// function loadDomainIndices(): {
-//   domainToComponents: Record<string, any> | null;
-//   componentToDomains: Record<string, string[]> | null;
-// } {
-//   const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
-//
-//   let domainToComponents = null;
-//   let componentToDomains = null;
-//
-//   try {
-//     const domainToComponentsPath = path.join(indicesDir, 'domain-to-components.json');
-//     if (fs.existsSync(domainToComponentsPath)) {
-//       domainToComponents = JSON.parse(fs.readFileSync(domainToComponentsPath, 'utf-8'));
-//     }
-//   } catch (error) {
-//     // Indices not available yet
-//   }
-//
-//   try {
-//     const componentToDomainsPath = path.join(indicesDir, 'component-to-domains.json');
-//     if (fs.existsSync(componentToDomainsPath)) {
-//       componentToDomains = JSON.parse(fs.readFileSync(componentToDomainsPath, 'utf-8'));
-//     }
-//   } catch (error) {
-//     // Indices not available yet
-//   }
-//
-//   return { domainToComponents, componentToDomains };
-// }
+interface DomainIndices {
+  domainToComponents: Record<string, unknown> | null;
+  componentToDomains: Record<string, string[]> | null;
+}
+
+const loadJsonIndex = (filePath: string): Record<string, unknown> | null => {
+  try {
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    }
+  } catch {
+    // Index not available yet
+  }
+  return null;
+};
+
+const loadDomainIndices = (): DomainIndices => {
+  const indicesDir = path.join(process.cwd(), 'agent-memory', 'indices');
+
+  return {
+    domainToComponents: loadJsonIndex(path.join(indicesDir, 'domain-to-components.json')),
+    componentToDomains: loadJsonIndex(path.join(indicesDir, 'component-to-domains.json')) as Record<string, string[]> | null,
+  };
+};
 
 /**
  * Format array items for prompt, handling empty arrays gracefully
  */
-function formatListForPrompt(items: string[], emptyMessage: string = 'None provided'): string {
+const formatListForPrompt = (items: string[], emptyMessage: string = 'None provided'): string => {
   if (!items || items.length === 0) {
     return emptyMessage;
   }
   return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
-}
+};
 
 /**
  * Domain classification examples to guide the LLM
@@ -108,16 +99,62 @@ Pitfalls (Common Misclassifications to Avoid):
    → If data freshness/replication is the root cause, prefer data-sync domain.
 `;
 
+const VALID_DOMAINS: CHTDomain[] = [
+  'authentication',
+  'contacts',
+  'forms-and-reports',
+  'tasks-and-targets',
+  'messaging',
+  'data-sync',
+  'configuration',
+  'interoperability',
+];
+
+const extractJson = (content: string): string => {
+  const jsonRegex = /\{[^{}]*(?:\{[^{}]*}[^{}]*)*}/;
+  const match = jsonRegex.exec(content);
+  if (!match) {
+    throw new Error('LLM did not return valid JSON response');
+  }
+  return match[0];
+};
+
+const parseJsonSafe = (jsonStr: string): { domain?: string; components?: string[] } => {
+  try {
+    return JSON.parse(jsonStr);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(`LLM returned malformed JSON. Parse error: ${msg}. Raw: ${jsonStr.substring(0, 200)}...`);
+  }
+};
+
+const parseLLMResponse = (content: string): { domain: CHTDomain; components: string[] } => {
+  const result = parseJsonSafe(extractJson(content));
+
+  if (!result.domain) {
+    throw new Error(`LLM response missing required "domain" field. Got: ${JSON.stringify(result)}`);
+  }
+
+  if (!VALID_DOMAINS.includes(result.domain as CHTDomain)) {
+    throw new Error(`LLM returned invalid domain: "${result.domain}". Must be one of: ${VALID_DOMAINS.join(', ')}`);
+  }
+
+  return {
+    domain: result.domain as CHTDomain,
+    components: Array.isArray(result.components) ? result.components : [],
+  };
+};
+
 /**
  * Infer domain and components using Claude LLM
  */
-async function inferUsingLLM(
+const inferUsingLLM = async (
   issue: IssueTemplate,
   modelName: string = 'claude-sonnet-4-20250514'
-): Promise<{ domain: CHTDomain; components: string[] }> {
+): Promise<{ domain: CHTDomain; components: string[] }> => {
   const model = new ChatAnthropic({
-    modelName,
-    temperature: 0.2, // Low temperature for consistent categorization
+    model: modelName,
+    temperature: 0.2,
   });
 
   // Format reference data for the prompt
@@ -184,62 +221,20 @@ Respond in this exact JSON format:
 }`;
 
   const response = await model.invoke(prompt);
-  const content = response.content.toString();
+  const content = typeof response.content === 'string'
+    ? response.content
+    : JSON.stringify(response.content);
 
-  // Extract JSON from response
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('LLM did not return valid JSON response');
-  }
-
-  // Parse JSON with error handling
-  let result: { domain?: string; components?: string[]; reasoning?: string };
-  try {
-    result = JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    throw new Error(
-      `LLM returned malformed JSON. Parse error: ${error instanceof Error ? error.message : 'Unknown error'}. Raw response: ${jsonMatch[0].substring(0, 200)}...`
-    );
-  }
-
-  // Validate required fields
-  if (!result.domain || typeof result.domain !== 'string') {
-    throw new Error(
-      `LLM response missing required "domain" field. Got: ${JSON.stringify(result)}`
-    );
-  }
-
-  // Validate domain is one of the valid CHT domains
-  const validDomains: CHTDomain[] = [
-    'authentication',
-    'contacts',
-    'forms-and-reports',
-    'tasks-and-targets',
-    'messaging',
-    'data-sync',
-    'configuration',
-    'interoperability',
-  ];
-
-  if (!validDomains.includes(result.domain as CHTDomain)) {
-    throw new Error(
-      `LLM returned invalid domain: "${result.domain}". Must be one of: ${validDomains.join(', ')}`
-    );
-  }
-
-  return {
-    domain: result.domain as CHTDomain,
-    components: Array.isArray(result.components) ? result.components : [],
-  };
-}
+  return parseLLMResponse(content);
+};
 
 /**
  * Main function: Infer domain and components for an issue
  */
-export async function inferDomainAndComponents(
+export const inferDomainAndComponents = async (
   issue: IssueTemplate,
   modelName?: string
-): Promise<{ domain: CHTDomain; components: string[] }> {
+): Promise<{ domain: CHTDomain; components: string[] }> => {
   // If domain is already specified, keep it
   const hasExistingDomain = issue.issue.technical_context.domain !== undefined;
   const hasExistingComponents = issue.issue.technical_context.components.length > 0;
@@ -247,33 +242,32 @@ export async function inferDomainAndComponents(
   if (hasExistingDomain && hasExistingComponents) {
     console.log('[Domain Inference] Using domain and components from ticket');
     return {
-      domain: issue.issue.technical_context.domain!,
+      domain: issue.issue.technical_context.domain,
       components: issue.issue.technical_context.components,
     };
   }
 
   console.log('[Domain Inference] Inferring domain and components...');
 
-  // Try to use indices first (when implemented)
-  // const indices = loadDomainIndices();
-  // TODO: Implement index-based inference when indices are populated
+  const indices = loadDomainIndices();
+  const hasIndices = indices.domainToComponents !== null || indices.componentToDomains !== null;
+  console.log(`[Domain Inference] Index-based inference ${hasIndices ? 'available' : 'not available, using LLM'}`);
 
-  // For now, use LLM inference
   const inferred = await inferUsingLLM(issue, modelName);
 
   console.log(`[Domain Inference] Inferred domain: ${inferred.domain}`);
   console.log(`[Domain Inference] Inferred components: ${inferred.components.join(', ')}`);
 
   return inferred;
-}
+};
 
 /**
  * Enrich an issue template with inferred domain/components
  */
-export async function enrichIssueTemplate(
+export const enrichIssueTemplate = async (
   issue: IssueTemplate,
   modelName?: string
-): Promise<IssueTemplate> {
+): Promise<IssueTemplate> => {
   const { domain, components } = await inferDomainAndComponents(issue, modelName);
 
   return {
@@ -286,4 +280,4 @@ export async function enrichIssueTemplate(
       },
     },
   };
-}
+};

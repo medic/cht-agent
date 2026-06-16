@@ -5,33 +5,46 @@
  * All detailed content is extracted from markdown body sections
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import { IssueTemplate, CHTDomain } from '../types';
+import { IssueTemplate, CHTDomain, IssueType, Priority } from '../types';
 
-/**
- * Extract YAML frontmatter from markdown content
- */
-function extractFrontmatter(content: string): {
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+const parseFrontmatterYaml = (yamlContent: string): Record<string, string> => {
+  try {
+    // Using JSON_SCHEMA to safely parse YAML without executing arbitrary code
+    const parsed = yaml.load(yamlContent, { schema: yaml.JSON_SCHEMA }) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object') {
+      return Object.fromEntries(
+        Object.entries(parsed).map(([key, value]) => [
+          key,
+          typeof value === 'string' ? value : JSON.stringify(value ?? ''),
+        ])
+      );
+    }
+  } catch (error) {
+    console.warn('Failed to parse YAML frontmatter:', error);
+  }
+  return {};
+};
+
+const extractFrontmatter = (content: string): {
   metadata: Record<string, string>;
   markdown: string;
-} {
+} => {
   const lines = content.split('\n');
 
-  // Check if file starts with ---
   if (lines[0]?.trim() !== '---') {
     return { metadata: {}, markdown: content };
   }
 
-  // Find the closing ---
-  let endIndex = -1;
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
-      endIndex = i;
-      break;
-    }
-  }
+  const endIndex = lines.findIndex((line, i) => i > 0 && line.trim() === '---');
 
   if (endIndex === -1) {
     return { metadata: {}, markdown: content };
@@ -39,169 +52,128 @@ function extractFrontmatter(content: string): {
 
   const yamlContent = lines.slice(1, endIndex).join('\n');
   const markdown = lines.slice(endIndex + 1).join('\n');
-
-  // Parse YAML using js-yaml
-  let metadata: Record<string, string> = {};
-  try {
-    const parsed = yaml.load(yamlContent);
-    if (parsed && typeof parsed === 'object') {
-      // Convert all values to strings for consistency
-      metadata = Object.fromEntries(
-        Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
-          key,
-          String(value ?? ''),
-        ])
-      );
-    }
-  } catch (error) {
-    // If YAML parsing fails, return empty metadata
-    console.warn('Failed to parse YAML frontmatter:', error);
-  }
+  const metadata = parseFrontmatterYaml(yamlContent);
 
   return { metadata, markdown };
-}
+};
 
-/**
- * Validate that type is a valid ticket type
- */
-type TicketType = 'feature' | 'bug' | 'improvement';
+const VALID_TYPES: IssueType[] = ['feature', 'bug', 'improvement'];
+const VALID_PRIORITIES: Priority[] = ['high', 'medium', 'low'];
+const VALID_DOMAINS: CHTDomain[] = [
+  'authentication',
+  'contacts',
+  'forms-and-reports',
+  'tasks-and-targets',
+  'messaging',
+  'data-sync',
+  'configuration',
+  'interoperability',
+];
 
-function validateType(type: string): TicketType {
-  const validTypes: TicketType[] = ['feature', 'bug', 'improvement'];
-
-  if (validTypes.includes(type as TicketType)) {
-    return type as TicketType;
+const validateType = (type: string): IssueType => {
+  if (VALID_TYPES.includes(type as IssueType)) {
+    return type as IssueType;
   }
+  throw new Error(`Invalid type: "${type}". Must be one of: ${VALID_TYPES.join(', ')}`);
+};
 
-  throw new Error(`Invalid type: "${type}". Must be one of: ${validTypes.join(', ')}`);
-}
-
-/**
- * Validate that priority is a valid priority level
- */
-type TicketPriority = 'high' | 'medium' | 'low';
-
-function validatePriority(priority: string): TicketPriority {
-  const validPriorities: TicketPriority[] = ['high', 'medium', 'low'];
-
-  if (validPriorities.includes(priority as TicketPriority)) {
-    return priority as TicketPriority;
+const validatePriority = (priority: string): Priority => {
+  if (VALID_PRIORITIES.includes(priority as Priority)) {
+    return priority as Priority;
   }
+  throw new Error(`Invalid priority: "${priority}". Must be one of: ${VALID_PRIORITIES.join(', ')}`);
+};
 
-  throw new Error(`Invalid priority: "${priority}". Must be one of: ${validPriorities.join(', ')}`);
-}
-
-/**
- * Validate that domain is a valid CHTDomain
- */
-function validateDomain(domain: string): CHTDomain {
-  const validDomains: CHTDomain[] = [
-    'authentication',
-    'contacts',
-    'forms-and-reports',
-    'tasks-and-targets',
-    'messaging',
-    'data-sync',
-    'configuration',
-    'interoperability',
-  ];
-
-  if (validDomains.includes(domain as CHTDomain)) {
+const validateDomain = (domain: string): CHTDomain => {
+  if (VALID_DOMAINS.includes(domain as CHTDomain)) {
     return domain as CHTDomain;
   }
+  throw new Error(`Invalid domain: "${domain}". Must be one of: ${VALID_DOMAINS.join(', ')}`);
+};
 
-  throw new Error(`Invalid domain: "${domain}". Must be one of: ${validDomains.join(', ')}`);
-}
-
-/**
- * Extract content from a markdown section
- * Returns all text until the next heading or end of content
- */
-function extractSection(markdown: string, sectionTitle: string): string {
-  const regex = new RegExp(`##\\s+${sectionTitle}\\s*\\n([\\s\\S]*?)(?=\\n##|$)`, 'i');
-  const match = markdown.match(regex);
+const extractSection = (markdown: string, sectionTitle: string): string => {
+  const regex = new RegExp(String.raw`##\s+${sectionTitle}\s*\n([\s\S]*?)(?=\n##|$)`, 'i');
+  const match = regex.exec(markdown);
   return match ? match[1].trim() : '';
-}
+};
 
-/**
- * Extract bullet list items from text
- */
-function extractBulletList(text: string): string[] {
-  const lines = text.split('\n');
-  const items: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- ')) {
-      items.push(trimmed.substring(2).trim());
-    } else if (trimmed.startsWith('* ')) {
-      items.push(trimmed.substring(2).trim());
-    } else if (/^\d+\.\s/.test(trimmed)) {
-      // Handle numbered lists
-      items.push(trimmed.replace(/^\d+\.\s/, '').trim());
-    }
+const parseBulletLine = (trimmed: string): string | null => {
+  if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+    return trimmed.substring(2).trim();
   }
-
-  return items;
-}
-
-/**
- * Extract code-formatted items (items wrapped in backticks)
- */
-function extractCodeItems(text: string): string[] {
-  const items: string[] = [];
-  const lines = text.split('\n');
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Match lines like "- `component/path`"
-    if (trimmed.startsWith('- `') || trimmed.startsWith('* `')) {
-      const match = trimmed.match(/[`]([^`]+)[`]/);
-      if (match) {
-        items.push(match[1]);
-      }
-    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      // Also handle non-code items
-      const item = trimmed.substring(2).trim();
-      if (item) {
-        items.push(item);
-      }
-    }
+  if (/^\d+\.\s/.test(trimmed)) {
+    return trimmed.replace(/^\d+\.\s/, '').trim();
   }
+  return null;
+};
 
-  return items;
-}
+const extractBulletList = (text: string): string[] => {
+  return text
+    .split('\n')
+    .map(line => parseBulletLine(line.trim()))
+    .filter((item): item is string => item !== null);
+};
 
-/**
- * Extract URLs from markdown links
- */
-function extractURLs(text: string): string[] {
+const extractCodeItem = (trimmed: string): string | null => {
+  if (trimmed.startsWith('- `') || trimmed.startsWith('* `')) {
+    const match = /`([^`]+)`/.exec(trimmed);
+    return match ? match[1] : null;
+  }
+  if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+    const item = trimmed.substring(2).trim();
+    return item || null;
+  }
+  return null;
+};
+
+const extractCodeItems = (text: string): string[] => {
+  return text
+    .split('\n')
+    .map(line => extractCodeItem(line.trim()))
+    .filter((item): item is string => item !== null);
+};
+
+const extractMarkdownLinks = (text: string): string[] => {
   const urls: string[] = [];
-
-  // Match markdown links: [text](url)
-  const markdownLinkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const regex = /\[([^\]]*)]\(([^)]*)\)/g;
   let match;
-  while ((match = markdownLinkRegex.exec(text)) !== null) {
+  while ((match = regex.exec(text)) !== null) {
     urls.push(match[2]);
   }
-
-  // Also match plain URLs
-  const plainUrlRegex = /https?:\/\/[^\s)]+/g;
-  const plainUrls = text.match(plainUrlRegex) || [];
-  for (const url of plainUrls) {
-    if (!urls.includes(url)) {
-      urls.push(url);
-    }
-  }
-
   return urls;
-}
+};
 
-/**
- * Parse a markdown ticket file into an IssueTemplate
- */
-export function parseTicketFile(filePath: string): IssueTemplate {
-  // Read file
+const extractURLs = (text: string): string[] => {
+  const markdownUrls = extractMarkdownLinks(text);
+  const plainUrls = text.match(/https?:\/\/[^\s)]+/g) || [];
+  const uniquePlain = plainUrls.filter(url => !markdownUrls.includes(url));
+  return [...markdownUrls, ...uniquePlain];
+};
+
+const validateMetadata = (metadata: Record<string, string>) => {
+  if (!metadata.title) {
+    throw new Error('Ticket must have a "title" in frontmatter');
+  }
+  if (!metadata.type) {
+    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|improvement)');
+  }
+  if (!metadata.priority) {
+    throw new Error('Ticket must have a "priority" in frontmatter (high|medium|low)');
+  }
+  if (!metadata.domain) {
+    throw new Error(
+      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration|interoperability)'
+    );
+  }
+};
+
+const extractSubsection = (text: string, heading: string): string | null => {
+  const regex = new RegExp(String.raw`\*\*${heading}:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)`, 'i');
+  const match = regex.exec(text);
+  return match ? match[1] : null;
+};
+
+export const parseTicketFile = (filePath: string): IssueTemplate => {
   if (!fs.existsSync(filePath)) {
     throw new Error(`Ticket file not found: ${filePath}`);
   }
@@ -209,26 +181,8 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   const content = fs.readFileSync(filePath, 'utf-8');
   const { metadata, markdown } = extractFrontmatter(content);
 
-  // Validate required metadata
-  if (!metadata.title) {
-    throw new Error('Ticket must have a "title" in frontmatter');
-  }
+  validateMetadata(metadata);
 
-  if (!metadata.type) {
-    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|improvement)');
-  }
-
-  if (!metadata.priority) {
-    throw new Error('Ticket must have a "priority" in frontmatter (high|medium|low)');
-  }
-
-  if (!metadata.domain) {
-    throw new Error(
-      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration|interoperability)'
-    );
-  }
-
-  // Extract sections from markdown
   const descriptionSection = extractSection(markdown, 'Description');
   const technicalContextSection = extractSection(markdown, 'Technical Context');
   const requirementsSection = extractSection(markdown, 'Requirements');
@@ -236,73 +190,141 @@ export function parseTicketFile(filePath: string): IssueTemplate {
   const constraintsSection = extractSection(markdown, 'Constraints');
   const referencesSection = extractSection(markdown, 'References');
 
-  // Parse technical context
   const components = extractCodeItems(technicalContextSection);
-  const existingReferencesMatch = technicalContextSection.match(
-    /\*\*Existing References:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
-  );
-  const existingReferences = existingReferencesMatch
-    ? extractBulletList(existingReferencesMatch[1])
-    : [];
+  const existingRefsText = extractSubsection(technicalContextSection, 'Existing References');
+  const existingReferences = existingRefsText ? extractBulletList(existingRefsText) : [];
 
-  // Parse requirements, acceptance criteria, and constraints
-  const requirements = extractBulletList(requirementsSection);
-  const acceptanceCriteria = extractBulletList(acceptanceCriteriaSection);
-  const constraints = extractBulletList(constraintsSection);
+  const similarImplText = extractSubsection(referencesSection, 'Similar Implementations');
+  const documentationText = extractSubsection(referencesSection, 'Documentation');
 
-  // Parse references
-  const similarImplementationsMatch = referencesSection.match(
-    /\*\*Similar Implementations:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
-  );
-  const documentationMatch = referencesSection.match(
-    /\*\*Documentation:\*\*([\s\S]*?)(?=\n\*\*|\n##|$)/i
-  );
-
-  const similarImplementations = similarImplementationsMatch
-    ? extractURLs(similarImplementationsMatch[1])
-    : [];
-  const documentation = documentationMatch ? extractURLs(documentationMatch[1]) : [];
-
-  // Validate type, priority, and domain
-  const validatedType = validateType(metadata.type);
-  const validatedPriority = validatePriority(metadata.priority);
-  const validatedDomain = validateDomain(metadata.domain);
-
-  // Build IssueTemplate
-  const issueTemplate: IssueTemplate = {
+  return {
     issue: {
       title: metadata.title,
-      type: validatedType,
-      priority: validatedPriority,
+      type: validateType(metadata.type),
+      priority: validatePriority(metadata.priority),
       description: descriptionSection || markdown.trim() || '',
       technical_context: {
-        domain: validatedDomain,
-        components: components,
+        domain: validateDomain(metadata.domain),
+        components,
         existing_references: existingReferences,
       },
-      requirements: requirements,
-      acceptance_criteria: acceptanceCriteria,
-      constraints: constraints,
+      requirements: extractBulletList(requirementsSection),
+      acceptance_criteria: extractBulletList(acceptanceCriteriaSection),
+      constraints: extractBulletList(constraintsSection),
       reference_data: {
-        similar_implementations: similarImplementations,
-        documentation: documentation,
+        similar_implementations: similarImplText ? extractURLs(similarImplText) : [],
+        documentation: documentationText ? extractURLs(documentationText) : [],
       },
     },
   };
+};
 
-  return issueTemplate;
-}
-
-/**
- * Find all ticket files in a directory
- */
-export function findTicketFiles(dirPath: string): string[] {
+export const findTicketFiles = (dirPath: string): string[] => {
   if (!fs.existsSync(dirPath)) {
     return [];
   }
 
-  const files = fs.readdirSync(dirPath);
-  return files
-    .filter((file) => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
-    .map((file) => path.join(dirPath, file));
-}
+  return fs
+    .readdirSync(dirPath)
+    .filter(file => file.endsWith('.md') && !file.toLowerCase().includes('readme'))
+    .map(file => path.join(dirPath, file));
+};
+
+// NOTE: This function maps parseTicketFile error messages to validation-friendly messages.
+// It relies on substring matching of the error messages, which is fragile.
+// If parseTicketFile error messages change, this mapping may silently fail.
+const mapErrorMessage = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error);
+
+  const errorPatterns: [RegExp, string][] = [
+    [/Ticket must have a "title" in frontmatter/, 'Title is required in the YAML frontmatter'],
+    [/Ticket must have a "type" in frontmatter/, 'Type is required in the YAML frontmatter (feature, bug, or improvement)'],
+    [/Ticket must have a "priority" in frontmatter/, 'Priority is required in the YAML frontmatter (high, medium, or low)'],
+    [/Ticket must have a "domain" in frontmatter/, 'Domain is required in the YAML frontmatter'],
+    [/Invalid type:/, 'Type must be one of: feature, bug, improvement'],
+    [/Invalid priority:/, 'Priority must be one of: high, medium, low'],
+    [/Invalid domain:/, `Domain must be one of: ${VALID_DOMAINS.join(', ')}`],
+    [/Ticket file not found:/, 'Ticket file not found'],
+  ];
+
+  for (const [pattern, friendlyMessage] of errorPatterns) {
+    if (pattern.test(message)) {
+      return friendlyMessage;
+    }
+  }
+
+  return `Failed to process ticket: ${message}`;
+};
+
+const DESCRIPTION_BRIEF_THRESHOLD = 100;
+
+const isEmptyDescription = (description: string): boolean => {
+  if (!description || description.trim() === '') {
+    return true;
+  }
+  // Check if description is only markdown headers (e.g., "## Description")
+  const trimmed = description.trim();
+  return /^#+\s*\w+\s*$/.test(trimmed);
+};
+
+const runContentChecks = (
+  description: string,
+  requirementsLength: number,
+  acceptanceCriteriaLength: number,
+  hasDescriptionSection: boolean
+): string[] => {
+  const warnings: string[] = [];
+
+  if (description.length < DESCRIPTION_BRIEF_THRESHOLD) {
+    warnings.push('Description is brief - consider adding more detail');
+  }
+
+  if (requirementsLength === 0) {
+    warnings.push('Consider adding requirements');
+  }
+
+  if (acceptanceCriteriaLength === 0) {
+    warnings.push('Consider adding acceptance criteria');
+  }
+
+  if (!hasDescriptionSection) {
+    warnings.push('Ticket should include markdown sections');
+  }
+
+  return warnings;
+};
+
+export const validateTicketFile = (filePath: string): ValidationResult => {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!fs.existsSync(filePath)) {
+    return { valid: false, errors: ['Ticket file not found'], warnings: [] };
+  }
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+
+  try {
+    const ticket = parseTicketFile(filePath);
+
+    if (isEmptyDescription(ticket.issue.description)) {
+      errors.push('Description cannot be empty');
+    } else {
+      const contentWarnings = runContentChecks(
+        ticket.issue.description,
+        ticket.issue.requirements.length,
+        ticket.issue.acceptance_criteria.length,
+        /##\s*Description/i.test(content)
+      );
+      warnings.push(...contentWarnings);
+    }
+  } catch (error) {
+    errors.push(mapErrorMessage(error));
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+  };
+};

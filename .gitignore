@@ -10,3 +10,6 @@ dist/
 # Test coverage
 .nyc_output/
 coverage/
+
+# Research output files
+outputs/
