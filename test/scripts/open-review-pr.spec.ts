@@ -212,6 +212,21 @@ describe('buildPRBody', () => {
     const body = buildPRBody('contacts', [noTitlePath]);
     expect(body).to.include('99-no-title.md');
   });
+
+  it('escapes Markdown special characters in the title', () => {
+    const trickyPath = path.join(pendingDir, '77-tricky.md');
+    fs.writeFileSync(
+      trickyPath,
+      '---\ndomain: contacts\ntitle: "Fix *bold* and _under_ [link]"\nlast_updated: "2026-05-20"\n---\n',
+      'utf8'
+    );
+    const body = buildPRBody('contacts', [trickyPath]);
+    // The raw, unescaped form must not appear; escaped form must.
+    expect(body).to.not.include('**bold**');
+    expect(body).to.include('\\*bold\\*');
+    expect(body).to.include('\\_under\\_');
+    expect(body).to.include('\\[link\\]');
+  });
 });
 
 // ---------------------------------------------------------------------------

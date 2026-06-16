@@ -19,10 +19,12 @@ import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
 // CHT service directory prefixes — a PR touching ≥2 of these is "multi-service"
 const SERVICE_PREFIXES = ['api/', 'webapp/', 'sentinel/', 'admin/', 'shared-libs/'];
 
-// Files matching these patterns are lockfiles.
-// `[^/]*` (not `.*`) bounds backtracking to a single path segment, avoiding
-// super-linear ReDoS while still matching any `*.lock` file basename.
-const LOCKFILE_PATTERN = /(?:^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|[^/]*\.lock)$/;
+// Files matching these names are dependency lockfiles. We enumerate known
+// lockfile names rather than matching any `*.lock`, so an unrelated `.lock`
+// file (an app data file, an editor lock, etc.) can't make a PR look
+// lockfile-only and get skipped. The alternation is fully literal — no
+// wildcard — so there is no backtracking/ReDoS surface.
+const LOCKFILE_PATTERN = /(?:^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb|composer\.lock|Gemfile\.lock|Pipfile\.lock|poetry\.lock|Cargo\.lock|go\.sum)$/;
 
 // Files matching these patterns are translation files
 const TRANSLATION_PATTERN = /(?:^|\/)translations\/.*|\.properties$|\.po$|\.pot$/;
@@ -170,7 +172,9 @@ function getTriageChain() {
 
 /**
  * Call the LLM to triage a PR that didn't match deterministic rules.
- * Returns flag-for-human if no API key is set or the call fails.
+ * Returns flag-for-human if no API key is set. Errors from the LLM call are
+ * NOT caught here — they propagate to runLlmTriage, the single error boundary,
+ * so the failure path isn't handled twice.
  *
  * @example
  * ```typescript
@@ -201,15 +205,8 @@ ${body}
 
 Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<one sentence>" }`;
 
-  try {
-    const result = await chain.invoke(prompt) as TriageOutput;
-    return { decision: result.decision as FilterDecision, reason: result.reason };
-  } catch (err) {
-    return {
-      decision: 'flag-for-human',
-      reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
+  const result = await chain.invoke(prompt) as TriageOutput;
+  return { decision: result.decision as FilterDecision, reason: result.reason };
 }
 
 /**

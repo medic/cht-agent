@@ -138,6 +138,17 @@ describe('filterPR', () => {
       expect(result.decision).to.equal('skip');
       expect(result.reason).to.equal('Lockfile-only changes');
     });
+
+    it('should NOT treat an unrelated *.lock file as a lockfile', async () => {
+      const { filterPR } = loadFilter();
+      const logPath = tmpLogPath();
+      // A non-dependency `.lock` file must not make the PR look lockfile-only.
+      const result: FilterResult = await filterPR(
+        makePR({ fileList: ['webapp/src/data/seed.lock'] }),
+        { logPath, skipLlm: true }
+      );
+      expect(result.decision).to.not.equal('skip');
+    });
   });
 
   describe('SKIP: translation-only changes', () => {
@@ -195,17 +206,16 @@ describe('filterPR', () => {
   // --- touchesMultipleServices logic ---
 
   describe('touchesMultipleServices: single service does not trigger distill rule', () => {
-    it('shared-libs bug with only api files should not match multi-service distill', async () => {
+    it('bug + linked issue touching only one service should not match multi-service distill', async () => {
       const { filterPR } = loadFilter();
-      // No labels, no linked issues — only shared-libs + api (2 services, but no bug label)
-      // shared-libs + api IS 2 services, so the shared-libs rule WOULD fire
-      // Use a non-shared-libs scenario: just api files only (1 service)
+      // Bug label + linked issue, but every file is under api/ — a single service.
+      // The bug distill rule requires ≥2 services, so it must NOT fire; with the LLM
+      // skipped the PR falls through to flag-for-human.
       const result: FilterResult = await filterPR(makePR({
         labels: ['Type: Bug'],
         linkedIssues: [LINKED_ISSUE],
         fileList: ['api/a.ts', 'api/b.ts'],
       }), { skipLlm: true });
-      // Only 1 service (api/) — bug rule should NOT fire → falls through to skipLlm → flag-for-human
       expect(result.decision).to.equal('flag-for-human');
     });
   });

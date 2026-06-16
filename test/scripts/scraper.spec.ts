@@ -452,7 +452,7 @@ describe('scrapePR', () => {
   });
 
   describe('linked issue fetch throws (404)', () => {
-    it('should fallback to { body: "", comments: [] } and not throw from scrapePR', () => {
+    it('should drop the unresolvable issue and not throw from scrapePR', () => {
       const linkMeta = JSON.stringify({
         number: 13,
         title: 'Issue fetch fails',
@@ -477,10 +477,81 @@ describe('scrapePR', () => {
       expect(() => {
         result = scrapePR(13);
       }).to.not.throw();
-      expect(result!.linkedIssues).to.have.lengthOf(1);
-      expect(result!.linkedIssues[0].number).to.equal(55);
-      expect(result!.linkedIssues[0].body).to.equal('');
-      expect(result!.linkedIssues[0].comments).to.deep.equal([]);
+      // A reference that can't be fetched must not count as a real linked issue.
+      expect(result!.linkedIssues).to.deep.equal([]);
+    });
+
+    it('should keep resolvable issues and drop only the failing one', () => {
+      const linkMeta = JSON.stringify({
+        number: 14,
+        title: 'Mixed issue fetch',
+        body: 'Fixes #55\nCloses #66',
+        labels: [],
+        mergeCommit: { oid: 'sha8' },
+        mergedAt: '2024-09-02T00:00:00Z',
+        files: [],
+      });
+
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return linkMeta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return '[]';
+        if (args[0] === 'issue' && args[1] === 'view') {
+          if (args[2] === '66') throw Object.assign(new Error('Not Found'), { status: 404 });
+          return JSON.stringify({ body: 'issue 55 body', comments: [] });
+        }
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      const result = scrapePR(14);
+      expect(result.linkedIssues).to.have.lengthOf(1);
+      expect(result.linkedIssues[0].number).to.equal(55);
+    });
+  });
+
+  describe('malformed JSON is wrapped in ScraperError', () => {
+    it('should throw ScraperError (not a raw SyntaxError) when PR metadata is not valid JSON', () => {
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return 'not-json{';
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      let caught: unknown;
+      try {
+        scrapePR(21);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).to.be.instanceOf(ScraperError);
+      expect((caught as ScraperError).prNumber).to.equal(21);
+    });
+
+    it('should throw ScraperError when reviews JSON is malformed', () => {
+      const meta = JSON.stringify({
+        number: 22,
+        title: 'Bad reviews',
+        body: '',
+        labels: [],
+        mergeCommit: { oid: 'sha9' },
+        mergedAt: '2024-09-03T00:00:00Z',
+        files: [],
+      });
+
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return meta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return 'broken][';
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      let caught: unknown;
+      try {
+        scrapePR(22);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).to.be.instanceOf(ScraperError);
+      expect((caught as ScraperError).prNumber).to.equal(22);
     });
   });
 

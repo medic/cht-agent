@@ -173,21 +173,26 @@ async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
 }
 
 /**
- * Convert a string to a URL-safe kebab-case slug.
+ * Convert a string to a URL-safe kebab-case slug. Falls back to 'untitled'
+ * when the input has no Latin alphanumerics (symbol-only or non-Latin titles),
+ * so the caller never builds a danging filename like `42-.md`.
  *
  * @example
  * ```typescript
  * slugify('Fix: Prevent Duplicate Contact Creation'); // 'fix-prevent-duplicate-contact-creation'
+ * slugify('日本語タイトル'); // 'untitled'
+ * slugify('!!!'); // 'untitled'
  * ```
  */
 export function slugify(text: string): string {
-  return text
+  const slug = text
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
     .trim()
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .slice(0, 60);
+  return slug || 'untitled';
 }
 
 /**

@@ -64,8 +64,10 @@ function checkOrgMembership(username: string): boolean {
  *
  * Searches for `Fixes/Closes/Resolves #N` patterns (case-insensitive),
  * deduplicates issue numbers, then fetches each issue via `gh issue view`.
- * If an individual issue fetch fails (404, permissions, etc.), it falls back
- * to `{ number, body: '', comments: [] }` — it does NOT propagate the error.
+ * If an individual issue fetch fails (404, permissions, etc.), that issue is
+ * dropped from the result rather than returned as an empty stub — a reference
+ * that can't be resolved must not count as a real linked issue downstream
+ * (e.g. flipping a filter skip into a distill). It does NOT propagate the error.
  *
  * @param prBody  - The raw PR body markdown text.
  * @param repo    - The `owner/repo` string used when calling the gh CLI.
@@ -88,22 +90,25 @@ function fetchLinkedIssues(prBody: string, repo: string): LinkedIssue[] {
     seen.add(Number.parseInt(match[1], 10));
   }
 
-  return Array.from(seen).map((issueNumber) => {
-    try {
-      const raw = execFileSync(
-        'gh',
-        ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'body,comments'],
-        EXEC_OPTS
-      );
-      const parsed = JSON.parse(raw);
-      const commentBodies: string[] = (parsed.comments ?? []).map(
-        (c: { body: string }) => c.body
-      );
-      return { number: issueNumber, body: parsed.body ?? '', comments: commentBodies };
-    } catch {
-      return { number: issueNumber, body: '', comments: [] };
-    }
-  });
+  return Array.from(seen)
+    .map((issueNumber): LinkedIssue | null => {
+      try {
+        const raw = execFileSync(
+          'gh',
+          ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'body,comments'],
+          EXEC_OPTS
+        );
+        const parsed = JSON.parse(raw);
+        const commentBodies: string[] = (parsed.comments ?? []).map(
+          (c: { body: string }) => c.body
+        );
+        return { number: issueNumber, body: parsed.body ?? '', comments: commentBodies };
+      } catch {
+        // Unresolvable reference (404/permissions/bad JSON) — drop it.
+        return null;
+      }
+    })
+    .filter((issue): issue is LinkedIssue => issue !== null);
 }
 
 /**
@@ -237,7 +242,12 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   }
 
   const metaRaw = fetchMetadata(prNumber, repo);
-  const meta = JSON.parse(metaRaw);
+  let meta;
+  try {
+    meta = JSON.parse(metaRaw);
+  } catch (err) {
+    throw new ScraperError(`Failed to parse PR metadata for #${prNumber}`, prNumber, { cause: err });
+  }
 
   if (meta.mergedAt === null || meta.mergedAt === undefined) {
     throw new ScraperError(`PR #${prNumber} is not merged`, prNumber);
@@ -257,8 +267,12 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
 
   // --paginate concatenates JSON arrays as `[...][...]` — merge into one array before parsing.
   const normalizedReviews = reviewsRaw.trim().replace(/\]\s*\[/g, ',');
-  const reviews: Array<{ user: { login: string }; body: string | null; state: string }> =
-    JSON.parse(normalizedReviews);
+  let reviews: Array<{ user: { login: string }; body: string | null; state: string }>;
+  try {
+    reviews = JSON.parse(normalizedReviews);
+  } catch (err) {
+    throw new ScraperError(`Failed to parse reviews for #${prNumber}`, prNumber, { cause: err });
+  }
 
   // Cache org membership lookups — one call per unique username.
   const membershipCache = new Map<string, boolean>();

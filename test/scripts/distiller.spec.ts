@@ -626,4 +626,14 @@ describe('slugify', () => {
     const { slugify } = loadDistiller();
     expect(slugify('fix -- double hyphen')).to.equal('fix-double-hyphen');
   });
+
+  it('should fall back to "untitled" for a symbol-only title', () => {
+    const { slugify } = loadDistiller();
+    expect(slugify('!!! @#$ ???')).to.equal('untitled');
+  });
+
+  it('should fall back to "untitled" for a non-Latin title', () => {
+    const { slugify } = loadDistiller();
+    expect(slugify('日本語タイトル')).to.equal('untitled');
+  });
 });

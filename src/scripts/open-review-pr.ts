@@ -56,6 +56,20 @@ export function discoverDraftsByDomain(pendingDir: string): Map<string, string[]
 }
 
 /**
+ * Escape characters that have structural meaning in inline Markdown, so a draft
+ * title can't inject formatting (or break the list item) when interpolated into
+ * the PR body.
+ *
+ * @example
+ * ```typescript
+ * escapeMarkdown('a*b_c[d]`e'); // 'a\\*b\\_c\\[d\\]\\`e'
+ * ```
+ */
+function escapeMarkdown(text: string): string {
+  return text.replace(/[\\`*_[\]<>]/g, '\\$&');
+}
+
+/**
  * Build a GitHub PR body that lists each draft with its source PR and a review checklist.
  *
  * @example
@@ -78,10 +92,10 @@ export function buildPRBody(domain: string, draftPaths: string[]): string {
     const content = fs.readFileSync(draftPath, 'utf8');
     const parsed = matter(content);
     const fm = parsed.data as Record<string, unknown>;
-    const title = String(fm.title ?? path.basename(draftPath));
+    const title = escapeMarkdown(String(fm.title ?? path.basename(draftPath)));
     const sourcePrStr = typeof fm.source_pr === 'string' ? fm.source_pr : '';
     const sourcePr = sourcePrStr
-      ? ` — [${sourcePrStr}](https://github.com/${sourcePrStr})`
+      ? ` — [${escapeMarkdown(sourcePrStr)}](https://github.com/${sourcePrStr})`
       : '';
     lines.push(`- **${title}**${sourcePr}`);
   }
