@@ -450,7 +450,7 @@ describe('openReviewPR (apply)', () => {
     expect(lastSwitch[1]).to.deep.equal(['switch', 'feat/108']);
   });
 
-  it('switches back to original branch even when an error is thrown', () => {
+  it('isolates a domain failure: records it as failed and still switches back', () => {
     const originalBranch = 'feat/108';
     let switchBackCalled = false;
 
@@ -470,11 +470,45 @@ describe('openReviewPR (apply)', () => {
       '*': () => '',
     });
 
-    expect(() => openReviewPR({
+    // A domain failure no longer aborts the run — it is recorded and other
+    // domains continue. The original branch is still restored.
+    const results = openReviewPR({
       apply: true, pendingDir, domainsDir, logPath, date: '20260520', execFn: exec.fn,
-    })).to.throw('git add failed');
+    });
 
+    const failed = results.find((r) => r.status === 'failed');
+    expect(failed, 'expected a failed result').to.not.be.undefined;
+    expect(failed!.domain).to.equal('contacts');
+    expect(failed!.error).to.include('git add failed');
     expect(switchBackCalled).to.equal(true);
+  });
+
+  it('deletes the orphan remote branch when PR creation fails after push', () => {
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      // PR creation fails *after* the branch was pushed.
+      'gh-pr': () => { throw new Error('gh pr create failed'); },
+    });
+
+    const results = openReviewPR({
+      apply: true, pendingDir, domainsDir, logPath, date: '20260520', execFn: exec.fn,
+    });
+
+    expect(results.find((r) => r.status === 'failed')).to.not.be.undefined;
+    // The pushed branch must be cleaned up via `git push origin --delete <branch>`.
+    const deleteCall = exec.calls.find(
+      ([f, a]) => f === 'git' && a[0] === 'push' && a.includes('--delete')
+    );
+    expect(deleteCall, 'expected an orphan-branch delete').to.exist;
+    expect(deleteCall![1]).to.deep.equal(['push', 'origin', '--delete', 'memory/review/contacts-20260520']);
   });
 });
 

@@ -451,6 +451,59 @@ describe('scrapePR', () => {
     });
   });
 
+  describe('paginated reviews via --slurp', () => {
+    it('should flatten an array-of-pages and preserve bodies containing "] ["', () => {
+      const meta = JSON.stringify({
+        number: 15,
+        title: 'Paginated reviews',
+        body: '',
+        labels: [],
+        mergeCommit: { oid: 'sha15' },
+        mergedAt: '2024-09-05T00:00:00Z',
+        files: [],
+      });
+      // gh --paginate --slurp returns an array whose elements are each page's
+      // response (an array of reviews). A body literally containing "] [" must
+      // survive — the old string-stitching merge corrupted exactly this.
+      const slurpedReviews = JSON.stringify([
+        [{ user: { login: 'alice' }, body: 'see arr[1] [2] note', state: 'APPROVED' }],
+        [{ user: { login: 'carol' }, body: 'second page', state: 'COMMENTED' }],
+      ]);
+
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return meta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].includes('/members/')) return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return slurpedReviews;
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      const result = scrapePR(15);
+      expect(result.reviewComments).to.have.lengthOf(2);
+      expect(result.reviewComments[0].body).to.equal('see arr[1] [2] note');
+      expect(result.reviewComments.map((r: { author: string }) => r.author)).to.deep.equal(['alice', 'carol']);
+    });
+
+    it('should request reviews with --paginate and --slurp', () => {
+      let reviewArgs: string[] = [];
+      const { scrapePR } = loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') {
+          return JSON.stringify({
+            number: 16, title: 't', body: '', labels: [],
+            mergeCommit: { oid: 's16' }, mergedAt: '2024-09-06T00:00:00Z', files: [],
+          });
+        }
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) { reviewArgs = args; return '[]'; }
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+
+      scrapePR(16);
+      expect(reviewArgs).to.include('--paginate');
+      expect(reviewArgs).to.include('--slurp');
+    });
+  });
+
   describe('linked issue fetch throws (404)', () => {
     it('should drop the unresolvable issue and not throw from scrapePR', () => {
       const linkMeta = JSON.stringify({

@@ -301,41 +301,57 @@ function promoteDomain(
 
   exec('git', ['switch', '-c', branch, 'origin/main']);
 
-  const targetDir = path.join(domainsDir, domain, 'issues');
-  fs.mkdirSync(targetDir, { recursive: true });
+  let pushed = false;
+  try {
+    const targetDir = path.join(domainsDir, domain, 'issues');
+    fs.mkdirSync(targetDir, { recursive: true });
 
-  const addPaths: string[] = [];
-  for (const draftPath of validDrafts) {
-    const filename = path.basename(draftPath);
-    const targetPath = path.join(targetDir, filename);
-    fs.copyFileSync(draftPath, targetPath);
-    addPaths.push(path.relative(REPO_ROOT, targetPath));
+    const addPaths: string[] = [];
+    for (const draftPath of validDrafts) {
+      const filename = path.basename(draftPath);
+      const targetPath = path.join(targetDir, filename);
+      fs.copyFileSync(draftPath, targetPath);
+      addPaths.push(path.relative(REPO_ROOT, targetPath));
+    }
+
+    exec('git', ['add', ...addPaths]);
+    exec('git', ['commit', '-m',
+      `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
+    exec('git', ['push', '-u', 'origin', branch]);
+    pushed = true;
+
+    const prBody = buildPRBody(domain, validDrafts);
+    const prUrl = exec('gh', [
+      'pr', 'create',
+      '--title', `Memory review: ${domain}`,
+      '--body', prBody,
+      '--head', branch,
+      '--base', 'main',
+    ]).trim();
+
+    for (const draftPath of validDrafts) {
+      fs.unlinkSync(draftPath);
+    }
+
+    return { domain, branch, prUrl, filesPromoted: validDrafts.length, status: 'created' };
+  } catch (err) {
+    // Best-effort cleanup: if we pushed the branch but a later step failed,
+    // delete the remote branch so the failure doesn't leave an orphan behind.
+    if (pushed) {
+      try {
+        exec('git', ['push', 'origin', '--delete', branch]);
+      } catch {
+        // Ignore cleanup failure — the original error is what matters.
+      }
+    }
+    throw err;
   }
-
-  exec('git', ['add', ...addPaths]);
-  exec('git', ['commit', '-m',
-    `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
-  exec('git', ['push', '-u', 'origin', branch]);
-
-  const prBody = buildPRBody(domain, validDrafts);
-  const prUrl = exec('gh', [
-    'pr', 'create',
-    '--title', `Memory review: ${domain}`,
-    '--body', prBody,
-    '--head', branch,
-    '--base', 'main',
-  ]).trim();
-
-  for (const draftPath of validDrafts) {
-    fs.unlinkSync(draftPath);
-  }
-
-  return { domain, branch, prUrl, filesPromoted: validDrafts.length, status: 'created' };
 }
 
 /**
  * Applies all planned domain promotions: fetches origin/main, then promotes each domain.
- * Restores the original branch in a finally block per domain.
+ * Each domain is isolated — a failure in one is recorded as a 'failed' result and
+ * the remaining domains still run. The original branch is restored after each domain.
  *
  * @param plans  - Map of domain to valid draft paths.
  * @param config - Options including domainsDir, date, and exec function.
@@ -359,6 +375,16 @@ function executeApply(
   for (const [domain, validDrafts] of plans) {
     try {
       results.push(promoteDomain(domain, validDrafts, config));
+    } catch (err) {
+      // Isolate per domain: record the failure and keep promoting the rest
+      // rather than aborting the whole run on one domain's error.
+      results.push({
+        domain,
+        branch: '',
+        filesPromoted: 0,
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       exec('git', ['switch', originalBranch]);
     }

@@ -185,9 +185,14 @@ function fetchDiff(prNumber: number, repo: string): string {
 /**
  * Fetches raw review JSON string for a PR from the gh CLI.
  *
+ * Uses `--paginate --slurp` so multi-page results come back as a single,
+ * well-formed JSON array of pages (each page is itself an array of reviews) —
+ * not raw concatenated arrays. This avoids corrupting review bodies that happen
+ * to contain `] [` and avoids breaking on empty pages.
+ *
  * @param prNumber - A positive integer GitHub PR number.
  * @param repo     - Repository in `owner/repo` format.
- * @returns Raw JSON string of reviews (may be concatenated arrays from --paginate).
+ * @returns Raw JSON string: an array of page-arrays.
  * @throws {ScraperError} On gh CLI failure.
  *
  * @example
@@ -201,7 +206,7 @@ function fetchReviews(prNumber: number, repo: string): string {
   try {
     return execFileSync(
       'gh',
-      ['api', `repos/${owner}/${repoName}/pulls/${prNumber}/reviews`, '--paginate'],
+      ['api', `repos/${owner}/${repoName}/pulls/${prNumber}/reviews`, '--paginate', '--slurp'],
       EXEC_OPTS
     );
   } catch (err) {
@@ -265,11 +270,15 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
 
   const reviewsRaw = fetchReviews(prNumber, repo);
 
-  // --paginate concatenates JSON arrays as `[...][...]` — merge into one array before parsing.
-  const normalizedReviews = reviewsRaw.trim().replace(/\]\s*\[/g, ',');
-  let reviews: Array<{ user: { login: string }; body: string | null; state: string }>;
+  // With `--paginate --slurp`, gh returns an array whose elements are each
+  // page's response. The reviews endpoint returns an array per page, so this is
+  // an array of arrays — flatten one level. `.flat()` is a no-op if gh ever
+  // returns a single already-flat array, so this is robust either way.
+  type RawReview = { user: { login: string }; body: string | null; state: string };
+  let reviews: RawReview[];
   try {
-    reviews = JSON.parse(normalizedReviews);
+    const parsed = JSON.parse(reviewsRaw.trim() || '[]');
+    reviews = (Array.isArray(parsed) ? parsed : []).flat() as RawReview[];
   } catch (err) {
     throw new ScraperError(`Failed to parse reviews for #${prNumber}`, prNumber, { cause: err });
   }

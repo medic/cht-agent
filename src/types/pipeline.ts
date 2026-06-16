@@ -180,7 +180,9 @@ export interface ReviewPRResult {
   branch: string;
   prUrl?: string;
   filesPromoted: number;
-  status: 'created' | 'dry-run' | 'skipped';
+  status: 'created' | 'dry-run' | 'skipped' | 'failed';
+  /** Failure reason — set only when status === 'failed' */
+  error?: string;
 }
 
 /**

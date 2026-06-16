@@ -33,28 +33,24 @@ function makePR(overrides: Partial<ScrapedPR> = {}): ScrapedPR {
 const LINKED_ISSUE = { number: 10, body: 'Issue body', comments: [] };
 
 /**
- * Load the filter module via proxyquire with a fake ChatAnthropic.
- * fakeInvoke controls what withStructuredOutput().invoke() returns or throws.
+ * Load the filter module via proxyquire with BOTH LLM providers stubbed.
+ * The primary triage path is OpenRouter (`ChatOpenAI`) with a `ChatAnthropic`
+ * fallback, so both must be faked or a test could hit a real network client
+ * depending on which API key is set. fakeInvoke controls what
+ * withStructuredOutput().invoke() returns or throws; both providers share it.
  */
 function loadFilter(fakeInvoke?: () => Promise<unknown>) {
-  const fakeChatAnthropic = fakeInvoke
-    ? class FakeChatAnthropic {
-      constructor(_opts: unknown) {}
-      withStructuredOutput(_schema: unknown) {
-        return { invoke: fakeInvoke };
-      }
+  const invoke = fakeInvoke ?? (async () => ({ decision: 'distill', reason: 'LLM says distill' }));
+  class FakeChat {
+    constructor(_opts: unknown) {}
+    withStructuredOutput(_schema: unknown) {
+      return { invoke };
     }
-    : class FakeChatAnthropic {
-      constructor(_opts: unknown) {}
-      withStructuredOutput(_schema: unknown) {
-        return {
-          invoke: async () => ({ decision: 'distill', reason: 'LLM says distill' }),
-        };
-      }
-    };
+  }
 
   return proxyquire('../../src/scripts/filter', {
-    '@langchain/anthropic': { ChatAnthropic: fakeChatAnthropic },
+    '@langchain/anthropic': { ChatAnthropic: FakeChat },
+    '@langchain/openai': { ChatOpenAI: FakeChat },
   });
 }
 
@@ -68,6 +64,28 @@ function tmpLogPath(): string {
 // ---------------------------------------------------------------------------
 
 describe('filterPR', () => {
+  // Make this spec self-contained: snapshot and clear BOTH provider keys before
+  // every test, then restore. Triage routing depends on which key is set, so
+  // relying on ambient env (or another spec clearing OPENROUTER_API_KEY first)
+  // makes results order-dependent. Tests that exercise a provider set its key
+  // explicitly below.
+  let savedOpenRouterKey: string | undefined;
+  let savedAnthropicKey: string | undefined;
+
+  beforeEach(() => {
+    savedOpenRouterKey = process.env.OPENROUTER_API_KEY;
+    savedAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedOpenRouterKey !== undefined) process.env.OPENROUTER_API_KEY = savedOpenRouterKey;
+    else delete process.env.OPENROUTER_API_KEY;
+    if (savedAnthropicKey !== undefined) process.env.ANTHROPIC_API_KEY = savedAnthropicKey;
+    else delete process.env.ANTHROPIC_API_KEY;
+  });
+
   // --- SKIP rules ---
 
   describe('SKIP: bot author', () => {
@@ -344,113 +362,85 @@ describe('filterPR', () => {
     });
   });
 
-  // --- LLM triage via proxyquired ChatAnthropic (covers llmTriage branches) ---
+  // --- LLM triage via proxyquired providers (covers llmTriage branches) ---
+  // Both keys are cleared by the suite-level beforeEach; each test sets only
+  // the key for the branch it exercises, so routing is deterministic.
 
-  describe('llmTriage: missing ANTHROPIC_API_KEY returns flag-for-human', () => {
-    let savedKey: string | undefined;
-
-    beforeEach(() => {
-      savedKey = process.env.ANTHROPIC_API_KEY;
-      delete process.env.ANTHROPIC_API_KEY;
-    });
-
-    afterEach(() => {
-      if (savedKey !== undefined) {
-        process.env.ANTHROPIC_API_KEY = savedKey;
-      } else {
-        delete process.env.ANTHROPIC_API_KEY;
-      }
-    });
-
-    it('should return flag-for-human and write log when API key is absent', async () => {
+  describe('llmTriage: no provider key returns flag-for-human', () => {
+    it('should return flag-for-human and write log when neither key is set', async () => {
       const { filterPR } = loadFilter();
       const logPath = tmpLogPath();
-      // No triageFn — exercises the real llmTriage path which checks for key
+      // No triageFn and no key — exercises the real llmTriage no-key branch.
       const result: FilterResult = await filterPR(makePR(), { logPath });
       expect(result.decision).to.equal('flag-for-human');
-      expect(result.reason).to.include('ANTHROPIC_API_KEY');
+      expect(result.reason).to.include('no API key');
       const line = fs.readFileSync(logPath, 'utf8').trim();
       const parsed = JSON.parse(line);
       expect(parsed.decision).to.equal('flag-for-human');
     });
   });
 
-  describe('llmTriage: ChatAnthropic invoke succeeds (via proxyquire)', () => {
+  describe('llmTriage: OpenRouter (ChatOpenAI) is the primary path', () => {
+    it('should route through ChatOpenAI when OPENROUTER_API_KEY is set', async () => {
+      process.env.OPENROUTER_API_KEY = 'test-or-key';
+      const { filterPR } = loadFilter(async () => ({
+        decision: 'distill',
+        reason: 'OpenRouter says distill',
+      }));
+      const logPath = tmpLogPath();
+      const result: FilterResult = await filterPR(makePR(), { logPath });
+      expect(result.decision).to.equal('distill');
+      expect(result.reason).to.equal('OpenRouter says distill');
+      expect(fs.existsSync(logPath)).to.equal(false);
+    });
+  });
+
+  describe('llmTriage: Anthropic fallback invoke succeeds (via proxyquire)', () => {
     it('should return distill when LLM responds with distill decision', async () => {
-      const savedKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'test-key-fake';
-
-      try {
-        const { filterPR } = loadFilter(async () => ({
-          decision: 'distill',
-          reason: 'Substantive change',
-        }));
-        const logPath = tmpLogPath();
-        const result: FilterResult = await filterPR(makePR(), { logPath });
-        expect(result.decision).to.equal('distill');
-        expect(result.reason).to.equal('Substantive change');
-        // distill → no log written
-        expect(fs.existsSync(logPath)).to.equal(false);
-      } finally {
-        if (savedKey !== undefined) {
-          process.env.ANTHROPIC_API_KEY = savedKey;
-        } else {
-          delete process.env.ANTHROPIC_API_KEY;
-        }
-      }
+      const { filterPR } = loadFilter(async () => ({
+        decision: 'distill',
+        reason: 'Substantive change',
+      }));
+      const logPath = tmpLogPath();
+      const result: FilterResult = await filterPR(makePR(), { logPath });
+      expect(result.decision).to.equal('distill');
+      expect(result.reason).to.equal('Substantive change');
+      // distill → no log written
+      expect(fs.existsSync(logPath)).to.equal(false);
     });
   });
 
-  describe('llmTriage: ChatAnthropic invoke throws (via proxyquire)', () => {
+  describe('llmTriage: invoke throws (via proxyquire)', () => {
     it('should return flag-for-human and write log when LLM call throws', async () => {
-      const savedKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'test-key-fake';
-
-      try {
-        const { filterPR } = loadFilter(async () => {
-          throw new Error('Network error from LLM');
-        });
-        const logPath = tmpLogPath();
-        const result: FilterResult = await filterPR(makePR(), { logPath });
-        expect(result.decision).to.equal('flag-for-human');
-        expect(result.reason).to.include('Network error from LLM');
-        const line = fs.readFileSync(logPath, 'utf8').trim();
-        const parsed = JSON.parse(line);
-        expect(parsed.decision).to.equal('flag-for-human');
-      } finally {
-        if (savedKey !== undefined) {
-          process.env.ANTHROPIC_API_KEY = savedKey;
-        } else {
-          delete process.env.ANTHROPIC_API_KEY;
-        }
-      }
+      const { filterPR } = loadFilter(async () => {
+        throw new Error('Network error from LLM');
+      });
+      const logPath = tmpLogPath();
+      const result: FilterResult = await filterPR(makePR(), { logPath });
+      expect(result.decision).to.equal('flag-for-human');
+      expect(result.reason).to.include('Network error from LLM');
+      const line = fs.readFileSync(logPath, 'utf8').trim();
+      const parsed = JSON.parse(line);
+      expect(parsed.decision).to.equal('flag-for-human');
     });
   });
 
-  describe('llmTriage: ChatAnthropic invoke returns skip (via proxyquire)', () => {
+  describe('llmTriage: invoke returns skip (via proxyquire)', () => {
     it('should return skip and write log when LLM responds with skip decision', async () => {
-      const savedKey = process.env.ANTHROPIC_API_KEY;
       process.env.ANTHROPIC_API_KEY = 'test-key-fake';
-
-      try {
-        const { filterPR } = loadFilter(async () => ({
-          decision: 'skip',
-          reason: 'Trivial change',
-        }));
-        const logPath = tmpLogPath();
-        const result: FilterResult = await filterPR(makePR(), { logPath });
-        expect(result.decision).to.equal('skip');
-        expect(result.reason).to.equal('Trivial change');
-        const line = fs.readFileSync(logPath, 'utf8').trim();
-        const parsed = JSON.parse(line);
-        expect(parsed.decision).to.equal('skip');
-      } finally {
-        if (savedKey !== undefined) {
-          process.env.ANTHROPIC_API_KEY = savedKey;
-        } else {
-          delete process.env.ANTHROPIC_API_KEY;
-        }
-      }
+      const { filterPR } = loadFilter(async () => ({
+        decision: 'skip',
+        reason: 'Trivial change',
+      }));
+      const logPath = tmpLogPath();
+      const result: FilterResult = await filterPR(makePR(), { logPath });
+      expect(result.decision).to.equal('skip');
+      expect(result.reason).to.equal('Trivial change');
+      const line = fs.readFileSync(logPath, 'utf8').trim();
+      const parsed = JSON.parse(line);
+      expect(parsed.decision).to.equal('skip');
     });
   });
 
