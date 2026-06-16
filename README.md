@@ -88,3 +88,16 @@ npm run lint
 # Build
 npm run build
 ```
+
+## Memory Pipeline: LLM Provider
+
+The memory distillation pipeline (filter + distiller stages) reaches its LLM through
+[OpenRouter](https://openrouter.ai) rather than calling a single vendor's SDK directly.
+This is a deliberate choice to keep the pipeline **provider-agnostic**: OpenRouter exposes
+a uniform API in front of many providers and models, so the pipeline isn't locked to one
+vendor and a new model can be adopted by changing configuration alone.
+
+There is **no mandated default provider** — whoever runs the pipeline chooses the model via
+environment configuration. The Claude model names that appear in the code are just an example
+of one such configuration, not a requirement. A direct Anthropic path remains available as a
+fallback.
