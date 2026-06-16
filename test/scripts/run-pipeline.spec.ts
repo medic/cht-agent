@@ -113,6 +113,12 @@ describe('run-pipeline parseArgs', () => {
     const { parseArgs } = loadPipeline();
     expect(() => parseArgs()).to.throw(/Invalid --pr value/);
   });
+
+  it('rejects a --since value too large to be a safe integer', () => {
+    withArgv(['--since', '9'.repeat(400)]);
+    const { parseArgs } = loadPipeline();
+    expect(() => parseArgs()).to.throw(/Invalid --since value/);
+  });
 });
 
 describe('run-pipeline errorMessage', () => {

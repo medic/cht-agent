@@ -50,12 +50,14 @@ interface CliArgs {
  *
  * Uses a full-string match (`/^[1-9]\d*$/`) rather than `Number.parseInt`,
  * which would silently truncate `'123abc'` → 123 or `'1.5'` → 1 and let
- * partially-numeric input through.
+ * partially-numeric input through. A safe-integer check additionally rejects
+ * digit strings so large they overflow to a value that can't be represented
+ * exactly (which would otherwise yield an invalid lookback date downstream).
  *
  * @param raw  - The raw argument value (may be undefined when the flag is last).
  * @param flag - The flag name, used in the error message.
  * @returns The parsed positive integer.
- * @throws {Error} When `raw` is not a bare positive integer.
+ * @throws {Error} When `raw` is not a bare, safe positive integer.
  *
  * @example
  * ```typescript
@@ -64,10 +66,11 @@ interface CliArgs {
  * ```
  */
 function parsePositiveIntArg(raw: string | undefined, flag: string): number {
-  if (raw === undefined || !/^[1-9]\d*$/.test(raw)) {
+  const value = raw !== undefined && /^[1-9]\d*$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(value)) {
     throw new Error(`Invalid ${flag} value: ${JSON.stringify(raw)} (expected a positive integer)`);
   }
-  return Number.parseInt(raw, 10);
+  return value;
 }
 
 export function parseArgs(): CliArgs {
