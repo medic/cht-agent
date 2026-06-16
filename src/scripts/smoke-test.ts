@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { scrapePR } from './scraper';
@@ -9,6 +10,10 @@ import { distillPR } from './distiller';
 
 // Mix: feat+linked issue (deterministic distill), fix no labels (LLM triage), test commit (LLM)
 const TEST_PRS = [11057, 11022, 11077];
+
+// Per-run temp dir with a random, unpredictable name (0700 perms) created atomically
+// by mkdtempSync — avoids the predictable-path hotspot of writing straight into os.tmpdir().
+const SMOKE_TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cht-smoke-'));
 
 /**
  * Filter and optionally distill a scraped PR, logging each stage.
@@ -20,12 +25,12 @@ const TEST_PRS = [11057, 11022, 11077];
  */
 async function filterAndDistill(pr: ReturnType<typeof scrapePR>): Promise<void> {
   console.log('  filtering...');
-  const filterResult = await filterPR(pr, { logPath: path.join(os.tmpdir(), '_skipped_smoke.ndjson') });
+  const filterResult = await filterPR(pr, { logPath: path.join(SMOKE_TMP_DIR, '_skipped_smoke.ndjson') });
   console.log(`  filter:   ${filterResult.decision} — ${filterResult.reason}`);
   if (filterResult.decision !== 'distill') return;
 
   console.log('  distilling...');
-  const distillResult = await distillPR(pr, { outputDir: path.join(os.tmpdir(), 'smoke-pending') });
+  const distillResult = await distillPR(pr, { outputDir: path.join(SMOKE_TMP_DIR, 'smoke-pending') });
   console.log(`  distill:  ${distillResult.status} — ${distillResult.reason}`);
   if (distillResult.outputPath) console.log(`  output:   ${distillResult.outputPath}`);
 }
