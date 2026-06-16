@@ -55,7 +55,7 @@ if (result.valid) {
 All tickets must include these fields in the YAML frontmatter:
 
 - `title`: Brief description of the issue
-- `type`: One of 'feature', 'bug', 'improvement'
+- `type`: One of 'feature', 'bug', 'improvement', 'documentation'
 - `priority`: One of 'high', 'medium', 'low'
 - `domain`: One of the valid CHT domains
 

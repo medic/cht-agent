@@ -57,7 +57,7 @@ const extractFrontmatter = (content: string): {
   return { metadata, markdown };
 };
 
-const VALID_TYPES: IssueType[] = ['feature', 'bug', 'improvement'];
+const VALID_TYPES: IssueType[] = ['feature', 'bug', 'improvement', 'documentation'];
 const VALID_PRIORITIES: Priority[] = ['high', 'medium', 'low'];
 const VALID_DOMAINS: CHTDomain[] = [
   'authentication',
@@ -155,7 +155,7 @@ const validateMetadata = (metadata: Record<string, string>) => {
     throw new Error('Ticket must have a "title" in frontmatter');
   }
   if (!metadata.type) {
-    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|improvement)');
+    throw new Error('Ticket must have a "type" in frontmatter (feature|bug|improvement|documentation)');
   }
   if (!metadata.priority) {
     throw new Error('Ticket must have a "priority" in frontmatter (high|medium|low)');
@@ -238,10 +238,10 @@ const mapErrorMessage = (error: unknown): string => {
 
   const errorPatterns: [RegExp, string][] = [
     [/Ticket must have a "title" in frontmatter/, 'Title is required in the YAML frontmatter'],
-    [/Ticket must have a "type" in frontmatter/, 'Type is required in the YAML frontmatter (feature, bug, or improvement)'],
+    [/Ticket must have a "type" in frontmatter/, 'Type is required in the YAML frontmatter (feature, bug, documentation or improvement)'],
     [/Ticket must have a "priority" in frontmatter/, 'Priority is required in the YAML frontmatter (high, medium, or low)'],
     [/Ticket must have a "domain" in frontmatter/, 'Domain is required in the YAML frontmatter'],
-    [/Invalid type:/, 'Type must be one of: feature, bug, improvement'],
+    [/Invalid type:/, 'Type must be one of: feature, bug, improvement, documentation'],
     [/Invalid priority:/, 'Priority must be one of: high, medium, low'],
     [/Invalid domain:/, `Domain must be one of: ${VALID_DOMAINS.join(', ')}`],
     [/Ticket file not found:/, 'Ticket file not found'],
