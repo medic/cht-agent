@@ -135,7 +135,7 @@ export class OpenDeepWikiClient {
 
     const catalog = this.parseJsonContent<DeepWikiCatalog>(text, repo, 'get_document_catalog');
     if (!Array.isArray(catalog.documents)) {
-      throw new Error(`OpenDeepWiki get_document_catalog returned an unexpected shape for ${repo}`);
+      throw new TypeError(`OpenDeepWiki get_document_catalog returned an unexpected shape for ${repo}`);
     }
     return catalog;
   }
@@ -161,7 +161,7 @@ export class OpenDeepWikiClient {
 
     const document = this.parseJsonContent<DeepWikiDocument>(text, repo, 'read_document');
     if (typeof document.content !== 'string') {
-      throw new Error(`OpenDeepWiki read_document returned no content for ${repo}`);
+      throw new TypeError(`OpenDeepWiki read_document returned no content for ${repo}`);
     }
     if (document.content.length > MAX_DOCUMENT_CONTENT_LENGTH) {
       document.content = document.content.slice(0, MAX_DOCUMENT_CONTENT_LENGTH);

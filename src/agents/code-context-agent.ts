@@ -157,14 +157,22 @@ export class CodeContextAgent {
         data: this.extractFindingsFromDocuments(documents),
       };
     } catch (error) {
-      if (error instanceof DeepWikiRateLimitError) {
-        return { success: false, rateLimited: true };
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[Code Context Agent] OpenDeepWiki call failed for ${repo}: ${message}`);
-      return { success: false, error: message };
+      return this.toErrorResponse(error, repo);
     }
+  }
+
+  /**
+   * Map an OpenDeepWiki failure to a response envelope, flagging rate limits
+   * separately so the caller can surface a distinct warning.
+   */
+  private toErrorResponse(error: unknown, repo: string): OpenDeepWikiMCPResponse {
+    if (error instanceof DeepWikiRateLimitError) {
+      return { success: false, rateLimited: true };
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Code Context Agent] OpenDeepWiki call failed for ${repo}: ${message}`);
+    return { success: false, error: message };
   }
 
   /**
@@ -304,19 +312,25 @@ export class CodeContextAgent {
       labels.set(labelMatch[1], label);
     }
 
+    // Strip inline node-label definitions (`A[Foo]`, `B("Bar")`, `C{Baz}`) down to
+    // the bare node id so the edge pattern below stays simple. Labels are already
+    // captured in the `labels` map above.
+    const edgesOnly = diagram.replace(/(\w+)\s*[[({][^\])}]*[\])}]/g, '$1');
+
     const relationships: ModuleRelationship[] = [];
-    // Matches `A --> B`, `A -->|label| B`, and inline-labelled nodes like `A[x] --> B[y]`
-    const edgeRegex = /(\w+)(?:\s*[[({]+"?[^\])}"]*"?[\])}]+)?\s*-->\s*(?:\|"?([^|"]*)"?\|\s*)?(\w+)/g;
+    // Matches `A --> B` and `A -->|label| B` on the stripped diagram.
+    const edgeRegex = /(\w+)\s*-->\s*(?:\|([^|]*)\|\s*)?(\w+)/g;
 
     let edgeMatch;
-    while ((edgeMatch = edgeRegex.exec(diagram)) !== null) {
-      const [, sourceId, label, targetId] = edgeMatch;
+    while ((edgeMatch = edgeRegex.exec(edgesOnly)) !== null) {
+      const [, sourceId, rawLabel, targetId] = edgeMatch;
+      const label = (rawLabel ?? '').replace(/"/g, '').trim();
       relationships.push({
         source: labels.get(sourceId) ?? sourceId,
         target: labels.get(targetId) ?? targetId,
         relationship: 'depends-on',
-        description: label?.trim()
-          ? `${label.trim()} (from "${docTitle}" diagram)`
+        description: label
+          ? `${label} (from "${docTitle}" diagram)`
           : `Relationship from "${docTitle}" architecture diagram`,
       });
     }
