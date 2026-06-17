@@ -250,7 +250,7 @@ export class CodeContextAgent {
   }
 
   private extractLeadParagraph(content: string): string {
-    const withoutCodeBlocks = content.replace(/```[\s\S]*?```/g, '');
+    const withoutCodeBlocks = content.replaceAll(/```[\s\S]*?```/g, '');
 
     const paragraph = withoutCodeBlocks
       .split(/\n\s*\n/)
@@ -261,7 +261,7 @@ export class CodeContextAgent {
       return '';
     }
 
-    const text = paragraph.replace(/\s+/g, ' ');
+    const text = paragraph.replaceAll(/\s+/g, ' ');
     return text.length > MAX_DESCRIPTION_LENGTH
       ? `${text.slice(0, MAX_DESCRIPTION_LENGTH)}…`
       : text;
@@ -308,14 +308,14 @@ export class CodeContextAgent {
     let labelMatch;
     while ((labelMatch = labelRegex.exec(diagram)) !== null) {
       // Mermaid labels may contain <br/> line breaks; flatten them to spaces
-      const label = labelMatch[2].replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').trim();
+      const label = labelMatch[2].replaceAll(/<br\s*\/?>/gi, ' ').replaceAll(/\s+/g, ' ').trim();
       labels.set(labelMatch[1], label);
     }
 
     // Strip inline node-label definitions (`A[Foo]`, `B("Bar")`, `C{Baz}`) down to
     // the bare node id so the edge pattern below stays simple. Labels are already
     // captured in the `labels` map above.
-    const edgesOnly = diagram.replace(/(\w+)\s*[[({][^\])}]*[\])}]/g, '$1');
+    const edgesOnly = diagram.replaceAll(/(\w+)\s*[[({][^\])}]*[\])}]/g, '$1');
 
     const relationships: ModuleRelationship[] = [];
     // Matches `A --> B` and `A -->|label| B` on the stripped diagram.
@@ -324,7 +324,7 @@ export class CodeContextAgent {
     let edgeMatch;
     while ((edgeMatch = edgeRegex.exec(edgesOnly)) !== null) {
       const [, sourceId, rawLabel, targetId] = edgeMatch;
-      const label = (rawLabel ?? '').replace(/"/g, '').trim();
+      const label = (rawLabel ?? '').replaceAll('"', '').trim();
       relationships.push({
         source: labels.get(sourceId) ?? sourceId,
         target: labels.get(targetId) ?? targetId,
