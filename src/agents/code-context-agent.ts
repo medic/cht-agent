@@ -303,7 +303,7 @@ export class CodeContextAgent {
    */
   private parseDiagramRelationships(diagram: string, docTitle: string): ModuleRelationship[] {
     const labels = new Map<string, string>();
-    const labelRegex = /(\w+)\s*[[({]+"?([^\])}"]+)"?[\])}]+/g;
+    const labelRegex = /(\w+)\s*[[({]{1,2}"?([^\])}"]+)"?[\])}]{1,2}/g;
 
     let labelMatch;
     while ((labelMatch = labelRegex.exec(diagram)) !== null) {
@@ -312,9 +312,6 @@ export class CodeContextAgent {
       labels.set(labelMatch[1], label);
     }
 
-    // Strip inline node-label definitions (`A[Foo]`, `B("Bar")`, `C{Baz}`) down to
-    // the bare node id so the edge pattern below stays simple. Labels are already
-    // captured in the `labels` map above.
     const edgesOnly = diagram.replaceAll(/(\w+)\s*[[({][^\])}]*[\])}]/g, '$1');
 
     const relationships: ModuleRelationship[] = [];
