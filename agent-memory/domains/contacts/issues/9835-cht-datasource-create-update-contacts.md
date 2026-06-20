@@ -10,7 +10,6 @@ lastUpdated: 2026-03-16
 summary: Extended cht-datasource with create and update operations for Person, Place, and Report, exposed as both a TypeScript API and REST endpoints, with a major internal refactoring of validation, lineage handling, and auth.
 services:
   - api
-  - shared-libs
 techStack:
   - typescript
   - couchdb
