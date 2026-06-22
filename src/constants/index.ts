@@ -28,3 +28,13 @@ export const DEFAULT_PIPELINE_LOG_PATH = path.join(
 export const DEFAULT_PIPELINE_OUTPUT_DIR = path.join(
   __dirname, '..', '..', 'agent-memory', '_pending'
 );
+ * Default OpenDeepWiki MCP server base URL.
+ * Repo-specific query parameters (?owner=medic&name=<repo>) are appended per request.
+ * Override via the DEEPWIKI_MCP_URL environment variable.
+ */
+export const DEFAULT_DEEPWIKI_MCP_URL = 'https://opendeepwiki.dev.medicmobile.org/api/mcp';
+
+/**
+ * Default GitHub organization that owns the CHT repositories indexed in OpenDeepWiki.
+ */
+export const DEFAULT_DEEPWIKI_REPO_OWNER = 'medic';

@@ -1,5 +1,7 @@
 import { expect } from 'chai';
+import * as sinon from 'sinon';
 import { CodeContextAgent } from '../../src/agents/code-context-agent';
+import { OpenDeepWikiClient, DeepWikiRateLimitError } from '../../src/mcp';
 import { IssueTemplate, OpenDeepWikiMCPResponse } from '../../src/types';
 
 describe('CodeContextAgent', () => {
@@ -7,6 +9,10 @@ describe('CodeContextAgent', () => {
 
   beforeEach(() => {
     agent = new CodeContextAgent({ useMockMCP: true });
+  });
+
+  afterEach(() => {
+    sinon.restore();
   });
 
   // Helper to create test issue template
@@ -288,7 +294,6 @@ describe('CodeContextAgent', () => {
             },
           ],
           diagrams: ['graph TD\n    A --> B'],
-          structure: [],
         },
       };
 
@@ -341,16 +346,221 @@ describe('CodeContextAgent', () => {
   });
 
   describe('MCP integration', () => {
-    it('should throw error when MCP is disabled and not implemented', async () => {
-      const agentWithoutMock = new CodeContextAgent({ useMockMCP: false });
-      const issue = createTestIssue();
+    const catalogFixture = {
+      repository: 'medic/cht-core',
+      documents: [
+        { title: 'Project Overview', path: '1-getting-started.1-overview' },
+        { title: 'Contact Management', path: '4-frontend.2-modules.2-contacts' },
+        { title: 'Unit Testing', path: '9-testing.1-unit-tests' },
+      ],
+    };
 
-      try {
-        await agentWithoutMock.search(issue);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('OpenDeepWiki MCP integration not yet implemented');
-      }
+    const documentFixture = {
+      repository: 'medic/cht-core',
+      path: '4-frontend.2-modules.2-contacts',
+      title: 'Contact Management',
+      content: [
+        '# Contact Management',
+        '',
+        'The contacts module handles CRUD operations and hierarchy navigation for people and places.',
+        '',
+        '## Data Flow',
+        '',
+        'Requests flow from the webapp to the API.',
+        '',
+        '## Architecture',
+        '',
+        '```mermaid',
+        'graph TD',
+        '    A[webapp/contacts] -->|HTTP| B[api/people]',
+        '    B --> C[shared-libs/lineage]',
+        '```',
+      ].join('\n'),
+    };
+
+    const stubDeepWikiClient = (agentInstance: CodeContextAgent) => {
+      const stubClient = sinon.createStubInstance(OpenDeepWikiClient);
+      stubClient.getDocumentCatalog.resolves(catalogFixture);
+      stubClient.readFullDocument.resolves(documentFixture);
+      (agentInstance as any).deepWikiClient = stubClient;
+      return stubClient;
+    };
+
+    it('should default to real MCP mode (useMockMCP false)', () => {
+      const defaultAgent = new CodeContextAgent();
+
+      expect((defaultAgent as any).useMockMCP).to.be.false;
+    });
+
+    it('should use the default OpenDeepWiki server URL', () => {
+      const defaultAgent = new CodeContextAgent();
+
+      expect((defaultAgent as any).deepWikiServerUrl).to.equal(
+        'https://opendeepwiki.dev.medicmobile.org/api/mcp'
+      );
+    });
+
+    it('should allow overriding the server URL via constructor option', () => {
+      const customAgent = new CodeContextAgent({
+        deepWikiServerUrl: 'https://custom.example.com/api/mcp',
+      });
+
+      expect((customAgent as any).deepWikiServerUrl).to.equal('https://custom.example.com/api/mcp');
+    });
+
+    it('should produce findings from live wiki documents', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubDeepWikiClient(realAgent);
+      const issue = createTestIssue({
+        title: 'Fix contact hierarchy bug',
+        technical_context: { domain: 'contacts', components: ['webapp/contacts'] },
+      });
+
+      const result = await realAgent.search(issue);
+
+      expect(stubClient.getDocumentCatalog.calledOnceWith('cht-core')).to.be.true;
+      expect(result.source).to.equal('opendeepwiki');
+      expect(result.warnings).to.have.lengthOf(0);
+      expect(result.confidence).to.equal(0.8);
+
+      expect(result.architectureInsights).to.have.lengthOf(1);
+      expect(result.architectureInsights[0].component).to.equal('Contact Management');
+      expect(result.architectureInsights[0].description).to.include('CRUD operations');
+      expect(result.architectureInsights[0].patterns).to.include('Data Flow');
+
+      expect(result.diagrams).to.have.lengthOf(1);
+      expect(result.diagrams[0]).to.include('graph TD');
+
+      expect(result.moduleRelationships).to.have.lengthOf(2);
+      expect(result.moduleRelationships[0].source).to.equal('webapp/contacts');
+      expect(result.moduleRelationships[0].target).to.equal('api/people');
+      expect(result.moduleRelationships[0].description).to.include('HTTP');
+      expect(result.moduleRelationships[1].target).to.equal('shared-libs/lineage');
+    });
+
+    it('should only read documents relevant to the query', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubDeepWikiClient(realAgent);
+      const issue = createTestIssue({
+        title: 'Fix contact hierarchy bug',
+        technical_context: { domain: 'contacts', components: [] },
+      });
+
+      await realAgent.search(issue);
+
+      expect(stubClient.readFullDocument.calledOnce).to.be.true;
+      expect(stubClient.readFullDocument.firstCall.args[1]).to.equal(
+        '4-frontend.2-modules.2-contacts'
+      );
+    });
+
+    it('should add a warning when the catalog fetch fails', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = sinon.createStubInstance(OpenDeepWikiClient);
+      stubClient.getDocumentCatalog.rejects(new Error('Network error'));
+      (realAgent as any).deepWikiClient = stubClient;
+
+      const result = await realAgent.search(createTestIssue());
+
+      expect(result.architectureInsights).to.have.lengthOf(0);
+      expect(result.warnings).to.have.lengthOf(1);
+      expect(result.warnings[0]).to.include('cht-core');
+      expect(result.confidence).to.equal(0.3);
+    });
+
+    it('should add a rate-limit warning on DeepWikiRateLimitError', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = sinon.createStubInstance(OpenDeepWikiClient);
+      stubClient.getDocumentCatalog.rejects(new DeepWikiRateLimitError('cht-core'));
+      (realAgent as any).deepWikiClient = stubClient;
+
+      const result = await realAgent.search(createTestIssue());
+
+      expect(result.warnings).to.have.lengthOf(1);
+      expect(result.warnings[0]).to.include('Rate limited');
+    });
+  });
+
+  describe('selectRelevantDocs', () => {
+    const entries = [
+      { title: 'Project Overview', path: '1-getting-started.1-overview' },
+      { title: 'Contact Management', path: '4-frontend.2-modules.2-contacts' },
+      { title: 'SMS Messaging', path: '11-messaging.1-sms' },
+    ];
+
+    it('should rank documents by query term matches', () => {
+      const selected = (agent as any).selectRelevantDocs(entries, 'contacts contact hierarchy');
+
+      expect(selected[0].title).to.equal('Contact Management');
+    });
+
+    it('should fall back to architecture/overview docs when nothing matches', () => {
+      const selected = (agent as any).selectRelevantDocs(entries, 'zzz qqq');
+
+      expect(selected).to.have.lengthOf(1);
+      expect(selected[0].title).to.equal('Project Overview');
+    });
+
+    it('should limit the number of selected documents', () => {
+      const many = Array.from({ length: 10 }, (_, i) => ({
+        title: `Contacts Doc ${i}`,
+        path: `contacts-${i}`,
+      }));
+
+      const selected = (agent as any).selectRelevantDocs(many, 'contacts');
+
+      expect(selected).to.have.lengthOf(3);
+    });
+  });
+
+  describe('parseDiagramRelationships', () => {
+    it('should parse plain and labelled edges with node label resolution', () => {
+      const diagram = [
+        'graph TD',
+        '    A[webapp/tasks] --> B[rules-engine]',
+        '    B -->|emits| C',
+      ].join('\n');
+
+      const rels = (agent as any).parseDiagramRelationships(diagram, 'Tasks');
+
+      expect(rels).to.have.lengthOf(2);
+      expect(rels[0].source).to.equal('webapp/tasks');
+      expect(rels[0].target).to.equal('rules-engine');
+      expect(rels[0].relationship).to.equal('depends-on');
+      expect(rels[1].source).to.equal('rules-engine');
+      expect(rels[1].target).to.equal('C');
+      expect(rels[1].description).to.include('emits');
+    });
+
+    it('should return empty array for diagrams without edges', () => {
+      const rels = (agent as any).parseDiagramRelationships('sequenceDiagram\n  A->>B: hi', 'Doc');
+
+      expect(rels).to.deep.equal([]);
+    });
+  });
+
+  describe('extractLeadParagraph', () => {
+    it('should skip headings and return the first prose paragraph', () => {
+      const content = '# Title\n\nFirst paragraph here.\n\nSecond paragraph.';
+
+      const lead = (agent as any).extractLeadParagraph(content);
+
+      expect(lead).to.equal('First paragraph here.');
+    });
+
+    it('should truncate long paragraphs', () => {
+      const content = `# Title\n\n${'word '.repeat(100)}`;
+
+      const lead = (agent as any).extractLeadParagraph(content);
+
+      expect(lead.length).to.be.at.most(301);
+      expect(lead.endsWith('…')).to.be.true;
+    });
+
+    it('should return empty string when there is no prose', () => {
+      const lead = (agent as any).extractLeadParagraph('# Only Heading');
+
+      expect(lead).to.equal('');
     });
   });
 });
