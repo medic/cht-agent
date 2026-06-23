@@ -12,6 +12,8 @@
 import * as fs from 'node:fs';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { isBatchFatalError } from '../llm/rate-limit';
 import { z } from 'zod';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
 import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
@@ -141,8 +143,18 @@ const triageSchema: z.ZodType<TriageOutput> = z.object({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _triageChain: any;
 
+// JSON shape appended to the prompt in CLI mode (no response_format channel).
+const TRIAGE_SHAPE = '{"decision": "distill" | "skip" | "flag-for-human", "reason": "<short explanation>"}';
+
 function getTriageChain() {
   if (_triageChain !== undefined) return _triageChain;
+
+  // CLI mode: run triage on the operator's Claude subscription via `claude -p`,
+  // no API key needed. Takes precedence over API keys when set.
+  if (isUsingCLIProvider()) {
+    _triageChain = createStructuredCliChain(triageSchema, TRIAGE_SHAPE);
+    return _triageChain;
+  }
 
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -229,6 +241,9 @@ async function runLlmTriage(
   try {
     return await triageFn(pr);
   } catch (err) {
+    // Rate/usage limits and auth failures are global, not a property of this PR
+    // — stop the whole batch (the runner catches this) so it can be fixed and resumed.
+    if (isBatchFatalError(err)) throw err;
     return {
       decision: 'flag-for-human',
       reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,
