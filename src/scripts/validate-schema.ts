@@ -4,6 +4,7 @@
  * Usage:
  *   npx ts-node src/scripts/validate-schema.ts
  *   npm run validate-schema
+ *   npm run validate-schema -- --include-pending   # also validate _pending/ drafts
  *
  * Exits with code 1 if any file fails validation.
  *
@@ -24,6 +25,15 @@ import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from 
 
 const MEMORY_DIR = path.join(REPO_ROOT, 'agent-memory');
 
+// `--include-pending` also validates _pending/ drafts (skipped by default since
+// drafts are works-in-progress). Used by the pipeline CI to catch malformed
+// drafts before they are committed.
+// `--pending-only` validates ONLY _pending/ — the pre-promotion check run by
+// hand before manually promoting drafts into domains/ (ignores the committed
+// corpus so its output is just the drafts under review).
+const INCLUDE_PENDING = process.argv.includes('--include-pending');
+const PENDING_ONLY = process.argv.includes('--pending-only');
+
 // ---------------------------------------------------------------------------
 // File discovery
 // ---------------------------------------------------------------------------
@@ -43,7 +53,7 @@ const MEMORY_DIR = path.join(REPO_ROOT, 'agent-memory');
  */
 function processEntry(dir: string, entry: import('node:fs').Dirent): string[] {
   const fullPath = path.join(dir, entry.name);
-  if (entry.isDirectory() && entry.name !== '_pending') return collectMarkdownFiles(fullPath);
+  if (entry.isDirectory() && (INCLUDE_PENDING || PENDING_ONLY || entry.name !== '_pending')) return collectMarkdownFiles(fullPath);
   if (entry.isFile() && entry.name.endsWith('.md')) return [fullPath];
   return [];
 }
@@ -175,7 +185,8 @@ function logFileResult(rel: string, result: FileResult): 'pass' | 'fail' | 'skip
  */
 function main(): void {
   const validate = buildValidator();
-  const files = collectMarkdownFiles(MEMORY_DIR);
+  const scanDir = PENDING_ONLY ? path.join(MEMORY_DIR, '_pending') : MEMORY_DIR;
+  const files = fs.existsSync(scanDir) ? collectMarkdownFiles(scanDir) : [];
   const counts = { pass: 0, fail: 0, skip: 0 };
 
   for (const filePath of files.toSorted((a, b) => a.localeCompare(b))) {
