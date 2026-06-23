@@ -51,6 +51,9 @@ jobs:
             npm run run-pipeline -- --since "$LOOKBACK_HOURS"
           fi
 
+      - name: Validate distilled drafts
+        run: npm run validate-schema -- --include-pending
+
       - name: Commit knowledge drafts
         run: |
           git config user.name "github-actions[bot]"
