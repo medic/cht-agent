@@ -58,18 +58,49 @@ describe('run-pipeline parseArgs', () => {
     withArgv([]);
     const { parseArgs } = loadPipeline();
     const args = parseArgs();
-    expect(args.prNumber).to.equal(undefined);
+    expect(args.prNumbers).to.equal(undefined);
     expect(args.repo).to.equal('medic/cht-core');
     expect(args.lookbackHours).to.equal(24);
+    expect(args.concurrency).to.equal(1);
+    expect(args.resume).to.equal(false);
+    expect(args.force).to.equal(false);
   });
 
   it('parses --pr, --repo, and --since', () => {
     withArgv(['--pr', '123', '--repo', 'medic/cht-core', '--since', '48']);
     const { parseArgs } = loadPipeline();
     const args = parseArgs();
-    expect(args.prNumber).to.equal(123);
+    expect(args.prNumbers).to.deep.equal([123]);
     expect(args.repo).to.equal('medic/cht-core');
     expect(args.lookbackHours).to.equal(48);
+  });
+
+  it('parses a comma-separated --pr list', () => {
+    withArgv(['--pr', '123,456,789']);
+    const { parseArgs } = loadPipeline();
+    expect(parseArgs().prNumbers).to.deep.equal([123, 456, 789]);
+  });
+
+  it('parses --last, --resume, and --force', () => {
+    withArgv(['--last', '1000', '--resume', '--force', '--pr', '5']);
+    const { parseArgs } = loadPipeline();
+    const args = parseArgs();
+    expect(args.last).to.equal(1000);
+    expect(args.resume).to.equal(true);
+    expect(args.force).to.equal(true);
+  });
+
+  it('clamps --concurrency to [1, 10]', () => {
+    withArgv(['--concurrency', '4']);
+    expect(loadPipeline().parseArgs().concurrency).to.equal(4);
+    withArgv(['--concurrency', '99']);
+    expect(loadPipeline().parseArgs().concurrency).to.equal(10);
+  });
+
+  it('throws on a non-numeric --pr in a list', () => {
+    withArgv(['--pr', '123,oops']);
+    const { parseArgs } = loadPipeline();
+    expect(() => parseArgs()).to.throw(/Invalid --pr value/);
   });
 
   it('throws on a non-numeric --since instead of silently doing nothing', () => {
@@ -225,5 +256,31 @@ describe('run-pipeline runPipeline', () => {
     });
     await runPipeline([99], 'medic/cht-core');
     expect(exitCode).to.equal(1);
+  });
+
+  it('stops the batch and exits with the rate-limit code on a rate-limit error', async () => {
+    const seen: number[] = [];
+    const { runPipeline, RATE_LIMIT_EXIT_CODE } = loadPipeline({
+      scrapePR: (prNum: number) => {
+        seen.push(prNum);
+        throw new Error('HTTP 429: rate limit exceeded');
+      },
+    });
+    await runPipeline([10, 11, 12], 'medic/cht-core');
+    expect(seen).to.deep.equal([10]); // stopped after the first, did not process 11/12
+    expect(exitCode).to.equal(RATE_LIMIT_EXIT_CODE);
+  });
+
+  it('stops the batch on an authentication (401) error', async () => {
+    const seen: number[] = [];
+    const { runPipeline, RATE_LIMIT_EXIT_CODE } = loadPipeline({
+      scrapePR: (prNum: number) => {
+        seen.push(prNum);
+        throw new Error('Claude CLI error: Failed to authenticate. API Error: 401 Invalid authentication credentials');
+      },
+    });
+    await runPipeline([20, 21, 22], 'medic/cht-core');
+    expect(seen).to.deep.equal([20]);
+    expect(exitCode).to.equal(RATE_LIMIT_EXIT_CODE);
   });
 });
