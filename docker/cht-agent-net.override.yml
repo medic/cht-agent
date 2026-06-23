@@ -1,0 +1,29 @@
+# cht-agent-net.override.yml
+#
+# Layers onto cht-core's local-build compose (or the docker-helper stack) so the
+# running CHT instance joins the shared `cht-agent-net` network that the
+# dockerized cht-agent is also attached to. This lets the agent reach the
+# instance at https://nginx with no host-port juggling and — importantly — with
+# NO Docker access (the agent only polls /api/v2/monitoring).
+#
+# HUMAN-run only (the cht-agent never runs Docker):
+#   docker compose -f cht-couchdb.yml -f cht-core.yml -f cht-agent-net.override.yml up -d
+#
+# ⚠️ VALIDATE before relying on this: the service name (`nginx`) and the stack's
+# internal network name (`cht-net` below) must match what `npm run local-images`
+# generates in `local-build/` for your cht-core version. Confirm with:
+#   docker compose ... config            # see resolved service/network names
+#   docker network inspect cht-agent-net # confirm nginx is attached
+# If the internal network differs, update the first entry under nginx.networks.
+
+networks:
+  cht-agent-net:
+    external: true
+
+services:
+  # nginx is the HTTPS entry point the agent reaches. Keep it on the stack's
+  # internal network AND join the shared cht-agent-net.
+  nginx:
+    networks:
+      - cht-net
+      - cht-agent-net

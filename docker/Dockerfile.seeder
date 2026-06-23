@@ -1,0 +1,40 @@
+# cht-agent SEEDER image — memory distillation pipeline in a container.
+#
+# Layers on the sandboxed cht-agent base image (build that first):
+#   + gh CLI            (scraper reads PR/issue metadata — read-only token)
+#   + Claude Code CLI   (LLM_PROVIDER=claude-cli runs triage/distill via
+#                        `claude -p` on the operator's subscription, no API key)
+#
+# Trust profile vs the base image: this container holds a READ-ONLY GH_TOKEN
+# (classic PAT, read:org scope only). All base-image git hardening is
+# inherited — push is still impossible at every layer. The pipeline writes
+# nothing to GitHub: drafts land in the bind-mounted agent-memory/ and PR
+# promotion (open-review-pr) is a manual, host-side step.
+#
+# Build (from the repo root, after the base image):
+#   docker build -f docker/Dockerfile -t cht-agent:local .
+#   docker build -f docker/Dockerfile.seeder -t cht-agent-seeder:local .
+
+FROM cht-agent:local
+
+USER root
+
+# gh CLI from the official apt repo
+RUN mkdir -p -m 755 /etc/apt/keyrings && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && apt-get install -y --no-install-recommends gh && \
+    rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI — the code-gen/seeding `claude -p` backend (this fills the
+# base image's code-generation-tools extension point for the seeder profile).
+RUN npm install -g @anthropic-ai/claude-code
+
+USER agent
+
+# cwd the claude-cli provider spawns in; the seeder has no cht-core mount
+ENV CHT_CORE_PATH=/app
+ENV LLM_PROVIDER=claude-cli
