@@ -3,6 +3,8 @@
  * These types model the data flowing through scrape → filter → distill stages.
  */
 
+import type { BaseCallbackHandler } from '@langchain/core/callbacks/base';
+
 /**
  * A GitHub issue linked from a PR description, fetched via /issues/{n}.
  * Captures the issue body and any top-level comments for context.
@@ -95,6 +97,8 @@ export interface FilterOptions {
   skipLlm?: boolean;
   /** Inject a triage function replacing the real LLM call (for testing) */
   triageFn?: (pr: ScrapedPR) => Promise<FilterResult>;
+  /** Langfuse callback handler for LLM tracing — omit to skip tracing */
+  langfuseHandler?: BaseCallbackHandler;
 }
 
 /** The 8 functional CHT domains — matches the domain enum in schema.json */
@@ -156,6 +160,8 @@ export interface DistillOptions {
   logPath?: string;
   /** Inject a distill function replacing the real LLM call (for testing) */
   distillFn?: (pr: ScrapedPR) => Promise<DistillDraft>;
+  /** Langfuse callback handler for LLM tracing — omit to skip tracing */
+  langfuseHandler?: BaseCallbackHandler;
 }
 
 /** Options for openReviewPR — used to inject test doubles and override defaults */

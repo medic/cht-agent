@@ -16,8 +16,10 @@ interface PipelineMocks {
  */
 function loadPipeline(mocks: PipelineMocks = {}) {
   const fakePr = { prTitle: 'T', labels: [], fileList: [] };
+  const noopTrace = { span: () => ({ end: () => {} }), score: () => {} };
   return proxyquire('../../src/scripts/run-pipeline', {
     dotenv: { config: () => ({}), '@noCallThru': true },
+    'node:crypto': { randomUUID: () => 'test-session-id', '@noCallThru': true },
     'node:child_process': {
       execFileSync: ((file: string, args: string[]) =>
         mocks.exec ? mocks.exec(file, args) : '[]') as unknown,
@@ -34,6 +36,12 @@ function loadPipeline(mocks: PipelineMocks = {}) {
     './distiller': {
       distillPR:
         mocks.distillPR ?? (async () => ({ status: 'written', reason: 'ok', outputPath: '/tmp/x.md' })),
+      '@noCallThru': true,
+    },
+    '../observability': {
+      makeLangfuseHandler: () => undefined,
+      createTrace: () => noopTrace,
+      flushLangfuse: async () => {},
       '@noCallThru': true,
     },
   });

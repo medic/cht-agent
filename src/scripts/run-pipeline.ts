@@ -18,10 +18,12 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { scrapePR } from './scraper';
 import { filterPR } from './filter';
 import { distillPR } from './distiller';
+import { makeLangfuseHandler, createTrace, flushLangfuse } from '../observability';
 
 const DEFAULT_REPO = 'medic/cht-core';
 const DEFAULT_LOOKBACK_HOURS = 24;
@@ -130,34 +132,45 @@ export function errorMessage(err: unknown): string {
 
 /**
  * Runs scrape → filter → distill for a single PR number.
+ * Creates a Langfuse trace for the full run when observability is enabled.
  *
- * @param prNum - The GitHub PR number to process.
- * @param repo  - Repository in `owner/repo` format.
+ * @param prNum     - The GitHub PR number to process.
+ * @param repo      - Repository in `owner/repo` format.
+ * @param sessionId - Pipeline session ID (groups all PR traces from one run).
  *
  * @example
  * ```typescript
- * await processSinglePR(12345, 'medic/cht-core');
+ * await processSinglePR(12345, 'medic/cht-core', 'session-abc');
  * ```
  */
-export async function processSinglePR(prNum: number, repo: string): Promise<void> {
+export async function processSinglePR(prNum: number, repo: string, sessionId?: string): Promise<void> {
+  const traceId = `pipeline-pr-${repo.replace('/', '-')}-${prNum}`;
+  const handler = makeLangfuseHandler(traceId, sessionId ?? traceId);
+  const trace = createTrace(traceId, sessionId);
+
+  const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
   console.log('  scraping...');
   const pr = scrapePR(prNum, repo);
   console.log(`  title:  ${pr.prTitle}`);
   console.log(`  labels: ${pr.labels.join(', ') || '(none)'}`);
   console.log(`  files:  ${pr.fileList.length}`);
+  scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
 
   console.log('  filtering...');
-  const filterResult = await filterPR(pr);
+  const filterResult = await filterPR(pr, { langfuseHandler: handler });
   console.log(`  filter: ${filterResult.decision} — ${filterResult.reason}`);
 
   if (filterResult.decision === 'distill') {
     console.log('  distilling...');
-    const distillResult = await distillPR(pr);
+    const distillResult = await distillPR(pr, { langfuseHandler: handler });
     console.log(`  distill: ${distillResult.status} — ${distillResult.reason}`);
     if (distillResult.outputPath) {
       console.log(`  output: ${distillResult.outputPath}`);
     }
+    trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
   }
+
+  await flushLangfuse();
 }
 
 /**
@@ -169,12 +182,13 @@ export async function processSinglePR(prNum: number, repo: string): Promise<void
  */
 export async function runPipeline(prNumbers: number[], repo: string): Promise<void> {
   let failures = 0;
+  const sessionId = randomUUID();
 
   for (const prNum of prNumbers) {
     console.log(`\n${'─'.repeat(60)}`);
     console.log(`PR #${prNum} (${repo})`);
     try {
-      await processSinglePR(prNum, repo);
+      await processSinglePR(prNum, repo, sessionId);
     } catch (err) {
       console.error(`  ERROR: ${errorMessage(err)}`);
       failures++;

@@ -30,6 +30,8 @@
     "dotenv": "^16.4.5",
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.1",
+    "langfuse": "^3.38.20",
+    "langfuse-langchain": "^3.38.20",
     "zod": "^3.23.8"
   },
   "devDependencies": {

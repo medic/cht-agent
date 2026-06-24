@@ -42,6 +42,9 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TRIAGE_MODEL: ${{ vars.TRIAGE_MODEL }}
           DISTILL_MODEL: ${{ vars.DISTILL_MODEL }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ vars.LANGFUSE_HOST }}
           PR_NUMBER: ${{ inputs.pr_number }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours || '24' }}
         run: |

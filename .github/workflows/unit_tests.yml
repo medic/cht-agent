@@ -29,4 +29,6 @@ jobs:
         run: npm run lint
 
       - name: Test with coverage
+        env:
+          LANGFUSE_ENABLED: 'false'
         run: npm run test:coverage
