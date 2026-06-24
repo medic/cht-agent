@@ -1,0 +1,92 @@
+---
+id: cht-core-8995
+category: improvement
+domain: contacts
+domainFit: strong
+issueNumber: 8995
+issueUrl: https://github.com/medic/cht-core/issues/8995
+title: Fetch reports once in contact details page by passing docs (not IDs) to the contact view model generator
+lastUpdated: '2026-06-23'
+summary: The contact details page fetched report docs more than once — loading them and then re-fetching inside addHeading. The PR threads already-fetched docs through the view-model generator and summary services, eliminating the redundant fetch.
+services:
+  - webapp
+techStack:
+  - typescript
+  - angular
+  - pouchdb
+tags:
+  - performance
+  - contact-details
+  - reports
+  - refactor
+  - lodash-removal
+  - view-model
+  - fetch-deduplication
+related_workflows: []
+source_pr: medic/cht-core#8995
+source_sha: 0ba3adb75d0588698ac30c37343eb45c7e2d2038
+distilled_at: '2026-06-23'
+reviewed_by: null
+reviewed_at: null
+confidence: medium
+entities:
+  - webapp/src/ts/modules/contacts/contacts.component.ts
+  - webapp/src/ts/services/contact-view-model-generator.service.ts
+  - webapp/src/ts/services/get-data-records.service.ts
+  - webapp/src/ts/services/get-summaries.service.ts
+  - webapp/src/ts/services/target-aggregates.service.ts
+concepts:
+  - view-model generation
+  - fetch deduplication
+  - passing docs instead of ids to avoid refetch
+  - service API normalization
+  - summary generation
+related_issues: []
+stale: false
+---
+
+## Problem
+
+Rendering a contact's details page triggered redundant database reads: report docs were already loaded but addHeading received only their IDs and fetched the same docs a second time, slowing page load.
+
+## Root Cause
+
+contactViewModelGenerator.addHeading took a list of IDs and re-fetched docs via getDataRecordsService rather than reusing docs that had already been loaded; getDataRecordsService.get() also had an inconsistent (id-or-array) signature that encouraged extra round-trips.
+
+## Solution
+
+Changed addHeading to accept a list of docs instead of IDs so no second fetch occurs; added getDataRecordsService.getDocsSummaries to build summaries from already-fetched records; normalized getDataRecordsService.get() to take only an array of IDs and always return an array; added getSummariesService.getByDocs to attach summary fields from a list of docs; removed lodash from GetDataRecordsService in favor of native Array methods.
+
+## Code Patterns
+
+Pass already-fetched documents downstream instead of IDs to avoid redundant DB round-trips (e.g., addHeading(docs) rather than addHeading(ids)) — see contact-view-model-generator.service.ts. Normalize service method signatures to consistently accept arrays and return arrays (get-data-records.service.ts get()/getDocsSummaries). Add a *-by-docs variant (getSummariesService.getByDocs) that operates on in-memory docs rather than re-querying by id.
+
+## Design Choices
+
+Threading docs through function signatures trades a slightly heavier API surface for the elimination of a duplicate fetch on the hot contact-details path. Normalizing get() to array-in/array-out removes branching and makes callers predictable; dropping lodash for native Array APIs trims a dependency without behavior change.
+
+## Related Files
+
+- webapp/src/ts/modules/contacts/contacts.component.ts
+- webapp/src/ts/services/contact-view-model-generator.service.ts
+- webapp/src/ts/services/get-data-records.service.ts
+- webapp/src/ts/services/get-summaries.service.ts
+- webapp/src/ts/services/target-aggregates.service.ts
+- webapp/tests/karma/ts/modules/contacts/contacts.component.spec.ts
+- webapp/tests/karma/ts/services/contact-view-model-generator.service.spec.ts
+- webapp/tests/karma/ts/services/get-data-records.service.spec.ts
+- webapp/tests/karma/ts/services/target-aggregates.service.spec.ts
+
+## Testing
+
+Updated Karma unit tests for the affected units: contacts.component, contact-view-model-generator.service, get-data-records.service, and target-aggregates.service specs were modified to cover the new doc-based signatures (addHeading receiving docs, getDocsSummaries/getByDocs) and the normalized array-only get() API.
+
+## Related Issues
+
+- #8994: performance issue — reports fetched more than once on the contact details page
+
+## Domain Rationale
+
+**Fit:** strong
+
+The change optimizes how the contact details page builds its view model, centered on contacts.component and the contact-view-model-generator service. Although it fetches report docs, the controlling context and primary code are the contacts profile page, not report submission/validation — so contacts is the most specific fit.
