@@ -17,6 +17,7 @@ import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-
 import { isBatchFatalError } from '../llm/rate-limit';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../utils/domain-inference';
 import { z } from 'zod';
+import type { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import type {
   ScrapedPR,
   DistillDraft,
@@ -233,12 +234,15 @@ CONSTRAINTS:
  * Call the LLM to generate a DistillDraft from a ScrapedPR.
  * Returns a DistillDraft or throws — callers handle errors.
  *
+ * @param pr      - The PR to distill.
+ * @param handler - Optional Langfuse callback handler for tracing this LLM call.
+ *
  * @example
  * ```typescript
  * // Not called directly in tests — injected via opts.distillFn
  * ```
  */
-async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
+async function llmDistill(pr: ScrapedPR, handler?: BaseCallbackHandler): Promise<DistillDraft> {
   const chain = getDistillChain();
 
   if (!chain) {
@@ -246,7 +250,8 @@ async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
   }
 
   const prompt = buildPrompt(pr);
-  return await chain.invoke(prompt) as DistillDraft;
+  const callbacks = handler ? [handler] : undefined;
+  return await chain.invoke(prompt, { callbacks }) as DistillDraft;
 }
 
 /**
@@ -469,7 +474,7 @@ function resolveDistillOpts(opts: DistillOptions): {
   return {
     logPath: opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH,
     outputDir: opts.outputDir ?? DEFAULT_PIPELINE_OUTPUT_DIR,
-    distillFn: opts.distillFn ?? llmDistill,
+    distillFn: opts.distillFn ?? ((p: ScrapedPR) => llmDistill(p, opts.langfuseHandler)),
   };
 }
 
