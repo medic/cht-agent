@@ -53,7 +53,7 @@ const formatListForPrompt = (items: string[], emptyMessage: string = 'None provi
  * Domain classification examples to guide the LLM
  * These are hardcoded examples that demonstrate correct domain categorization
  */
-const DOMAIN_EXAMPLES = `
+export const DOMAIN_EXAMPLES = `
 Seeds/Examples (Correct Domain Classifications):
 
 1. "Add search functionality to find contacts by phone number"
@@ -75,12 +75,24 @@ Seeds/Examples (Correct Domain Classifications):
 5. "Add new target widget to show monthly vaccination coverage"
    → Domain: tasks-and-targets
    → Reasoning: Targets and coverage metrics are part of tasks-and-targets domain
+
+6. "Add Brazilian Portuguese translations and register the pt locale"
+   → Domain: configuration
+   → Reasoning: App settings, translations, branding, and hierarchy config are canonically the configuration domain — these are strong fits, not catch-all picks
+
+7. "Skip CouchDB compaction during API upgrade" / "Bump the CouchDB Docker image and rename the CI container" / "Fix build version computation for release branches"
+   → Domain: infrastructure
+   → Reasoning: OPERATIONAL lifecycle only — CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling, runtime-dependency maintenance. Strong fit because it changes how the system is built/shipped/run, not application behavior.
+
+8. "Migrate document ID generation from UUID v4 to v7" / "Add a length limit to Nouveau search index fields"
+   → Domain: data-sync (weak fit is fine)
+   → Reasoning: In-application code and data-layer/storage-engine internals (ID generation, CouchDB/Nouveau/Lucene index documents, B-tree concerns) are NOT infrastructure even when cross-cutting — keep them in the closest functional domain (here data-sync), not the ops bucket.
 `;
 
 /**
  * Common pitfalls to help the LLM avoid misclassification
  */
-const DOMAIN_PITFALLS = `
+export const DOMAIN_PITFALLS = `
 Pitfalls (Common Misclassifications to Avoid):
 
 1. Avoid placing "form validation errors" into forms-and-reports when the issue is actually about offline behavior.
@@ -97,6 +109,10 @@ Pitfalls (Common Misclassifications to Avoid):
 
 5. Avoid placing "report shows wrong data" into forms-and-reports when the issue is about data not syncing.
    → If data freshness/replication is the root cause, prefer data-sync domain.
+
+6. Infrastructure is for OPERATIONAL lifecycle only (CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling, runtime-dependency maintenance) — it is NOT a catch-all for cross-cutting code.
+   → Don't put CI/build/deploy/upgrade-lifecycle PRs into configuration — those are infrastructure.
+   → Don't put in-application code refactors, data-layer/storage-engine internals (UUID/ID generation, CouchDB/Nouveau/Lucene index design docs, B-tree concerns), or library dependency bumps that change app behavior into infrastructure — keep those in the closest functional domain (often data-sync).
 `;
 
 const VALID_DOMAINS: CHTDomain[] = [
@@ -108,6 +124,7 @@ const VALID_DOMAINS: CHTDomain[] = [
   'data-sync',
   'configuration',
   'interoperability',
+  'infrastructure',
 ];
 
 const extractJson = (content: string): string => {

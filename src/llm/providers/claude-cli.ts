@@ -129,10 +129,6 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
         args.push('--disallowedTools', DISALLOWED_TOOLS.join(','));
       }
 
-      // Note: CLI doesn't support temperature/maxTokens directly
-      // These are handled by the account settings or model defaults
-
-      // Log process start with key details
       const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
       console.log(`[Claude CLI] Starting: "${promptPreview}..." (${prompt.length} chars, maxTurns=${effectiveMaxTurns}, tools=${options?.disableTools ? 'disabled' : 'enabled'})`);
       const startTime = Date.now();
@@ -178,11 +174,11 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
         reject(new Error(`Claude CLI timed out after ${timeout}ms`));
       }, timeout);
 
-      proc.stdout.on('data', (data) => {
+      proc.stdout?.on('data', (data) => {
         stdoutChunks.push(data.toString());
       });
 
-      proc.stderr.on('data', (data) => {
+      proc.stderr?.on('data', (data) => {
         stderrChunks.push(data.toString());
       });
 
