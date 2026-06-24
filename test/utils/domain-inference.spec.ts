@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import { IssueTemplate, CHTDomain } from '../../src/types';
+import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../../src/utils/domain-inference';
 
 // Note: Tests for inferDomainAndComponents and enrichIssueTemplate
 // are limited because they require mocking the ChatAnthropic LLM.
@@ -100,6 +101,21 @@ describe('domain-inference', () => {
       });
 
       expect(issue.issue.technical_context.existing_references).to.have.lengthOf(2);
+    });
+  });
+
+  describe('infrastructure domain scoping guidance', () => {
+    it('scopes infrastructure to operational lifecycle, excluding data-layer internals', () => {
+      // Pitfall must steer storage-engine internals AWAY from infrastructure so
+      // PRs like UUID v4→v7 (10935) and Nouveau index limits don't over-capture.
+      expect(DOMAIN_PITFALLS).to.match(/operational lifecycle/i);
+      expect(DOMAIN_PITFALLS).to.match(/storage-engine internals/i);
+      expect(DOMAIN_PITFALLS).to.match(/not.*infrastructure|into infrastructure/i);
+    });
+
+    it('gives a data-layer counter-example that stays in data-sync, not infrastructure', () => {
+      expect(DOMAIN_EXAMPLES).to.match(/UUID v4 to v7|Nouveau/i);
+      expect(DOMAIN_EXAMPLES).to.match(/data-sync/);
     });
   });
 });
