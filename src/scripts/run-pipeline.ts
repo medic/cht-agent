@@ -23,7 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { scrapePR } from './scraper';
 import { filterPR } from './filter';
 import { distillPR } from './distiller';
-import { makeLangfuseHandler, createTrace, flushLangfuse } from '../observability';
+import { makeLangfuseHandler, createTrace, getLangfuse } from '../observability';
 
 const DEFAULT_REPO = 'medic/cht-core';
 const DEFAULT_LOOKBACK_HOURS = 24;
@@ -145,7 +145,7 @@ export function errorMessage(err: unknown): string {
  */
 export async function processSinglePR(prNum: number, repo: string, sessionId?: string): Promise<void> {
   const traceId = `pipeline-pr-${repo.replace('/', '-')}-${prNum}`;
-  const handler = makeLangfuseHandler(traceId, sessionId ?? traceId);
+  const handler = makeLangfuseHandler(traceId, sessionId);
   const trace = createTrace(traceId, sessionId);
 
   const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
@@ -170,7 +170,7 @@ export async function processSinglePR(prNum: number, repo: string, sessionId?: s
     trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
   }
 
-  await flushLangfuse();
+  await getLangfuse().flushAsync();
 }
 
 /**
