@@ -4,5 +4,14 @@
   "lines": 95,
   "functions": 95,
   "statements": 95,
-  "reporter": ["text", "text-summary", "html"]
+  "reporter": ["text", "text-summary", "html"],
+  "exclude": [
+    "**/*.spec.ts",
+    "**/*.d.ts",
+    "test/**",
+    "dist/**",
+    "src/llm/providers/**",
+    "src/utils/domain-inference.ts",
+    "src/scripts/open-review-pr.ts"
+  ]
 }

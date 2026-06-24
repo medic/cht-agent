@@ -226,7 +226,7 @@ function prFromLogLine(line: string): number | null {
 }
 
 /** PR numbers recorded in the audit log (skip / flag-for-human entries). */
-function prNumbersFromLog(logPath: string): number[] {
+export function prNumbersFromLog(logPath: string): number[] {
   let log: string;
   try {
     log = fs.readFileSync(logPath, 'utf8');
@@ -251,7 +251,7 @@ function prNumbersFromDraftDir(dir: string): number[] {
 }
 
 /** PR numbers with a draft under any _pending/<domain>/ dir. */
-function prNumbersFromDrafts(outputDir: string): number[] {
+export function prNumbersFromDrafts(outputDir: string): number[] {
   let domains: string[];
   try {
     domains = fs.readdirSync(outputDir);
@@ -432,7 +432,7 @@ export async function runPipeline(prNumbers: number[], repo: string, force = fal
  * newest --last N, else PRs merged in the --since window.
  */
 /* istanbul ignore next */
-function resolvePrNumbers(args: CliArgs): number[] {
+export function resolvePrNumbers(args: CliArgs): number[] {
   const { prNumbers: requestedPRs, repo, lookbackHours, last } = args;
   if (requestedPRs !== undefined) return requestedPRs;
   if (last !== undefined) {

@@ -1,5 +1,8 @@
 import { expect } from 'chai';
 import proxyquire from 'proxyquire';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 type ExecHandler = (file: string, args: string[]) => string;
 
@@ -282,5 +285,87 @@ describe('run-pipeline runPipeline', () => {
     await runPipeline([20, 21, 22], 'medic/cht-core');
     expect(seen).to.deep.equal([20]);
     expect(exitCode).to.equal(RATE_LIMIT_EXIT_CODE);
+  });
+
+  it('processes every PR under concurrency > 1', async () => {
+    const seen: number[] = [];
+    const { runPipeline } = loadPipeline({
+      scrapePR: (prNum: number) => { seen.push(prNum); return { prTitle: 'T', labels: [], fileList: [] }; },
+      filterPR: async () => ({ decision: 'skip', reason: 'x' }),
+    });
+    await runPipeline([1, 2, 3, 4], 'medic/cht-core', false, 2);
+    expect(seen.sort((a, b) => a - b)).to.deep.equal([1, 2, 3, 4]);
+    expect(exitCode).to.equal(undefined);
+  });
+});
+
+describe('run-pipeline getLastMergedPRs', () => {
+  it('returns the newest merged PR numbers', () => {
+    const { getLastMergedPRs } = loadPipeline({ exec: () => JSON.stringify([{ number: 5 }, { number: 6 }]) });
+    expect(getLastMergedPRs('medic/cht-core', 2)).to.deep.equal([5, 6]);
+  });
+});
+
+describe('run-pipeline prNumbersFromLog', () => {
+  it('parses valid prNumbers, skipping blank/malformed/prNumber-less lines', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-log-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    fs.writeFileSync(logPath, [
+      JSON.stringify({ prNumber: 10, decision: 'skip' }),
+      '',
+      'not json',
+      JSON.stringify({ decision: 'skip' }),
+      JSON.stringify({ prNumber: 11 }),
+    ].join('\n'));
+    const { prNumbersFromLog } = loadPipeline();
+    expect(prNumbersFromLog(logPath)).to.deep.equal([10, 11]);
+  });
+
+  it('returns [] when the log file is absent', () => {
+    const { prNumbersFromLog } = loadPipeline();
+    expect(prNumbersFromLog('/no/such/file.ndjson')).to.deep.equal([]);
+  });
+});
+
+describe('run-pipeline prNumbersFromDrafts', () => {
+  it('extracts PR numbers from <pr>-<slug>.md draft filenames, ignoring others', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-pending-'));
+    fs.mkdirSync(path.join(base, 'contacts'));
+    fs.writeFileSync(path.join(base, 'contacts', '42-foo.md'), 'x');
+    fs.writeFileSync(path.join(base, 'contacts', 'README.txt'), 'x');
+    const { prNumbersFromDrafts } = loadPipeline();
+    expect(prNumbersFromDrafts(base)).to.deep.equal([42]);
+  });
+
+  it('returns [] when the output dir is absent', () => {
+    const { prNumbersFromDrafts } = loadPipeline();
+    expect(prNumbersFromDrafts('/no/such/dir')).to.deep.equal([]);
+  });
+});
+
+describe('run-pipeline getProcessedPRs', () => {
+  it('returns a Set (union of log + draft PR numbers)', () => {
+    const { getProcessedPRs } = loadPipeline();
+    expect(getProcessedPRs()).to.be.instanceOf(Set);
+  });
+});
+
+describe('run-pipeline resolvePrNumbers', () => {
+  const base = { prNumbers: undefined, repo: 'medic/cht-core', lookbackHours: 24, last: undefined, resume: false, force: false, concurrency: 1 };
+
+  it('uses an explicit --pr list as-is', () => {
+    const { resolvePrNumbers } = loadPipeline();
+    expect(resolvePrNumbers({ ...base, prNumbers: [1, 2] })).to.deep.equal([1, 2]);
+  });
+
+  it('fetches the newest --last PRs', () => {
+    const { resolvePrNumbers } = loadPipeline({ exec: () => JSON.stringify([{ number: 9 }]) });
+    expect(resolvePrNumbers({ ...base, last: 1 })).to.deep.equal([9]);
+  });
+
+  it('falls back to the --since lookback window', () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { resolvePrNumbers } = loadPipeline({ exec: () => JSON.stringify([{ number: 7, mergedAt: recent }]) });
+    expect(resolvePrNumbers({ ...base })).to.deep.equal([7]);
   });
 });
