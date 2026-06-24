@@ -1,0 +1,45 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(cht:*)",
+      "Bash(curl:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git restore:*)",
+      "Bash(git branch:*)",
+      "Bash(git stash:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(git clone:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git remote -v)",
+      "Bash(git remote show:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git remote add:*)",
+      "Bash(git remote remove:*)",
+      "Bash(git remote rename:*)",
+      "Bash(git config --system:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(sftp:*)",
+      "Bash(rm -rf:*)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)",
+      "Bash(sudo:*)",
+      "Bash(su:*)"
+    ]
+  }
+}

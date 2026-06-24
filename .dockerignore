@@ -1,0 +1,16 @@
+# Build context for docker/Dockerfile (context is the repo root).
+# agent-memory/ is intentionally INCLUDED — it is the context database the
+# agent reads at runtime.
+.git
+.claude
+.idea
+node_modules
+dist
+coverage
+.nyc_output
+outputs
+*.log
+.env
+.DS_Store
+*.tmp
+*.bak
