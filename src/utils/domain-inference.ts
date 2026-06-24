@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
+import { CHT_DOMAINS } from '../constants';
 
 interface DomainIndices {
   domainToComponents: Record<string, unknown> | null;
@@ -115,17 +116,8 @@ Pitfalls (Common Misclassifications to Avoid):
    → Don't put in-application code refactors, data-layer/storage-engine internals (UUID/ID generation, CouchDB/Nouveau/Lucene index design docs, B-tree concerns), or library dependency bumps that change app behavior into infrastructure — keep those in the closest functional domain (often data-sync).
 `;
 
-const VALID_DOMAINS: CHTDomain[] = [
-  'authentication',
-  'contacts',
-  'forms-and-reports',
-  'tasks-and-targets',
-  'messaging',
-  'data-sync',
-  'configuration',
-  'interoperability',
-  'infrastructure',
-];
+// Derived from the single taxonomy source so it can't drift from CHT_DOMAINS.
+const VALID_DOMAINS: readonly CHTDomain[] = CHT_DOMAINS;
 
 const extractJson = (content: string): string => {
   const jsonRegex = /\{[^{}]*(?:\{[^{}]*}[^{}]*)*}/;

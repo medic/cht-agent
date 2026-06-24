@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { IssueTemplate, CHTDomain, IssueType, Priority } from '../types';
+import { CHT_DOMAINS } from '../constants';
 
 export interface ValidationResult {
   valid: boolean;
@@ -59,16 +60,8 @@ const extractFrontmatter = (content: string): {
 
 const VALID_TYPES: IssueType[] = ['feature', 'bug', 'improvement'];
 const VALID_PRIORITIES: Priority[] = ['high', 'medium', 'low'];
-const VALID_DOMAINS: CHTDomain[] = [
-  'authentication',
-  'contacts',
-  'forms-and-reports',
-  'tasks-and-targets',
-  'messaging',
-  'data-sync',
-  'configuration',
-  'interoperability',
-];
+// Derived from the single taxonomy source so a new domain can't be silently rejected.
+const VALID_DOMAINS: readonly CHTDomain[] = CHT_DOMAINS;
 
 const validateType = (type: string): IssueType => {
   if (VALID_TYPES.includes(type as IssueType)) {
