@@ -373,6 +373,18 @@ export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
   return renderMarkdown(buildFrontmatter(draft, pr), draft);
 }
 
+/** Log a flag-for-human outcome to the audit log and return the result. */
+async function flagForHuman(prNumber: number, reason: string, logPath: string): Promise<DistillResult> {
+  const entry: SkipLogEntry = {
+    prNumber,
+    decision: 'flag-for-human',
+    reason,
+    timestamp: new Date().toISOString(),
+  };
+  await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
+  return { status: 'flag-for-human', reason };
+}
+
 /**
  * Distill a scraped PR into a schema-valid knowledge draft.
  * Writes the draft to agent-memory/_pending/<domain>/<prNumber>-<slug>.md.
@@ -396,36 +408,19 @@ export async function distillPR(
   try {
     draft = await distillFn(pr);
   } catch (err) {
-    // Rate/usage limits and auth failures are global, not a property of this PR
-    // — stop the whole batch (the runner catches this) so it can be fixed and resumed.
+    // Global failures (rate/usage limit, auth) stop the whole batch — the runner catches this.
     if (isBatchFatalError(err)) throw err;
-    const reason = err instanceof Error ? err.message : `Distill failed: ${String(err)}`;
-    const entry: SkipLogEntry = {
-      prNumber: pr.prNumber,
-      decision: 'flag-for-human',
-      reason,
-      timestamp: new Date().toISOString(),
-    };
-    await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
-    return { status: 'flag-for-human', reason };
+    return flagForHuman(pr.prNumber, err instanceof Error ? err.message : `Distill failed: ${String(err)}`, logPath);
   }
 
-  // Validate the assembled frontmatter against schema.json before writing, so a
-  // malformed draft is logged and skipped rather than committed to _pending/.
+  // Validate frontmatter against schema.json before writing, so a malformed
+  // draft is logged and skipped rather than committed to _pending/.
   const frontmatter = buildFrontmatter(draft, pr);
   if (!validateFrontmatter(frontmatter)) {
     const errors = (validateFrontmatter.errors ?? [])
       .map(e => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`)
       .join('; ');
-    const reason = `Distilled draft failed schema validation: ${errors}`;
-    const entry: SkipLogEntry = {
-      prNumber: pr.prNumber,
-      decision: 'flag-for-human',
-      reason,
-      timestamp: new Date().toISOString(),
-    };
-    await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
-    return { status: 'flag-for-human', reason };
+    return flagForHuman(pr.prNumber, `Distilled draft failed schema validation: ${errors}`, logPath);
   }
 
   const markdown = renderMarkdown(frontmatter, draft);

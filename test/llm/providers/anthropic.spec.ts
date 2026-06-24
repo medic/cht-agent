@@ -69,7 +69,7 @@ describe('createAnthropicProvider (v9a.6) — wiring', () => {
     const { createAnthropicProvider } = loadProvider(stub);
     createAnthropicProvider(baseConfig);
     const ctor = stub.getLastCtorArgs();
-    expect(ctor).to.not.equal(undefined);
+    expect(ctor).to.not.be.undefined;
     expect(ctor!.modelName).to.equal('claude-opus-4-6');
     expect(ctor!.anthropicApiKey).to.equal('sk-test');
     expect(ctor!.temperature).to.equal(0.3); // DEFAULT_CONFIG.temperature
@@ -137,7 +137,7 @@ describe('createAnthropicProvider invoke / invokeWithMessages', () => {
     const { createAnthropicProvider } = loadProvider(stub);
     const provider = createAnthropicProvider(baseConfig);
     const result = await provider.invoke('prompt');
-    expect(result.usage).to.equal(undefined);
+    expect(result.usage).to.be.undefined;
   });
 
   it('invokeWithMessages preserves system / user / assistant role mapping', async () => {
@@ -167,7 +167,7 @@ describe('createAnthropicProvider invoke / invokeWithMessages', () => {
     const provider = createAnthropicProvider(baseConfig);
     let caught: Error | null = null;
     try { await provider.invoke('prompt'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/401 Unauthorized/);
   });
 });
@@ -213,7 +213,7 @@ describe('createAnthropicProvider invokeForJSON', () => {
     const provider = loadProviderTyped(stub, baseConfig);
     let caught: Error | null = null;
     try { await provider.invokeForJSON<unknown>('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/did not contain valid JSON/);
   });
 
@@ -225,7 +225,7 @@ describe('createAnthropicProvider invokeForJSON', () => {
     const provider = loadProviderTyped(stub, baseConfig);
     let caught: Error | null = null;
     try { await provider.invokeForJSON<unknown>('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Failed to parse LLM response as JSON/);
   });
 });

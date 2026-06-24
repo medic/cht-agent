@@ -58,7 +58,7 @@ describe('run-pipeline parseArgs', () => {
     withArgv([]);
     const { parseArgs } = loadPipeline();
     const args = parseArgs();
-    expect(args.prNumbers).to.equal(undefined);
+    expect(args.prNumbers).to.be.undefined;
     expect(args.repo).to.equal('medic/cht-core');
     expect(args.lookbackHours).to.equal(24);
     expect(args.concurrency).to.equal(1);

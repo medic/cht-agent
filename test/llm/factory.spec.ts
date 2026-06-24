@@ -148,8 +148,8 @@ describe('llm/factory env-driven config readers', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test';
       const { getAPIConfigFromEnv } = loadFactory();
       const config = getAPIConfigFromEnv();
-      expect(config.temperature).to.equal(undefined);
-      expect(config.maxTokens).to.equal(undefined);
+      expect(config.temperature).to.be.undefined;
+      expect(config.maxTokens).to.be.undefined;
     });
   });
 

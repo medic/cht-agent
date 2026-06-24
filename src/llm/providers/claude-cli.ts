@@ -11,6 +11,7 @@
  */
 
 import { spawn, ChildProcess } from 'node:child_process';
+import { extractJsonObject } from '../json-extract';
 import {
   LLMProvider,
   LLMMessage,
@@ -242,14 +243,18 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       };
     }
 
-    // Claude CLI can include non-JSON content before the result
-    // Look for the JSON result object
-    const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch (e) {
-        console.error('[Claude CLI] Failed to parse matched JSON:', e);
+    // Claude CLI can include non-JSON content before the result object.
+    // Take the outermost { ... } span (linear) and use it if it's the result envelope.
+    const start = stdout.indexOf('{');
+    const end = stdout.lastIndexOf('}');
+    if (start !== -1 && end > start) {
+      const candidate = stdout.slice(start, end + 1);
+      if (/"type"\s*:\s*"result"/.test(candidate)) {
+        try {
+          return JSON.parse(candidate);
+        } catch (e) {
+          console.error('[Claude CLI] Failed to parse matched JSON:', e);
+        }
       }
     }
 
@@ -335,26 +340,20 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 IMPORTANT: Respond with valid JSON only. Do not include any text before or after the JSON object.`;
 
     const response = await invoke(jsonPrompt, options);
-    let content = response.content;
+    const content = response.content;
 
     // Check if content is empty or undefined
     if (!content || content.trim() === '') {
       throw new Error('CLI returned empty response');
     }
 
-    // Strip markdown code blocks if present
-    const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(content);
-    if (codeBlockMatch) {
-      content = codeBlockMatch[1].trim();
-    }
-
-    // Try to extract JSON object from the response
-    const jsonMatch = /\{[\s\S]*\}/.exec(content);
-    if (!jsonMatch) {
+    // Strip any ```json fence and extract the outermost JSON object.
+    const extracted = extractJsonObject(content);
+    if (!extracted) {
       throw new Error('CLI response did not contain valid JSON object');
     }
 
-    let jsonStr = jsonMatch[0];
+    let jsonStr = extracted;
 
     // Clean up common JSON issues
     jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
