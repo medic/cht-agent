@@ -350,14 +350,23 @@ interface BatchState {
   abortKind: 'rate' | 'auth' | null;
 }
 
+/** Immutable run config + mutable state shared across the concurrent workers. */
+interface BatchCtx {
+  prNumbers: number[];
+  repo: string;
+  force: boolean;
+  parallel: boolean;
+  state: BatchState;
+}
+
 /** Log the start line for a PR (a per-PR tag under concurrency). */
-function logPrStart(prNum: number, index: number, total: number, repo: string, parallel: boolean, tag: string): void {
-  if (parallel) {
-    console.log(`${tag} start (${index + 1}/${total}, ${repo})`);
+function logPrStart(ctx: BatchCtx, index: number, tag: string): void {
+  if (ctx.parallel) {
+    console.log(`${tag} start (${index + 1}/${ctx.prNumbers.length}, ${ctx.repo})`);
     return;
   }
   console.log(`\n${'─'.repeat(60)}`);
-  console.log(`PR #${prNum} (${repo})`);
+  console.log(`PR #${ctx.prNumbers[index]} (${ctx.repo})`);
 }
 
 /** Record a per-PR error; returns true if it's a global failure that stops the batch. */
@@ -374,24 +383,22 @@ function recordWorkerError(err: unknown, tag: string, state: BatchState): boolea
 }
 
 /** Process one PR; returns false if the batch should stop. */
-async function processBatchItem(
-  prNumbers: number[], index: number, repo: string, force: boolean, parallel: boolean, state: BatchState
-): Promise<boolean> {
-  const prNum = prNumbers[index];
-  const tag = parallel ? ` [#${prNum}]` : ' ';
-  logPrStart(prNum, index, prNumbers.length, repo, parallel, tag);
+async function processBatchItem(ctx: BatchCtx, index: number): Promise<boolean> {
+  const prNum = ctx.prNumbers[index];
+  const tag = ctx.parallel ? ` [#${prNum}]` : ' ';
+  logPrStart(ctx, index, tag);
   try {
-    await processSinglePR(prNum, repo, force, tag);
+    await processSinglePR(prNum, ctx.repo, ctx.force, tag);
     return true;
   } catch (err) {
-    return !recordWorkerError(err, tag, state);
+    return !recordWorkerError(err, tag, ctx.state);
   }
 }
 
 /** Pull-and-process loop: stops pulling new work once a global failure is hit. */
-async function runWorker(prNumbers: number[], repo: string, force: boolean, parallel: boolean, state: BatchState): Promise<void> {
-  while (!state.abortKind && state.nextIndex < prNumbers.length) {
-    const keepGoing = await processBatchItem(prNumbers, state.nextIndex++, repo, force, parallel, state);
+async function runWorker(ctx: BatchCtx): Promise<void> {
+  while (!ctx.state.abortKind && ctx.state.nextIndex < ctx.prNumbers.length) {
+    const keepGoing = await processBatchItem(ctx, ctx.state.nextIndex++);
     if (!keepGoing) break;
   }
 }
@@ -413,9 +420,9 @@ function reportOutcome(total: number, state: BatchState): void {
 
 export async function runPipeline(prNumbers: number[], repo: string, force = false, concurrency = 1): Promise<void> {
   const state: BatchState = { failures: 0, nextIndex: 0, abortKind: null };
-  const parallel = concurrency > 1;
+  const ctx: BatchCtx = { prNumbers, repo, force, parallel: concurrency > 1, state };
   const count = Math.min(concurrency, prNumbers.length);
-  const workers = Array.from({ length: count }, () => runWorker(prNumbers, repo, force, parallel, state));
+  const workers = Array.from({ length: count }, () => runWorker(ctx));
   await Promise.all(workers);
   reportOutcome(prNumbers.length, state);
 }
