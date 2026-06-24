@@ -11,13 +11,28 @@ import * as path from 'node:path';
 export const DEFAULT_MCP_SERVER_URL = 'https://mcp-docs.dev.medicmobile.org/mcp';
 
 /**
- * The 8 functional domains of the CHT project.
+ * The functional domains of the CHT project.
  * Used by the memory pipeline (distiller, filter) and knowledge utilities.
  */
 export const CHT_DOMAINS = [
   'authentication', 'contacts', 'forms-and-reports', 'tasks-and-targets',
-  'messaging', 'data-sync', 'configuration', 'interoperability',
+  'messaging', 'data-sync', 'configuration', 'interoperability', 'infrastructure',
 ] as const;
+
+/**
+ * Cross-domain workflow processes and technical workstreams.
+ * Mirrors the CHTWorkflow type and the schema.json CHTWorkflow enum — keep in sync.
+ */
+export const CHT_WORKFLOWS = [
+  'form-submission', 'user-registration', 'contact-creation', 'task-scheduling',
+  'message-processing', 'data-migration', 'ui-extensions', 'nouveau-search', 'observability',
+] as const;
+
+/**
+ * CHT services. Mirrors the CHTService type and the schema.json CHTService enum
+ * — the taxonomy-schema-sync test asserts they stay equal.
+ */
+export const CHT_SERVICES = ['api', 'webapp', 'sentinel', 'admin'] as const;
 
 /** Audit log for PRs that were skipped or flagged during pipeline processing. */
 export const DEFAULT_PIPELINE_LOG_PATH = path.join(

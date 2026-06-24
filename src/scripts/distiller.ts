@@ -13,6 +13,9 @@ import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { isBatchFatalError } from '../llm/rate-limit';
+import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../utils/domain-inference';
 import { z } from 'zod';
 import type {
   ScrapedPR,
@@ -21,10 +24,9 @@ import type {
   DistillOptions,
   SkipLogEntry,
 } from '../types/pipeline';
-import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
+import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { buildValidator } from './schema-utils';
 
-const CHT_SERVICES = ['api', 'webapp', 'sentinel', 'admin'] as const;
 
 // Compiled once — the same validator open-review-pr re-runs before promotion.
 // Validating here means malformed drafts never reach committed _pending/.
@@ -45,12 +47,15 @@ const REVIEW_BODY_LIMIT = 300;
 
 const draftSchema = z.object({
   domain: z.enum(CHT_DOMAINS),
+  domainFit: z.enum(['strong', 'weak']),
+  domainReasoning: z.string().min(1),
   title: z.string().min(1).max(200),
   category: z.enum(['bug', 'feature', 'improvement']),
   summary: z.string().min(1),
   services: z.array(z.enum(CHT_SERVICES)).min(1),
   techStack: z.array(z.string().min(1)).min(1),
   tags: z.array(z.string()),
+  relatedWorkflows: z.array(z.enum(CHT_WORKFLOWS)),
   entities: z.array(z.string()),
   concepts: z.array(z.string()),
   problem: z.string().min(1),
@@ -59,14 +64,49 @@ const draftSchema = z.object({
   codePatterns: z.string(),
   designChoices: z.string(),
   relatedFiles: z.array(z.string()),
+  testing: z.string(),
+  relatedIssues: z.array(z.string()),
 });
 
 // Cached on first call — avoids recreating the client for each PR in a batch
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _distillChain: any;
 
+// JSON shape appended to the prompt in CLI mode (no response_format channel).
+// Mirrors draftSchema — keep the two in sync.
+const DRAFT_SHAPE = `{
+  "domain": ${CHT_DOMAINS.map(d => `"${d}"`).join(' | ')},
+  "domainFit": "strong" | "weak",
+  "domainReasoning": "<1-2 sentences: why this domain, and what made it weak if so>",
+  "title": "<concise title ≤200 chars describing the change>",
+  "category": "bug" | "feature" | "improvement",
+  "summary": "<1-2 sentence summary of the problem and resolution>",
+  "services": ["<one or more of: api, webapp, sentinel, admin>"],
+  "techStack": ["<technologies touched, e.g. typescript, couchdb, angular>"],
+  "tags": ["<tag>", ...],
+  "relatedWorkflows": [<zero or more of: ${CHT_WORKFLOWS.join(', ')}>],
+  "entities": ["<file or module path>", ...],
+  "concepts": ["<architectural concept>", ...],
+  "problem": "<what was wrong>",
+  "rootCause": "<why it was wrong>",
+  "solution": "<how it was fixed>",
+  "codePatterns": "<reusable patterns, may be empty string>",
+  "designChoices": "<design decisions, may be empty string>",
+  "relatedFiles": ["<path>", ...],
+  "testing": "<how the change was tested — tests added/modified, strategy; may be empty string>",
+  "relatedIssues": ["#<issue>: <brief description>", ...]
+}`;
+
 function getDistillChain() {
   if (_distillChain !== undefined) return _distillChain;
+
+  // CLI mode: run on the operator's Claude subscription via `claude -p`,
+  // no API key needed. DISTILL_MODEL does not apply — the CLI uses one model
+  // for all pipeline steps. Takes precedence over API keys when set.
+  if (isUsingCLIProvider()) {
+    _distillChain = createStructuredCliChain(draftSchema, DRAFT_SHAPE);
+    return _distillChain;
+  }
 
   const openrouterKey = process.env.OPENROUTER_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -117,8 +157,19 @@ function buildPrompt(pr: ScrapedPR): string {
 
 Analyse this merged GitHub PR and produce a structured knowledge entry for the agent memory system.
 
-The CHT has 8 functional domains — pick the most specific one that fits:
+The CHT has ${CHT_DOMAINS.length} functional domains — pick the most specific one that fits:
   ${CHT_DOMAINS.join(', ')}
+${DOMAIN_EXAMPLES}
+${DOMAIN_PITFALLS}
+Set "domainFit" honestly: "strong" when the PR squarely belongs to the chosen
+domain, "weak" when no domain is a principled match and you picked the least-bad
+option. CI/build/deploy/upgrade-lifecycle work belongs to the "infrastructure"
+domain (strong) — do not force such PRs into configuration. Explain the choice in
+"domainReasoning" so a human reviewer can audit or re-bin the draft.
+
+Set "relatedWorkflows" to the cross-domain workstreams this PR is part of —
+choose zero or more from: ${CHT_WORKFLOWS.join(', ')}. Use it for work that
+spans domains (e.g. UI extensions, Nouveau search, observability); [] if none.
 
 PR #${pr.prNumber}: ${pr.prTitle}
 Labels: ${pr.labels.join(', ') || 'none'}
@@ -134,13 +185,16 @@ ${reviewContext ? `\nReview comments:\n${reviewContext}` : ''}
 
 Respond with a JSON object matching this structure exactly:
 {
-  "domain": "<one of the 8 domains above>",
+  "domain": "<one of the domains above>",
+  "domainFit": "strong" | "weak",
+  "domainReasoning": "<1-2 sentences: why this domain, and what made it weak if so>",
   "title": "<concise title ≤200 chars describing the change>",
   "category": "bug" | "feature" | "improvement",
   "summary": "<1-2 sentence summary of the problem and resolution>",
   "services": ["<one or more of: api, webapp, sentinel, admin>"],
   "techStack": ["<technologies touched, e.g. typescript, couchdb, angular>"],
   "tags": ["<tag1>", "<tag2>"],
+  "relatedWorkflows": ["<0+ cross-domain workstreams this PR is part of, from the list above; [] if none>"],
   "entities": ["<file or module path>"],
   "concepts": ["<architectural concept>"],
   "problem": "<what was wrong — symptoms, affected users, error messages>",
@@ -148,7 +202,9 @@ Respond with a JSON object matching this structure exactly:
   "solution": "<how it was fixed — approach and key changes>",
   "codePatterns": "<reusable patterns from this fix with file paths>",
   "designChoices": "<why this approach over alternatives>",
-  "relatedFiles": ["<path1>", "<path2>"]
+  "relatedFiles": ["<path1>", "<path2>"],
+  "testing": "<how the change was tested — tests added/modified, strategy; may be empty string>",
+  "relatedIssues": ["#<issue>: <brief description>"]
 }`;
 }
 
@@ -216,6 +272,7 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
     id: `cht-core-${issueNumber}`,
     category: draft.category,
     domain: draft.domain,
+    domainFit: draft.domainFit,
     issueNumber,
     issueUrl: `https://github.com/medic/cht-core/issues/${issueNumber}`,
     title: draft.title,
@@ -224,6 +281,7 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
     services: draft.services,
     techStack: draft.techStack,
     tags: draft.tags,
+    related_workflows: draft.relatedWorkflows,
     source_pr: `medic/cht-core#${pr.prNumber}`,
     source_sha: pr.mergeSha,
     distilled_at: today,
@@ -232,6 +290,8 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
     confidence: 'medium',
     entities: draft.entities,
     concepts: draft.concepts,
+    // Cross-links to other agent-memory entries (populated by a later post-pass);
+    // distinct from the GitHub issues in the draft body's ## Related Issues section.
     related_issues: [],
     stale: false,
   };
@@ -246,6 +306,12 @@ function renderMarkdown(frontmatter: Record<string, unknown>, draft: DistillDraf
 
   const relatedFilesSection = draft.relatedFiles.length > 0
     ? draft.relatedFiles.map(f => `- ${f}`).join('\n')
+    : '_none_';
+
+  const testingSection = draft.testing.trim() || '_none_';
+
+  const relatedIssuesSection = draft.relatedIssues.length > 0
+    ? draft.relatedIssues.map(i => `- ${i}`).join('\n')
     : '_none_';
 
   return [
@@ -276,6 +342,20 @@ function renderMarkdown(frontmatter: Record<string, unknown>, draft: DistillDraf
     `## Related Files`,
     '',
     relatedFilesSection,
+    '',
+    `## Testing`,
+    '',
+    testingSection,
+    '',
+    `## Related Issues`,
+    '',
+    relatedIssuesSection,
+    '',
+    `## Domain Rationale`,
+    '',
+    `**Fit:** ${draft.domainFit}`,
+    '',
+    draft.domainReasoning,
     '',
   ].join('\n');
 }
@@ -316,6 +396,9 @@ export async function distillPR(
   try {
     draft = await distillFn(pr);
   } catch (err) {
+    // Rate/usage limits and auth failures are global, not a property of this PR
+    // — stop the whole batch (the runner catches this) so it can be fixed and resumed.
+    if (isBatchFatalError(err)) throw err;
     const reason = err instanceof Error ? err.message : `Distill failed: ${String(err)}`;
     const entry: SkipLogEntry = {
       prNumber: pr.prNumber,

@@ -1,20 +1,8 @@
 /**
- * Detects whether a thrown error represents an LLM rate / usage limit.
- *
- * Covers the API path (HTTP 429, Anthropic `rate_limit_error`, "too many
- * requests") and the Claude Code CLI path (a subscription "usage limit
- * reached" message surfaced as a `Claude CLI error: ...`).
- *
- * The seeding pipeline stops the whole batch when this is true — rather than
- * flagging each PR for human review — so a throttled run can be resumed later
- * (`--resume`) once the limit resets, without burning the audit log.
- *
- * @example
- * ```typescript
- * isRateLimitError(new Error('HTTP 429: rate limit exceeded')); // true
- * isRateLimitError(new Error('Claude usage limit reached'));     // true
- * isRateLimitError(new Error('scrape failed'));                  // false
- * ```
+ * Detects an LLM rate / usage limit — HTTP 429, Anthropic `rate_limit_error`,
+ * "too many requests", or a Claude CLI subscription "session/usage limit" message.
+ * Global condition: the runner stops the whole batch (resumable via --resume)
+ * rather than flagging each PR.
  */
 export function isRateLimitError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
@@ -32,19 +20,9 @@ export function isRateLimitError(err: unknown): boolean {
 }
 
 /**
- * Detects whether a thrown error is an authentication failure (e.g. an expired
- * or missing Claude OAuth token surfaced as `401 Invalid authentication
- * credentials`, or "Failed to authenticate").
- *
- * Like a rate limit, this is a GLOBAL condition — every PR will fail until the
- * operator re-logs in (`docker exec -it cht-seeder claude`) — so the seeding
- * pipeline stops the whole batch rather than flagging each PR for human review.
- *
- * @example
- * ```typescript
- * isAuthError(new Error('Claude CLI error: Failed to authenticate. API Error: 401 Invalid authentication credentials')); // true
- * isAuthError(new Error('scrape failed')); // false
- * ```
+ * Detects an authentication failure (401 / "Failed to authenticate" / expired
+ * Claude OAuth). Like a rate limit it's global — every PR fails until re-login —
+ * so the runner stops the batch rather than flagging each PR.
  */
 export function isAuthError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
@@ -58,11 +36,7 @@ export function isAuthError(err: unknown): boolean {
   );
 }
 
-/**
- * True for errors that are global (not a property of the current PR) and should
- * stop the whole batch so the operator can fix the cause and resume: LLM
- * rate/usage limits and authentication failures.
- */
+/** Global errors (rate limit or auth) that should stop the batch, not flag one PR. */
 export function isBatchFatalError(err: unknown): boolean {
   return isRateLimitError(err) || isAuthError(err);
 }
