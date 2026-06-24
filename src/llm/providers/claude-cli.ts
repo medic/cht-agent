@@ -74,6 +74,24 @@ function totalLength(chunks: string[]): number {
 }
 
 /**
+ * Extract the CLI's JSON result envelope from stdout (which may have leading
+ * non-JSON noise). Returns null if no result envelope is found. Linear scan.
+ */
+function extractResultEnvelope(stdout: string): CLIResponse | null {
+  const start = stdout.indexOf('{');
+  const end = stdout.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+  const candidate = stdout.slice(start, end + 1);
+  if (!/"type"\s*:\s*"result"/.test(candidate)) return null;
+  try {
+    return JSON.parse(candidate) as CLIResponse;
+  } catch (e) {
+    console.error('[Claude CLI] Failed to parse matched JSON:', e);
+    return null;
+  }
+}
+
+/**
  * Create a Claude CLI LLM provider
  *
  * This provider spawns the Claude Code CLI for each request,
@@ -244,19 +262,8 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
     }
 
     // Claude CLI can include non-JSON content before the result object.
-    // Take the outermost { ... } span (linear) and use it if it's the result envelope.
-    const start = stdout.indexOf('{');
-    const end = stdout.lastIndexOf('}');
-    if (start !== -1 && end > start) {
-      const candidate = stdout.slice(start, end + 1);
-      if (/"type"\s*:\s*"result"/.test(candidate)) {
-        try {
-          return JSON.parse(candidate);
-        } catch (e) {
-          console.error('[Claude CLI] Failed to parse matched JSON:', e);
-        }
-      }
-    }
+    const envelope = extractResultEnvelope(stdout);
+    if (envelope) return envelope;
 
     // Try parsing the entire output as JSON
     try {

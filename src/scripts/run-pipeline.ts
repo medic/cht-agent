@@ -129,34 +129,35 @@ function parseRepoArg(raw: string | undefined): string {
   return raw;
 }
 
-// NOSONAR_BEGIN — cognitive complexity here is inherent to validating six CLI
-// flags; extracting per-flag helpers would fragment a flat, readable parser.
+/** Read an integer flag (validated positive) or return the fallback. */
+function intFlag(args: string[], flag: string, fallback: number): number {
+  const idx = args.indexOf(flag);
+  return idx >= 0 ? parsePositiveIntArg(args[idx + 1], flag) : fallback;
+}
+
+/** Parse --pr: a single number or comma-separated list, or undefined if absent. */
+function parsePrList(args: string[]): number[] | undefined {
+  const idx = args.indexOf('--pr');
+  if (idx < 0) return undefined;
+  return (args[idx + 1] ?? '').split(',').map(s => parsePositiveIntArg(s.trim() || undefined, '--pr'));
+}
+
 export function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
-  const prIdx = args.indexOf('--pr');
   const repoIdx = args.indexOf('--repo');
-  const sinceIdx = args.indexOf('--since');
   const lastIdx = args.indexOf('--last');
-  const concIdx = args.indexOf('--concurrency');
-
-  const concurrency = concIdx >= 0
-    ? parsePositiveIntArg(args[concIdx + 1], '--concurrency')
-    : envConcurrency();
+  const concurrency = Math.max(1, Math.min(intFlag(args, '--concurrency', envConcurrency()), MAX_CONCURRENCY));
 
   return {
-    // --pr accepts a single number or a comma-separated list (--pr 123,456)
-    prNumbers: prIdx >= 0
-      ? (args[prIdx + 1] ?? '').split(',').map(s => parsePositiveIntArg(s.trim() || undefined, '--pr'))
-      : undefined,
+    prNumbers: parsePrList(args),
     repo: repoIdx >= 0 ? parseRepoArg(args[repoIdx + 1]) : DEFAULT_REPO,
-    lookbackHours: sinceIdx >= 0 ? parsePositiveIntArg(args[sinceIdx + 1], '--since') : DEFAULT_LOOKBACK_HOURS,
+    lookbackHours: intFlag(args, '--since', DEFAULT_LOOKBACK_HOURS),
     last: lastIdx >= 0 ? parsePositiveIntArg(args[lastIdx + 1], '--last') : undefined,
     resume: args.includes('--resume'),
     force: args.includes('--force'),
-    concurrency: Math.max(1, Math.min(concurrency, MAX_CONCURRENCY)),
+    concurrency,
   };
 }
-// NOSONAR_END
 
 /**
  * Fetches PR numbers merged into the default branch within the last `hours`.
@@ -213,45 +214,58 @@ export function getLastMergedPRs(repo: string, count: number): number[] {
  * [101, 102].filter(n => !done.has(n));
  * ```
  */
+/** Parse a PR number from one audit-log line, or null if absent/malformed. */
+function prFromLogLine(line: string): number | null {
+  if (!line.trim()) return null;
+  try {
+    const entry = JSON.parse(line) as { prNumber?: number };
+    return typeof entry.prNumber === 'number' ? entry.prNumber : null;
+  } catch {
+    return null;
+  }
+}
+
+/** PR numbers recorded in the audit log (skip / flag-for-human entries). */
+function prNumbersFromLog(logPath: string): number[] {
+  let log: string;
+  try {
+    log = fs.readFileSync(logPath, 'utf8');
+  } catch {
+    return [];
+  }
+  return log.split('\n').map(prFromLogLine).filter((n): n is number => n !== null);
+}
+
+/** PR numbers with a draft `<prNumber>-<slug>.md` in one _pending/<domain>/ dir. */
+function prNumbersFromDraftDir(dir: string): number[] {
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return files
+    .map(f => /^(\d+)-.*\.md$/.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map(m => Number.parseInt(m[1], 10));
+}
+
+/** PR numbers with a draft under any _pending/<domain>/ dir. */
+function prNumbersFromDrafts(outputDir: string): number[] {
+  let domains: string[];
+  try {
+    domains = fs.readdirSync(outputDir);
+  } catch {
+    return [];
+  }
+  return domains.flatMap(d => prNumbersFromDraftDir(path.join(outputDir, d)));
+}
+
 export function getProcessedPRs(): Set<number> {
-  const processed = new Set<number>();
-
-  try {
-    const log = fs.readFileSync(DEFAULT_PIPELINE_LOG_PATH, 'utf8');
-    for (const line of log.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        const entry = JSON.parse(line) as { prNumber?: number };
-        if (typeof entry.prNumber === 'number') processed.add(entry.prNumber);
-      } catch {
-        // malformed log line — ignore
-      }
-    }
-  } catch {
-    // no log yet
-  }
-
-  // Draft filenames are `<prNumber>-<slug>.md` under _pending/<domain>/
-  let domains: string[] = [];
-  try {
-    domains = fs.readdirSync(DEFAULT_PIPELINE_OUTPUT_DIR);
-  } catch {
-    return processed;
-  }
-  for (const domain of domains) {
-    let files: string[] = [];
-    try {
-      files = fs.readdirSync(path.join(DEFAULT_PIPELINE_OUTPUT_DIR, domain));
-    } catch {
-      continue;
-    }
-    for (const file of files) {
-      const match = /^(\d+)-.*\.md$/.exec(file);
-      if (match) processed.add(Number.parseInt(match[1], 10));
-    }
-  }
-
-  return processed;
+  return new Set([
+    ...prNumbersFromLog(DEFAULT_PIPELINE_LOG_PATH),
+    ...prNumbersFromDrafts(DEFAULT_PIPELINE_OUTPUT_DIR),
+  ]);
 }
 
 /**
@@ -330,60 +344,81 @@ export async function processSinglePR(prNum: number, repo: string, force = false
  * @param force       - Bypass the filter stage entirely.
  * @param concurrency - Number of PRs in flight at once (1 = serial).
  */
-// NOSONAR_BEGIN — the worker-pool loop + global-abort handling is one coherent
-// concurrency primitive; fragmenting it to hit CC 5 would obscure the control flow.
-export async function runPipeline(prNumbers: number[], repo: string, force = false, concurrency = 1): Promise<void> {
-  let failures = 0;
-  let nextIndex = 0;
-  let abortKind: 'rate' | 'auth' | null = null;
-  const parallel = concurrency > 1;
+interface BatchState {
+  failures: number;
+  nextIndex: number;
+  abortKind: 'rate' | 'auth' | null;
+}
 
-  const worker = async (): Promise<void> => {
-    // Stop pulling new work once a global failure is hit; in-flight PRs finish.
-    while (!abortKind && nextIndex < prNumbers.length) {
-      const index = nextIndex++;
-      const prNum = prNumbers[index];
-      const tag = parallel ? ` [#${prNum}]` : ' ';
-      if (parallel) {
-        console.log(`${tag} start (${index + 1}/${prNumbers.length}, ${repo})`);
-      } else {
-        console.log(`\n${'─'.repeat(60)}`);
-        console.log(`PR #${prNum} (${repo})`);
-      }
-      try {
-        await processSinglePR(prNum, repo, force, tag);
-      } catch (err) {
-        if (isBatchFatalError(err)) {
-          abortKind = isAuthError(err) ? 'auth' : 'rate';
-          const label = abortKind === 'auth' ? 'AUTH ERROR' : 'RATE LIMIT';
-          console.error(`${tag} ${label} — stopping the batch: ${errorMessage(err)}`);
-          break;
-        }
-        console.error(`${tag} ERROR: ${errorMessage(err)}`);
-        failures++;
-      }
-    }
-  };
-
-  const workers = Array.from({ length: Math.min(concurrency, prNumbers.length) }, () => worker());
-  await Promise.all(workers);
-
+/** Log the start line for a PR (a per-PR tag under concurrency). */
+function logPrStart(prNum: number, index: number, total: number, repo: string, parallel: boolean, tag: string): void {
+  if (parallel) {
+    console.log(`${tag} start (${index + 1}/${total}, ${repo})`);
+    return;
+  }
   console.log(`\n${'─'.repeat(60)}`);
+  console.log(`PR #${prNum} (${repo})`);
+}
 
-  if (abortKind === 'auth') {
+/** Record a per-PR error; returns true if it's a global failure that stops the batch. */
+function recordWorkerError(err: unknown, tag: string, state: BatchState): boolean {
+  if (isBatchFatalError(err)) {
+    state.abortKind = isAuthError(err) ? 'auth' : 'rate';
+    const label = state.abortKind === 'auth' ? 'AUTH ERROR' : 'RATE LIMIT';
+    console.error(`${tag} ${label} — stopping the batch: ${errorMessage(err)}`);
+    return true;
+  }
+  console.error(`${tag} ERROR: ${errorMessage(err)}`);
+  state.failures++;
+  return false;
+}
+
+/** Process one PR; returns false if the batch should stop. */
+async function processBatchItem(
+  prNumbers: number[], index: number, repo: string, force: boolean, parallel: boolean, state: BatchState
+): Promise<boolean> {
+  const prNum = prNumbers[index];
+  const tag = parallel ? ` [#${prNum}]` : ' ';
+  logPrStart(prNum, index, prNumbers.length, repo, parallel, tag);
+  try {
+    await processSinglePR(prNum, repo, force, tag);
+    return true;
+  } catch (err) {
+    return !recordWorkerError(err, tag, state);
+  }
+}
+
+/** Pull-and-process loop: stops pulling new work once a global failure is hit. */
+async function runWorker(prNumbers: number[], repo: string, force: boolean, parallel: boolean, state: BatchState): Promise<void> {
+  while (!state.abortKind && state.nextIndex < prNumbers.length) {
+    const keepGoing = await processBatchItem(prNumbers, state.nextIndex++, repo, force, parallel, state);
+    if (!keepGoing) break;
+  }
+}
+
+/** Print the run summary and exit non-zero on abort or failures. */
+function reportOutcome(total: number, state: BatchState): void {
+  console.log(`\n${'─'.repeat(60)}`);
+  if (state.abortKind === 'auth') {
     console.log('Stopped early: Claude authentication failed (401). Re-login in the container — `docker exec -it cht-seeder claude` then run /login — and re-run with --resume.');
     process.exit(RATE_LIMIT_EXIT_CODE);
   }
-  if (abortKind === 'rate') {
+  if (state.abortKind === 'rate') {
     console.log('Stopped early: LLM rate/usage limit hit. Re-run with --resume once it resets to continue.');
     process.exit(RATE_LIMIT_EXIT_CODE);
   }
-
-  console.log(`Done. Processed ${prNumbers.length} PR(s), ${failures} failure(s).`);
-
-  if (failures > 0) process.exit(1);
+  console.log(`Done. Processed ${total} PR(s), ${state.failures} failure(s).`);
+  if (state.failures > 0) process.exit(1);
 }
-// NOSONAR_END
+
+export async function runPipeline(prNumbers: number[], repo: string, force = false, concurrency = 1): Promise<void> {
+  const state: BatchState = { failures: 0, nextIndex: 0, abortKind: null };
+  const parallel = concurrency > 1;
+  const count = Math.min(concurrency, prNumbers.length);
+  const workers = Array.from({ length: count }, () => runWorker(prNumbers, repo, force, parallel, state));
+  await Promise.all(workers);
+  reportOutcome(prNumbers.length, state);
+}
 
 /**
  * Resolves the PR list from the parsed args: an explicit --pr list, else the
