@@ -3,18 +3,13 @@
  * Based on the domain-first context structure
  */
 
+import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS } from '../constants';
+
 /**
- * CHT Domains based on functional areas
+ * CHT Domains based on functional areas.
+ * Derived from CHT_DOMAINS — the single TS source of truth (mirrored in schema.json).
  */
-export type CHTDomain =
-  | 'authentication'
-  | 'contacts'
-  | 'forms-and-reports'
-  | 'tasks-and-targets'
-  | 'messaging'
-  | 'data-sync'
-  | 'configuration'
-  | 'interoperability';
+export type CHTDomain = (typeof CHT_DOMAINS)[number];
 
 /**
  * Issue type classification
@@ -106,9 +101,16 @@ export interface DomainOverviewMetadata {
 }
 
 /**
- * CHT Services
+ * CHT Services. Derived from CHT_SERVICES (mirrored in schema.json).
  */
-export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+export type CHTService = (typeof CHT_SERVICES)[number];
+
+/**
+ * Cross-domain workflow processes and technical workstreams. A draft keeps one
+ * primary domain and links cross-cutting work here, rather than splitting into
+ * sub-domains (see docs/domain-taxonomy-findings.md). Derived from CHT_WORKFLOWS.
+ */
+export type CHTWorkflow = (typeof CHT_WORKFLOWS)[number];
 
 /**
  * Workflow step

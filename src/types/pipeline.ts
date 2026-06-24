@@ -97,19 +97,10 @@ export interface FilterOptions {
   triageFn?: (pr: ScrapedPR) => Promise<FilterResult>;
 }
 
-/** The 8 functional CHT domains — matches the domain enum in schema.json */
-export type CHTDomain =
-  | 'authentication'
-  | 'contacts'
-  | 'forms-and-reports'
-  | 'tasks-and-targets'
-  | 'messaging'
-  | 'data-sync'
-  | 'configuration'
-  | 'interoperability';
-
-/** CHT services — matches the CHTService enum in schema.json */
-export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+// Single source of truth lives in ../types (derived from ../constants); re-exported
+// here so pipeline consumers can keep importing these from one module.
+import type { CHTDomain, CHTService, CHTWorkflow } from './index';
+export type { CHTDomain, CHTService, CHTWorkflow };
 
 /**
  * The structured output the LLM returns when distilling a PR.
@@ -117,6 +108,10 @@ export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
  */
 export interface DistillDraft {
   domain: CHTDomain;
+  /** Whether the chosen domain is a principled match or a forced least-bad pick */
+  domainFit: 'strong' | 'weak';
+  /** The model's rationale for the domain choice — emitted into the draft for reviewers */
+  domainReasoning: string;
   title: string;
   category: 'bug' | 'feature' | 'improvement';
   summary: string;
@@ -125,6 +120,8 @@ export interface DistillDraft {
   /** Technologies relevant to the fix (schema-required, min 1) */
   techStack: string[];
   tags: string[];
+  /** Cross-domain workstreams this PR participates in (0+; empty if none) */
+  relatedWorkflows: CHTWorkflow[];
   /** Referenced files, modules, or named patterns */
   entities: string[];
   /** Referenced architectural or domain concepts */
@@ -135,6 +132,10 @@ export interface DistillDraft {
   codePatterns: string;
   designChoices: string;
   relatedFiles: string[];
+  /** How the change was tested — body for the `## Testing` section */
+  testing: string;
+  /** Related cht-core issues/PRs (e.g. "#123: desc") — body for `## Related Issues` */
+  relatedIssues: string[];
 }
 
 /** Outcome of the distill stage for a single PR */
