@@ -1,0 +1,91 @@
+---
+id: cht-core-10278
+category: bug
+domain: configuration
+domainFit: strong
+issueNumber: 10278
+issueUrl: https://github.com/medic/cht-core/issues/10278
+title: Defensively handle malformed partners branding document missing its 'resources' property to prevent fatal crashes in Admin app and Webapp
+lastUpdated: '2026-06-22'
+summary: A malformed partners document (empty content {}) uploaded via the cht tool caused fatal TypeErrors in both the Admin app and Webapp because code assumed the resources property existed. The fix adds null checks and initializes an empty resources object so the UI stays functional and users can repair the document.
+services:
+  - admin
+  - webapp
+techStack:
+  - javascript
+  - typescript
+  - angularjs
+  - angular
+  - couchdb
+tags:
+  - defensive-programming
+  - null-check
+  - branding
+  - partners-doc
+  - resource-icons
+  - error-handling
+  - graceful-degradation
+  - about-page
+related_workflows: []
+source_pr: medic/cht-core#10278
+source_sha: 9b26cbd0e20b6f3ba44aaa4fb6e90f91c2592aec
+distilled_at: '2026-06-22'
+reviewed_by: null
+reviewed_at: null
+confidence: medium
+entities:
+  - admin/src/js/controllers/images-partners.js
+  - admin/src/js/services/resource-icons.js
+  - webapp/src/ts/services/resource-icons.service.ts
+concepts:
+  - defensive null-checking
+  - graceful degradation
+  - resource icon documents
+  - CouchDB attachment resources
+  - branding configuration
+related_issues: []
+stale: false
+---
+
+## Problem
+
+When a malformed partners document with content {} was uploaded via the cht tool, both the Admin app and Webapp threw fatal TypeErrors that completely blocked functionality. Admin app: 'TypeError: Cannot set properties of undefined (setting partner-name)' when saving partners, and 'TypeError: Cannot convert undefined or null to object' when loading the partners page. Webapp: 'TypeError: Cannot convert undefined or null to object' when accessing the About page. Users could neither access nor fix the malformed document.
+
+## Root Cause
+
+The code assumed the partners document's resources property always existed — calling Object.keys(res.resources) in getDocResources and writing partner properties onto doc.resources without an existence check. A malformed document lacking the resources property therefore triggered TypeErrors on load, save, and About-page render.
+
+## Solution
+
+Added null checks and lazy initialization of an empty resources object when it is missing. In the Admin controller (images-partners.js), resources is initialized during document loading and attachment operations; in both the Admin service (resource-icons.js) and the Webapp service (resource-icons.service.ts), getDocResources returns an empty array when resources is absent. This keeps the UI usable so users can view and edit the partners list to correct the malformed document instead of crashing.
+
+## Code Patterns
+
+Guard before iterating object keys: have getDocResources return [] when res.resources is missing (admin/src/js/services/resource-icons.js, webapp/src/ts/services/resource-icons.service.ts) rather than calling Object.keys on undefined; initialize doc.resources = {} before writing partner properties on load and during attachment ops (admin/src/js/controllers/images-partners.js).
+
+## Design Choices
+
+Chose graceful degradation over rejecting/validating the bad document: initializing an empty resources object keeps the UI functional so users can repair the document in-place. Per review feedback, redundant resource initialization was removed, tests were consolidated to cut duplication, one-liner style was applied, and a browserify-compatibility const was documented.
+
+## Related Files
+
+- admin/src/js/controllers/images-partners.js
+- admin/src/js/services/resource-icons.js
+- admin/tests/unit/controllers/images-partners.spec.js
+- admin/tests/unit/services/resource-icon.spec.js
+- webapp/src/ts/services/resource-icons.service.ts
+- webapp/tests/karma/ts/services/resource-icon.service.spec.ts
+
+## Testing
+
+Added comprehensive unit tests covering all malformed-document scenarios, including a new Admin controller test file (images-partners.spec.js), plus updates to the Admin service spec and the Webapp Karma service spec. Tests were consolidated during review to reduce duplication. Reviewer witash also verified the fix locally.
+
+## Related Issues
+
+- #8027: malformed partners document (content {}) causes fatal crashes blocking the Admin partners page/save and the Webapp About page
+
+## Domain Rationale
+
+**Fit:** strong
+
+The PR fixes crash handling for the 'partners' branding document (partner logos/resource icons shown on the About page and managed via the Admin app's images-partners section). App branding and resource-document config are canonically the configuration domain.
