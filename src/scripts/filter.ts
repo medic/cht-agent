@@ -146,19 +146,10 @@ let _triageChain: any;
 // JSON shape appended to the prompt in CLI mode (no response_format channel).
 const TRIAGE_SHAPE = '{"decision": "distill" | "skip" | "flag-for-human", "reason": "<short explanation>"}';
 
-function getTriageChain() {
-  if (_triageChain !== undefined) return _triageChain;
-
-  // CLI mode: run triage on the operator's Claude subscription via `claude -p`,
-  // no API key needed. Takes precedence over API keys when set.
-  if (isUsingCLIProvider()) {
-    _triageChain = createStructuredCliChain(triageSchema, TRIAGE_SHAPE);
-    return _triageChain;
-  }
-
+// Build the API-mode triage chain: OpenRouter if its key is set, else Anthropic, else null.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function createApiTriageChain(): any {
   const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-
   if (openrouterKey) {
     const llm = new ChatOpenAI({
       modelName: process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL,
@@ -166,19 +157,27 @@ function getTriageChain() {
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _triageChain = (llm as any).withStructuredOutput(triageSchema);
-  } else if (anthropicKey) {
+    return (llm as any).withStructuredOutput(triageSchema);
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
       model: 'claude-haiku-4-5-20251001',
-      apiKey: anthropicKey,
+      apiKey: process.env.ANTHROPIC_API_KEY,
       maxTokens: 200,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _triageChain = (llm as any).withStructuredOutput(triageSchema);
-  } else {
-    _triageChain = null;
+    return (llm as any).withStructuredOutput(triageSchema);
   }
+  return null;
+}
 
+// CLI mode runs triage on the operator's Claude subscription via `claude -p` (no
+// API key); it takes precedence over API keys when LLM_PROVIDER=claude-cli.
+function getTriageChain() {
+  if (_triageChain !== undefined) return _triageChain;
+  _triageChain = isUsingCLIProvider()
+    ? createStructuredCliChain(triageSchema, TRIAGE_SHAPE)
+    : createApiTriageChain();
   return _triageChain;
 }
 

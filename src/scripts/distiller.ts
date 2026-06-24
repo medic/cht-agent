@@ -97,20 +97,10 @@ const DRAFT_SHAPE = `{
   "relatedIssues": ["#<issue>: <brief description>", ...]
 }`;
 
-function getDistillChain() {
-  if (_distillChain !== undefined) return _distillChain;
-
-  // CLI mode: run on the operator's Claude subscription via `claude -p`,
-  // no API key needed. DISTILL_MODEL does not apply — the CLI uses one model
-  // for all pipeline steps. Takes precedence over API keys when set.
-  if (isUsingCLIProvider()) {
-    _distillChain = createStructuredCliChain(draftSchema, DRAFT_SHAPE);
-    return _distillChain;
-  }
-
+// Build the API-mode chain: OpenRouter if its key is set, else Anthropic, else null.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function createApiChain(): any {
   const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-
   if (openrouterKey) {
     const llm = new ChatOpenAI({
       modelName: process.env.DISTILL_MODEL ?? DEFAULT_DISTILL_MODEL,
@@ -118,19 +108,27 @@ function getDistillChain() {
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _distillChain = (llm as any).withStructuredOutput(draftSchema);
-  } else if (anthropicKey) {
+    return (llm as any).withStructuredOutput(draftSchema);
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
       model: ANTHROPIC_DISTILL_MODEL,
-      apiKey: anthropicKey,
+      apiKey: process.env.ANTHROPIC_API_KEY,
       maxTokens: 2000,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _distillChain = (llm as any).withStructuredOutput(draftSchema);
-  } else {
-    _distillChain = null;
+    return (llm as any).withStructuredOutput(draftSchema);
   }
+  return null;
+}
 
+// CLI mode runs on the operator's Claude subscription via `claude -p` (no API key,
+// one model); it takes precedence over API keys when LLM_PROVIDER=claude-cli.
+function getDistillChain() {
+  if (_distillChain !== undefined) return _distillChain;
+  _distillChain = isUsingCLIProvider()
+    ? createStructuredCliChain(draftSchema, DRAFT_SHAPE)
+    : createApiChain();
   return _distillChain;
 }
 
@@ -385,6 +383,32 @@ async function flagForHuman(prNumber: number, reason: string, logPath: string): 
   return { status: 'flag-for-human', reason };
 }
 
+/** Format AJV validation errors into a single human-readable string. */
+function formatAjvErrors(errors: Array<{ instancePath?: string; message?: string }> | null | undefined): string {
+  return (errors ?? [])
+    .map(e => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`)
+    .join('; ');
+}
+
+/** Resolve distill options with defaults. */
+function resolveDistillOpts(opts: DistillOptions): {
+  logPath: string;
+  outputDir: string;
+  distillFn: (pr: ScrapedPR) => Promise<DistillDraft>;
+} {
+  return {
+    logPath: opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH,
+    outputDir: opts.outputDir ?? DEFAULT_PIPELINE_OUTPUT_DIR,
+    distillFn: opts.distillFn ?? llmDistill,
+  };
+}
+
+/** Handle a distill-stage error: re-throw global failures (batch stops), else flag-for-human. */
+async function handleDistillError(err: unknown, prNumber: number, logPath: string): Promise<DistillResult> {
+  if (isBatchFatalError(err)) throw err;
+  return flagForHuman(prNumber, err instanceof Error ? err.message : `Distill failed: ${String(err)}`, logPath);
+}
+
 /**
  * Distill a scraped PR into a schema-valid knowledge draft.
  * Writes the draft to agent-memory/_pending/<domain>/<prNumber>-<slug>.md.
@@ -400,27 +424,21 @@ export async function distillPR(
   pr: ScrapedPR,
   opts: DistillOptions = {}
 ): Promise<DistillResult> {
-  const logPath = opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH;
-  const outputDir = opts.outputDir ?? DEFAULT_PIPELINE_OUTPUT_DIR;
-  const distillFn = opts.distillFn ?? llmDistill;
+  const { logPath, outputDir, distillFn } = resolveDistillOpts(opts);
 
   let draft: DistillDraft;
   try {
     draft = await distillFn(pr);
   } catch (err) {
-    // Global failures (rate/usage limit, auth) stop the whole batch — the runner catches this.
-    if (isBatchFatalError(err)) throw err;
-    return flagForHuman(pr.prNumber, err instanceof Error ? err.message : `Distill failed: ${String(err)}`, logPath);
+    return handleDistillError(err, pr.prNumber, logPath);
   }
 
   // Validate frontmatter against schema.json before writing, so a malformed
   // draft is logged and skipped rather than committed to _pending/.
   const frontmatter = buildFrontmatter(draft, pr);
   if (!validateFrontmatter(frontmatter)) {
-    const errors = (validateFrontmatter.errors ?? [])
-      .map(e => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`)
-      .join('; ');
-    return flagForHuman(pr.prNumber, `Distilled draft failed schema validation: ${errors}`, logPath);
+    const reason = `Distilled draft failed schema validation: ${formatAjvErrors(validateFrontmatter.errors)}`;
+    return flagForHuman(pr.prNumber, reason, logPath);
   }
 
   const markdown = renderMarkdown(frontmatter, draft);
