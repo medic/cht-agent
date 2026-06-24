@@ -7,6 +7,7 @@
 
 import { ChatAnthropic } from '@langchain/anthropic';
 import { HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage } from '@langchain/core/messages';
+import { extractJsonObject } from '../json-extract';
 import {
   LLMProvider,
   APIProviderConfig,
@@ -243,26 +244,20 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     };
 
     const response = await invoke(prompt, jsonOptions);
-    let content = response.content;
+    const content = response.content;
 
     // Check if response was truncated
     if (response.stopReason === 'max_tokens') {
       console.warn('[LLM] Response was truncated due to max_tokens limit');
     }
 
-    // Strip markdown code blocks if present
-    const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(content);
-    if (codeBlockMatch) {
-      content = codeBlockMatch[1].trim();
-    }
-
-    // Try to extract JSON object from the response
-    const jsonMatch = /\{[\s\S]*\}/.exec(content);
-    if (!jsonMatch) {
+    // Strip any ```json fence and extract the outermost JSON object.
+    const extracted = extractJsonObject(content);
+    if (!extracted) {
       throw new Error('LLM response did not contain valid JSON object');
     }
 
-    let jsonStr = jsonMatch[0];
+    let jsonStr = extracted;
 
     // Clean up common JSON issues
     // Remove trailing commas before ] or }

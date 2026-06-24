@@ -15,9 +15,9 @@
  */
 
 import { z } from 'zod';
-import { createLLMProviderFromEnv, isUsingCLIProvider } from './factory';
+import { createLLMProviderFromEnv } from './factory';
 
-export { isUsingCLIProvider };
+export { isUsingCLIProvider } from './factory';
 
 /**
  * The chain surface the pipeline scripts consume.

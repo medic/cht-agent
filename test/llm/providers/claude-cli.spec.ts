@@ -176,7 +176,7 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
     } catch (e) {
       caught = e as Error;
     }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Claude CLI error: auth failed/);
   });
 
@@ -205,7 +205,7 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
     } catch (e) {
       caught = e as Error;
     }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Claude Code CLI not found/);
     expect(caught!.message).to.match(/@anthropic-ai\/claude-code/);
   });
@@ -218,7 +218,7 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
     } catch (e) {
       caught = e as Error;
     }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Permission denied/);
   });
 
@@ -230,7 +230,7 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
     } catch (e) {
       caught = e as Error;
     }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/exited with code 1/);
     expect(caught!.message).to.match(/boom/);
   });
@@ -277,7 +277,7 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
     } catch (e) {
       caught = e as Error;
     }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/empty response/);
   });
 
@@ -291,7 +291,7 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
     } catch (e) {
       caught = e as Error;
     }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/did not contain valid JSON/);
   });
 
