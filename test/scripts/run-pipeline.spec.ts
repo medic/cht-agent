@@ -44,7 +44,7 @@ function loadPipeline(mocks: PipelineMocks = {}) {
     '../observability': {
       makeLangfuseHandler: () => undefined,
       createTrace: () => noopTrace,
-      flushLangfuse: async () => {},
+      getLangfuse: () => ({ flushAsync: async () => {} }),
       '@noCallThru': true,
     },
   });

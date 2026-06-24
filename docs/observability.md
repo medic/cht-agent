@@ -79,7 +79,7 @@ Follow these when adding instrumentation to new workflows:
 
 1. Import from `src/observability`:
    ```typescript
-   import { makeLangfuseHandler, createTrace, flushLangfuse } from '../observability';
+   import { makeLangfuseHandler, createTrace, getLangfuse } from '../observability';
    ```
 
 2. Create a trace and handler at the entry point of your workflow:
@@ -109,7 +109,7 @@ Follow these when adding instrumentation to new workflows:
 
 6. Always flush at the end of your workflow:
    ```typescript
-   await flushLangfuse();
+   await getLangfuse().flushAsync();
    ```
 
 7. In tests, mock the observability module with proxyquire:

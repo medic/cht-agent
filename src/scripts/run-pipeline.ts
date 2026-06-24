@@ -51,7 +51,7 @@ import { isAuthError, isBatchFatalError } from '../llm/rate-limit';
 import { DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { reconcile, formatReconciliation } from './reconcile';
 import type { SkipLogEntry, DistillResult } from '../types/pipeline';
-import { makeLangfuseHandler, createTrace, flushLangfuse } from '../observability';
+import { makeLangfuseHandler, createTrace, getLangfuse } from '../observability';
 
 /** Exit code used when the batch stops early on a global LLM failure (rate limit / auth). */
 export const RATE_LIMIT_EXIT_CODE = 2;
@@ -338,7 +338,7 @@ export async function processSinglePR(
   sessionId?: string
 ): Promise<DistillResult | undefined> {
   const traceId = `pipeline-pr-${repo.replace('/', '-')}-${prNum}`;
-  const handler = makeLangfuseHandler(traceId, sessionId ?? traceId);
+  const handler = makeLangfuseHandler(traceId, sessionId);
   const trace = createTrace(traceId, sessionId);
 
   const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
@@ -361,7 +361,7 @@ export async function processSinglePR(
     trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
   }
 
-  await flushLangfuse();
+  await getLangfuse().flushAsync();
   return distillResult;
 }
 
