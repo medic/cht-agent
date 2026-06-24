@@ -250,7 +250,7 @@ describe('run-pipeline runPipeline', () => {
     });
     await runPipeline([10, 11], 'medic/cht-core');
     expect(seen).to.deep.equal([10, 11]);
-    expect(exitCode).to.equal(undefined);
+    expect(exitCode).to.be.undefined;
   });
 
   it('records a failure and exits 1 when a PR throws', async () => {
@@ -295,7 +295,7 @@ describe('run-pipeline runPipeline', () => {
     });
     await runPipeline([1, 2, 3, 4], 'medic/cht-core', false, 2);
     expect(seen.sort((a, b) => a - b)).to.deep.equal([1, 2, 3, 4]);
-    expect(exitCode).to.equal(undefined);
+    expect(exitCode).to.be.undefined;
   });
 });
 
