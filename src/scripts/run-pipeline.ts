@@ -117,6 +117,18 @@ function envConcurrency(): number {
  * parseArgs(); // { prNumbers: [123], repo: 'medic/cht-core', lookbackHours: 24, ... }
  * ```
  */
+/**
+ * Validates a `--repo` value as `owner/repo`. Rejects anything else (e.g. a
+ * leading `-` that gh would parse as a flag), mirroring the strictness applied
+ * to the numeric flags.
+ */
+function parseRepoArg(raw: string | undefined): string {
+  if (raw === undefined || !/^[\w.-]+\/[\w.-]+$/.test(raw)) {
+    throw new TypeError(`Invalid --repo value: ${JSON.stringify(raw)} (expected owner/repo)`);
+  }
+  return raw;
+}
+
 export function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   const prIdx = args.indexOf('--pr');
@@ -134,7 +146,7 @@ export function parseArgs(): CliArgs {
     prNumbers: prIdx >= 0
       ? (args[prIdx + 1] ?? '').split(',').map(s => parsePositiveIntArg(s.trim() || undefined, '--pr'))
       : undefined,
-    repo: repoIdx >= 0 ? args[repoIdx + 1] : DEFAULT_REPO,
+    repo: repoIdx >= 0 ? parseRepoArg(args[repoIdx + 1]) : DEFAULT_REPO,
     lookbackHours: sinceIdx >= 0 ? parsePositiveIntArg(args[sinceIdx + 1], '--since') : DEFAULT_LOOKBACK_HOURS,
     last: lastIdx >= 0 ? parsePositiveIntArg(args[lastIdx + 1], '--last') : undefined,
     resume: args.includes('--resume'),
