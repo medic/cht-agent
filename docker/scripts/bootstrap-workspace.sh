@@ -22,15 +22,15 @@ echo "[bootstrap] cht-core working copy: $CHT_CORE_PATH"
 
 # 1. Provide the working copy (public repo, read-only use — the agent
 # local-branches off main; only the operator ever pushes).
-if [ ! -e "$CHT_CORE_PATH" ]; then
+if [[ ! -e "$CHT_CORE_PATH" ]]; then
   echo "[bootstrap] Cloning cht-core (this is large; first run takes a while)..."
   git clone "$CHT_CORE_REPO" "$CHT_CORE_PATH"
-elif [ -f "$CHT_CORE_PATH/.git" ]; then
+elif [[ -f "$CHT_CORE_PATH/.git" ]]; then
   # A worktree's .git is a FILE — the read-only config shadow mount needs a directory.
   echo "[bootstrap] ERROR: $CHT_CORE_PATH is a git worktree (.git is a file)." >&2
   echo "[bootstrap] Use a full clone — the hardened .git/config mount requires a .git directory." >&2
   exit 1
-elif [ ! -d "$CHT_CORE_PATH/.git" ]; then
+elif [[ ! -d "$CHT_CORE_PATH/.git" ]]; then
   echo "[bootstrap] ERROR: $CHT_CORE_PATH exists but is not a git repository." >&2
   exit 1
 fi
@@ -54,7 +54,7 @@ fi
 # or Docker creates a root-owned directory there and the agent gets EISDIR. An
 # empty file is harmless when you authenticate with ANTHROPIC_API_KEY instead.
 CREDS_PATH="${CLAUDE_CREDENTIALS:-$HOME/.claude/.credentials.json}"
-if [ ! -f "$CREDS_PATH" ]; then
+if [[ ! -f "$CREDS_PATH" ]]; then
   mkdir -p "$(dirname "$CREDS_PATH")"
   touch "$CREDS_PATH"
   echo "[bootstrap] Created empty credentials mount target: $CREDS_PATH"
