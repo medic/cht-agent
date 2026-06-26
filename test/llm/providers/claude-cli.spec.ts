@@ -4,6 +4,7 @@ import sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { LLMProvider } from '../../../src/llm/types';
 import { DISALLOWED_TOOLS } from '../../../src/llm/providers/claude-cli';
+import { isBatchFatalError } from '../../../src/llm/rate-limit';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -350,5 +351,46 @@ describe('claude-cli deny-list drift guard (iter7 B4/B5)', () => {
     const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
     await provider.invoke('p'); // no disableTools -> tools stay live, no deny-list
     expect(spawnArgs[0].args).to.not.include('--disallowedTools');
+  });
+});
+
+describe('createClaudeCLIProvider — limit/auth classification & error paths', () => {
+  const rejection = async (p: Promise<unknown>): Promise<Error> => {
+    try {
+      await p;
+    } catch (e) {
+      return e as Error;
+    }
+    throw new Error('expected promise to reject');
+  };
+
+  it('treats a plain-text usage-limit notice as batch-fatal instead of a success result', async () => {
+    const { provider } = loadProvider([{ stdout: "You've hit your usage limit · resets at 5pm", closeCode: 0 }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(isBatchFatalError(err.message)).to.equal(true);
+  });
+
+  it('treats a plain-text auth failure as batch-fatal', async () => {
+    const { provider } = loadProvider([{ stdout: 'Invalid authentication — please run /login', closeCode: 0 }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(isBatchFatalError(err.message)).to.equal(true);
+  });
+
+  it('returns is_error on empty stdout so invoke throws', async () => {
+    const { provider } = loadProvider([{ stdout: '', closeCode: 0 }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(err.message).to.match(/Claude CLI error/);
+  });
+
+  it('rejects with a generic message when spawn errors with a non-ENOENT/EACCES code', async () => {
+    const { provider } = loadProvider([{ errorCode: 'EPERM' }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(err.message).to.match(/Failed to execute Claude CLI/);
+  });
+
+  it('falls back to plain-text when a result-shaped envelope is malformed JSON', async () => {
+    const { provider } = loadProvider([{ stdout: 'noise {"type":"result", not valid}', closeCode: 0 }]);
+    const res = await provider.invoke('x');
+    expect(res.content).to.include('type');
   });
 });

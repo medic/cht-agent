@@ -218,6 +218,45 @@ describe('run-pipeline processSinglePR', () => {
     await processSinglePR(8, 'medic/cht-core');
     expect(logs.join('\n')).to.include('output: /tmp/out.md');
   });
+
+  it('bypasses the filter under --force and distills directly', async () => {
+    let filtered = false;
+    let distilled = false;
+    const { processSinglePR } = loadPipeline({
+      filterPR: async () => { filtered = true; return { decision: 'skip', reason: 'would-skip' }; },
+      distillPR: async () => { distilled = true; return { status: 'written', reason: 'ok', outputPath: '/tmp/f.md' }; },
+    });
+    await processSinglePR(9, 'medic/cht-core', true);
+    expect(filtered).to.equal(false);
+    expect(distilled).to.equal(true);
+    expect(logs.join('\n')).to.include('BYPASSED (--force)');
+  });
+});
+
+describe('run-pipeline filterResumable', () => {
+  const baseArgs = { repo: 'medic/cht-core', lookbackHours: 24, concurrency: 1 };
+
+  it('returns the list unchanged when --resume is absent', () => {
+    const { filterResumable } = loadPipeline();
+    const out = filterResumable([1, 2, 3], { ...baseArgs, resume: false, force: false }, new Set([2]));
+    expect(out).to.deep.equal([1, 2, 3]);
+  });
+
+  it('drops already-processed PRs under --resume', () => {
+    const { filterResumable } = loadPipeline();
+    const out = filterResumable([1, 2, 3], { ...baseArgs, resume: true, force: false }, new Set([2]));
+    expect(out).to.deep.equal([1, 3]);
+  });
+
+  it('exempts explicitly named --pr from the resume skip when --force is set', () => {
+    const { filterResumable } = loadPipeline();
+    const out = filterResumable(
+      [1, 2],
+      { ...baseArgs, resume: true, force: true, prNumbers: [1, 2] },
+      new Set([1, 2])
+    );
+    expect(out).to.deep.equal([1, 2]);
+  });
 });
 
 describe('run-pipeline runPipeline', () => {
