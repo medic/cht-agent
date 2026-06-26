@@ -61,12 +61,15 @@ function makePR(overrides: Partial<ScrapedPR> = {}): ScrapedPR {
 function makeDraft(overrides: Partial<DistillDraft> = {}): DistillDraft {
   return {
     domain: 'contacts',
+    domainFit: 'strong',
+    domainReasoning: 'Directly involves contact CRUD and deduplication.',
     title: 'Prevent duplicate contact creation on slow networks',
     category: 'bug',
     summary: 'Race condition in contact creation caused duplicates on slow networks.',
     services: ['webapp', 'api'],
     techStack: ['javascript'],
     tags: ['contacts', 'race-condition'],
+    relatedWorkflows: ['contact-creation'],
     entities: ['webapp/src/services/contacts.js', 'api/src/controllers/people.js'],
     concepts: ['optimistic-locking', 'idempotency'],
     problem: 'On slow networks, rapid successive POSTs created duplicate contact records.',
@@ -75,6 +78,8 @@ function makeDraft(overrides: Partial<DistillDraft> = {}): DistillDraft {
     codePatterns: 'Correlation ID passed in header; server checks for existing record before insert.',
     designChoices: 'Client-side ID chosen over server-side locking to avoid DB contention.',
     relatedFiles: ['webapp/src/services/contacts.js', 'api/src/controllers/people.js'],
+    testing: 'Added unit tests for the deduplication guard and an E2E test for rapid submissions.',
+    relatedIssues: ['#1234: Duplicate contacts reported on slow networks'],
     ...overrides,
   };
 }
@@ -221,9 +226,10 @@ describe('distillPR', () => {
       });
 
       const content = fs.readFileSync(result.outputPath!, 'utf8');
-      for (const section of ['## Problem', '## Root Cause', '## Solution', '## Code Patterns', '## Design Choices', '## Related Files']) {
+      for (const section of ['## Problem', '## Root Cause', '## Solution', '## Code Patterns', '## Design Choices', '## Related Files', '## Testing', '## Related Issues', '## Domain Rationale']) {
         expect(content).to.include(section);
       }
+      expect(content).to.include('**Fit:** strong');
     });
 
     it('should emit camelCase issue fields derived from the linked issue', async () => {
@@ -244,6 +250,22 @@ describe('distillPR', () => {
       expect(fm).to.not.have.property('last_updated');
       expect(fm.services).to.deep.equal(['webapp', 'api']);
       expect(fm.techStack).to.deep.equal(['javascript']);
+      expect(fm.domainFit).to.equal('strong');
+      expect(fm.related_workflows).to.deep.equal(['contact-creation']);
+    });
+
+    it('should accept the infrastructure domain and write to its directory', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+
+      const result: DistillResult = await distillPR(makePR(), {
+        outputDir,
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft({ domain: 'infrastructure', domainFit: 'weak', relatedWorkflows: [] }),
+      });
+
+      expect(result.status).to.equal('written');
+      expect(result.outputPath).to.include(path.join('infrastructure'));
     });
 
     it('should fall back to the PR number for issue fields when no issue is linked', async () => {
@@ -463,10 +485,10 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
     expect(result.status).to.equal('written');
   });
 
-  it('should return flag-for-human when LLM invoke throws', async () => {
+  it('should return flag-for-human when LLM invoke throws a non-rate-limit error', async () => {
     process.env.OPENROUTER_API_KEY = 'test-or-key';
 
-    const { distillPR } = loadDistiller(async () => { throw new Error('rate limit'); });
+    const { distillPR } = loadDistiller(async () => { throw new Error('transient LLM failure'); });
 
     const result: DistillResult = await distillPR(makePR(), {
       outputDir: tmpOutputDir(),
@@ -474,7 +496,22 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
     });
 
     expect(result.status).to.equal('flag-for-human');
-    expect(result.reason).to.include('rate limit');
+    expect(result.reason).to.include('transient LLM failure');
+  });
+
+  it('re-throws a rate-limit error from distillPR so the runner can stop the batch', async () => {
+    process.env.OPENROUTER_API_KEY = 'test-or-key';
+
+    const { distillPR } = loadDistiller(async () => { throw new Error('HTTP 429: rate limit exceeded'); });
+
+    let threw = false;
+    try {
+      await distillPR(makePR(), { outputDir: tmpOutputDir(), logPath: tmpLogPath() });
+    } catch (err) {
+      threw = true;
+      expect((err as Error).message).to.include('429');
+    }
+    expect(threw).to.equal(true);
   });
 
   it('should handle non-Error thrown by LLM (covers err instanceof Error false branch)', async () => {

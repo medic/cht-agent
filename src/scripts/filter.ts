@@ -12,6 +12,8 @@
 import * as fs from 'node:fs';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { isBatchFatalError } from '../llm/rate-limit';
 import { z } from 'zod';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
 import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
@@ -141,12 +143,13 @@ const triageSchema: z.ZodType<TriageOutput> = z.object({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _triageChain: any;
 
-function getTriageChain() {
-  if (_triageChain !== undefined) return _triageChain;
+// JSON shape appended to the prompt in CLI mode (no response_format channel).
+const TRIAGE_SHAPE = '{"decision": "distill" | "skip" | "flag-for-human", "reason": "<short explanation>"}';
 
+// Build the API-mode triage chain: OpenRouter if its key is set, else Anthropic, else null.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function createApiTriageChain(): any {
   const openrouterKey = process.env.OPENROUTER_API_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-
   if (openrouterKey) {
     const llm = new ChatOpenAI({
       modelName: process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL,
@@ -154,19 +157,27 @@ function getTriageChain() {
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _triageChain = (llm as any).withStructuredOutput(triageSchema);
-  } else if (anthropicKey) {
+    return (llm as any).withStructuredOutput(triageSchema);
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
       model: 'claude-haiku-4-5-20251001',
-      apiKey: anthropicKey,
+      apiKey: process.env.ANTHROPIC_API_KEY,
       maxTokens: 200,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    _triageChain = (llm as any).withStructuredOutput(triageSchema);
-  } else {
-    _triageChain = null;
+    return (llm as any).withStructuredOutput(triageSchema);
   }
+  return null;
+}
 
+// CLI mode runs triage on the operator's Claude subscription via `claude -p` (no
+// API key); it takes precedence over API keys when LLM_PROVIDER=claude-cli.
+function getTriageChain() {
+  if (_triageChain !== undefined) return _triageChain;
+  _triageChain = isUsingCLIProvider()
+    ? createStructuredCliChain(triageSchema, TRIAGE_SHAPE)
+    : createApiTriageChain();
   return _triageChain;
 }
 
@@ -229,6 +240,9 @@ async function runLlmTriage(
   try {
     return await triageFn(pr);
   } catch (err) {
+    // Rate/usage limits and auth failures are global, not a property of this PR
+    // — stop the whole batch (the runner catches this) so it can be fixed and resumed.
+    if (isBatchFatalError(err)) throw err;
     return {
       decision: 'flag-for-human',
       reason: `LLM triage unavailable: ${err instanceof Error ? err.message : String(err)}`,

@@ -66,6 +66,12 @@ techStack:
 ## Related Issues
 
 - #<related-issue-number>: <brief description>
+
+## Domain Rationale
+
+**Fit:** <strong | weak>
+
+<Why this domain was chosen; what made it weak if so. Emitted by the seeding pipeline into _pending drafts as a reviewer aid; optional for hand-authored entries.>
 ```
 
 ## Field Reference

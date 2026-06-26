@@ -11,7 +11,6 @@ summary: Added cht-datasource APIs to query target interval documents filtered b
 services:
   - api
   - webapp
-  - shared-libs
 techStack:
   - typescript
   - angular

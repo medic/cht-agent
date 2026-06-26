@@ -13,11 +13,35 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { CHTDomain, IssueTemplate } from '../types';
+import { CHT_DOMAINS } from '../constants';
 
 interface DomainIndices {
   domainToComponents: Record<string, unknown> | null;
   componentToDomains: Record<string, string[]> | null;
 }
+
+/**
+ * One-line description per domain, keyed by CHTDomain so the inference prompt's
+ * roster is single-sourced from CHT_DOMAINS. The Record type fails to compile if
+ * a domain is added without a description, which prevents the "7 vs 9" drift the
+ * old hardcoded list had.
+ */
+const DOMAIN_DESCRIPTIONS: Record<CHTDomain, string> = {
+  authentication: 'User login, permissions, roles, session management',
+  contacts: 'Contact management, hierarchy, relationships, person/place management',
+  'forms-and-reports': 'Form definitions, submissions, reports, Enketo integration',
+  'tasks-and-targets': 'Task generation, targets, scheduling, rules engine',
+  messaging: 'SMS integration, notifications, message sending/receiving',
+  'data-sync': 'Replication, offline-first, conflict resolution, PouchDB/CouchDB sync',
+  configuration: 'App configuration, settings, translations, admin features',
+  interoperability: 'FHIR, OpenHIM, DHIS2, outbound push, external system integration',
+  infrastructure: 'CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling — operational lifecycle',
+};
+
+/** Numbered domain roster injected into the inference prompt, derived from CHT_DOMAINS. */
+const DOMAIN_ROSTER = CHT_DOMAINS
+  .map((d, i) => `${i + 1}. ${d} - ${DOMAIN_DESCRIPTIONS[d]}`)
+  .join('\n');
 
 const loadJsonIndex = (filePath: string): Record<string, unknown> | null => {
   try {
@@ -53,7 +77,7 @@ const formatListForPrompt = (items: string[], emptyMessage: string = 'None provi
  * Domain classification examples to guide the LLM
  * These are hardcoded examples that demonstrate correct domain categorization
  */
-const DOMAIN_EXAMPLES = `
+export const DOMAIN_EXAMPLES = `
 Seeds/Examples (Correct Domain Classifications):
 
 1. "Add search functionality to find contacts by phone number"
@@ -75,12 +99,24 @@ Seeds/Examples (Correct Domain Classifications):
 5. "Add new target widget to show monthly vaccination coverage"
    → Domain: tasks-and-targets
    → Reasoning: Targets and coverage metrics are part of tasks-and-targets domain
+
+6. "Add Brazilian Portuguese translations and register the pt locale"
+   → Domain: configuration
+   → Reasoning: App settings, translations, branding, and hierarchy config are canonically the configuration domain — these are strong fits, not catch-all picks
+
+7. "Skip CouchDB compaction during API upgrade" / "Bump the CouchDB Docker image and rename the CI container" / "Fix build version computation for release branches"
+   → Domain: infrastructure
+   → Reasoning: OPERATIONAL lifecycle only — CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling, runtime-dependency maintenance. Strong fit because it changes how the system is built/shipped/run, not application behavior.
+
+8. "Migrate document ID generation from UUID v4 to v7" / "Add a length limit to Nouveau search index fields"
+   → Domain: data-sync (weak fit is fine)
+   → Reasoning: In-application code and data-layer/storage-engine internals (ID generation, CouchDB/Nouveau/Lucene index documents, B-tree concerns) are NOT infrastructure even when cross-cutting — keep them in the closest functional domain (here data-sync), not the ops bucket.
 `;
 
 /**
  * Common pitfalls to help the LLM avoid misclassification
  */
-const DOMAIN_PITFALLS = `
+export const DOMAIN_PITFALLS = `
 Pitfalls (Common Misclassifications to Avoid):
 
 1. Avoid placing "form validation errors" into forms-and-reports when the issue is actually about offline behavior.
@@ -97,18 +133,14 @@ Pitfalls (Common Misclassifications to Avoid):
 
 5. Avoid placing "report shows wrong data" into forms-and-reports when the issue is about data not syncing.
    → If data freshness/replication is the root cause, prefer data-sync domain.
+
+6. Infrastructure is for OPERATIONAL lifecycle only (CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling, runtime-dependency maintenance) — it is NOT a catch-all for cross-cutting code.
+   → Don't put CI/build/deploy/upgrade-lifecycle PRs into configuration — those are infrastructure.
+   → Don't put in-application code refactors, data-layer/storage-engine internals (UUID/ID generation, CouchDB/Nouveau/Lucene index design docs, B-tree concerns), or library dependency bumps that change app behavior into infrastructure — keep those in the closest functional domain (often data-sync).
 `;
 
-const VALID_DOMAINS: CHTDomain[] = [
-  'authentication',
-  'contacts',
-  'forms-and-reports',
-  'tasks-and-targets',
-  'messaging',
-  'data-sync',
-  'configuration',
-  'interoperability',
-];
+// Derived from the single taxonomy source so it can't drift from CHT_DOMAINS.
+const VALID_DOMAINS: readonly CHTDomain[] = CHT_DOMAINS;
 
 const extractJson = (content: string): string => {
   const jsonRegex = /\{[^{}]*(?:\{[^{}]*}[^{}]*)*}/;
@@ -170,13 +202,7 @@ const inferUsingLLM = async (
   const prompt = `You are analyzing a Community Health Toolkit (CHT) issue to identify the relevant domain and components.
 
 CHT Domains:
-1. authentication - User login, permissions, roles, session management
-2. contacts - Contact management, hierarchy, relationships, person/place management
-3. forms-and-reports - Form definitions, submissions, reports, Enketo integration
-4. tasks-and-targets - Task generation, targets, scheduling, rules engine
-5. messaging - SMS integration, notifications, message sending/receiving
-6. data-sync - Replication, offline-first, conflict resolution, PouchDB/CouchDB sync
-7. configuration - App configuration, settings, admin features
+${DOMAIN_ROSTER}
 
 CHT Architecture Components (examples):
 - webapp/modules/* (Angular webapp modules)
@@ -210,7 +236,7 @@ Existing Code References (paths in codebase mentioned by ticket author):
 ${existingReferences}
 
 Based on this issue and the examples/pitfalls above, identify:
-1. The PRIMARY domain (one of the 7 listed above)
+1. The PRIMARY domain (one of the ${CHT_DOMAINS.length} listed above)
 2. Likely components that would be affected (be specific but realistic)
 
 Respond in this exact JSON format:

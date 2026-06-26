@@ -28,5 +28,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Validate agent-memory schema
+        run: npm run validate-schema
+
       - name: Test with coverage
         run: npm run test:coverage
