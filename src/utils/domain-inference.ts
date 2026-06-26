@@ -20,6 +20,29 @@ interface DomainIndices {
   componentToDomains: Record<string, string[]> | null;
 }
 
+/**
+ * One-line description per domain, keyed by CHTDomain so the inference prompt's
+ * roster is single-sourced from CHT_DOMAINS. The Record type fails to compile if
+ * a domain is added without a description, which prevents the "7 vs 9" drift the
+ * old hardcoded list had.
+ */
+const DOMAIN_DESCRIPTIONS: Record<CHTDomain, string> = {
+  authentication: 'User login, permissions, roles, session management',
+  contacts: 'Contact management, hierarchy, relationships, person/place management',
+  'forms-and-reports': 'Form definitions, submissions, reports, Enketo integration',
+  'tasks-and-targets': 'Task generation, targets, scheduling, rules engine',
+  messaging: 'SMS integration, notifications, message sending/receiving',
+  'data-sync': 'Replication, offline-first, conflict resolution, PouchDB/CouchDB sync',
+  configuration: 'App configuration, settings, translations, admin features',
+  interoperability: 'FHIR, OpenHIM, DHIS2, outbound push, external system integration',
+  infrastructure: 'CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling — operational lifecycle',
+};
+
+/** Numbered domain roster injected into the inference prompt, derived from CHT_DOMAINS. */
+const DOMAIN_ROSTER = CHT_DOMAINS
+  .map((d, i) => `${i + 1}. ${d} - ${DOMAIN_DESCRIPTIONS[d]}`)
+  .join('\n');
+
 const loadJsonIndex = (filePath: string): Record<string, unknown> | null => {
   try {
     if (fs.existsSync(filePath)) {
@@ -179,13 +202,7 @@ const inferUsingLLM = async (
   const prompt = `You are analyzing a Community Health Toolkit (CHT) issue to identify the relevant domain and components.
 
 CHT Domains:
-1. authentication - User login, permissions, roles, session management
-2. contacts - Contact management, hierarchy, relationships, person/place management
-3. forms-and-reports - Form definitions, submissions, reports, Enketo integration
-4. tasks-and-targets - Task generation, targets, scheduling, rules engine
-5. messaging - SMS integration, notifications, message sending/receiving
-6. data-sync - Replication, offline-first, conflict resolution, PouchDB/CouchDB sync
-7. configuration - App configuration, settings, admin features
+${DOMAIN_ROSTER}
 
 CHT Architecture Components (examples):
 - webapp/modules/* (Angular webapp modules)
@@ -219,7 +236,7 @@ Existing Code References (paths in codebase mentioned by ticket author):
 ${existingReferences}
 
 Based on this issue and the examples/pitfalls above, identify:
-1. The PRIMARY domain (one of the 7 listed above)
+1. The PRIMARY domain (one of the ${CHT_DOMAINS.length} listed above)
 2. Likely components that would be affected (be specific but realistic)
 
 Respond in this exact JSON format:

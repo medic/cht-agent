@@ -447,6 +447,17 @@ export function resolvePrNumbers(args: CliArgs): number[] {
   return prs;
 }
 
+/**
+ * Applies the --resume skip-list. Explicitly named `--pr` requests under
+ * `--force` are exempt: forcing a named PR is an intentional re-distill, so the
+ * resume filter must not silently drop it just because a prior draft exists.
+ */
+export function filterResumable(prNumbers: number[], args: CliArgs, processed: Set<number>): number[] {
+  if (!args.resume) return prNumbers;
+  if (args.force && args.prNumbers !== undefined) return prNumbers;
+  return prNumbers.filter(n => !processed.has(n));
+}
+
 /* istanbul ignore next */
 async function main(): Promise<void> {
   const args = parseArgs();
@@ -460,9 +471,8 @@ async function main(): Promise<void> {
   let prNumbers = resolvePrNumbers(args);
 
   if (resume) {
-    const processed = getProcessedPRs();
     const before = prNumbers.length;
-    prNumbers = prNumbers.filter(n => !processed.has(n));
+    prNumbers = filterResumable(prNumbers, args, getProcessedPRs());
     console.log(`Resume: skipping ${before - prNumbers.length} already-processed PR(s), ${prNumbers.length} remaining.`);
   }
 

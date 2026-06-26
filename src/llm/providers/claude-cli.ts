@@ -12,6 +12,7 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { extractJsonObject } from '../json-extract';
+import { isBatchFatalError } from '../rate-limit';
 import {
   LLMProvider,
   LLMMessage,
@@ -67,6 +68,7 @@ interface CLIResponse {
   is_error: boolean;
 }
 
+/* istanbul ignore next -- only invoked from the 60s progress interval below */
 function totalLength(chunks: string[]): number {
   let total = 0;
   for (const c of chunks) total += c.length;
@@ -114,6 +116,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   // subprocesses. Without this, killing the parent leaves orphans that may
   // continue accruing cost. Multiple provider instances will register multiple
   // handlers; process.once is the right semantics (run at most once per signal).
+  /* istanbul ignore next -- signal-driven cleanup, not reachable in unit tests */
   const shutdownHandler = () => {
     for (const proc of activeProcesses) {
       try {
@@ -176,6 +179,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       const stderrChunks: string[] = [];
 
       // Periodic progress logging every 60 seconds
+      /* istanbul ignore next -- 60s interval callback, not reachable in unit tests */
       const progressId = setInterval(() => {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         const stdoutSize = totalLength(stdoutChunks);
@@ -184,6 +188,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       }, 60000);
 
       // Setup timeout
+      /* istanbul ignore next -- timeout callback fires only after `timeout` ms */
       const timeoutId = setTimeout(() => {
         clearInterval(progressId);
         proc.kill('SIGTERM');
@@ -269,8 +274,24 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
     try {
       return JSON.parse(stdout);
     } catch {
-      // If no JSON found, treat stdout as the result
-      // Log first 200 chars for debugging
+      // No JSON envelope. A plain-text usage/rate-limit or auth notice (the CLI
+      // can emit these without a result envelope) must NOT be mistaken for a
+      // successful result — classify it as an error so the batch stops instead
+      // of silently flagging a PR. See isBatchFatalError / run-pipeline.
+      if (isBatchFatalError(stdout)) {
+        console.error(`[Claude CLI] Limit/auth notice in plain-text output: ${stdout.substring(0, 200)}`);
+        return {
+          type: 'result',
+          subtype: 'error',
+          result: stdout.trim(),
+          session_id: '',
+          total_cost_usd: 0,
+          duration_ms: 0,
+          num_turns: 0,
+          is_error: true,
+        };
+      }
+      // Otherwise treat stdout as the result. Log first 200 chars for debugging.
       console.warn(`[Claude CLI] Non-JSON response (first 200 chars): ${stdout.substring(0, 200)}`);
       return {
         type: 'result',
