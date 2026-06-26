@@ -1,0 +1,30 @@
+# Hardened .git/config for the cht-core working copy mounted into the
+# cht-agent container (#114).
+#
+# Compose mounts this file READ-ONLY over <working copy>/.git/config so the
+# agent cannot edit remotes or undo the push block. Requires the working copy
+# to be a full clone (.git directory); git worktrees have a .git *file* and
+# the shadow mount will fail.
+#
+# Read stays allowed (public repo); push is rewritten to error:// here AND at
+# the image's system-level git config.
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[remote "origin"]
+	url = https://github.com/medic/cht-core.git
+	pushurl = error://push-blocked-by-policy
+	fetch = +refs/heads/*:refs/remotes/origin/*
+# Upstream tracking for the default branch. Without this, replacing the working
+# copy's .git/config strips all [branch] stanzas and `git pull --ff-only` on
+# main fails with "no tracking information". The agent branches off main, so it
+# needs main to track origin/main.
+[branch "main"]
+	remote = origin
+	merge = refs/heads/main
+[push]
+	default = nothing
+[credential]
+	helper =

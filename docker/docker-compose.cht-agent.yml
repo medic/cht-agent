@@ -1,0 +1,77 @@
+# docker-compose.cht-agent.yml (#114)
+#
+# Runs the sandboxed cht-agent on the shared `cht-agent-net` Docker network,
+# alongside a CHT instance the HUMAN operator brings up (the agent never runs
+# Docker). The #66 override (docker/cht-agent-net.override.yml) attaches the
+# CHT stack's nginx to the same network so the agent reaches it at
+# https://nginx. Full walkthrough: docs/docker-agent-runbook.md.
+#
+#   docker network create cht-agent-net    # once
+#   CHT_CORE_PATH=$HOME/src/cht-core \
+#     docker compose -f docker/docker-compose.cht-agent.yml up -d --build
+#
+# Security invariants (do not "fix" these):
+#   - NO Docker socket mount. A mounted socket grants host-root; env bring-up
+#     is human-gated instead.
+#   - NO SSH keys, host ~/.gitconfig, or write tokens enter the container.
+#   - Model credentials are mounted READ-ONLY.
+#   - The working copy's .git/config is shadowed by a hardened read-only file,
+#     so the agent cannot edit remotes or undo the push block.
+
+networks:
+  cht-agent-net:
+    external: true
+
+services:
+  cht-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: cht-agent:local
+    container_name: cht-agent
+    hostname: cht-agent
+    stdin_open: true
+    tty: true
+    # Operator-gated: a sandbox-verification failure (init-agent-git.sh exits
+    # non-zero) must stay DOWN for inspection, not crash-loop. The operator
+    # explicitly brings the agent up per session.
+    restart: "no"
+    # Confinement hardening: the agent never needs extra privileges.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - cht-agent-net
+    environment:
+      # Model credentials: pass an API key, or rely on the read-only
+      # .credentials.json mount below (for OAuth-based tools).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CHT_CORE_PATH: /workspace/cht-core
+      # CHT entry point on cht-agent-net (nginx joins via the #66 override)
+      CHT_URL: ${CHT_URL:-https://nginx}
+      NODE_ENV: development
+    volumes:
+      # The cht-core working copy is an INPUT: a standing local clone the agent
+      # local-branches and edits in place. Must be a full clone (a .git
+      # DIRECTORY — worktrees have a .git file and the shadow mount below fails).
+      - ${CHT_CORE_PATH:?Set CHT_CORE_PATH to your cht-core working copy}:/workspace/cht-core:rw
+      # Hardened git config shadows the working copy's own .git/config.
+      - ${CHT_CORE_GIT_CONFIG:-./git-config.hardened}:/workspace/cht-core/.git/config:ro
+      # Model credentials, read-only. CURRENTLY UNUSED: the base image bakes no
+      # OAuth-based CLI yet (deferred code-gen extension point), and the seeding
+      # pipeline authenticates via its own named volume (docker-compose.seeder.yml),
+      # not this bind. It stays as the hook for when a Claude-CLI-style tool lands.
+      # Today the agent authenticates with ANTHROPIC_API_KEY (above).
+      # The file MUST exist as a regular file before `up` (run bootstrap-workspace.sh,
+      # which touches it) — otherwise Docker creates a root-owned directory at the
+      # target. Compose does NOT expand `~`, so the default uses ${HOME}; set
+      # CLAUDE_CREDENTIALS to an absolute path to override. NOTE: whatever is mounted
+      # here is fully readable by the agent's shell — use a disposable, narrowly-scoped
+      # key, never your personal OAuth credentials (see docs/docker-agent-runbook.md).
+      - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
+    deploy:
+      resources:
+        limits:
+          memory: ${AGENT_MEMORY_LIMIT:-4g}
+          cpus: "${AGENT_CPU_LIMIT:-2}"
