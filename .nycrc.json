@@ -9,8 +9,6 @@
     "**/*.spec.ts",
     "**/*.d.ts",
     "test/**",
-    "dist/**",
-    "src/utils/domain-inference.ts",
-    "src/scripts/open-review-pr.ts"
+    "dist/**"
   ]
 }
