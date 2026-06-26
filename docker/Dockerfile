@@ -6,6 +6,9 @@
 # human-gated on the host (see docs/docker-agent-runbook.md and
 # designs/layer_recommendations/test-environment-layer.md).
 
+# Pinned to the major+distro tag, not a digest: this is a locally-rebuilt dev
+# sandbox (image: cht-agent:local), so we want OS security patches on each
+# rebuild. Pin to a @sha256 digest if you need byte-reproducible builds.
 FROM node:22-bookworm
 
 # Root-level setup in one layer: tools the agent drives, the system-level git
@@ -74,6 +77,9 @@ RUN chmod 755 /usr/local/bin/agent-entrypoint.sh /usr/local/bin/init-agent-git.s
 # `USER agent` so they install system-wide), e.g.:
 #   RUN npm install -g @anthropic-ai/claude-code
 # Tools must respect the sandbox: no credentials baked, no Docker required.
+# NOTE: the ~/.claude/settings.json allow/deny lists and the .credentials.json
+# mount only take runtime effect once such a CLI is the execution layer — until
+# then they are inert. Re-audit both when this extension point is filled.
 
 USER agent
 

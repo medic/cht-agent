@@ -32,6 +32,8 @@
       "Bash(git remote remove:*)",
       "Bash(git remote rename:*)",
       "Bash(git config --system:*)",
+      "Bash(git config --global:*)",
+      "Bash(git config --local:*)",
       "Bash(ssh:*)",
       "Bash(scp:*)",
       "Bash(sftp:*)",

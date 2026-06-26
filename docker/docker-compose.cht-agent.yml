@@ -58,13 +58,17 @@ services:
       - ${CHT_CORE_PATH:?Set CHT_CORE_PATH to your cht-core working copy}:/workspace/cht-core:rw
       # Hardened git config shadows the working copy's own .git/config.
       - ${CHT_CORE_GIT_CONFIG:-./git-config.hardened}:/workspace/cht-core/.git/config:ro
-      # Model credentials, read-only. The file MUST exist as a regular file
-      # before `up` (run bootstrap-workspace.sh, which touches it) — otherwise
-      # Docker creates a root-owned directory at the target. Compose does NOT
-      # expand `~`, so the default uses ${HOME}; set CLAUDE_CREDENTIALS to an
-      # absolute path to override. NOTE: whatever is mounted here is fully
-      # readable by the agent's shell — use a disposable, narrowly-scoped key,
-      # never your personal OAuth credentials (see docs/docker-agent-runbook.md).
+      # Model credentials, read-only. CURRENTLY UNUSED: the base image bakes no
+      # OAuth-based CLI yet (deferred code-gen extension point), and the seeding
+      # pipeline authenticates via its own named volume (docker-compose.seeder.yml),
+      # not this bind. It stays as the hook for when a Claude-CLI-style tool lands.
+      # Today the agent authenticates with ANTHROPIC_API_KEY (above).
+      # The file MUST exist as a regular file before `up` (run bootstrap-workspace.sh,
+      # which touches it) — otherwise Docker creates a root-owned directory at the
+      # target. Compose does NOT expand `~`, so the default uses ${HOME}; set
+      # CLAUDE_CREDENTIALS to an absolute path to override. NOTE: whatever is mounted
+      # here is fully readable by the agent's shell — use a disposable, narrowly-scoped
+      # key, never your personal OAuth credentials (see docs/docker-agent-runbook.md).
       - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
     deploy:
       resources:

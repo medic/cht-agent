@@ -22,9 +22,10 @@ set -uo pipefail
 
 CHT_CORE_PATH="${CHT_CORE_PATH:-/workspace/cht-core}"
 FAILURES=0
+WARNINGS=0
 
 ok()   { local msg="$1"; echo "  [OK]   $msg"; return 0; }
-warn() { local msg="$1"; echo "  [WARN] $msg"; return 0; }
+warn() { local msg="$1"; echo "  [WARN] $msg"; WARNINGS=$((WARNINGS + 1)); return 0; }
 fail() { local msg="$1"; echo "  [FAIL] $msg"; FAILURES=$((FAILURES + 1)); return 0; }
 
 echo "[cht-agent] Initializing git/credential sandbox..."
@@ -97,10 +98,13 @@ if command -v ssh > /dev/null 2>&1; then
 else
   ok "no ssh binary"
 fi
-if ls /home/agent/.ssh/id_* > /dev/null 2>&1; then
-  fail "SSH keys found in /home/agent/.ssh"
+# Any file other than the disabled-config stub we baked in is unexpected (a
+# private key, known_hosts, etc.) — broader than just the id_* glob.
+SSH_EXTRA="$(ls -A /home/agent/.ssh 2>/dev/null | grep -vx config)"
+if [[ -n "$SSH_EXTRA" ]]; then
+  fail "unexpected files in /home/agent/.ssh: $(echo "$SSH_EXTRA" | tr '\n' ' ')"
 else
-  ok "no SSH keys"
+  ok "no SSH keys (~/.ssh holds only the disabled-config stub)"
 fi
 TOKENS_FOUND=0
 for tok in GH_TOKEN GITHUB_TOKEN GITHUB_ACCESS_TOKEN GH_ENTERPRISE_TOKEN \
@@ -157,4 +161,8 @@ if [[ "$FAILURES" -gt 0 ]]; then
   echo "[cht-agent] Sandbox verification FAILED ($FAILURES check(s)). Refusing to start."
   exit 1
 fi
-echo "[cht-agent] Sandbox verified. Remote read OK, push impossible, no Docker."
+if [[ "$WARNINGS" -gt 0 ]]; then
+  echo "[cht-agent] Sandbox PARTIALLY verified: $WARNINGS warning(s) above — a defense-in-depth layer is degraded (e.g. the pre-push hook or read-only .git/config), but no critical check failed. Remote read OK, push impossible, no Docker."
+else
+  echo "[cht-agent] Sandbox verified. Remote read OK, push impossible, no Docker."
+fi
