@@ -62,6 +62,18 @@ The JSON result's model/usage fields should name `claude-opus-4-8`. If you see
 a different model, check that nothing in the claude-config volume overrides it
 (`docker exec cht-seeder cat /home/agent/.claude/settings.json`).
 
+> **Named-volume caveat.** `/home/agent/.claude` is a named volume
+> (`seeder-claude-config`) that is seeded from the image **only on first
+> creation**. Rebuilding the image after changing the baked `CLAUDE.md` /
+> `settings.json` will **not** update an existing volume. To pick up those
+> changes (or to recover from a corrupted config) recreate it:
+> ```bash
+> docker compose -f docker/docker-compose.seeder.yml down
+> docker volume rm cht-agent_seeder-claude-config   # then `up` re-seeds + re-login
+> ```
+> The OAuth login persists in this volume, so you will need to re-run the login
+> step afterwards.
+
 ## 2. Run the batch
 
 ```bash
