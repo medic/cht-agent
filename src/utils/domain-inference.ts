@@ -12,8 +12,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
-import { CHTDomain, IssueTemplate } from '../types';
-import { CHT_DOMAINS } from '../constants';
+import { CHTDomain, CHTLayer, ConfigArtifact, IssueTemplate } from '../types';
+import { CHT_DOMAINS, CHT_LAYERS, CONFIG_ARTIFACTS } from '../constants';
 
 interface DomainIndices {
   domainToComponents: Record<string, unknown> | null;
@@ -151,7 +151,18 @@ const extractJson = (content: string): string => {
   return match[0];
 };
 
-const parseJsonSafe = (jsonStr: string): { domain?: string; components?: string[] } => {
+// Domain/components are the required contract; layer/configArtifact are added by PR2 and
+// stay optional so responses (or cached ones) that omit them still parse.
+export interface InferenceResult {
+  domain: CHTDomain;
+  components: string[];
+  layer: CHTLayer;
+  configArtifact?: ConfigArtifact;
+}
+
+const parseJsonSafe = (
+  jsonStr: string
+): { domain?: string; components?: string[]; layer?: string; configArtifact?: string } => {
   try {
     return JSON.parse(jsonStr);
   } catch (error) {
@@ -160,7 +171,7 @@ const parseJsonSafe = (jsonStr: string): { domain?: string; components?: string[
   }
 };
 
-const parseLLMResponse = (content: string): { domain: CHTDomain; components: string[] } => {
+const parseLLMResponse = (content: string): InferenceResult => {
   const result = parseJsonSafe(extractJson(content));
 
   if (!result.domain) {
@@ -171,9 +182,20 @@ const parseLLMResponse = (content: string): { domain: CHTDomain; components: str
     throw new Error(`LLM returned invalid domain: "${result.domain}". Must be one of: ${VALID_DOMAINS.join(', ')}`);
   }
 
+  // Tolerant: an absent or unrecognized layer defaults to cht-core; an unrecognized
+  // configArtifact is dropped. These never fail inference (backward-compatible).
+  const layer: CHTLayer = (CHT_LAYERS as readonly string[]).includes(result.layer ?? '')
+    ? (result.layer as CHTLayer)
+    : 'cht-core';
+  const configArtifact = (CONFIG_ARTIFACTS as readonly string[]).includes(result.configArtifact ?? '')
+    ? (result.configArtifact as ConfigArtifact)
+    : undefined;
+
   return {
     domain: result.domain as CHTDomain,
     components: Array.isArray(result.components) ? result.components : [],
+    layer,
+    ...(configArtifact ? { configArtifact } : {}),
   };
 };
 
@@ -183,7 +205,7 @@ const parseLLMResponse = (content: string): { domain: CHTDomain; components: str
 const inferUsingLLM = async (
   issue: IssueTemplate,
   modelName: string = 'claude-sonnet-4-20250514'
-): Promise<{ domain: CHTDomain; components: string[] }> => {
+): Promise<InferenceResult> => {
   const model = new ChatAnthropic({
     model: modelName,
     temperature: 0.2,
@@ -235,15 +257,28 @@ ${similarImplementations}
 Existing Code References (paths in codebase mentioned by ticket author):
 ${existingReferences}
 
+CHT Layers (where the fix lives):
+- cht-core: a change to the platform codebase itself (a genuine platform bug or feature).
+- cht-conf: a change to the deployment's own configuration — XLSForms, tasks.js,
+  targets.js, contact-summary.js, app_settings.json. Most field-feedback fixes are here.
+- investigate: ambiguous; could be either until the config and platform are compared.
+
+Config artifacts (only when layer is cht-conf): form, contact-form, task, target,
+contact-summary, app-settings, messaging, purge, translations, resources, tooling.
+
 Based on this issue and the examples/pitfalls above, identify:
 1. The PRIMARY domain (one of the ${CHT_DOMAINS.length} listed above)
 2. Likely components that would be affected (be specific but realistic)
+3. The layer (cht-core | cht-conf | investigate); default to cht-core if unsure
+4. If layer is cht-conf, the most likely configArtifact (omit otherwise)
 
 Respond in this exact JSON format:
 {
   "domain": "domain-name",
   "components": ["component1", "component2"],
-  "reasoning": "Brief explanation of why this domain and these components"
+  "layer": "cht-core",
+  "configArtifact": "form",
+  "reasoning": "Brief explanation of the domain, layer, and (if cht-conf) the artifact"
 }`;
 
   const response = await model.invoke(prompt);
@@ -260,16 +295,21 @@ Respond in this exact JSON format:
 export const inferDomainAndComponents = async (
   issue: IssueTemplate,
   modelName?: string
-): Promise<{ domain: CHTDomain; components: string[] }> => {
+): Promise<InferenceResult> => {
+  const ctx = issue.issue.technical_context;
   // If domain is already specified, keep it
-  const hasExistingDomain = issue.issue.technical_context.domain !== undefined;
-  const hasExistingComponents = issue.issue.technical_context.components.length > 0;
+  const hasExistingDomain = ctx.domain !== undefined;
+  const hasExistingComponents = ctx.components.length > 0;
 
   if (hasExistingDomain && hasExistingComponents) {
     console.log('[Domain Inference] Using domain and components from ticket');
+    // Carry through any layer/configArtifact already on the ticket; default layer to
+    // cht-core. (Short-circuit stays — we don't call the LLM just to fill the layer.)
     return {
-      domain: issue.issue.technical_context.domain,
-      components: issue.issue.technical_context.components,
+      domain: ctx.domain,
+      components: ctx.components,
+      layer: ctx.layer ?? 'cht-core',
+      ...(ctx.configArtifact ? { configArtifact: ctx.configArtifact } : {}),
     };
   }
 
@@ -288,21 +328,28 @@ export const inferDomainAndComponents = async (
 };
 
 /**
- * Enrich an issue template with inferred domain/components
+ * Enrich an issue template with inferred domain/components/layer/configArtifact.
+ * Frontmatter wins: an explicit layer/configArtifact on the ticket is preserved; the
+ * inferred value only fills a gap.
  */
 export const enrichIssueTemplate = async (
   issue: IssueTemplate,
   modelName?: string
 ): Promise<IssueTemplate> => {
-  const { domain, components } = await inferDomainAndComponents(issue, modelName);
+  const ctx = issue.issue.technical_context;
+  const { domain, components, layer, configArtifact } = await inferDomainAndComponents(issue, modelName);
 
   return {
     issue: {
       ...issue.issue,
       technical_context: {
-        ...issue.issue.technical_context,
-        domain: domain,
-        components: components.length > 0 ? components : issue.issue.technical_context.components,
+        ...ctx,
+        domain,
+        components: components.length > 0 ? components : ctx.components,
+        layer: ctx.layer ?? layer,
+        ...(ctx.configArtifact ?? configArtifact
+          ? { configArtifact: ctx.configArtifact ?? configArtifact }
+          : {}),
       },
     },
   };

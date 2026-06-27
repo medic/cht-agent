@@ -3,13 +3,38 @@
  * Based on the domain-first context structure
  */
 
-import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS } from '../constants';
+import {
+  CHT_DOMAINS,
+  CHT_SERVICES,
+  CHT_WORKFLOWS,
+  CHT_LAYERS,
+  CONFIG_ARTIFACTS,
+  CONFIG_MECHANISMS,
+} from '../constants';
 
 /**
  * CHT Domains based on functional areas.
  * Derived from CHT_DOMAINS — the single TS source of truth (mirrored in schema.json).
  */
 export type CHTDomain = (typeof CHT_DOMAINS)[number];
+
+/**
+ * Whether a ticket/context concerns the cht-core platform, the deployment's cht-conf
+ * configuration, or is still ambiguous. Derived from CHT_LAYERS (mirrored in schema.json).
+ */
+export type CHTLayer = (typeof CHT_LAYERS)[number];
+
+/**
+ * The suspected cht-conf artifact for a config ticket/context.
+ * Derived from CONFIG_ARTIFACTS (mirrored in schema.json).
+ */
+export type ConfigArtifact = (typeof CONFIG_ARTIFACTS)[number];
+
+/**
+ * The config mechanism a fix edits (e.g. an XLSForm `relevant` expression or a
+ * `tasks.js` `appliesIf`). Derived from CONFIG_MECHANISMS (mirrored in schema.json).
+ */
+export type ConfigMechanism = (typeof CONFIG_MECHANISMS)[number];
 
 /**
  * Issue type classification
@@ -39,6 +64,15 @@ export interface IssueTemplate {
       domain: CHTDomain; // Required - must be specified in ticket frontmatter
       components: string[];
       existing_references?: string[];
+      // Layer routing. Optional on a freshly parsed ticket: the parser only sets it when
+      // present in frontmatter, leaving it absent otherwise. Domain inference fills the
+      // gap and defaults it to cht-core, so after enrichIssueTemplate it is always set
+      // (frontmatter wins over inference). cht-conf marks a deployment-config ticket.
+      layer?: CHTLayer;
+      configArtifact?: ConfigArtifact;
+      artifactName?: string;
+      chtConfVersion?: string;
+      deploymentRef?: string;
     };
     requirements: string[];
     acceptance_criteria: string[];
@@ -199,6 +233,23 @@ export interface ResolvedIssueContext {
     tests?: string[];
   };
   tags?: string[];
+
+  /**
+   * Layer discriminator. Absent or 'cht-core' for platform contexts (the default that
+   * preserves today's behavior); 'cht-conf' for deployment-config contexts. The fields
+   * below are only populated for cht-conf entries.
+   */
+  layer?: CHTLayer;
+  /** The cht-conf artifact this context resolved (form, task, app-settings, …). */
+  configArtifact?: ConfigArtifact;
+  /** The config mechanism the fix edits (relevant, appliesIf, constraint, …). */
+  mechanism?: ConfigMechanism;
+  /** The reusable fix as a config snippet (before/after `relevant`, `tasks.js` block, …). */
+  fix?: string;
+  /** cht-conf actions involved in applying the fix (e.g. convert-app-forms, upload-app-settings). */
+  chtConfActions?: string[];
+  /** Other artifacts the fix touches or depends on (e.g. a task that reads a form field). */
+  relatedArtifacts?: string[];
 }
 
 /**

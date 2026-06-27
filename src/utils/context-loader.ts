@@ -12,7 +12,11 @@ import {
   WorkflowComponents,
   ResolvedIssueContext,
   CHTDomain,
+  CHTLayer,
+  ConfigArtifact,
+  ConfigMechanism,
 } from '../types';
+import { CHT_LAYERS, CONFIG_ARTIFACTS, CONFIG_MECHANISMS } from '../constants';
 
 const AGENT_MEMORY_PATH = path.join(process.cwd(), 'agent-memory');
 
@@ -117,44 +121,82 @@ export const loadWorkflowFlow = (
 };
 
 /**
- * Find resolved issues by domain
+ * Find resolved issues by domain. Reads the memory-pipeline drafts at
+ * `domains/<domain>/issues/*.md` and maps their frontmatter onto ResolvedIssueContext.
  */
 export const findResolvedIssuesByDomain = (domain: CHTDomain): ResolvedIssueContext[] => {
-  const domainPath = path.join(
-    AGENT_MEMORY_PATH,
-    'knowledge-base',
-    'resolved-issues',
-    'by-domain',
-    domain
-  );
+  const draftsPath = path.join(AGENT_MEMORY_PATH, 'domains', domain, 'issues');
 
-  if (!fs.existsSync(domainPath)) {
+  if (!fs.existsSync(draftsPath)) {
     return [];
   }
 
-  return scanDirectoryForIssues(domainPath);
+  return scanDraftsForIssues(draftsPath, domain);
 };
 
-function parseCompletedIssue(filePath: string): ResolvedIssueContext | null {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const { metadata } = parseFrontmatter(content);
-  return metadata.phase === 'completed'
-    ? metadata as unknown as ResolvedIssueContext
-    : null;
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+
+const asEnum = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
+  typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
+
+// Map a promoted-draft's frontmatter onto ResolvedIssueContext. Drafts come from merged
+// issues, so phase is 'completed'; tags are folded into components so overlap scoring has
+// signal against a ticket's technical context. Config fields are only set for cht-conf
+// drafts (layer defaults to cht-core, preserving today's behavior).
+function mapDraftToResolvedIssue(
+  metadata: Record<string, unknown>,
+  domain: CHTDomain
+): ResolvedIssueContext {
+  const services = asStringArray(metadata.services);
+  const tags = asStringArray(metadata.tags);
+  const has = (svc: string) => (services.includes(svc) ? [svc] : []);
+
+  const layer = asEnum<CHTLayer>(metadata.layer, CHT_LAYERS) ?? 'cht-core';
+
+  return {
+    id: typeof metadata.id === 'string' ? metadata.id : `cht-core-${metadata.issueNumber ?? 'unknown'}`,
+    issue_number: typeof metadata.issueNumber === 'number' ? metadata.issueNumber : undefined,
+    timestamp: typeof metadata.lastUpdated === 'string' ? metadata.lastUpdated : '',
+    category: typeof metadata.category === 'string' ? metadata.category : 'unknown',
+    domains: [typeof metadata.domain === 'string' ? (metadata.domain as CHTDomain) : domain],
+    phase: 'completed',
+    task_id: typeof metadata.source_pr === 'string' ? metadata.source_pr : String(metadata.id ?? ''),
+    summary: typeof metadata.summary === 'string' ? metadata.summary : '',
+    tech_stack: asStringArray(metadata.techStack),
+    components: {
+      api: has('api'),
+      webapp: has('webapp'),
+      sentinel: has('sentinel'),
+      shared_libs: [...has('admin'), ...tags],
+    },
+    tags,
+    layer,
+    configArtifact: asEnum<ConfigArtifact>(metadata.configArtifact, CONFIG_ARTIFACTS),
+    mechanism: asEnum<ConfigMechanism>(metadata.mechanism, CONFIG_MECHANISMS),
+  };
 }
 
-function processEntry(dirPath: string, entry: fs.Dirent): ResolvedIssueContext[] {
-  const fullPath = path.join(dirPath, entry.name);
-  if (entry.isDirectory()) return scanDirectoryForIssues(fullPath);
-  if (!entry.name.endsWith('.md')) return [];
-  const issue = parseCompletedIssue(fullPath);
-  return issue ? [issue] : [];
+function parseDraftIssue(filePath: string, domain: CHTDomain): ResolvedIssueContext | null {
+  const { metadata } = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
+  if (!metadata.domain && metadata.issueNumber === undefined) {
+    return null;
+  }
+  return mapDraftToResolvedIssue(metadata, domain);
 }
 
-function scanDirectoryForIssues(dirPath: string): ResolvedIssueContext[] {
+function scanDraftsForIssues(dirPath: string, domain: CHTDomain): ResolvedIssueContext[] {
   return fs
     .readdirSync(dirPath, { withFileTypes: true })
-    .flatMap(entry => processEntry(dirPath, entry));
+    .flatMap(entry => {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) return scanDraftsForIssues(fullPath, domain);
+      if (!entry.name.endsWith('.md')) return [];
+      const issue = parseDraftIssue(fullPath, domain);
+      return issue ? [issue] : [];
+    });
 }
 
 /**

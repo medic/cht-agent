@@ -2,7 +2,12 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { IssueTemplate, CHTDomain } from '../../src/types';
-import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../../src/utils/domain-inference';
+import {
+  DOMAIN_EXAMPLES,
+  DOMAIN_PITFALLS,
+  inferDomainAndComponents,
+  enrichIssueTemplate,
+} from '../../src/utils/domain-inference';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -54,6 +59,7 @@ describe('domain-inference', () => {
         'data-sync',
         'configuration',
         'interoperability',
+        'infrastructure',
       ];
 
       for (const domain of validDomains) {
@@ -105,6 +111,64 @@ describe('domain-inference', () => {
       });
 
       expect(issue.issue.technical_context.existing_references).to.have.lengthOf(2);
+    });
+  });
+
+  // These exercise the short-circuit path (domain + components already present), which
+  // returns without calling the LLM — so no ChatAnthropic mock is needed.
+  describe('layer/configArtifact on the short-circuit path', () => {
+    it('defaults layer to cht-core when the ticket omits it', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'contacts', components: ['api/contacts'] },
+      });
+
+      const result = await inferDomainAndComponents(issue);
+
+      expect(result.domain).to.equal('contacts');
+      expect(result.layer).to.equal('cht-core');
+      expect(result.configArtifact).to.be.undefined;
+    });
+
+    it('carries through layer and configArtifact from the ticket', async () => {
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: ['forms/app/pnc.xlsx'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+
+      const result = await inferDomainAndComponents(issue);
+
+      expect(result.layer).to.equal('cht-conf');
+      expect(result.configArtifact).to.equal('form');
+    });
+
+    it('enrichIssueTemplate defaults layer to cht-core when the ticket omits it', async () => {
+      const issue = createTestIssue({
+        technical_context: { domain: 'contacts', components: ['api/contacts'] },
+      });
+
+      const enriched = await enrichIssueTemplate(issue);
+
+      expect(enriched.issue.technical_context.layer).to.equal('cht-core');
+    });
+
+    it('enrichIssueTemplate preserves the ticket layer/configArtifact', async () => {
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: ['forms/app/pnc.xlsx'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+
+      const enriched = await enrichIssueTemplate(issue);
+
+      expect(enriched.issue.technical_context.layer).to.equal('cht-conf');
+      expect(enriched.issue.technical_context.configArtifact).to.equal('form');
     });
   });
 
@@ -166,7 +230,8 @@ describe('domain-inference (mocked LLM)', () => {
     const res = await mod.inferDomainAndComponents(
       makeIssue({ technical_context: { domain: 'contacts', components: ['api/x'] } }),
     );
-    expect(res).to.deep.equal({ domain: 'contacts', components: ['api/x'] });
+    // layer defaults to cht-core on the short-circuit path (no layer on the ticket).
+    expect(res).to.deep.equal({ domain: 'contacts', components: ['api/x'], layer: 'cht-core' });
     expect(invokeStub.called).to.equal(false);
   });
 

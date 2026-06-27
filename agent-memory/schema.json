@@ -50,6 +50,44 @@
       "enum": ["high", "medium", "low"],
       "description": "Distillation confidence: high=reviewed, medium=unreviewed draft, low=stale"
     },
+    "CHTLayer": {
+      "type": "string",
+      "enum": ["cht-core", "cht-conf", "investigate"],
+      "description": "Whether the entry concerns the cht-core platform, the deployment's cht-conf configuration, or is still ambiguous"
+    },
+    "ConfigArtifact": {
+      "type": "string",
+      "enum": [
+        "form",
+        "contact-form",
+        "task",
+        "target",
+        "contact-summary",
+        "app-settings",
+        "messaging",
+        "purge",
+        "translations",
+        "resources",
+        "tooling"
+      ],
+      "description": "The cht-conf configuration artifact a config entry implicates"
+    },
+    "ConfigMechanism": {
+      "type": "string",
+      "enum": [
+        "relevant",
+        "constraint",
+        "calculation",
+        "appliesIf",
+        "resolvedIf",
+        "events",
+        "schedule",
+        "choices",
+        "validation",
+        "permissions"
+      ],
+      "description": "The config mechanism a fix edits (e.g. an XLSForm relevant expression or a tasks.js appliesIf)"
+    },
     "frontmatter": {
       "type": "object",
       "description": "YAML frontmatter for markdown context files",
@@ -75,6 +113,18 @@
         "subDomain": {
           "type": "string",
           "description": "More specific area within the domain"
+        },
+        "layer": {
+          "$ref": "#/definitions/CHTLayer",
+          "description": "Layer discriminator. Defaults to cht-core when absent; set to cht-conf for deployment-config entries"
+        },
+        "configArtifact": {
+          "$ref": "#/definitions/ConfigArtifact",
+          "description": "For cht-conf entries: the configuration artifact this resolution touched"
+        },
+        "mechanism": {
+          "$ref": "#/definitions/ConfigMechanism",
+          "description": "For cht-conf entries: the config mechanism the fix edits"
         },
         "issueNumber": {
           "type": "integer",

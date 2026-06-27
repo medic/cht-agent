@@ -8,8 +8,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as yaml from 'js-yaml';
-import { IssueTemplate, CHTDomain, IssueType, Priority } from '../types';
-import { CHT_DOMAINS } from '../constants';
+import { IssueTemplate, CHTDomain, CHTLayer, ConfigArtifact, IssueType, Priority } from '../types';
+import { CHT_DOMAINS, CHT_LAYERS, CONFIG_ARTIFACTS } from '../constants';
 
 export interface ValidationResult {
   valid: boolean;
@@ -84,6 +84,21 @@ const validateDomain = (domain: string): CHTDomain => {
   throw new Error(`Invalid domain: "${domain}". Must be one of: ${VALID_DOMAINS.join(', ')}`);
 };
 
+// layer/configArtifact are optional; these only fire when the field is present.
+const validateLayer = (layer: string): CHTLayer => {
+  if ((CHT_LAYERS as readonly string[]).includes(layer)) {
+    return layer as CHTLayer;
+  }
+  throw new Error(`Invalid layer: "${layer}". Must be one of: ${CHT_LAYERS.join(', ')}`);
+};
+
+const validateConfigArtifact = (artifact: string): ConfigArtifact => {
+  if ((CONFIG_ARTIFACTS as readonly string[]).includes(artifact)) {
+    return artifact as ConfigArtifact;
+  }
+  throw new Error(`Invalid configArtifact: "${artifact}". Must be one of: ${CONFIG_ARTIFACTS.join(', ')}`);
+};
+
 const extractSection = (markdown: string, sectionTitle: string): string => {
   const regex = new RegExp(String.raw`##\s+${sectionTitle}\s*\n([\s\S]*?)(?=\n##|$)`, 'i');
   const match = regex.exec(markdown);
@@ -155,7 +170,7 @@ const validateMetadata = (metadata: Record<string, string>) => {
   }
   if (!metadata.domain) {
     throw new Error(
-      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration|interoperability)'
+      `Ticket must have a "domain" in frontmatter (${VALID_DOMAINS.join('|')})`
     );
   }
 };
@@ -190,6 +205,12 @@ export const parseTicketFile = (filePath: string): IssueTemplate => {
   const similarImplText = extractSubsection(referencesSection, 'Similar Implementations');
   const documentationText = extractSubsection(referencesSection, 'Documentation');
 
+  // All config fields are optional and only set when present in frontmatter. layer is
+  // intentionally NOT defaulted here — leaving it absent lets domain inference fill it
+  // (frontmatter wins); the default to cht-core lands in inference/enrichment.
+  const layer = metadata.layer ? validateLayer(metadata.layer) : undefined;
+  const configArtifact = metadata.configArtifact ? validateConfigArtifact(metadata.configArtifact) : undefined;
+
   return {
     issue: {
       title: metadata.title,
@@ -200,6 +221,11 @@ export const parseTicketFile = (filePath: string): IssueTemplate => {
         domain: validateDomain(metadata.domain),
         components,
         existing_references: existingReferences,
+        ...(layer ? { layer } : {}),
+        ...(configArtifact ? { configArtifact } : {}),
+        ...(metadata.artifactName ? { artifactName: metadata.artifactName } : {}),
+        ...(metadata.chtConfVersion ? { chtConfVersion: metadata.chtConfVersion } : {}),
+        ...(metadata.deploymentRef ? { deploymentRef: metadata.deploymentRef } : {}),
       },
       requirements: extractBulletList(requirementsSection),
       acceptance_criteria: extractBulletList(acceptanceCriteriaSection),
@@ -237,6 +263,8 @@ const mapErrorMessage = (error: unknown): string => {
     [/Invalid type:/, 'Type must be one of: feature, bug, improvement'],
     [/Invalid priority:/, 'Priority must be one of: high, medium, low'],
     [/Invalid domain:/, `Domain must be one of: ${VALID_DOMAINS.join(', ')}`],
+    [/Invalid layer:/, `Layer must be one of: ${CHT_LAYERS.join(', ')}`],
+    [/Invalid configArtifact:/, `configArtifact must be one of: ${CONFIG_ARTIFACTS.join(', ')}`],
     [/Ticket file not found:/, 'Ticket file not found'],
   ];
 
