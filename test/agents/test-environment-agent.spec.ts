@@ -1,7 +1,15 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
-import { DiscoveredConfig, EnvironmentHandle, ProvisionOptions, ResetTier } from '../../src/types';
+import * as chtConfRunner from '../../src/utils/cht-conf-runner';
+import {
+  ConfigActionResult,
+  ConfigUploadAction,
+  DiscoveredConfig,
+  EnvironmentHandle,
+  ProvisionOptions,
+  ResetTier,
+} from '../../src/types';
 
 describe('TestEnvironmentAgent', () => {
   let agent: TestEnvironmentAgent;
@@ -219,21 +227,76 @@ describe('TestEnvironmentAgent', () => {
       expect(second.actions[0].warnings).to.deep.equal([]);
     });
 
-    it('should throw not-implemented in real mode', async () => {
-      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
-      const handle: EnvironmentHandle = {
+    describe('real mode (useMockDocker: false)', () => {
+      let runBucketStub: sinon.SinonStub;
+      const dockerHandle: EnvironmentHandle = {
         url: 'https://nginx',
         auth: { user: 'medic', password: 'password' },
         network: 'cht-agent-net',
         source: 'docker',
       };
+      const uploaded = (action: ConfigUploadAction): ConfigActionResult => ({
+        action,
+        status: 'uploaded',
+        commands: [],
+        warnings: [],
+      });
 
-      try {
-        await realAgent.applyConfig(handle);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('not yet implemented');
-      }
+      beforeEach(() => {
+        runBucketStub = sinon
+          .stub(chtConfRunner, 'runBucket')
+          .callsFake((opts) => Promise.resolve(uploaded(opts.action)));
+      });
+
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      it('runs cht-conf per action against the instance and aggregates success', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        const result = await realAgent.applyConfig(dockerHandle, { actions: ['app-settings', 'app-forms'] });
+
+        expect(runBucketStub.callCount).to.equal(2);
+        expect(result.succeeded).to.equal(true);
+        expect(result.actions.map((a) => a.action)).to.deep.equal(['app-settings', 'app-forms']);
+      });
+
+      it('passes the credentialed instance URL and configPath to the runner', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        await realAgent.applyConfig(dockerHandle, { configPath: '/mnt/conf', actions: ['app-forms'] });
+
+        const passed = runBucketStub.firstCall.args[0];
+        expect(passed.instanceUrl).to.equal('https://medic:password@nginx/');
+        expect(passed.configPath).to.equal('/mnt/conf');
+        expect(passed.action).to.equal('app-forms');
+      });
+
+      it('threads the targeted artifact through to the runner', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        await realAgent.applyConfig(dockerHandle, { actions: ['app-forms'], artifact: 'pregnancy' });
+
+        expect(runBucketStub.firstCall.args[0].artifact).to.equal('pregnancy');
+      });
+
+      it('reports succeeded:false when a bucket fails, without aborting the rest', async () => {
+        runBucketStub.restore();
+        runBucketStub = sinon.stub(chtConfRunner, 'runBucket').callsFake((opts) => {
+          const status = opts.action === 'app-forms' ? 'failed' : 'uploaded';
+          return Promise.resolve({ action: opts.action, status, commands: [], warnings: [] });
+        });
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        const result = await realAgent.applyConfig(dockerHandle, {
+          actions: ['app-settings', 'app-forms', 'resources'],
+        });
+
+        expect(runBucketStub.callCount).to.equal(3);
+        expect(result.succeeded).to.equal(false);
+        expect(result.actions.map((a) => a.status)).to.deep.equal(['uploaded', 'failed', 'uploaded']);
+      });
     });
   });
 

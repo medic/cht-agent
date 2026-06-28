@@ -13,6 +13,7 @@
 
 import {
   ApplyConfigOptions,
+  ConfigActionResult,
   ConfigApplyResult,
   ConfigUploadAction,
   DiscoveredConfig,
@@ -23,6 +24,7 @@ import {
 } from '../types';
 import { MOCK_TEST_ENV_DATA, mockConfigActionResult } from './test-environment-agent.mock-data';
 import { waitForReady } from '../utils/cht-readiness';
+import { runBucket } from '../utils/cht-conf-runner';
 
 const NOT_IMPLEMENTED = 'Docker orchestration not yet implemented';
 
@@ -42,6 +44,33 @@ const DEFAULT_CONFIG_ACTIONS: ConfigUploadAction[] = [
   'contact-forms',
   'resources',
 ];
+
+/**
+ * Build the cht-conf instance URL with embedded credentials
+ * (https://user:pass@host). Only the runner sees this; logs use handle.url.
+ */
+const credentialedUrl = (handle: EnvironmentHandle): string => {
+  const url = new URL(handle.url);
+  url.username = encodeURIComponent(handle.auth.user);
+  url.password = encodeURIComponent(handle.auth.password);
+  return url.toString();
+};
+
+/**
+ * Aggregate per-bucket results into the ConfigApplyResult envelope. Shared by
+ * the mock and real paths so both return an identical shape.
+ */
+const toApplyResult = (
+  configPath: string,
+  artifact: string | undefined,
+  results: ConfigActionResult[]
+): ConfigApplyResult => ({
+  configPath,
+  ...(artifact ? { artifact } : {}),
+  actions: results,
+  succeeded: results.every((result) => result.status !== 'failed'),
+  warnings: results.flatMap((result) => result.warnings),
+});
 
 export class TestEnvironmentAgent {
   private readonly useMockDocker: boolean;
@@ -120,26 +149,24 @@ export class TestEnvironmentAgent {
     const actions = opts.actions ?? DEFAULT_CONFIG_ACTIONS;
     const artifact = opts.artifact;
 
+    const scope = artifact ? `${actions.join(', ')}; artifact=${artifact}` : actions.join(', ');
+    console.log(`[Test Environment Agent] Applying config: ${configPath} (${scope}) -> ${handle.url}`);
+
     if (!this.useMockDocker) {
-      // Real path (#66 Phase 2): shell cht-conf over HTTP for each bucket
-      // (compile/convert + upload, optionally `--forms=<artifact>`), aggregate
-      // per-action status (uploaded/skipped/failed), never push.
-      throw new Error(NOT_IMPLEMENTED);
+      // Real path: one cht-conf invocation per bucket against the running
+      // instance (the agent runs no Docker — cht-conf talks over HTTP). Buckets
+      // run independently so one failure doesn't abort the rest; never push.
+      const instanceUrl = credentialedUrl(handle);
+      const results: ConfigActionResult[] = [];
+      for (const action of actions) {
+        results.push(await runBucket({ action, instanceUrl, configPath, artifact }));
+      }
+      return toApplyResult(configPath, artifact, results);
     }
 
-    const scope = artifact ? `${actions.join(', ')}; artifact=${artifact}` : actions.join(', ');
-    console.log(
-      `[Test Environment Agent] Applying config: ${configPath} (${scope}) -> ${handle.url}`
-    );
     const results = actions.map((action) => mockConfigActionResult(action));
     console.log(`[Test Environment Agent] (mock) config applied — ${results.length} action(s)`);
-    return {
-      configPath,
-      ...(artifact ? { artifact } : {}),
-      actions: results,
-      succeeded: results.every((result) => result.status !== 'failed'),
-      warnings: results.flatMap((result) => result.warnings),
-    };
+    return toApplyResult(configPath, artifact, results);
   }
 
   /**
