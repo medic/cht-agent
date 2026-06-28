@@ -125,16 +125,98 @@ describe('TestEnvironmentAgent', () => {
   });
 
   describe('applyConfig', () => {
-    it('should resolve in mock mode with the default config path', async () => {
+    it('should default to config/default and run all four upload buckets', async () => {
       const handle = await provisionMock();
 
-      expect(await agent.applyConfig(handle)).to.equal(undefined);
+      const result = await agent.applyConfig(handle);
+
+      expect(result.configPath).to.equal('config/default');
+      expect(result.succeeded).to.equal(true);
+      expect(result.warnings).to.deep.equal([]);
+      expect(result.actions.map((action) => action.action)).to.deep.equal([
+        'app-settings',
+        'app-forms',
+        'contact-forms',
+        'resources',
+      ]);
     });
 
-    it('should resolve in mock mode with an explicit config path', async () => {
+    it('should accept a bare config path string (back-compat)', async () => {
       const handle = await provisionMock();
 
-      expect(await agent.applyConfig(handle, 'config/standard')).to.equal(undefined);
+      const result = await agent.applyConfig(handle, 'config/standard');
+
+      expect(result.configPath).to.equal('config/standard');
+      expect(result.actions).to.have.lengthOf(4);
+    });
+
+    it('should run only the selected actions when actions are narrowed', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.applyConfig(handle, {
+        configPath: '/mnt/cht-conf-project',
+        actions: ['app-forms'],
+      });
+
+      expect(result.configPath).to.equal('/mnt/cht-conf-project');
+      expect(result.actions).to.have.lengthOf(1);
+      expect(result.actions[0].action).to.equal('app-forms');
+    });
+
+    it('should report the underlying cht-conf commands for each action', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.applyConfig(handle, { actions: ['app-forms'] });
+
+      expect(result.actions[0].commands).to.deep.equal(['convert-app-forms', 'upload-app-forms']);
+    });
+
+    it('should report an uploaded status per action in mock mode', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.applyConfig(handle, { actions: ['app-settings'] });
+
+      expect(result.actions[0].status).to.equal('uploaded');
+    });
+
+    it('should carry the targeted artifact onto the result when narrowed to one', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.applyConfig(handle, {
+        actions: ['app-forms'],
+        artifact: 'pregnancy',
+      });
+
+      expect(result.artifact).to.equal('pregnancy');
+    });
+
+    it('should omit the artifact field when no single artifact is targeted', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.applyConfig(handle, { actions: ['app-forms'] });
+
+      expect(result.artifact).to.equal(undefined);
+    });
+
+    it('should return an empty action list when actions is an empty array', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.applyConfig(handle, { actions: [] });
+
+      expect(result.actions).to.deep.equal([]);
+      expect(result.succeeded).to.equal(true);
+    });
+
+    it('should return an isolated copy (mutation does not leak to later calls)', async () => {
+      const handle = await provisionMock();
+
+      const first = await agent.applyConfig(handle, { actions: ['app-forms'] });
+      first.actions[0].commands.push('tampered');
+      first.actions[0].warnings.push('tampered');
+
+      const second = await agent.applyConfig(handle, { actions: ['app-forms'] });
+      expect(second.actions[0].commands).to.deep.equal(['convert-app-forms', 'upload-app-forms']);
+      expect(second.actions[0].warnings).to.deep.equal([]);
     });
 
     it('should throw not-implemented in real mode', async () => {

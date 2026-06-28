@@ -1,4 +1,4 @@
-import { DiscoveredConfig, TestDataResult } from '../types';
+import { ConfigActionResult, ConfigUploadAction, DiscoveredConfig, TestDataResult } from '../types';
 
 /**
  * Raw deterministic fixtures for the Test Environment Agent's mock mode.
@@ -14,6 +14,28 @@ export type MockTestEnvData = {
   config: DiscoveredConfig;
   testData: TestDataResult;
 };
+
+/**
+ * The cht-conf verbs each upload bucket runs (real-path Phase 2 shells out to
+ * these; mock mode reports them as the would-run commands). Single source for
+ * both the fixture and the real implementation.
+ */
+export const CONFIG_ACTION_COMMANDS: Record<ConfigUploadAction, string[]> = {
+  'app-settings': ['compile-app-settings', 'upload-app-settings'],
+  'app-forms': ['convert-app-forms', 'upload-app-forms'],
+  'contact-forms': ['convert-contact-forms', 'upload-contact-forms'],
+  resources: ['upload-resources', 'upload-branding', 'upload-custom-translations'],
+};
+
+/**
+ * Build a successful (uploaded), warning-free mock result for a single bucket.
+ */
+export const mockConfigActionResult = (action: ConfigUploadAction): ConfigActionResult => ({
+  action,
+  status: 'uploaded',
+  commands: [...CONFIG_ACTION_COMMANDS[action]],
+  warnings: [],
+});
 
 export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
   url: 'https://nginx',
