@@ -190,9 +190,12 @@ export function rewriteFrontmatter(content: string, repo: string, newIssue: numb
     ],
   ];
   for (const [re, repl] of edits) {
-    const count = (fm.match(new RegExp(re.source, 'gm')) ?? []).length;
-    if (count !== 1) throw new Error(`expected exactly one ${re.source} line, found ${count}`);
-    fm = fm.replace(re, repl);
+    let replaced = 0;
+    fm = fm.replace(new RegExp(re.source, 'gm'), () => {
+      replaced++;
+      return repl;
+    });
+    if (replaced !== 1) throw new Error(`expected exactly one ${re.source} line, found ${replaced}`);
   }
   return block[1] + fm + block[3] + content.slice(block[0].length);
 }
