@@ -127,6 +127,62 @@ describe('scrapePR', () => {
     });
   });
 
+  describe('linked-issue sources (title scope + closingIssuesReferences)', () => {
+    const issueViewByNumber: ExecHandler = (_file, args) =>
+      JSON.stringify({ body: `body ${args[2]}`, comments: [] });
+
+    function metaWith(overrides: Record<string, unknown>): string {
+      return JSON.stringify({
+        number: 8773,
+        title: 'My PR',
+        body: '',
+        labels: [],
+        mergeCommit: { oid: 'sha8773' },
+        mergedAt: '2024-03-01T00:00:00Z',
+        files: [],
+        ...overrides,
+      });
+    }
+
+    function load(meta: string) {
+      return loadScraper((_file, args) => {
+        if (args[0] === 'pr' && args[1] === 'view') return meta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return '[]';
+        if (args[0] === 'issue' && args[1] === 'view') return issueViewByNumber(_file, args);
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+    }
+
+    it('resolves the issue from the PR title scope fix(#N): when the body has no keyword', () => {
+      const { scrapePR } = load(metaWith({ title: 'fix(#6299): trigger sync', body: 'no keyword' }));
+      const result = scrapePR(8773);
+      expect(result.linkedIssues.map((i: { number: number }) => i.number)).to.deep.equal([6299]);
+    });
+
+    it('prefers closingIssuesReferences over the body and orders it first', () => {
+      const { scrapePR } = load(
+        metaWith({
+          body: 'Fixes #20',
+          closingIssuesReferences: [{ number: 6299, url: 'https://github.com/medic/cht-core/issues/6299' }],
+        })
+      );
+      const result = scrapePR(8773);
+      expect(result.linkedIssues.map((i: { number: number }) => i.number)).to.deep.equal([6299, 20]);
+    });
+
+    it('drops a cross-repo closingIssuesReferences entry', () => {
+      const { scrapePR } = load(
+        metaWith({
+          body: 'Fixes #20',
+          closingIssuesReferences: [{ number: 111, url: 'https://github.com/attacker/foo/issues/111' }],
+        })
+      );
+      const result = scrapePR(8773);
+      expect(result.linkedIssues.map((i: { number: number }) => i.number)).to.deep.equal([20]);
+    });
+  });
+
   describe('gh non-zero exit on PR metadata fetch', () => {
     it('should throw ScraperError with the correct prNumber', () => {
       const { scrapePR } = loadScraper((_file, args) => {

@@ -268,17 +268,22 @@ describe('distillPR', () => {
       expect(result.outputPath).to.include(path.join('infrastructure'));
     });
 
-    it('should fall back to the PR number for issue fields when no issue is linked', async () => {
+    it('should flag-for-human and write no draft when the PR closes no tracked issue', async () => {
       const { distillPR } = loadDistiller();
+      let distilled = false;
       const result: DistillResult = await distillPR(makePR({ prNumber: 500, linkedIssues: [] }), {
         outputDir: tmpOutputDir(),
         logPath: tmpLogPath(),
-        distillFn: async () => makeDraft(),
+        distillFn: async () => {
+          distilled = true;
+          return makeDraft();
+        },
       });
 
-      const fm = matter(fs.readFileSync(result.outputPath!, 'utf8')).data as Record<string, unknown>;
-      expect(fm.id).to.equal('cht-core-500');
-      expect(fm.issueNumber).to.equal(500);
+      expect(result.status).to.equal('flag-for-human');
+      expect(result.reason).to.include('no tracked issue');
+      expect(result.outputPath).to.equal(undefined);
+      expect(distilled).to.equal(false); // guarded before the LLM call
     });
 
     it('should populate provenance frontmatter fields', async () => {
@@ -528,21 +533,13 @@ describe('LLM chain via OpenRouter (no distillFn)', () => {
     expect(result.reason).to.include('non-error failure');
   });
 
-  it('should build prompt without issue context when linkedIssues is empty (covers issueContext false branch)', async () => {
-    process.env.OPENROUTER_API_KEY = 'test-or-key';
+  it('should build prompt without issue context when linkedIssues is empty (covers issueContext false branch)', () => {
+    // No-issue PRs are flagged before distillPR builds a prompt, so exercise the
+    // buildPrompt false branch directly.
+    const { buildPrompt } = loadDistiller();
+    const prompt: string = buildPrompt(makePR({ linkedIssues: [] }));
 
-    const capturedPrompts: string[] = [];
-    const { distillPR } = loadDistiller(async (prompt: string) => {
-      capturedPrompts.push(prompt);
-      return makeDraft();
-    });
-
-    await distillPR(
-      makePR({ linkedIssues: [] }),
-      { outputDir: tmpOutputDir(), logPath: tmpLogPath() }
-    );
-
-    expect(capturedPrompts[0]).to.not.include('Linked issues:');
+    expect(prompt).to.not.include('Linked issues:');
   });
 
   it('should build prompt with undefined prBody (covers prBody null-coalescing branch)', async () => {

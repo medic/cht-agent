@@ -1,10 +1,11 @@
 /**
  * scraper.ts — Synchronous GitHub PR scraper using `gh` CLI.
  *
- * Known limitations:
- *  - GitHub sidebar-linked issues (added via the PR UI) require the GraphQL
- *    `closingIssuesReferences` field and are NOT captured here; only issues
- *    mentioned in the PR body via Fixes/Closes/Resolves patterns are fetched.
+ * Linked issues are merged from three sources in descending authority: the
+ * GraphQL `closingIssuesReferences` (sidebar links), the PR title scope
+ * `type(#N):`, and the PR body `Fixes/Closes/Resolves #N` keywords.
+ *
+ * Known limitation:
  *  - Accurate `isOrgMember` results require the `read:org` scope on the gh CLI
  *    token. Without that scope, the /orgs/:org/members/:username endpoint may
  *    return 404 even for genuine members.
@@ -12,6 +13,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { LinkedIssue, ReviewComment, ScrapedPR, ScraperError } from '../types/pipeline';
+import { IssueRef, collectLinkedIssueRefs } from './issue-linkage';
 
 /** Options shared across all execFileSync calls. */
 const EXEC_OPTS = { maxBuffer: 50 * 1024 * 1024, encoding: 'utf8' as const };
@@ -60,51 +62,26 @@ function checkOrgMembership(username: string): boolean {
 }
 
 /**
- * Fetches all linked issues referenced in a PR body.
- *
- * Searches for `Fixes/Closes/Resolves #N` patterns (case-insensitive),
- * deduplicates issue numbers, then fetches each issue via `gh issue view`.
- * If an individual issue fetch fails (404, permissions, etc.), that issue is
- * dropped from the result rather than returned as an empty stub — a reference
- * that can't be resolved must not count as a real linked issue downstream
- * (e.g. flipping a filter skip into a distill). It does NOT propagate the error.
- *
- * @param prBody  - The raw PR body markdown text.
- * @param repo    - The `owner/repo` string used when calling the gh CLI.
- * @returns Array of LinkedIssue objects for every unique issue number found.
- *
- * @example
- * ```typescript
- * const issues = fetchLinkedIssues('Fixes #10\nCloses #20', 'medic/cht-core');
- * // issues.length === 2
- * ```
+ * Hydrates each collected issue reference via `gh issue view`, preserving order.
+ * A failed fetch (404/permissions/bad JSON) drops that issue rather than
+ * returning an empty stub — an unresolvable reference must not count as a real
+ * linked issue downstream (e.g. flipping a filter skip into a distill).
  */
-function fetchLinkedIssues(prBody: string, repo: string): LinkedIssue[] {
-  // Matches both bare keywords ("Fixes #123") and full GitHub issue URLs
-  // ("Fixes https://github.com/org/repo/issues/123")
-  const pattern = /(?:fixes|closes|resolves)\s+(?:https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/|#)(\d+)/gi;
-  const seen = new Set<number>();
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(prBody)) !== null) {
-    seen.add(Number.parseInt(match[1], 10));
-  }
-
-  return Array.from(seen)
-    .map((issueNumber): LinkedIssue | null => {
+function fetchLinkedIssues(refs: IssueRef[], repo: string): LinkedIssue[] {
+  return refs
+    .map((ref): LinkedIssue | null => {
       try {
         const raw = execFileSync(
           'gh',
-          ['issue', 'view', String(issueNumber), '--repo', repo, '--json', 'body,comments'],
+          ['issue', 'view', String(ref.number), '--repo', repo, '--json', 'body,comments'],
           EXEC_OPTS
         );
         const parsed = JSON.parse(raw);
         const commentBodies: string[] = (parsed.comments ?? []).map(
           (c: { body: string }) => c.body
         );
-        return { number: issueNumber, body: parsed.body ?? '', comments: commentBodies };
+        return { number: ref.number, body: parsed.body ?? '', comments: commentBodies };
       } catch {
-        // Unresolvable reference (404/permissions/bad JSON) — drop it.
         return null;
       }
     })
@@ -136,7 +113,7 @@ function fetchMetadata(prNumber: number, repo: string): string {
         '--repo',
         repo,
         '--json',
-        'number,title,body,labels,mergeCommit,mergedAt,files,author',
+        'number,title,body,labels,mergeCommit,mergedAt,files,author,closingIssuesReferences',
       ],
       EXEC_OPTS
     );
@@ -303,7 +280,19 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
       };
     });
 
-  const linkedIssues: LinkedIssue[] = fetchLinkedIssues(prBody, repo);
+  const rawClosing: Array<{ number: number; url?: string }> = Array.isArray(
+    meta.closingIssuesReferences
+  )
+    ? meta.closingIssuesReferences
+    : [];
+  // Drop cross-repo sidebar links so a PR can't attribute another repo's issue here.
+  const closingRefs = rawClosing.filter(
+    r => typeof r.url === 'string' && r.url.includes(`/${repo}/issues/`)
+  );
+  const linkedIssues: LinkedIssue[] = fetchLinkedIssues(
+    collectLinkedIssueRefs(prTitle, prBody, closingRefs),
+    repo
+  );
 
   return {
     prNumber,
