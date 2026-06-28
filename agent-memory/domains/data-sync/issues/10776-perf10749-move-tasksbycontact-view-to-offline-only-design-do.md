@@ -1,10 +1,10 @@
 ---
-id: cht-core-10776
+id: cht-core-10749
 category: improvement
 domain: data-sync
 domainFit: strong
-issueNumber: 10776
-issueUrl: https://github.com/medic/cht-core/issues/10776
+issueNumber: 10749
+issueUrl: https://github.com/medic/cht-core/issues/10749
 title: Move tasks_by_contact view from server-indexed medic-client ddoc to an offline-only design document to eliminate wasteful CouchDB server indexing
 lastUpdated: '2026-06-22'
 summary: The high-volume tasks_by_contact view was being indexed on the CouchDB server even though only offline clients' rules engine queries it, wasting disk and CPU on large deployments. The PR moves the view to a new offline-only design document (medic-offline-tasks) so it is only built on client-side PouchDB.

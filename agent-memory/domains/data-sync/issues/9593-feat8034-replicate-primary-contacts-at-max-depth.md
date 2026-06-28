@@ -1,10 +1,10 @@
 ---
-id: cht-core-9593
+id: cht-core-8034
 category: feature
 domain: data-sync
 domainFit: strong
-issueNumber: 9593
-issueUrl: https://github.com/medic/cht-core/issues/9593
+issueNumber: 8034
+issueUrl: https://github.com/medic/cht-core/issues/8034
 title: Add replicate_primary_contacts option to replicate primary contacts and their reports/targets at max depth
 lastUpdated: '2026-06-22'
 summary: Offline users could not replicate primary contacts (and their reports/targets) that fell outside their configured replication depth. This PR adds an opt-in replicate_primary_contacts flag to each replication_depth role config so those documents replicate at max depth, and removes the ability to create feedback docs in the medic db.

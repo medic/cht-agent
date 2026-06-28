@@ -1,10 +1,10 @@
 ---
-id: cht-core-10914
+id: cht-core-10912
 category: bug
 domain: data-sync
 domainFit: strong
-issueNumber: 10914
-issueUrl: https://github.com/medic/cht-core/issues/10914
+issueNumber: 10912
+issueUrl: https://github.com/medic/cht-core/issues/10912
 title: Fix replication key collection in API authorization service
 lastUpdated: '2026-06-22'
 summary: The API authorization service collected replication keys incorrectly (#10912), risking documents being wrongly included in or excluded from offline replication. The fix corrects the key-collection logic and adds unit tests.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-8773
+id: cht-core-6299
 category: bug
 domain: data-sync
 domainFit: strong
-issueNumber: 8773
-issueUrl: https://github.com/medic/cht-core/issues/8773
+issueNumber: 6299
+issueUrl: https://github.com/medic/cht-core/issues/6299
 title: Trigger successive sync when changes remain unsynced and fix last-replicated sequence tracking in db-sync service
 lastUpdated: '2026-06-23'
 summary: Changes that occurred on the server during an already-in-progress sync were left unsynced and the sync status could display an error. The db-sync service now records the highest last_seq from replication responses and triggers up to 2 successive syncs when something is still left to replicate.

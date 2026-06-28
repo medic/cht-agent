@@ -1,10 +1,10 @@
 ---
-id: cht-core-9874
+id: cht-core-9872
 category: feature
 domain: data-sync
 domainFit: strong
-issueNumber: 9874
-issueUrl: https://github.com/medic/cht-core/issues/9874
+issueNumber: 9872
+issueUrl: https://github.com/medic/cht-core/issues/9872
 title: Add storage pressure indicator to webapp header and sidebar menu for offline users
 lastUpdated: '2026-06-22'
 summary: Offline users (especially on kiosks) had no visibility into local storage usage, making it hard to tell whether storage limits or broken purging were degrading performance. Added a storage pressure indicator in the header/sidebar menu backed by a storage-info service and NgRx state.
