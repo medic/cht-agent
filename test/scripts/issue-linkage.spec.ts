@@ -3,6 +3,23 @@ import {
   parseTitleIssue,
   collectLinkedIssueRefs,
   sameRepoClosingRefs,
+  MAX_LINKED_ISSUES,
+} from '../../src/scripts/issue-linkage';
+
+describe('parseTitleIssue', () => {
+  it('extracts the issue from a conventional type(#N): scope', () => {
+    expect(parseTitleIssue('fix(#6299): trigger sync')).to.equal(6299);
+    expect(parseTitleIssue('feat(#111): wire thing')).to.equal(111);
+    expect(parseTitleIssue('chore(#1)!: breaking')).to.equal(1);
+  });
+
+  it('returns null for shapes that are not a strict (#N) scope', () => {
+    expect(parseTitleIssue('chore!: no scope')).to.be.null;
+    expect(parseTitleIssue('My PR title')).to.be.null;
+    expect(parseTitleIssue('chore(deps #123): incidental')).to.be.null;
+    expect(parseTitleIssue('feat(api,#5): multi-token scope')).to.be.null;
+    expect(parseTitleIssue('Fix #5 in the thing')).to.be.null; // bare prose
+    expect(parseTitleIssue('build(#0): zero is not a valid issue')).to.be.null;
   });
 });
 

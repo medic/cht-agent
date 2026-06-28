@@ -45,6 +45,16 @@ function bodyIssueRefs(prBody: string, repo: string): number[] {
 }
 
 /**
+ * Merges the issue numbers a PR resolves from closingIssuesReferences (sidebar),
+ * the title scope, and the body Fixes/Closes/Resolves keywords — deduped, ordered
+ * by descending authority (so the first entry is the most authoritative), and
+ * capped at MAX_LINKED_ISSUES.
+ */
+export function collectLinkedIssueRefs(
+  prTitle: string,
+  prBody: string,
+  closingRefs: { number: number }[],
+  repo: string
 ): IssueRef[] {
   const seen = new Set<number>();
   const refs: IssueRef[] = [];
