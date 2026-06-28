@@ -775,6 +775,71 @@ export interface DiscoveredConfig {
 }
 
 /**
+ * A bucket of cht-conf upload work, mapping to the underlying cht-conf verbs
+ * (see designs/cht-conf-agent-extension.md §7.2 step 4). The agent drives these
+ * over HTTP against the instance; it never edits the config itself.
+ * - `app-settings`   compile-app-settings + upload-app-settings
+ * - `app-forms`      convert-app-forms + upload-app-forms
+ * - `contact-forms`  convert-contact-forms + upload-contact-forms
+ * - `resources`      upload-resources + upload-branding + upload-custom-translations
+ */
+export type ConfigUploadAction = 'app-settings' | 'app-forms' | 'contact-forms' | 'resources';
+
+/**
+ * Inputs to applyConfig. `configPath` defaults to cht-core's in-repo
+ * `config/default`; for cht-conf tickets it points at the mounted deployment
+ * config (CHT_CONF_PATH). `actions` narrows which cht-conf uploads run — omit
+ * to run the full set (the cht-core default-config flow).
+ */
+export interface ApplyConfigOptions {
+  /** Path to the cht-conf project to compile + upload (default: config/default). */
+  configPath?: string;
+  /** Which cht-conf upload buckets to run (default: all four). */
+  actions?: ConfigUploadAction[];
+  /**
+   * Restrict an upload to a single artifact by name (e.g. a form id like
+   * `pregnancy`) so the validate loop re-uploads only the one form it changed,
+   * matching cht-conf's `--forms=<name>` targeting. Omit to upload the whole
+   * bucket. (Real-path targeting lands in #66 Phase 2.)
+   */
+  artifact?: string;
+}
+
+/**
+ * Per-action outcome of a cht-conf upload. `uploaded` = the artifact changed and
+ * was pushed; `skipped` = cht-conf's hash check found it identical to the
+ * instance (no-op, not a failure); `failed` = the verb errored. The verify step
+ * needs this three-way distinction — a boolean can't tell "skipped" from "ran".
+ */
+export type ConfigActionStatus = 'uploaded' | 'skipped' | 'failed';
+
+/**
+ * Outcome of a single cht-conf upload bucket within applyConfig.
+ */
+export interface ConfigActionResult {
+  action: ConfigUploadAction;
+  status: ConfigActionStatus;
+  /** The cht-conf verbs this bucket ran (for evidence/logging). */
+  commands: string[];
+  warnings: string[];
+}
+
+/**
+ * Result of applying a config to the instance. The verify step (and the QA
+ * Supervisor) asserts on this rather than re-deriving success from logs.
+ */
+export interface ConfigApplyResult {
+  configPath: string;
+  /** Single artifact targeted, if the apply was narrowed to one. */
+  artifact?: string;
+  /** Per-bucket outcome, in the order the buckets ran. */
+  actions: ConfigActionResult[];
+  /** True unless some action failed (a skipped/no-change action is not a failure). */
+  succeeded: boolean;
+  warnings: string[];
+}
+
+/**
  * Tuning for readiness polling (see src/utils/cht-readiness.ts)
  */
 export interface ReadinessOptions {

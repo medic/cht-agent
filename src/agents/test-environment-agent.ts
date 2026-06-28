@@ -12,13 +12,16 @@
  */
 
 import {
+  ApplyConfigOptions,
+  ConfigApplyResult,
+  ConfigUploadAction,
   DiscoveredConfig,
   EnvironmentHandle,
   ProvisionOptions,
   ResetTier,
   TestDataResult,
 } from '../types';
-import { MOCK_TEST_ENV_DATA } from './test-environment-agent.mock-data';
+import { MOCK_TEST_ENV_DATA, mockConfigActionResult } from './test-environment-agent.mock-data';
 import { waitForReady } from '../utils/cht-readiness';
 
 const NOT_IMPLEMENTED = 'Docker orchestration not yet implemented';
@@ -30,6 +33,15 @@ const DEFAULT_NETWORK = 'cht-agent-net';
 const DEFAULT_AUTH = { user: 'medic', password: 'password' };
 // Humans may take minutes to run local-images + compose up.
 const DEFAULT_PROVISION_WAIT_MS = 300_000;
+
+// Default config project (cht-core in-repo) and the full cht-conf upload set.
+const DEFAULT_CONFIG_PATH = 'config/default';
+const DEFAULT_CONFIG_ACTIONS: ConfigUploadAction[] = [
+  'app-settings',
+  'app-forms',
+  'contact-forms',
+  'resources',
+];
 
 export class TestEnvironmentAgent {
   private readonly useMockDocker: boolean;
@@ -90,16 +102,44 @@ export class TestEnvironmentAgent {
   }
 
   /**
-   * Apply (compile + upload) a config project from the working copy to the
-   * instance. Defaults to cht-core's in-repo `config/default` project.
+   * Apply (compile + upload) a config project to the instance via cht-conf.
+   * Defaults to cht-core's in-repo `config/default`; cht-conf tickets pass the
+   * mounted deployment config (CHT_CONF_PATH). `actions` selects which cht-conf
+   * upload buckets run — settings, app forms, contact forms, resources — so the
+   * cht-conf validate loop can re-upload only the artifact it changed.
+   *
+   * Accepts a bare path string (back-compat) or an options object. Returns a
+   * ConfigApplyResult the verify step / QA Supervisor asserts on.
    */
-  async applyConfig(handle: EnvironmentHandle, configPath = 'config/default'): Promise<void> {
+  async applyConfig(
+    handle: EnvironmentHandle,
+    options: string | ApplyConfigOptions = {}
+  ): Promise<ConfigApplyResult> {
+    const opts: ApplyConfigOptions = typeof options === 'string' ? { configPath: options } : options;
+    const configPath = opts.configPath ?? DEFAULT_CONFIG_PATH;
+    const actions = opts.actions ?? DEFAULT_CONFIG_ACTIONS;
+    const artifact = opts.artifact;
+
     if (!this.useMockDocker) {
+      // Real path (#66 Phase 2): shell cht-conf over HTTP for each bucket
+      // (compile/convert + upload, optionally `--forms=<artifact>`), aggregate
+      // per-action status (uploaded/skipped/failed), never push.
       throw new Error(NOT_IMPLEMENTED);
     }
 
-    console.log(`[Test Environment Agent] Applying config: ${configPath} -> ${handle.url}`);
-    console.log('[Test Environment Agent] (mock) config applied');
+    const scope = artifact ? `${actions.join(', ')}; artifact=${artifact}` : actions.join(', ');
+    console.log(
+      `[Test Environment Agent] Applying config: ${configPath} (${scope}) -> ${handle.url}`
+    );
+    const results = actions.map((action) => mockConfigActionResult(action));
+    console.log(`[Test Environment Agent] (mock) config applied — ${results.length} action(s)`);
+    return {
+      configPath,
+      ...(artifact ? { artifact } : {}),
+      actions: results,
+      succeeded: results.every((result) => result.status !== 'failed'),
+      warnings: results.flatMap((result) => result.warnings),
+    };
   }
 
   /**
