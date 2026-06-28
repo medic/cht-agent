@@ -64,20 +64,28 @@ filing so it doesn't fork.
 ## Issue 3 — Instrument the Research Supervisor with Langfuse
 
 **Type:** feature · **Depends on:** #126 · **Effort:** M · **Relates to:** Research Supervisor demo
+**Implementation-ready spec:** `docs/handoffs/126-langfuse-research-supervisor-spec.md`
+**Strategy context:** `docs/handoffs/126-langfuse-instrumentation-strategy.md`
 
-**Problem.** Observability stops at the memory pipeline. The Research Supervisor and
-its agents (documentation-search, context-analysis, code-context) make LLM calls that
-are currently untraced.
+**Problem.** Observability stops at the memory pipeline. The Research Supervisor runs
+a real LLM call (the `generatePlan` node — `ChatAnthropic` at
+`research-supervisor.ts:82,288`) that is currently untraced. Note its orchestrated
+agents are *not* LLM callers today: doc-search (Kapa, mocked) and code-context
+(OpenDeepWiki) are MCP retrieval; context-analysis is rule-based — so they trace as
+spans, not generations.
 
 **Scope.** Apply the `startTrace` pattern from `docs/observability.md` to
-`src/supervisors/research-supervisor.ts` and the agents it orchestrates:
-- One trace per supervisor run (`name: 'research-supervisor'`), session per batch.
-- Pass the handler to each agent's LangChain `chain.invoke(...)`.
-- Manual spans for non-LLM steps (context loading, domain inference).
-- Score terminal outcomes; `trace.update({ output })` at the end; flush.
+`src/supervisors/research-supervisor.ts`:
+- One trace per supervisor run (`name: 'research-supervisor'`), session per CLI run.
+- Attach the handler at `graph.invoke(state, { callbacks: [handler] })` and verify
+  the planner generation nests automatically; thread it into the planner call
+  (`research-supervisor.ts:288`) only if propagation doesn't reach it.
+- Manual spans for the non-LLM nodes (doc-search/code-context MCP, analyze).
+- Score terminal outcomes; `trace.update({ output })`; flush on success AND error.
 
-**Acceptance.** A supervisor run produces one trace with nested agent generations and
-token/cost capture; tests stub `../observability` per the doc; coverage maintained.
+**Acceptance.** A supervisor run produces one trace with the planner captured as a
+generation (tokens/cost), non-LLM nodes as spans; tests stub `../observability` per
+the doc; coverage maintained. See the implementation-ready spec for step-by-step.
 
 **Notes.** Ties directly into the demo branch work. Defer until the memory-pipeline
 PoC is validated (per the handoff).
