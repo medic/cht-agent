@@ -13,7 +13,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { LinkedIssue, ReviewComment, ScrapedPR, ScraperError } from '../types/pipeline';
-import { IssueRef, collectLinkedIssueRefs } from './issue-linkage';
+import { IssueRef, collectLinkedIssueRefs, sameRepoClosingRefs } from './issue-linkage';
 
 /** Options shared across all execFileSync calls. */
 const EXEC_OPTS = { maxBuffer: 50 * 1024 * 1024, encoding: 'utf8' as const };
@@ -195,22 +195,59 @@ function fetchReviews(prNumber: number, repo: string): string {
   }
 }
 
+/** A raw review from the gh API; `user` is null for since-deleted accounts. */
+type RawReview = { user: { login: string } | null; body: string | null; state: string };
+
+/** Fetch + parse PR metadata, asserting the PR is merged. */
+function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, unknown> {
+  const metaRaw = fetchMetadata(prNumber, repo);
+  let meta;
+  try {
+    meta = JSON.parse(metaRaw);
+  } catch (err) {
+    throw new ScraperError(`Failed to parse PR metadata for #${prNumber}`, prNumber, { cause: err });
+  }
+  if (meta.mergedAt === null || meta.mergedAt === undefined) {
+    throw new ScraperError(`PR #${prNumber} is not merged`, prNumber);
+  }
+  return meta;
+}
+
 /**
- * Fetches and assembles all data for a single merged GitHub PR.
- *
- * Steps performed (all synchronous via `gh` CLI):
- *  1. Fetch PR metadata (title, body, labels, merge SHA, file list).
- *  2. Fetch the unified diff.
- *  3. Fetch review summaries and resolve org-membership per unique reviewer.
- *  4. Extract and fetch issues linked in the PR body.
+ * Parse the `--paginate --slurp` reviews payload. gh returns one array element
+ * per page (each itself an array), so flatten one level; `.flat()` is a no-op if
+ * gh ever returns an already-flat array.
+ */
+function parseReviews(reviewsRaw: string, prNumber: number): RawReview[] {
+  try {
+    const parsed = JSON.parse(reviewsRaw.trim() || '[]');
+    return (Array.isArray(parsed) ? parsed : []).flat() as RawReview[];
+  } catch (err) {
+    throw new ScraperError(`Failed to parse reviews for #${prNumber}`, prNumber, { cause: err });
+  }
+}
+
+/** Map reviews to comments, resolving org membership once per unique author. */
+function buildReviewComments(reviews: RawReview[]): ReviewComment[] {
+  const membershipCache = new Map<string, boolean>();
+  return reviews
+    .filter(r => r.state !== 'PENDING')
+    .map(r => {
+      const author = r.user?.login ?? 'ghost'; // null for since-deleted accounts
+      if (!membershipCache.has(author)) membershipCache.set(author, checkOrgMembership(author));
+      return { author, isOrgMember: membershipCache.get(author) as boolean, body: r.body ?? '' };
+    });
+}
+
+/**
+ * Fetches and assembles all data for a single merged GitHub PR (metadata, diff,
+ * reviews with org-membership, and linked issues).
  *
  * @param prNumber - A positive integer GitHub PR number.
  * @param repo     - Repository in `owner/repo` format. Defaults to `'medic/cht-core'`.
  * @returns A fully-populated ScrapedPR object.
- * @throws {ScraperError} When `prNumber` is not a positive integer.
- * @throws {ScraperError} When the PR has not been merged (`mergedAt` is null).
- * @throws {ScraperError} When the diff exceeds 50 MB (`ENOBUFS`).
- * @throws {ScraperError} On any other `gh` CLI failure.
+ * @throws {ScraperError} When `prNumber` is invalid, the PR is not merged, the diff
+ *   exceeds 50 MB, or any `gh` CLI call fails.
  *
  * @example
  * ```typescript
@@ -222,75 +259,14 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   if (!isPositiveInt(prNumber)) {
     throw new ScraperError(`Invalid PR number: ${prNumber}`, prNumber);
   }
-
-  const metaRaw = fetchMetadata(prNumber, repo);
-  let meta;
-  try {
-    meta = JSON.parse(metaRaw);
-  } catch (err) {
-    throw new ScraperError(`Failed to parse PR metadata for #${prNumber}`, prNumber, { cause: err });
-  }
-
-  if (meta.mergedAt === null || meta.mergedAt === undefined) {
-    throw new ScraperError(`PR #${prNumber} is not merged`, prNumber);
-  }
-
-  const prTitle: string = meta.title ?? '';
-  const prBody: string = meta.body ?? '';
-  const labels: string[] = (meta.labels ?? []).map((l: { name: string }) => l.name);
-  const mergeSha: string = meta.mergeCommit?.oid ?? '';
-  const mergedAt: string = meta.mergedAt;
-  const fileList: string[] = (meta.files ?? []).map((f: { path: string }) => f.path);
-  const author: string = meta.author?.login ?? '';
-
+  const meta = fetchAndParseMetadata(prNumber, repo);
+  const prTitle = (meta.title as string) ?? '';
+  const prBody = (meta.body as string) ?? '';
+  // Preserve the original fetch order (diff before reviews) so a diff error surfaces first.
   const diff = fetchDiff(prNumber, repo);
-
-  const reviewsRaw = fetchReviews(prNumber, repo);
-
-  // With `--paginate --slurp`, gh returns an array whose elements are each
-  // page's response. The reviews endpoint returns an array per page, so this is
-  // an array of arrays — flatten one level. `.flat()` is a no-op if gh ever
-  // returns a single already-flat array, so this is robust either way.
-  // `user` can be null when the reviewer's GitHub account has been deleted.
-  type RawReview = { user: { login: string } | null; body: string | null; state: string };
-  let reviews: RawReview[];
-  try {
-    const parsed = JSON.parse(reviewsRaw.trim() || '[]');
-    reviews = (Array.isArray(parsed) ? parsed : []).flat() as RawReview[];
-  } catch (err) {
-    throw new ScraperError(`Failed to parse reviews for #${prNumber}`, prNumber, { cause: err });
-  }
-
-  // Cache org membership lookups — one call per unique username.
-  const membershipCache = new Map<string, boolean>();
-
-  const reviewComments: ReviewComment[] = reviews
-    .filter((r) => r.state !== 'PENDING')
-    .map((r) => {
-      // GitHub returns `user: null` for reviews left by since-deleted accounts;
-      // fall back to its 'ghost' sentinel rather than dereferencing null.
-      const author = r.user?.login ?? 'ghost';
-      if (!membershipCache.has(author)) {
-        membershipCache.set(author, checkOrgMembership(author));
-      }
-      return {
-        author,
-        isOrgMember: membershipCache.get(author) as boolean,
-        body: r.body ?? '',
-      };
-    });
-
-  const rawClosing: Array<{ number: number; url?: string }> = Array.isArray(
-    meta.closingIssuesReferences
-  )
-    ? meta.closingIssuesReferences
-    : [];
-  // Drop cross-repo sidebar links so a PR can't attribute another repo's issue here.
-  const closingRefs = rawClosing.filter(
-    r => typeof r.url === 'string' && r.url.includes(`/${repo}/issues/`)
-  );
+  const reviews = parseReviews(fetchReviews(prNumber, repo), prNumber);
   const linkedIssues: LinkedIssue[] = fetchLinkedIssues(
-    collectLinkedIssueRefs(prTitle, prBody, closingRefs),
+    collectLinkedIssueRefs(prTitle, prBody, sameRepoClosingRefs(meta, repo)),
     repo
   );
 
@@ -298,14 +274,14 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
     prNumber,
     prTitle,
     prBody,
-    labels,
-    mergeSha,
-    mergedAt,
-    fileList,
+    labels: ((meta.labels as { name: string }[]) ?? []).map(l => l.name),
+    mergeSha: (meta.mergeCommit as { oid?: string })?.oid ?? '',
+    mergedAt: meta.mergedAt as string,
+    fileList: ((meta.files as { path: string }[]) ?? []).map(f => f.path),
     diff,
     linkedIssues,
-    reviewComments,
-    author,
+    reviewComments: buildReviewComments(reviews),
+    author: (meta.author as { login?: string })?.login ?? '',
   };
 }
 

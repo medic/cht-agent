@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   parseTitleIssue,
   collectLinkedIssueRefs,
+  sameRepoClosingRefs,
   MAX_LINKED_ISSUES,
 } from '../../src/scripts/issue-linkage';
 
@@ -13,12 +14,12 @@ describe('parseTitleIssue', () => {
   });
 
   it('returns null for shapes that are not a strict (#N) scope', () => {
-    expect(parseTitleIssue('chore!: no scope')).to.equal(null);
-    expect(parseTitleIssue('My PR title')).to.equal(null);
-    expect(parseTitleIssue('chore(deps #123): incidental')).to.equal(null);
-    expect(parseTitleIssue('feat(api,#5): multi-token scope')).to.equal(null);
-    expect(parseTitleIssue('Fix #5 in the thing')).to.equal(null); // bare prose
-    expect(parseTitleIssue('build(#0): zero is not a valid issue')).to.equal(null);
+    expect(parseTitleIssue('chore!: no scope')).to.be.null;
+    expect(parseTitleIssue('My PR title')).to.be.null;
+    expect(parseTitleIssue('chore(deps #123): incidental')).to.be.null;
+    expect(parseTitleIssue('feat(api,#5): multi-token scope')).to.be.null;
+    expect(parseTitleIssue('Fix #5 in the thing')).to.be.null; // bare prose
+    expect(parseTitleIssue('build(#0): zero is not a valid issue')).to.be.null;
   });
 });
 
@@ -55,5 +56,23 @@ describe('collectLinkedIssueRefs', () => {
 
   it('returns an empty array when no source yields an issue', () => {
     expect(collectLinkedIssueRefs('My PR', 'no references here', [])).to.deep.equal([]);
+  });
+});
+
+describe('sameRepoClosingRefs', () => {
+  it('keeps same-repo sidebar links and drops cross-repo ones', () => {
+    const meta = {
+      closingIssuesReferences: [
+        { number: 6299, url: 'https://github.com/medic/cht-core/issues/6299' },
+        { number: 111, url: 'https://github.com/attacker/foo/issues/111' },
+        { number: 9999 }, // no url
+      ],
+    };
+    expect(sameRepoClosingRefs(meta, 'medic/cht-core')).to.deep.equal([{ number: 6299, url: 'https://github.com/medic/cht-core/issues/6299' }]);
+  });
+
+  it('returns [] when closingIssuesReferences is missing or not an array', () => {
+    expect(sameRepoClosingRefs({}, 'medic/cht-core')).to.deep.equal([]);
+    expect(sameRepoClosingRefs({ closingIssuesReferences: 'nope' }, 'medic/cht-core')).to.deep.equal([]);
   });
 });

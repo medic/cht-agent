@@ -282,7 +282,7 @@ describe('distillPR', () => {
 
       expect(result.status).to.equal('flag-for-human');
       expect(result.reason).to.include('no tracked issue');
-      expect(result.outputPath).to.equal(undefined);
+      expect(result.outputPath).to.be.undefined;
       expect(distilled).to.equal(false); // guarded before the LLM call
     });
 

@@ -61,3 +61,17 @@ export function collectLinkedIssueRefs(
 
   return refs.slice(0, MAX_LINKED_ISSUES);
 }
+
+/**
+ * Same-repo `closingIssuesReferences` from PR metadata JSON. Drops cross-repo
+ * sidebar links so a PR can't attribute another repo's issue to this one.
+ */
+export function sameRepoClosingRefs(
+  meta: { closingIssuesReferences?: unknown },
+  repo: string
+): { number: number }[] {
+  const raw: Array<{ number: number; url?: string }> = Array.isArray(meta.closingIssuesReferences)
+    ? meta.closingIssuesReferences
+    : [];
+  return raw.filter(r => typeof r.url === 'string' && r.url.includes(`/${repo}/issues/`));
+}
