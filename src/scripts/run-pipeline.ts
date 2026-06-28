@@ -23,7 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { scrapePR } from './scraper';
 import { filterPR } from './filter';
 import { distillPR } from './distiller';
-import { makeLangfuseHandler, createTrace, getLangfuse } from '../observability';
+import { startTrace, getLangfuse } from '../observability';
 
 const DEFAULT_REPO = 'medic/cht-core';
 const DEFAULT_LOOKBACK_HOURS = 24;
@@ -144,9 +144,12 @@ export function errorMessage(err: unknown): string {
  * ```
  */
 export async function processSinglePR(prNum: number, repo: string, sessionId?: string): Promise<void> {
-  const traceId = `pipeline-pr-${repo.replace('/', '-')}-${prNum}`;
-  const handler = makeLangfuseHandler(traceId, sessionId);
-  const trace = createTrace(traceId, sessionId);
+  const { trace, handler } = startTrace({
+    name: 'memory-pipeline-pr',
+    sessionId,
+    input: { prNum, repo, url: `https://github.com/${repo}/pull/${prNum}` },
+    tags: ['memory-pipeline', repo],
+  });
 
   const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
   console.log('  scraping...');
@@ -168,6 +171,9 @@ export async function processSinglePR(prNum: number, repo: string, sessionId?: s
       console.log(`  output: ${distillResult.outputPath}`);
     }
     trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
+    trace.update({ output: { decision: filterResult.decision, status: distillResult.status } });
+  } else {
+    trace.update({ output: { decision: filterResult.decision, reason: filterResult.reason } });
   }
 
   await getLangfuse().flushAsync();
