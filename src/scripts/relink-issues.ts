@@ -39,6 +39,8 @@ export interface RelinkResult {
   tokenMismatch?: boolean;
   /** Other files resolving to the same issue (the #135 dedup worklist). */
   collidesWith?: string[];
+  /** The issue this file resolves to (current or relinked) — set when it collides. */
+  issue?: number;
 }
 
 export interface RelinkOptions {
@@ -268,12 +270,13 @@ function detectCollisions(plans: FilePlan[]): void {
     arr.push(p);
     byIssue.set(p.finalIssue, arr);
   }
-  for (const [, group] of byIssue) {
+  for (const [issue, group] of byIssue) {
     if (group.length < 2) continue;
     for (const p of group) {
       p.result.collidesWith = group
         .filter(o => o.file !== p.file)
         .map(o => path.basename(o.file));
+      p.result.issue = issue;
     }
   }
 }
@@ -334,7 +337,7 @@ function printReport(results: RelinkResult[], apply: boolean): void {
   }
   if (collisions.length) {
     console.log('\nCOLLISIONS (#135 dedup worklist — confirm each is genuine multi-PR-to-one-issue):');
-    for (const r of collisions) console.log(`  ${path.basename(r.file)} -> issue ${r.to ?? r.from}  also: ${r.collidesWith!.join(', ')}`);
+    for (const r of collisions) console.log(`  ${path.basename(r.file)} -> issue ${r.issue ?? r.to ?? r.from}  also: ${r.collidesWith!.join(', ')}`);
   }
 }
 

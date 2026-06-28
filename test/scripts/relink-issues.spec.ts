@@ -144,13 +144,33 @@ describe('relinkIssues (dry-run classification)', () => {
     expect(r.reason).to.match(/verify/);
   });
 
-  it('detects the new->old collision on issue 9467', () => {
+  it('detects the new->old collision on issue 9467 and surfaces the shared issue number', () => {
     const results = run();
     const relinked = byName(results, '9559-fix9467-better-handling.md');
     const old = byName(results, '9467-rapidpro-old.md');
     expect(old.status).to.equal('unchanged');
     expect(relinked.collidesWith).to.include('9467-rapidpro-old.md');
     expect(old.collidesWith).to.include('9559-fix9467-better-handling.md');
+    // Both carry the shared issue, including the unchanged old file (no from/to).
+    expect(relinked.issue).to.equal(9467);
+    expect(old.issue).to.equal(9467);
+  });
+});
+
+describe('relinkIssues (legitimate many-PRs-to-one-issue, already linked)', () => {
+  it('leaves three distinct PRs already pointing at one issue unchanged and reports the collision with its issue number', () => {
+    const dir = tmpDir();
+    // Mirrors data-sync 10793/10798/10799 -> issue 10792: distinct PRs, already correct.
+    makeDraft(dir, { name: '10793-fix10792-a.md', issueNumber: 10792, pr: 10793 });
+    makeDraft(dir, { name: '10798-fix10792-b.md', issueNumber: 10792, pr: 10798 });
+    makeDraft(dir, { name: '10799-fix10792-c.md', issueNumber: 10792, pr: 10799 });
+    const results = relinkIssues({ dir, exec: fakeExec({}) });
+    for (const r of results) {
+      expect(r.status).to.equal('unchanged');
+      expect(r.issue).to.equal(10792);
+      expect(r.collidesWith).to.have.lengthOf(2);
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 
