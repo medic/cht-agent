@@ -798,9 +798,10 @@ export interface ApplyConfigOptions {
   actions?: ConfigUploadAction[];
   /**
    * Restrict an upload to a single artifact by name (e.g. a form id like
-   * `pregnancy`) so the validate loop re-uploads only the one form it changed,
-   * matching cht-conf's `--forms=<name>` targeting. Omit to upload the whole
-   * bucket. (Real-path targeting lands in #66 Phase 2.)
+   * `pregnancy`) so the validate loop re-uploads only the one form it changed.
+   * Passed as a positional form filter to the form-upload verbs (cht-conf's
+   * args-form-filter); ignored with a warning for the settings/resources
+   * buckets. Omit to upload the whole bucket.
    */
   artifact?: string;
 }
@@ -837,6 +838,25 @@ export interface ConfigApplyResult {
   /** True unless some action failed (a skipped/no-change action is not a failure). */
   succeeded: boolean;
   warnings: string[];
+}
+
+/**
+ * Inputs to a single cht-conf bucket invocation (see src/utils/cht-conf-runner.ts).
+ * The runner builds the `cht` argv from these; the agent never embeds credentials
+ * in a log line.
+ */
+export interface ChtConfRunOptions {
+  action: ConfigUploadAction;
+  /** The instance URL WITH embedded credentials (https://user:pass@host). */
+  instanceUrl: string;
+  /** Project folder passed to cht-conf `--source`. */
+  configPath: string;
+  /** Optional single-form filter (positional arg on the form-upload verbs). */
+  artifact?: string;
+  /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
+  bin?: string;
+  /** Per-bucket timeout in ms before the process is killed and marked failed. */
+  timeoutMs?: number;
 }
 
 /**
