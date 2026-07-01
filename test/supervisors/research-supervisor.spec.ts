@@ -503,6 +503,7 @@ const v9b2buildSupervisor = (opts: {
   });
   const supervisor = new mod.ResearchSupervisor({
     llmProvider: opts.llm ?? v9b2mkLLM('plan response'),
+    useMockMCP: true,
   });
   return {
     supervisor: supervisor as unknown as {
