@@ -109,7 +109,7 @@ function createApiChain(): any {
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(draftSchema);
+    return (llm as any).withStructuredOutput(draftSchema).withConfig({ runName: 'distill-draft' });
   }
   if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
@@ -118,7 +118,7 @@ function createApiChain(): any {
       maxTokens: 2000,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(draftSchema);
+    return (llm as any).withStructuredOutput(draftSchema).withConfig({ runName: 'distill-draft' });
   }
   return null;
 }

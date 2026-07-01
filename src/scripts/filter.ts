@@ -158,7 +158,7 @@ function createApiTriageChain(): any {
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(triageSchema);
+    return (llm as any).withStructuredOutput(triageSchema).withConfig({ runName: 'triage-classify' });
   }
   if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
@@ -167,7 +167,7 @@ function createApiTriageChain(): any {
       maxTokens: 200,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(triageSchema);
+    return (llm as any).withStructuredOutput(triageSchema).withConfig({ runName: 'triage-classify' });
   }
   return null;
 }

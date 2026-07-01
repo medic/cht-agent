@@ -44,7 +44,8 @@ function loadFilter(fakeInvoke?: () => Promise<unknown>) {
   class FakeChat {
     constructor(_opts: unknown) {}
     withStructuredOutput(_schema: unknown) {
-      return { invoke };
+      const chain = { invoke, withConfig: (_cfg: unknown) => chain };
+      return chain;
     }
   }
 

@@ -233,7 +233,7 @@ describe('run-pipeline processSinglePR', () => {
       filterPR: async () => { filtered = true; return { decision: 'skip', reason: 'would-skip' }; },
       distillPR: async () => { distilled = true; return { status: 'written', reason: 'ok', outputPath: '/tmp/f.md' }; },
     });
-    await processSinglePR(9, 'medic/cht-core', true);
+    await processSinglePR(9, 'medic/cht-core', { force: true });
     expect(filtered).to.equal(false);
     expect(distilled).to.equal(true);
     expect(logs.join('\n')).to.include('BYPASSED (--force)');
