@@ -7,3 +7,11 @@ if [ "$branch" = "master" ] || [ "$branch" = "main" ]; then
   echo "You can't commit directly to master/main branch"
   exit 1
 fi
+
+# agent-memory/_skipped.ndjson is a local runtime log, never real content — keep it empty in git.
+skip_log="agent-memory/_skipped.ndjson"
+if git diff --cached --name-only | grep -qx "$skip_log" && [ -s "$skip_log" ]; then
+  : > "$skip_log"
+  git add "$skip_log"
+  echo "Emptied $skip_log before commit (runtime log, not meant to be checked in with content)."
+fi
