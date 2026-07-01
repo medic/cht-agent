@@ -292,6 +292,29 @@ describe('run-pipeline runPipeline', () => {
     expect(exitCode).to.be.undefined;
   });
 
+  it('prints a reconciliation summary line at the end of the run', async () => {
+    const logs: string[] = [];
+    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    const { runPipeline } = loadPipeline({
+      scrapePR: (prNum: number) => ({ prTitle: `T${prNum}`, labels: [], fileList: [] }),
+      filterPR: async () => ({ decision: 'skip', reason: 'x' }),
+    });
+    await runPipeline([12, 13], 'medic/cht-core');
+    expect(logs.join('\n')).to.include('Reconciliation:');
+  });
+
+  it('counts a distilled draft with unverified file refs in the end-of-run summary', async () => {
+    const logs: string[] = [];
+    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    const { runPipeline } = loadPipeline({
+      scrapePR: (prNum: number) => ({ prTitle: `T${prNum}`, labels: [], fileList: [] }),
+      filterPR: async () => ({ decision: 'distill', reason: 'x' }),
+      distillPR: async () => ({ status: 'written', reason: 'ok', outputPath: '/tmp/x.md', hallucinationRate: 1 }),
+    });
+    await runPipeline([14], 'medic/cht-core');
+    expect(logs.join('\n')).to.include('1 draft(s) with unverified file ref(s)');
+  });
+
   it('records a failure and exits 1 when a PR throws', async () => {
     const { runPipeline } = loadPipeline({
       scrapePR: () => { throw new Error('scrape failed'); },
@@ -363,6 +386,28 @@ describe('run-pipeline prNumbersFromLog', () => {
   it('returns [] when the log file is absent', () => {
     const { prNumbersFromLog } = loadPipeline();
     expect(prNumbersFromLog('/no/such/file.ndjson')).to.deep.equal([]);
+  });
+});
+
+describe('run-pipeline skipEntriesForRun', () => {
+  it('returns only entries whose prNumber is in the requested list', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-recon-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    fs.writeFileSync(logPath, [
+      JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'a', timestamp: 't' }),
+      JSON.stringify({ prNumber: 999, decision: 'skip', reason: 'not in this run', timestamp: 't' }),
+      '',
+      'not json',
+      JSON.stringify({ prNumber: 11, decision: 'flag-for-human', reason: 'b', timestamp: 't' }),
+    ].join('\n'));
+    const { skipEntriesForRun } = loadPipeline();
+    const entries: Array<{ prNumber: number }> = skipEntriesForRun([10, 11], logPath);
+    expect(entries.map((e: { prNumber: number }) => e.prNumber)).to.deep.equal([10, 11]);
+  });
+
+  it('returns [] when the log file is absent', () => {
+    const { skipEntriesForRun } = loadPipeline();
+    expect(skipEntriesForRun([1], '/no/such/file.ndjson')).to.deep.equal([]);
   });
 });
 

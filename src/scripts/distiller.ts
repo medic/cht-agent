@@ -26,6 +26,7 @@ import type {
 } from '../types/pipeline';
 import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { buildValidator } from './schema-utils';
+import { hallucinationRate } from './reconcile';
 
 
 // Compiled once — the same validator open-review-pr re-runs before promotion.
@@ -515,5 +516,6 @@ export async function distillPR(
     status: 'written',
     outputPath,
     reason: `Distilled PR #${pr.prNumber} to ${draft.domain}`,
+    hallucinationRate: hallucinationRate([...draft.relatedFiles, ...draft.entities], pr.fileList),
   };
 }

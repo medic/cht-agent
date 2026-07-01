@@ -147,6 +147,13 @@ export interface DistillResult {
   /** Absolute path of the written draft file — set only when status === 'written' */
   outputPath?: string;
   reason: string;
+  /**
+   * Ground-truth check: fraction of the draft's relatedFiles/entities not found
+   * in the PR's real fileList. Set only when status === 'written'. Noisy by
+   * construction (entities may name a module/concept, not a literal path) — a
+   * reporting signal, never a gate.
+   */
+  hallucinationRate?: number;
 }
 
 /** Options for distillPR — used to inject test doubles and override defaults */

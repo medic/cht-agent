@@ -140,6 +140,30 @@ describe('distillPR', () => {
       expect(fs.existsSync(result.outputPath!)).to.equal(true);
     });
 
+    it('should report a zero hallucinationRate when relatedFiles/entities match the PR fileList', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+      const result: DistillResult = await distillPR(makePR(), {
+        outputDir,
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft(),
+      });
+
+      expect(result.hallucinationRate).to.equal(0);
+    });
+
+    it('should report a nonzero hallucinationRate when the draft claims files not in the PR', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+      const result: DistillResult = await distillPR(makePR(), {
+        outputDir,
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft({ relatedFiles: ['made/up/path.js'], entities: ['made/up/path.js'] }),
+      });
+
+      expect(result.hallucinationRate).to.equal(1);
+    });
+
     it('should place the file under _pending/<domain>/', async () => {
       const { distillPR } = loadDistiller();
       const outputDir = tmpOutputDir();
