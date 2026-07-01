@@ -89,21 +89,3 @@ describe('sameRepoClosingRefs', () => {
     expect(sameRepoClosingRefs({ closingIssuesReferences: 'nope' }, 'medic/cht-core')).to.deep.equal([]);
   });
 });
-
-describe('sameRepoClosingRefs', () => {
-  it('keeps same-repo sidebar links and drops cross-repo ones', () => {
-    const meta = {
-      closingIssuesReferences: [
-        { number: 6299, url: 'https://github.com/medic/cht-core/issues/6299' },
-        { number: 111, url: 'https://github.com/attacker/foo/issues/111' },
-        { number: 9999 }, // no url
-      ],
-    };
-    expect(sameRepoClosingRefs(meta, 'medic/cht-core')).to.deep.equal([{ number: 6299, url: 'https://github.com/medic/cht-core/issues/6299' }]);
-  });
-
-  it('returns [] when closingIssuesReferences is missing or not an array', () => {
-    expect(sameRepoClosingRefs({}, 'medic/cht-core')).to.deep.equal([]);
-    expect(sameRepoClosingRefs({ closingIssuesReferences: 'nope' }, 'medic/cht-core')).to.deep.equal([]);
-  });
-});
