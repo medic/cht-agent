@@ -102,12 +102,16 @@ function loadDistiller(fakeInvoke?: (prompt: string) => Promise<unknown>) {
   const fakeLLMClass = fakeInvoke
     ? class FakeLLM {
       constructor(_opts: unknown) {}
-      withStructuredOutput(_schema: unknown) { return { invoke: fakeInvoke }; }
+      withStructuredOutput(_schema: unknown) {
+        const chain = { invoke: fakeInvoke, withConfig: (_cfg: unknown) => chain };
+        return chain;
+      }
     }
     : class FakeLLM {
       constructor(_opts: unknown) {}
       withStructuredOutput(_schema: unknown) {
-        return { invoke: async () => makeDraft() };
+        const chain = { invoke: async () => makeDraft(), withConfig: (_cfg: unknown) => chain };
+        return chain;
       }
     };
 

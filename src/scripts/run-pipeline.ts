@@ -290,15 +290,15 @@ export function errorMessage(err: unknown): string {
 
 /**
  * Runs scrape → filter → distill for a single PR number.
- * @param prNum     - The GitHub PR number to process.
- * @param repo      - Repository in `owner/repo` format.
- * @param force     - Bypass the filter stage entirely.
- * @param tag       - Log-line prefix (a per-PR tag under concurrency).
- * @param sessionId - Pipeline session ID (groups all PR traces from one run).
+ * @param prNum   - The GitHub PR number to process.
+ * @param repo    - Repository in `owner/repo` format.
+ * @param opts.force     - Bypass the filter stage entirely.
+ * @param opts.tag       - Log-line prefix (a per-PR tag under concurrency).
+ * @param opts.sessionId - Pipeline session ID (groups all PR traces from one run).
  *
  * @example
  * ```typescript
- * await processSinglePR(12345, 'medic/cht-core', false, ' ', 'session-abc');
+ * await processSinglePR(12345, 'medic/cht-core', { force: false, tag: ' ', sessionId: 'session-abc' });
  * ```
  */
 /** Run the filter stage (or bypass it under --force), logging the decision. */
@@ -333,10 +333,9 @@ async function runFilter(
 export async function processSinglePR(
   prNum: number,
   repo: string,
-  force = false,
-  tag = ' ',
-  sessionId: string | undefined = undefined
+  opts: { force?: boolean; tag?: string; sessionId?: string } = {}
 ): Promise<DistillResult | undefined> {
+  const { force = false, tag = ' ', sessionId } = opts;
   // Trace id is generated per run (not derived from the PR) so reprocessing the
   // same PR yields a distinct trace each time instead of mutating an earlier
   // run's session. PR identity lives in input/tags/metadata so it stays filterable.
@@ -436,7 +435,7 @@ async function processBatchItem(ctx: BatchCtx, index: number): Promise<boolean> 
   const tag = ctx.parallel ? ` [#${prNum}]` : ' ';
   logPrStart(ctx, index, tag);
   try {
-    const result = await processSinglePR(prNum, ctx.repo, ctx.force, tag, ctx.sessionId);
+    const result = await processSinglePR(prNum, ctx.repo, { force: ctx.force, tag, sessionId: ctx.sessionId });
     if (result?.hallucinationRate !== undefined) {
       ctx.state.hallucinationRates.push(result.hallucinationRate);
     }
