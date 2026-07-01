@@ -10,7 +10,7 @@ CHT Agent uses [Langfuse](https://langfuse.com) for LLM tracing, token cost trac
 |---|---|---|
 | `LANGFUSE_PUBLIC_KEY` | Yes (for tracing) | Langfuse project public key (`pk-lf-…`) |
 | `LANGFUSE_SECRET_KEY` | Yes (for tracing) | Langfuse project secret key (`sk-lf-…`) |
-| `LANGFUSE_HOST` | No | API endpoint (default: `https://cloud.langfuse.com`) |
+| `LANGFUSE_BASE_URL` | No | API endpoint (default: `https://cloud.langfuse.com`) |
 | `LANGFUSE_ENABLED` | No | Set to `false` to disable tracing entirely |
 
 Copy `.env.example` to `.env` and fill in the Langfuse values.
