@@ -49,7 +49,7 @@ import { filterPR } from './filter';
 import { distillPR } from './distiller';
 import { isAuthError, isBatchFatalError } from '../llm/rate-limit';
 import { DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
-import { makeLangfuseHandler, createTrace, getLangfuse } from '../observability';
+import { startTrace, getLangfuse } from '../observability';
 
 /** Exit code used when the batch stops early on a global LLM failure (rate limit / auth). */
 export const RATE_LIMIT_EXIT_CODE = 2;
@@ -304,7 +304,7 @@ async function runFilter(
   pr: ReturnType<typeof scrapePR>,
   force: boolean,
   tag: string,
-  handler: ReturnType<typeof makeLangfuseHandler>
+  handler: ReturnType<typeof startTrace>['handler']
 ): Promise<{ decision: string; reason: string }> {
   if (force) {
     console.log(`${tag} filter: BYPASSED (--force) — distilling directly`);
@@ -317,9 +317,16 @@ async function runFilter(
 }
 
 export async function processSinglePR(prNum: number, repo: string, force = false, tag = ' ', sessionId?: string): Promise<void> {
-  const traceId = `pipeline-pr-${repo.replace('/', '-')}-${prNum}`;
-  const handler = makeLangfuseHandler(traceId, sessionId);
-  const trace = createTrace(traceId, sessionId);
+  // Trace id is generated per run (not derived from the PR) so reprocessing the
+  // same PR yields a distinct trace each time instead of mutating an earlier
+  // run's session. PR identity lives in input/tags/metadata so it stays filterable.
+  const { trace, handler } = startTrace({
+    name: 'memory-pipeline-pr',
+    sessionId,
+    input: { prNum, repo, url: `https://github.com/${repo}/pull/${prNum}` },
+    tags: ['memory-pipeline', repo],
+    metadata: { prNum, repo },
+  });
 
   const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
   console.log(`${tag} scraping...`);
@@ -330,6 +337,8 @@ export async function processSinglePR(prNum: number, repo: string, force = false
   scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
 
   const filterResult = await runFilter(pr, force, tag, handler);
+  const output: Record<string, unknown> = { decision: filterResult.decision, reason: filterResult.reason };
+
   if (filterResult.decision === 'distill') {
     console.log(`${tag} distilling...`);
     const distillResult = await distillPR(pr, { langfuseHandler: handler });
@@ -338,8 +347,10 @@ export async function processSinglePR(prNum: number, repo: string, force = false
       console.log(`${tag} output: ${distillResult.outputPath}`);
     }
     trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
+    output.distillStatus = distillResult.status;
   }
 
+  trace.update({ output });
   await getLangfuse().flushAsync();
 }
 
