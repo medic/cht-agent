@@ -316,7 +316,7 @@ async function runFilter(
   return result;
 }
 
-export async function processSinglePR(prNum: number, repo: string, force = false, tag = ' ', sessionId?: string): Promise<void> {
+export async function processSinglePR(prNum: number, repo: string, force = false, tag = ' ', sessionId: string | undefined = undefined): Promise<void> {
   // Trace id is generated per run (not derived from the PR) so reprocessing the
   // same PR yields a distinct trace each time instead of mutating an earlier
   // run's session. PR identity lives in input/tags/metadata so it stays filterable.
