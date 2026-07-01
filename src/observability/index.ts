@@ -23,7 +23,7 @@ let _client: Langfuse | undefined;
 
 /**
  * Returns the shared Langfuse client, creating it on first call.
- * Reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST, and LANGFUSE_ENABLED
+ * Reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL, and LANGFUSE_ENABLED
  * from process.env at call time (not at module-load time).
  *
  * @example
@@ -36,7 +36,7 @@ export function getLangfuse(): Langfuse {
     _client = new Langfuse({
       publicKey: process.env.LANGFUSE_PUBLIC_KEY,
       secretKey: process.env.LANGFUSE_SECRET_KEY,
-      baseUrl: process.env.LANGFUSE_HOST ?? 'https://cloud.langfuse.com',
+      baseUrl: process.env.LANGFUSE_BASE_URL ?? 'https://cloud.langfuse.com',
       enabled: process.env.LANGFUSE_ENABLED !== 'false',
     });
   }
