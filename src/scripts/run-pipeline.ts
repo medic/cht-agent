@@ -335,7 +335,7 @@ export async function processSinglePR(
   repo: string,
   force = false,
   tag = ' ',
-  sessionId?: string
+  sessionId: string | undefined = undefined
 ): Promise<DistillResult | undefined> {
   // Trace id is generated per run (not derived from the PR) so reprocessing the
   // same PR yields a distinct trace each time instead of mutating an earlier
