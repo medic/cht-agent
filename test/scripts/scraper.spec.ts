@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { ScraperError } from '../../src/types/pipeline';
 import { GhTransientError } from '../../src/scripts/gh-classify';
+import { stripBoilerplate } from '../../src/scripts/scraper';
 
 // Use require for proxyquire to avoid ESM conflicts
 const proxyquire = require('proxyquire').noCallThru();
@@ -965,5 +966,25 @@ describe('scrapePR', () => {
       expect(orgCheckCount).to.equal(1);
       expect(result.reviewComments).to.have.lengthOf(2);
     });
+  });
+});
+
+describe('stripBoilerplate', () => {
+  it('removes an HTML comment block', () => {
+    expect(stripBoilerplate('<!-- PHI warning -->\nActual content')).to.equal('Actual content');
+  });
+
+  it('removes a multi-line HTML comment', () => {
+    const input = '<!--\nDo not include PHI\nin this report\n-->\nReal body text here.';
+    expect(stripBoilerplate(input)).to.equal('Real body text here.');
+  });
+
+  it('leaves text with no comments untouched (aside from trimming)', () => {
+    expect(stripBoilerplate('Just a plain PR body.')).to.equal('Just a plain PR body.');
+  });
+
+  it('removes multiple comments in the same body', () => {
+    const input = '<!-- a -->Keep this<!-- b -->and this<!-- c -->';
+    expect(stripBoilerplate(input)).to.equal('Keep thisand this');
   });
 });

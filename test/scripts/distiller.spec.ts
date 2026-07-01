@@ -671,3 +671,92 @@ describe('slugify', () => {
     expect(slugify('日本語タイトル')).to.equal('untitled');
   });
 });
+
+// ---------------------------------------------------------------------------
+// buildPrompt — CONSTRAINTS block + adaptive issue-body limit
+// ---------------------------------------------------------------------------
+
+describe('buildPrompt', () => {
+  it('includes the grounding/no-fabrication CONSTRAINTS block', () => {
+    const { buildPrompt } = loadDistiller();
+    const prompt = buildPrompt(makePR());
+    expect(prompt).to.include('CONSTRAINTS:');
+    expect(prompt).to.include('chosen only from the Files changed list above');
+    expect(prompt).to.include('Do NOT mention communication channels');
+  });
+
+  it('grants an expanded issue-body budget when the PR body is near-empty', () => {
+    const { buildPrompt } = loadDistiller();
+    const longIssueBody = 'x'.repeat(1000);
+    const prompt = buildPrompt(makePR({
+      prBody: 'Fixes #99',
+      linkedIssues: [{ number: 99, body: longIssueBody, comments: [] }],
+    }));
+    // Near-empty PR body -> the expanded 2000-char budget, not the default 500.
+    expect(prompt).to.include(longIssueBody.slice(0, 1000));
+  });
+
+  it('uses the default issue-body budget when the PR body has real content', () => {
+    const { buildPrompt } = loadDistiller();
+    const longIssueBody = 'x'.repeat(1000);
+    const longPrBody = 'A'.repeat(200) + ' — a detailed PR body with real content.';
+    const prompt = buildPrompt(makePR({
+      prBody: longPrBody,
+      linkedIssues: [{ number: 99, body: longIssueBody, comments: [] }],
+    }));
+    expect(prompt).to.not.include(longIssueBody.slice(0, 600));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeConfidence
+// ---------------------------------------------------------------------------
+
+describe('computeConfidence', () => {
+  it('is medium for a grounded, non-backport draft', () => {
+    const { computeConfidence } = loadDistiller();
+    expect(computeConfidence(makeDraft(), makePR())).to.equal('medium');
+  });
+
+  it('is low when relatedFiles are not all in the PR file list', () => {
+    const { computeConfidence } = loadDistiller();
+    const draft = makeDraft({ relatedFiles: ['not/in/file-list.js'] });
+    expect(computeConfidence(draft, makePR())).to.equal('low');
+  });
+
+  it('is low for a cherry-pick backport body marker', () => {
+    const { computeConfidence } = loadDistiller();
+    const pr = makePR({ prBody: 'Backported. (cherry picked from commit abc123def)' });
+    expect(computeConfidence(makeDraft(), pr)).to.equal('low');
+  });
+
+  it('is low for a trailing (#NNNN) backport title suffix', () => {
+    const { computeConfidence } = loadDistiller();
+    const pr = makePR({ prTitle: 'fix: prevent duplicate contacts (#9098)' });
+    expect(computeConfidence(makeDraft(), pr)).to.equal('low');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildFrontmatter — related_issues grounded in secondary linked issues
+// ---------------------------------------------------------------------------
+
+describe('buildFrontmatter — related_issues', () => {
+  it('is empty when the PR has only its canonical linked issue', () => {
+    const { buildFrontmatter } = loadDistiller();
+    const fm = buildFrontmatter(makeDraft(), makePR());
+    expect(fm.related_issues).to.deep.equal([]);
+  });
+
+  it('lists secondary linked issues as candidate cht-core-<n> ids', () => {
+    const { buildFrontmatter } = loadDistiller();
+    const pr = makePR({
+      linkedIssues: [
+        { number: 99, body: 'canonical', comments: [] },
+        { number: 100, body: 'secondary', comments: [] },
+      ],
+    });
+    const fm = buildFrontmatter(makeDraft(), pr);
+    expect(fm.related_issues).to.deep.equal(['cht-core-100']);
+  });
+});

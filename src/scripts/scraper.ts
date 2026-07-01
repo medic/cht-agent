@@ -23,6 +23,22 @@ const EXEC_OPTS = { maxBuffer: 50 * 1024 * 1024, encoding: 'utf8' as const };
 const ghExec: ExecFn = (file, args) => execFileSync(file, args, EXEC_OPTS) as string;
 
 /**
+ * Strips HTML comments (e.g. CHT's PHI-warning template boilerplate) from a PR
+ * or issue body before it's truncated downstream. Un-stripped boilerplate can
+ * consume the entire truncation budget before the real content — see cht-core
+ * issue #10912, where a ~246-char PHI comment pushed the root-cause sentence
+ * past `ISSUE_BODY_LIMIT`.
+ *
+ * @example
+ * ```typescript
+ * stripBoilerplate('<!-- PHI warning -->\nActual content'); // 'Actual content'
+ * ```
+ */
+export function stripBoilerplate(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, '').trim();
+}
+
+/**
  * Validates that a value is a positive integer suitable for use as a PR number.
  *
  * @param n - The value to check.
@@ -71,7 +87,7 @@ function hydrateIssue(n: number, repo: string): LinkedIssue | null {
     const raw = ghExec('gh', ['issue', 'view', String(n), '--repo', repo, '--json', 'body,comments']);
     const parsed = JSON.parse(raw);
     const comments: string[] = (parsed.comments ?? []).map((c: { body: string }) => c.body);
-    return { number: n, body: parsed.body ?? '', comments };
+    return { number: n, body: stripBoilerplate(parsed.body ?? ''), comments };
   } catch {
     return null;
   }
@@ -297,7 +313,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   }
   const meta = fetchAndParseMetadata(prNumber, repo);
   const prTitle = (meta.title as string) ?? '';
-  const prBody = (meta.body as string) ?? '';
+  const prBody = stripBoilerplate((meta.body as string) ?? '');
   // Preserve the original fetch order (diff before reviews) so a diff error surfaces first.
   const diff = fetchDiff(prNumber, repo);
   const reviews = parseReviews(fetchReviews(prNumber, repo), prNumber);

@@ -49,7 +49,7 @@
     "CHTConfidence": {
       "type": "string",
       "enum": ["high", "medium", "low"],
-      "description": "Distillation confidence: high=reviewed, medium=unreviewed draft, low=stale"
+      "description": "Distillation confidence: high=human-reviewed, medium=unreviewed draft with grounded relatedFiles, low=unreviewed draft that is a backport/fallback, has ungrounded relatedFiles, or is stale"
     },
     "frontmatter": {
       "type": "object",
@@ -190,7 +190,7 @@
         "related_issues": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Links to related agent-memory entries"
+          "description": "Candidate related agent-memory entry ids (cht-core-<n>), derived from this PR's own secondary linked issues; not verified to have a promoted memory entry"
         },
         "stale": {
           "type": "boolean",
