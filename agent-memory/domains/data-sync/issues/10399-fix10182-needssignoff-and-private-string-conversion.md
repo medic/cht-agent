@@ -1,10 +1,10 @@
 ---
-id: cht-core-10182
+id: cht-core-10183
 category: bug
 domain: data-sync
 domainFit: strong
-issueNumber: 10182
-issueUrl: https://github.com/medic/cht-core/issues/10182
+issueNumber: 10183
+issueUrl: https://github.com/medic/cht-core/issues/10183
 title: Handle string vs boolean values for needs_signoff and private flags across replication index, authorization, and purging
 lastUpdated: '2026-06-22'
 summary: The replication-key index and authorization logic assumed needs_signoff and private were always booleans, but reports/docs can produce them as strings, causing incorrect replication decisions. The fix normalizes these values consistently across the Nouveau index, API authorization, and sentinel purging.
