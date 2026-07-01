@@ -56,7 +56,7 @@ function fetchIssueRecord(repo: string, n: number, exec: ExecFn): Record<string,
 function recordKind(obj: Record<string, unknown>, repo: string): NumberKind {
   const repoUrl = typeof obj.repository_url === 'string' ? obj.repository_url : '';
   if (repoUrl && !repoUrl.endsWith(`/repos/${repo}`)) return 'missing'; // transferred elsewhere
-  return Object.prototype.hasOwnProperty.call(obj, 'pull_request') ? 'pr' : 'issue';
+  return Object.hasOwn(obj, 'pull_request') ? 'pr' : 'issue';
 }
 
 /**
