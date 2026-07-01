@@ -19,7 +19,7 @@ interface PipelineMocks {
  */
 function loadPipeline(mocks: PipelineMocks = {}) {
   const fakePr = { prTitle: 'T', labels: [], fileList: [] };
-  const noopTrace = { span: () => ({ end: () => {} }), score: () => {} };
+  const noopTrace = { span: () => ({ end: () => {} }), score: () => {}, update: () => {} };
   return proxyquire('../../src/scripts/run-pipeline', {
     dotenv: { config: () => ({}), '@noCallThru': true },
     'node:crypto': { randomUUID: () => 'test-session-id', '@noCallThru': true },
@@ -42,8 +42,7 @@ function loadPipeline(mocks: PipelineMocks = {}) {
       '@noCallThru': true,
     },
     '../observability': {
-      makeLangfuseHandler: () => undefined,
-      createTrace: () => noopTrace,
+      startTrace: () => ({ trace: noopTrace, handler: undefined }),
       getLangfuse: () => ({ flushAsync: async () => {} }),
       '@noCallThru': true,
     },

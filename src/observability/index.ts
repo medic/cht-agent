@@ -1,14 +1,17 @@
 /**
- * Observability module — Langfuse client singleton and LangChain callback handler factory.
+ * Observability module — Langfuse client singleton and trace/handler factory.
  *
- * All exports are no-ops when LANGFUSE_ENABLED=false (the default in tests and CI).
- * The Langfuse client is initialised lazily on first use so env vars loaded by
- * dotenv.config() in the entry point are available before the constructor runs.
+ * One reusable primitive: `startTrace()` creates a trace and the LangChain
+ * callback handler rooted on it, so every LLM call and manual span lands under
+ * the same trace. All exports no-op when LANGFUSE_ENABLED=false (the default in
+ * tests and CI). The client is created lazily so dotenv vars loaded by the entry
+ * point are available before the constructor runs.
  *
  * Usage:
- *   const handler = makeLangfuseHandler(traceId, sessionId);
- *   const trace   = createTrace(traceId, sessionId);
- *   await filterPR(pr, { langfuseHandler: handler });
+ *   const { trace, handler } = startTrace({ name: 'my-workflow', sessionId, input, tags });
+ *   await chain.invoke(prompt, { callbacks: [handler] });   // auto-captures model + tokens
+ *   const span = trace.span({ name: 'fetch' }); span.end({ output });
+ *   trace.update({ output: result });
  *   await getLangfuse().flushAsync();
  */
 
@@ -25,8 +28,7 @@ let _client: Langfuse | undefined;
  *
  * @example
  * ```typescript
- * const trace = getLangfuse().trace({ id: 'my-trace' });
- * await getLangfuse().flushAsync();
+ * await getLangfuse().flushAsync(); // flush buffered traces before exit
  * ```
  */
 export function getLangfuse(): Langfuse {
@@ -41,40 +43,47 @@ export function getLangfuse(): Langfuse {
   return _client;
 }
 
-/**
- * Create a LangChain CallbackHandler for a given trace and session.
- * The SDK no-ops automatically when LANGFUSE_ENABLED=false.
- * Pass to any LangChain chain.invoke() call to capture token counts, latency,
- * and model names automatically.
- *
- * @param traceId   - Unique identifier for this trace (e.g. `pipeline-pr-medic-cht-core-12345`).
- * @param sessionId - Session identifier grouping all traces from one pipeline run.
- *
- * @example
- * ```typescript
- * const handler = makeLangfuseHandler('pipeline-pr-medic-cht-core-42', 'session-abc');
- * await chain.invoke(prompt, { callbacks: [handler] });
- * ```
- */
-export function makeLangfuseHandler(traceId: string, sessionId?: string): CallbackHandler {
-  return new CallbackHandler({
-    root: getLangfuse().trace({ id: traceId, sessionId }),
-  });
+/** A trace plus the LangChain callback handler rooted on it. */
+export interface TraceContext {
+  trace: ReturnType<Langfuse['trace']>;
+  handler: CallbackHandler;
 }
 
 /**
- * Create a Langfuse trace for manual (non-LangChain) span instrumentation.
+ * Start a Langfuse trace and a LangChain callback handler rooted on it.
  *
- * @param id        - Trace identifier (same as the one passed to makeLangfuseHandler).
- * @param sessionId - Session identifier for this pipeline run.
+ * The handler auto-captures model name, token usage, and latency for any chain
+ * it's passed to; use `trace.span()` for non-LLM steps and `trace.update()` to
+ * set the trace output. The SDK no-ops when LANGFUSE_ENABLED=false.
+ *
+ * Pass a descriptive `name` (not a unique id) — Langfuse generates the trace id,
+ * so re-running the same entity produces a distinct trace each time. Put the
+ * entity identity in `input`/`tags`/`metadata` so it stays filterable.
+ *
+ * @param opts.name      - Human-readable trace name (e.g. `memory-pipeline-pr`).
+ * @param opts.sessionId - Groups all traces from one run (Sessions view).
+ * @param opts.input     - Trace input — set only the relevant identity, not whole objects.
+ * @param opts.tags      - Filterable tags (e.g. `['memory-pipeline', repo]`).
+ * @param opts.metadata  - Extra structured context.
  *
  * @example
  * ```typescript
- * const trace = createTrace('pipeline-pr-medic-cht-core-42', 'session-abc');
- * const span = trace.span({ name: 'scrape', input: { prNum: 42 } });
- * span.end({ output: { fileCount: 10 } });
+ * const { trace, handler } = startTrace({
+ *   name: 'memory-pipeline-pr',
+ *   sessionId: 'run-abc',
+ *   input: { prNum: 42, repo: 'medic/cht-core' },
+ *   tags: ['memory-pipeline', 'medic/cht-core'],
+ * });
  * ```
  */
-export function createTrace(id: string, sessionId?: string) {
-  return getLangfuse().trace({ id, sessionId });
+export function startTrace(opts: {
+  name: string;
+  sessionId?: string;
+  userId?: string;
+  input?: unknown;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}): TraceContext {
+  const trace = getLangfuse().trace(opts);
+  return { trace, handler: new CallbackHandler({ root: trace }) };
 }
