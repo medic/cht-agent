@@ -129,6 +129,15 @@ export interface LLMProvider {
   readonly modelName: string;
 
   /**
+   * Whether the provider honors custom tool definitions passed via InvokeOptions.
+   * True for the Anthropic API (runs the tool loop in-process); false for the
+   * claude-cli provider (ignores custom tools and runs its own agentic loop).
+   * The test-gen safety gate keys on this to force text-only output on providers
+   * that would otherwise run uncontained native tools.
+   */
+  readonly honorsCustomTools: boolean;
+
+  /**
    * Invoke the LLM with a simple prompt
    */
   invoke(prompt: string, options?: InvokeOptions): Promise<LLMResponse>;

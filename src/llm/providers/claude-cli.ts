@@ -11,6 +11,8 @@
  */
 
 import { spawn, ChildProcess } from 'node:child_process';
+import { extractJsonObject } from '../json-extract';
+import { isBatchFatalError } from '../rate-limit';
 import {
   LLMProvider,
   LLMMessage,
@@ -66,10 +68,29 @@ interface CLIResponse {
   is_error: boolean;
 }
 
+/* istanbul ignore next -- only invoked from the 60s progress interval below */
 function totalLength(chunks: string[]): number {
   let total = 0;
   for (const c of chunks) total += c.length;
   return total;
+}
+
+/**
+ * Extract the CLI's JSON result envelope from stdout (which may have leading
+ * non-JSON noise). Returns null if no result envelope is found. Linear scan.
+ */
+function extractResultEnvelope(stdout: string): CLIResponse | null {
+  const start = stdout.indexOf('{');
+  const end = stdout.lastIndexOf('}');
+  if (start === -1 || end <= start) return null;
+  const candidate = stdout.slice(start, end + 1);
+  if (!/"type"\s*:\s*"result"/.test(candidate)) return null;
+  try {
+    return JSON.parse(candidate) as CLIResponse;
+  } catch (e) {
+    console.error('[Claude CLI] Failed to parse matched JSON:', e);
+    return null;
+  }
 }
 
 /**
@@ -95,6 +116,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   // subprocesses. Without this, killing the parent leaves orphans that may
   // continue accruing cost. Multiple provider instances will register multiple
   // handlers; process.once is the right semantics (run at most once per signal).
+  /* istanbul ignore next -- signal-driven cleanup, not reachable in unit tests */
   const shutdownHandler = () => {
     for (const proc of activeProcesses) {
       try {
@@ -129,10 +151,6 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
         args.push('--disallowedTools', DISALLOWED_TOOLS.join(','));
       }
 
-      // Note: CLI doesn't support temperature/maxTokens directly
-      // These are handled by the account settings or model defaults
-
-      // Log process start with key details
       const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
       console.log(`[Claude CLI] Starting: "${promptPreview}..." (${prompt.length} chars, maxTurns=${effectiveMaxTurns}, tools=${options?.disableTools ? 'disabled' : 'enabled'})`);
       const startTime = Date.now();
@@ -161,6 +179,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       const stderrChunks: string[] = [];
 
       // Periodic progress logging every 60 seconds
+      /* istanbul ignore next -- 60s interval callback, not reachable in unit tests */
       const progressId = setInterval(() => {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         const stdoutSize = totalLength(stdoutChunks);
@@ -169,6 +188,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       }, 60000);
 
       // Setup timeout
+      /* istanbul ignore next -- timeout callback fires only after `timeout` ms */
       const timeoutId = setTimeout(() => {
         clearInterval(progressId);
         proc.kill('SIGTERM');
@@ -178,11 +198,11 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
         reject(new Error(`Claude CLI timed out after ${timeout}ms`));
       }, timeout);
 
-      proc.stdout.on('data', (data) => {
+      proc.stdout?.on('data', (data) => {
         stdoutChunks.push(data.toString());
       });
 
-      proc.stderr.on('data', (data) => {
+      proc.stderr?.on('data', (data) => {
         stderrChunks.push(data.toString());
       });
 
@@ -246,23 +266,32 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       };
     }
 
-    // Claude CLI can include non-JSON content before the result
-    // Look for the JSON result object
-    const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch (e) {
-        console.error('[Claude CLI] Failed to parse matched JSON:', e);
-      }
-    }
+    // Claude CLI can include non-JSON content before the result object.
+    const envelope = extractResultEnvelope(stdout);
+    if (envelope) return envelope;
 
     // Try parsing the entire output as JSON
     try {
       return JSON.parse(stdout);
     } catch {
-      // If no JSON found, treat stdout as the result
-      // Log first 200 chars for debugging
+      // No JSON envelope. A plain-text usage/rate-limit or auth notice (the CLI
+      // can emit these without a result envelope) must NOT be mistaken for a
+      // successful result — classify it as an error so the batch stops instead
+      // of silently flagging a PR. See isBatchFatalError / run-pipeline.
+      if (isBatchFatalError(stdout)) {
+        console.error(`[Claude CLI] Limit/auth notice in plain-text output: ${stdout.substring(0, 200)}`);
+        return {
+          type: 'result',
+          subtype: 'error',
+          result: stdout.trim(),
+          session_id: '',
+          total_cost_usd: 0,
+          duration_ms: 0,
+          num_turns: 0,
+          is_error: true,
+        };
+      }
+      // Otherwise treat stdout as the result. Log first 200 chars for debugging.
       console.warn(`[Claude CLI] Non-JSON response (first 200 chars): ${stdout.substring(0, 200)}`);
       return {
         type: 'result',
@@ -339,26 +368,20 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 IMPORTANT: Respond with valid JSON only. Do not include any text before or after the JSON object.`;
 
     const response = await invoke(jsonPrompt, options);
-    let content = response.content;
+    const content = response.content;
 
     // Check if content is empty or undefined
     if (!content || content.trim() === '') {
       throw new Error('CLI returned empty response');
     }
 
-    // Strip markdown code blocks if present
-    const codeBlockMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(content);
-    if (codeBlockMatch) {
-      content = codeBlockMatch[1].trim();
-    }
-
-    // Try to extract JSON object from the response
-    const jsonMatch = /\{[\s\S]*\}/.exec(content);
-    if (!jsonMatch) {
+    // Strip any ```json fence and extract the outermost JSON object.
+    const extracted = extractJsonObject(content);
+    if (!extracted) {
       throw new Error('CLI response did not contain valid JSON object');
     }
 
-    let jsonStr = jsonMatch[0];
+    let jsonStr = extracted;
 
     // Clean up common JSON issues
     jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
@@ -373,9 +396,12 @@ IMPORTANT: Respond with valid JSON only. Do not include any text before or after
   };
 
   // CLI provider declares itself as 'anthropic' for compatibility with LLMProvider consumers.
+  // honorsCustomTools is false: the CLI ignores custom tool definitions and runs its own
+  // agentic loop, which is the explicit capability the providerType shim hides.
   const provider: LLMProvider = {
     providerType: 'anthropic',
     modelName,
+    honorsCustomTools: false,
     invoke,
     invokeWithMessages,
     invokeForJSON,

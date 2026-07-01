@@ -91,6 +91,7 @@ describe('ClaudeApiCodeGenModule', () => {
     invokeStub = sinon.stub();
     mockProvider = {
       providerType: 'anthropic',
+      honorsCustomTools: false,
       modelName: 'test-model',
       invoke: invokeStub,
       async invokeWithMessages(_messages: LLMMessage[], _options?: InvokeOptions): Promise<LLMResponse> {

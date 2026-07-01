@@ -15,8 +15,10 @@ import {
   ContextAnalysisResult,
   OrchestrationPlan,
   CodeContext,
+  CodeContextFindings,
 } from '../types';
 import { DocumentationSearchAgent } from '../agents/documentation-search-agent';
+import { CodeContextAgent } from '../agents/code-context-agent';
 import { ContextAnalysisAgent } from '../agents/context-analysis-agent';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
@@ -32,6 +34,10 @@ const ResearchStateAnnotation = Annotation.Root({
     default: () => undefined,
   }),
   researchFindings: Annotation<ResearchFindings | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  codeContextFindings: Annotation<CodeContextFindings | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -95,6 +101,7 @@ function buildInitialResearchState(
     messages,
     issue,
     researchFindings: undefined,
+    codeContextFindings: undefined,
     contextAnalysis: undefined,
     orchestrationPlan: undefined,
     currentPhase: 'init',
@@ -148,12 +155,18 @@ function collectBulletText(section: string): string[] {
 export class ResearchSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly docSearchAgent: DocumentationSearchAgent;
+  private readonly codeContextAgent: CodeContextAgent;
   private readonly contextAgent: ContextAnalysisAgent;
   private readonly llm: LLMProvider;
   private readonly todos: TodoTracker;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean; llmProvider?: LLMProvider } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
+      useMockMCP: options.useMockMCP,
+    });
+
+    this.codeContextAgent = new CodeContextAgent({
+      modelName: options.modelName,
       useMockMCP: options.useMockMCP,
     });
 
@@ -177,12 +190,14 @@ export class ResearchSupervisor {
     const workflow = new StateGraph(ResearchStateAnnotation)
       // Define nodes
       .addNode('documentationSearch', this.documentationSearchNode.bind(this))
+      .addNode('codeContextSearch', this.codeContextSearchNode.bind(this))
       .addNode('analyzeContext', this.contextAnalysisNode.bind(this))
       .addNode('generatePlan', this.generatePlanNode.bind(this))
 
       // Define edges
       .addEdge(START, 'documentationSearch')
-      .addEdge('documentationSearch', 'analyzeContext')
+      .addEdge('documentationSearch', 'codeContextSearch')
+      .addEdge('codeContextSearch', 'analyzeContext')
       .addEdge('analyzeContext', 'generatePlan')
       .addEdge('generatePlan', END);
 
@@ -212,7 +227,7 @@ export class ResearchSupervisor {
 
       return {
         researchFindings: findings,
-        currentPhase: 'context-analysis' as const,
+        currentPhase: 'code-context' as const,
         messages: [
           {
             role: 'assistant' as const,
@@ -232,12 +247,54 @@ export class ResearchSupervisor {
   }
 
   /**
+   * Node: Code Context Search (OpenDeepWiki)
+   */
+  private async codeContextSearchNode(state: typeof ResearchStateAnnotation.State) {
+    console.log('\n=== CODE CONTEXT SEARCH NODE ===');
+
+    const todoId = 'research-2';
+    this.todos.start(todoId);
+
+    if (!state.issue) {
+      this.todos.fail(todoId, 'No issue provided');
+      return {
+        errors: ['No issue provided for code context search'],
+        currentPhase: 'code-context' as const,
+      };
+    }
+
+    try {
+      const findings = await this.codeContextAgent.search(state.issue);
+      this.todos.complete(todoId);
+
+      return {
+        codeContextFindings: findings,
+        currentPhase: 'context-analysis' as const,
+        messages: [
+          {
+            role: 'assistant' as const,
+            content: `Code context search completed. Found ${findings.architectureInsights.length} architecture insights.`,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.todos.fail(todoId, errorMessage);
+      return {
+        errors: [`Code context search failed: ${errorMessage}`],
+        currentPhase: 'code-context' as const,
+      };
+    }
+  }
+
+  /**
    * Node: Context Analysis
    */
   private async contextAnalysisNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== CONTEXT ANALYSIS NODE ===');
 
-    const todoId = 'research-2';
+    const todoId = 'research-3';
     this.todos.start(todoId);
 
     if (!state.issue) {
@@ -278,7 +335,7 @@ export class ResearchSupervisor {
    */
   private async generatePlanNode(state: typeof ResearchStateAnnotation.State) {
     console.log('\n=== GENERATE PLAN NODE ===');
-    const todoId = 'research-3';
+    const todoId = 'research-4';
     this.todos.start(todoId);
 
     if (!state.issue || !state.researchFindings || !state.contextAnalysis) {
@@ -297,7 +354,8 @@ export class ResearchSupervisor {
         state.issue,
         state.researchFindings,
         state.contextAnalysis,
-        codeContext
+        codeContext,
+        state.codeContextFindings
       );
       this.todos.complete(todoId);
       this.todos.printSummary();
@@ -331,17 +389,18 @@ export class ResearchSupervisor {
     issue: IssueTemplate,
     findings: ResearchFindings,
     analysis: ContextAnalysisResult,
-    codeContext?: CodeContext | null
+    codeContext?: CodeContext | null,
+    codeContextFindings?: CodeContextFindings
   ): Promise<OrchestrationPlan> {
     console.log('[Research Supervisor] Generating orchestration plan...');
 
-    const prompt = this.buildPlanPrompt(issue, findings, analysis, codeContext);
+    const prompt = this.buildPlanPrompt(issue, findings, analysis, codeContext, codeContextFindings);
 
     const response = await this.llm.invoke(prompt, { temperature: 0.3 });
     const content = response.content;
 
     // Parse the response into structured plan
-    const plan = this.parsePlanResponse(content, issue, findings, analysis);
+    const plan = this.parsePlanResponse(content, issue, findings, analysis, codeContextFindings);
 
     console.log('[Research Supervisor] Plan generated successfully');
     return plan;
@@ -354,7 +413,8 @@ export class ResearchSupervisor {
     issue: IssueTemplate,
     findings: ResearchFindings,
     analysis: ContextAnalysisResult,
-    codeContext?: CodeContext | null
+    codeContext?: CodeContext | null,
+    codeContextFindings?: CodeContextFindings
   ): string {
     const { issue: issueDetails } = issue;
 
@@ -374,6 +434,23 @@ ${snippet.content}
 \`\`\``
     )
     .join('\n\n')}
+`;
+    }
+
+    // Build OpenDeepWiki code architecture section if available
+    let codeArchitectureSection = '';
+    if (codeContextFindings && codeContextFindings.architectureInsights.length > 0) {
+      codeArchitectureSection = `
+## Code Architecture Context
+**Repos Analyzed**: ${codeContextFindings.relevantRepos.join(', ')}
+**Architecture Insights**: ${codeContextFindings.architectureInsights.length}
+${codeContextFindings.architectureInsights.map((insight) => `- **${insight.component}**: ${insight.description} (patterns: ${insight.patterns.join(', ')})`).join('\n')}
+
+**Module Relationships**: ${codeContextFindings.moduleRelationships.length}
+${codeContextFindings.moduleRelationships.map((rel) => `- ${rel.source} -> ${rel.target} (${rel.relationship}): ${rel.description}`).join('\n')}
+
+**Confidence**: ${(codeContextFindings.confidence * 100).toFixed(0)}%
+${codeContextFindings.warnings.length > 0 ? `\n**Warnings**: ${codeContextFindings.warnings.join(', ')}` : ''}
 `;
     }
 
@@ -403,7 +480,7 @@ ${findings.suggestedApproaches.map((approach, i) => `${i + 1}. ${approach}`).joi
 
 **Relevant Documentation**:
 ${findings.documentationReferences.slice(0, 10).map((ref) => `- ${ref.title}: ${ref.url}`).join('\n')}
-${codeContextSection}
+${codeContextSection}${codeArchitectureSection}
 ## Context Analysis
 **Similar Past Issues**: ${analysis.similarContexts.length}
 **Reusable Patterns**: ${analysis.reusablePatterns.length}
@@ -439,7 +516,8 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     content: string,
     issue: IssueTemplate,
     findings: ResearchFindings,
-    analysis: ContextAnalysisResult
+    analysis: ContextAnalysisResult,
+    codeContextFindings?: CodeContextFindings
   ): OrchestrationPlan {
     // Extract implementation approach from Claude's response
     const recommendedApproach = this.extractImplementationApproach(content);
@@ -462,6 +540,13 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
       keyFindings.push(`Key files to modify: ${keyFiles.slice(0, 3).join(', ')}`);
     }
 
+    // Add code architecture insights from OpenDeepWiki if available
+    if (codeContextFindings && codeContextFindings.architectureInsights.length > 0) {
+      keyFindings.push(
+        `${codeContextFindings.architectureInsights.length} code architecture insights from ${codeContextFindings.relevantRepos.join(', ')}`
+      );
+    }
+
     // Estimate complexity based on requirements and constraints
     const complexity = this.estimateComplexity(issue, analysis);
 
@@ -469,7 +554,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     const phases = this.buildPhases(issue, findings, analysis);
 
     // Extract risk factors - combine heuristic with LLM-extracted
-    const heuristicRisks = this.identifyRiskFactors(issue, findings, analysis);
+    const heuristicRisks = this.identifyRiskFactors(issue, findings, analysis, codeContextFindings);
     const llmRisks = this.extractRiskFactors(content);
     const riskFactors = [...new Set([...heuristicRisks, ...llmRisks])].slice(0, 5);
 
@@ -633,6 +718,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     issue: IssueTemplate,
     findings: ResearchFindings,
     analysis: ContextAnalysisResult,
+    codeContextFindings?: CodeContextFindings,
   ): string[] {
     const rules: Array<{ condition: boolean; message: string }> = [
       {
@@ -656,7 +742,23 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
         message: 'Changes span multiple components - requires coordination and integration testing',
       },
     ];
-    return rules.filter(r => r.condition).map(r => r.message);
+    const risks = rules.filter(r => r.condition).map(r => r.message);
+    return [...risks, ...this.getCodeContextRisks(codeContextFindings)];
+  }
+
+  /**
+   * Risk factors derived from the OpenDeepWiki code context findings.
+   */
+  private getCodeContextRisks(codeContextFindings?: CodeContextFindings): string[] {
+    if (!codeContextFindings) return [];
+    const risks: string[] = [];
+    if (codeContextFindings.warnings.length > 0) {
+      risks.push(`Code context warnings: ${codeContextFindings.warnings.join('; ')}`);
+    }
+    if (codeContextFindings.confidence < 0.5) {
+      risks.push('Low confidence in code architecture analysis - manual review recommended');
+    }
+    return risks;
   }
 
   /**
@@ -701,6 +803,7 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     this.todos.clear();
     this.todos.addMany([
       { content: 'Search documentation', activeForm: 'Searching documentation' },
+      { content: 'Search code context', activeForm: 'Searching code context' },
       { content: 'Analyze context', activeForm: 'Analyzing context' },
       { content: 'Generate orchestration plan', activeForm: 'Generating orchestration plan' },
     ]);

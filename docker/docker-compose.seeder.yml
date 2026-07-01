@@ -1,0 +1,64 @@
+# docker-compose.seeder.yml — containerized memory seeding pipeline.
+#
+# Runs the scrape -> filter -> distill pipeline (PR #109) inside the sandboxed
+# seeder image, using `claude -p` for triage/distillation (no API key) and a
+# READ-ONLY GH_TOKEN for scraping. Drafts land in the bind-mounted host
+# agent-memory/ — promotion to PRs (open-review-pr) is manual and host-side;
+# there is NO write path to GitHub from this container.
+#
+#   docker build -f docker/Dockerfile -t cht-agent:local .
+#   GH_TOKEN=<read:org-only classic PAT> \
+#     docker compose -f docker/docker-compose.seeder.yml up -d --build
+#   docker exec -it cht-seeder claude          # one-time OAuth login (persists in the named volume)
+#   docker exec -it cht-seeder npm run run-pipeline -- --last 1000 --resume
+#
+# Security invariants (in addition to the base image's):
+#   - GH_TOKEN must be a classic PAT with ONLY the read:org scope: it passes
+#     the scraper's medic-org membership check but has no repo/workflow scope,
+#     so it cannot push, open PRs, or write anything.
+#   - No Docker socket, no SSH, push blocked at every inherited layer.
+#   - agent-memory is the only writable host mount (drafts + resume log).
+
+services:
+  cht-seeder:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.seeder
+    image: cht-agent-seeder:local
+    container_name: cht-seeder
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    environment:
+      LLM_PROVIDER: claude-cli
+      CHT_CORE_PATH: /app
+      # Model + effort for every `claude -p` the pipeline spawns. The CLI
+      # provider forwards process.env to the claude binary, and these env vars
+      # outrank settings.json (only --model/--effort flags rank higher).
+      # "max" effort is env/flag-only — settings.json effortLevel can't hold it.
+      ANTHROPIC_MODEL: ${SEEDER_MODEL:-claude-opus-4-8}
+      CLAUDE_CODE_EFFORT_LEVEL: ${SEEDER_EFFORT:-max}
+      # PRs distilled concurrently (run-pipeline --concurrency default). Each PR
+      # spawns its own `claude -p`, so raise memory/cpu limits below to match.
+      PIPELINE_CONCURRENCY: ${SEEDER_CONCURRENCY:-4}
+      GH_TOKEN: ${GH_TOKEN:?Set GH_TOKEN to a read-only (read:org scope only) classic PAT}
+      # Declares to the sandbox verifier that GH_TOKEN is intentionally present
+      # and read-only; any other token still aborts startup.
+      CHT_AGENT_ALLOW_READONLY_GH_TOKEN: "1"
+    volumes:
+      # Drafts (_pending/<domain>/) and the resume log (_skipped.ndjson) land
+      # directly in the host working copy for review and manual PR promotion.
+      - ../agent-memory:/app/agent-memory:rw
+      # Claude CLI OAuth credentials persist here — log in once via:
+      #   docker exec -it cht-seeder claude
+      # (named volume is seeded from the image's baked CLAUDE.md/settings.json)
+      - seeder-claude-config:/home/agent/.claude
+    deploy:
+      resources:
+        limits:
+          # Headroom for PIPELINE_CONCURRENCY=4 Opus/max `claude` processes.
+          memory: ${SEEDER_MEMORY_LIMIT:-6g}
+          cpus: "${SEEDER_CPU_LIMIT:-4}"
+
+volumes:
+  seeder-claude-config:

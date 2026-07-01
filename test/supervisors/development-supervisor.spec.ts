@@ -45,6 +45,7 @@ const mkCodeGenResult = (files: GeneratedFile[] = []): CodeGenerationResult => (
 
 const mkMockLLM = (): LLMProvider => ({
   providerType: 'anthropic',
+  honorsCustomTools: false,
   modelName: 'test-model',
   invoke: async () => ({ content: '', model: 'test-model' }),
   invokeWithMessages: async () => ({ content: '', model: 'test-model' }),

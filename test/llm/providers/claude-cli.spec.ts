@@ -3,6 +3,8 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { LLMProvider } from '../../../src/llm/types';
+import { DISALLOWED_TOOLS } from '../../../src/llm/providers/claude-cli';
+import { isBatchFatalError } from '../../../src/llm/rate-limit';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -21,7 +23,7 @@ const buildFakeProc = (
     closeCode?: number | null;
     errorCode?: string;
     delay?: number;
-  }>,
+  }>
 ) => {
   const fakeStdout = new EventEmitter();
   const fakeStderr = new EventEmitter();
@@ -34,9 +36,15 @@ const buildFakeProc = (
   };
   fakeProc.stdout = fakeStdout;
   fakeProc.stderr = fakeStderr;
-  fakeProc.stdin = { end: (chunk?: string) => { stdinReceived = chunk ?? ''; } };
+  fakeProc.stdin = {
+    end: (chunk?: string) => {
+      stdinReceived = chunk ?? '';
+    },
+  };
   let killed = false;
-  fakeProc.kill = () => { killed = true; };
+  fakeProc.kill = () => {
+    killed = true;
+  };
   setImmediate(() => {
     for (const ev of events) {
       const fire = () => {
@@ -84,7 +92,7 @@ const loadProvider = (
     closeCode?: number | null;
     errorCode?: string;
     delay?: number;
-  }>,
+  }>
 ): { provider: LLMProvider; spawnArgs: SpawnLog[]; getStdin: () => string } => {
   const spawnArgs: SpawnLog[] = [];
   let fakeWrap: ReturnType<typeof buildFakeProc>;
@@ -120,30 +128,25 @@ describe('createClaudeCLIProvider (v9a.7) — spawn-arg construction', () => {
   });
 
   it('includes --dangerously-skip-permissions by default', async () => {
-    const { provider, spawnArgs } = loadProvider([
-      { stdout: cliResultJson(), closeCode: 0 },
-    ]);
+    const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
     await provider.invoke('p');
     expect(spawnArgs[0].args).to.include('--dangerously-skip-permissions');
   });
 
   it('serializes --disallowedTools when options.disableTools=true', async () => {
-    const { provider, spawnArgs } = loadProvider([
-      { stdout: cliResultJson(), closeCode: 0 },
-    ]);
+    const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
     await provider.invoke('p', { disableTools: true });
     const idx = spawnArgs[0].args.indexOf('--disallowedTools');
     expect(idx).to.be.greaterThan(-1);
     const list = spawnArgs[0].args[idx + 1];
     expect(list).to.include('Bash');
     expect(list).to.include('Write');
+    expect(list).to.include('Edit');
     expect(list).to.include('Read');
   });
 
   it('honors per-invoke maxTurns override', async () => {
-    const { provider, spawnArgs } = loadProvider([
-      { stdout: cliResultJson(), closeCode: 0 },
-    ]);
+    const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
     await provider.invoke('p', { maxTurns: 75 });
     const idx = spawnArgs[0].args.indexOf('--max-turns');
     expect(spawnArgs[0].args[idx + 1]).to.equal('75');
@@ -163,18 +166,23 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
 
   it('throws "Claude CLI error: <result>" when the JSON has is_error=true', async () => {
     const { provider } = loadProvider([
-      { stdout: cliResultJson({ result: 'auth failed', is_error: true, subtype: 'error' }), closeCode: 0 },
+      {
+        stdout: cliResultJson({ result: 'auth failed', is_error: true, subtype: 'error' }),
+        closeCode: 0,
+      },
     ]);
     let caught: Error | null = null;
-    try { await provider.invoke('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    try {
+      await provider.invoke('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Claude CLI error: auth failed/);
   });
 
   it('falls back to treating non-JSON stdout as the result content', async () => {
-    const { provider } = loadProvider([
-      { stdout: 'plain text completion', closeCode: 0 },
-    ]);
+    const { provider } = loadProvider([{ stdout: 'plain text completion', closeCode: 0 }]);
     const result = await provider.invoke('p');
     expect(result.content).to.equal('plain text completion');
   });
@@ -191,33 +199,39 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
   });
 
   it('rejects with ENOENT-typed message when spawn fires error with code=ENOENT', async () => {
-    const { provider } = loadProvider([
-      { errorCode: 'ENOENT' },
-    ]);
+    const { provider } = loadProvider([{ errorCode: 'ENOENT' }]);
     let caught: Error | null = null;
-    try { await provider.invoke('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    try {
+      await provider.invoke('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Claude Code CLI not found/);
     expect(caught!.message).to.match(/@anthropic-ai\/claude-code/);
   });
 
   it('rejects with EACCES-typed message when spawn fires error with code=EACCES', async () => {
-    const { provider } = loadProvider([
-      { errorCode: 'EACCES' },
-    ]);
+    const { provider } = loadProvider([{ errorCode: 'EACCES' }]);
     let caught: Error | null = null;
-    try { await provider.invoke('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    try {
+      await provider.invoke('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Permission denied/);
   });
 
   it('rejects when CLI exits non-zero with no stdout', async () => {
-    const { provider } = loadProvider([
-      { stderr: 'boom', closeCode: 1 },
-    ]);
+    const { provider } = loadProvider([{ stderr: 'boom', closeCode: 1 }]);
     let caught: Error | null = null;
-    try { await provider.invoke('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    try {
+      await provider.invoke('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/exited with code 1/);
     expect(caught!.message).to.match(/boom/);
   });
@@ -257,12 +271,14 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
   });
 
   it('invokeForJSON throws when result is empty', async () => {
-    const { provider } = loadProvider([
-      { stdout: cliResultJson({ result: '' }), closeCode: 0 },
-    ]);
+    const { provider } = loadProvider([{ stdout: cliResultJson({ result: '' }), closeCode: 0 }]);
     let caught: Error | null = null;
-    try { await provider.invokeForJSON<unknown>('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    try {
+      await provider.invokeForJSON<unknown>('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/empty response/);
   });
 
@@ -271,8 +287,12 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
       { stdout: cliResultJson({ result: 'just plain prose' }), closeCode: 0 },
     ]);
     let caught: Error | null = null;
-    try { await provider.invokeForJSON<unknown>('p'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    try {
+      await provider.invokeForJSON<unknown>('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/did not contain valid JSON/);
   });
 
@@ -288,7 +308,9 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
 
 describe('validateClaudeCLI (v9a.7)', () => {
   /** validateClaudeCLI uses spawn directly; can't reuse the loader. */
-  const loadValidate = (events: Array<{ stdout?: string; closeCode?: number | null; errorCode?: string }>) => {
+  const loadValidate = (
+    events: Array<{ stdout?: string; closeCode?: number | null; errorCode?: string }>
+  ) => {
     const spawnStub = sinon.stub().callsFake(() => buildFakeProc(events).proc);
     return proxyquire('../../../src/llm/providers/claude-cli', {
       'node:child_process': { spawn: spawnStub },
@@ -314,5 +336,61 @@ describe('validateClaudeCLI (v9a.7)', () => {
     const result = await mod.validateClaudeCLI('/missing/path/to/claude');
     expect(result.valid).to.equal(false);
     expect(result.error).to.match(/CLI not found at/);
+  });
+});
+
+describe('claude-cli deny-list drift guard (iter7 B4/B5)', () => {
+  // The disableTools deny-list is the only thing that blocks the CLI's native
+  // write-capable tools under --dangerously-skip-permissions. If a future CLI
+  // upgrade adds a write tool that is not enumerated here, this trips red.
+  it('DISALLOWED_TOOLS enumerates the write-capable tools', () => {
+    expect(DISALLOWED_TOOLS).to.include.members(['Write', 'Edit', 'Bash']);
+  });
+
+  it('does NOT append --disallowedTools when disableTools is not set (the iter7 bug mechanism)', async () => {
+    const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
+    await provider.invoke('p'); // no disableTools -> tools stay live, no deny-list
+    expect(spawnArgs[0].args).to.not.include('--disallowedTools');
+  });
+});
+
+describe('createClaudeCLIProvider — limit/auth classification & error paths', () => {
+  const rejection = async (p: Promise<unknown>): Promise<Error> => {
+    try {
+      await p;
+    } catch (e) {
+      return e as Error;
+    }
+    throw new Error('expected promise to reject');
+  };
+
+  it('treats a plain-text usage-limit notice as batch-fatal instead of a success result', async () => {
+    const { provider } = loadProvider([{ stdout: "You've hit your usage limit · resets at 5pm", closeCode: 0 }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(isBatchFatalError(err.message)).to.equal(true);
+  });
+
+  it('treats a plain-text auth failure as batch-fatal', async () => {
+    const { provider } = loadProvider([{ stdout: 'Invalid authentication — please run /login', closeCode: 0 }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(isBatchFatalError(err.message)).to.equal(true);
+  });
+
+  it('returns is_error on empty stdout so invoke throws', async () => {
+    const { provider } = loadProvider([{ stdout: '', closeCode: 0 }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(err.message).to.match(/Claude CLI error/);
+  });
+
+  it('rejects with a generic message when spawn errors with a non-ENOENT/EACCES code', async () => {
+    const { provider } = loadProvider([{ errorCode: 'EPERM' }]);
+    const err = await rejection(provider.invoke('x'));
+    expect(err.message).to.match(/Failed to execute Claude CLI/);
+  });
+
+  it('falls back to plain-text when a result-shaped envelope is malformed JSON', async () => {
+    const { provider } = loadProvider([{ stdout: 'noise {"type":"result", not valid}', closeCode: 0 }]);
+    const res = await provider.invoke('x');
+    expect(res.content).to.include('type');
   });
 });

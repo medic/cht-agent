@@ -3,18 +3,13 @@
  * Based on the domain-first context structure
  */
 
+import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS } from '../constants';
+
 /**
- * CHT Domains based on functional areas
+ * CHT Domains based on functional areas.
+ * Derived from CHT_DOMAINS — the single TS source of truth (mirrored in schema.json).
  */
-export type CHTDomain =
-  | 'authentication'
-  | 'contacts'
-  | 'forms-and-reports'
-  | 'tasks-and-targets'
-  | 'messaging'
-  | 'data-sync'
-  | 'configuration'
-  | 'interoperability';
+export type CHTDomain = (typeof CHT_DOMAINS)[number];
 
 /**
  * Issue type classification
@@ -106,9 +101,16 @@ export interface DomainOverviewMetadata {
 }
 
 /**
- * CHT Services
+ * CHT Services. Derived from CHT_SERVICES (mirrored in schema.json).
  */
-export type CHTService = 'api' | 'webapp' | 'sentinel' | 'admin';
+export type CHTService = (typeof CHT_SERVICES)[number];
+
+/**
+ * Cross-domain workflow processes and technical workstreams. A draft keeps one
+ * primary domain and links cross-cutting work here, rather than splitting into
+ * sub-domains (see docs/domain-taxonomy-findings.md). Derived from CHT_WORKFLOWS.
+ */
+export type CHTWorkflow = (typeof CHT_WORKFLOWS)[number];
 
 /**
  * Workflow step
@@ -255,6 +257,7 @@ export interface ContextAnalysisResult {
   relatedDomains: CHTDomain[];
   /** Code context gathered from cht-core codebase */
   codeContext: CodeContext | null;
+  codeArchitectureSummary?: string;
 }
 
 /**
@@ -288,9 +291,10 @@ export interface ResearchState {
   }>;
   issue?: IssueTemplate;
   researchFindings?: ResearchFindings;
+  codeContextFindings?: CodeContextFindings;
   contextAnalysis?: ContextAnalysisResult;
   orchestrationPlan?: OrchestrationPlan;
-  currentPhase: 'init' | 'doc-search' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
+  currentPhase: 'init' | 'doc-search' | 'code-context' | 'context-analysis' | 'plan-generation' | 'complete' | 'error';
   errors: string[];
 }
 
@@ -653,3 +657,169 @@ export interface DevelopmentWorkflowResult {
   iterationCount: number;
   filesWritten: string[];
 }
+
+// ============================================================================
+// OpenDeepWiki Code Context Layer Types
+// ============================================================================
+
+/**
+ * Architecture insight from OpenDeepWiki code analysis
+ */
+export interface ArchitectureInsight {
+  component: string;
+  description: string;
+  patterns: string[];
+  dependencies: string[];
+}
+
+/**
+ * Module relationship from code structure analysis
+ */
+export interface ModuleRelationship {
+  source: string;
+  target: string;
+  relationship: 'imports' | 'extends' | 'implements' | 'calls' | 'depends-on';
+  description: string;
+}
+
+/**
+ * Code context findings from OpenDeepWiki Code Context Agent
+ */
+export interface CodeContextFindings {
+  architectureInsights: ArchitectureInsight[];
+  moduleRelationships: ModuleRelationship[];
+  diagrams: string[]; // Mermaid diagram strings
+  relevantRepos: string[];
+  warnings: string[];
+  confidence: number; // 0-1
+  source: 'opendeepwiki' | 'mock';
+}
+
+/**
+ * Catalog entry returned by the OpenDeepWiki `get_document_catalog` tool
+ */
+export interface DeepWikiCatalogEntry {
+  title: string;
+  path: string;
+  order?: number;
+  hasParent?: boolean;
+}
+
+/**
+ * Document catalog returned by the OpenDeepWiki `get_document_catalog` tool
+ */
+export interface DeepWikiCatalog {
+  repository: string;
+  branch?: string;
+  language?: string;
+  documentCount?: number;
+  documents: DeepWikiCatalogEntry[];
+}
+
+/**
+ * Document content returned by the OpenDeepWiki `read_document` tool
+ */
+export interface DeepWikiDocument {
+  repository: string;
+  path: string;
+  title: string;
+  content: string;
+  startLine?: number;
+  endLine?: number;
+  totalLines?: number;
+}
+
+/**
+ * Configuration for the OpenDeepWiki MCP client
+ */
+export interface DeepWikiClientConfig {
+  serverUrl: string;
+  owner: string;
+  timeout: number; // milliseconds
+}
+
+/**
+ * Normalized response from OpenDeepWiki used inside the Code Context Agent
+ */
+export interface OpenDeepWikiMCPResponse {
+  success: boolean;
+  data?: {
+    architectureInsights: ArchitectureInsight[];
+    moduleRelationships: ModuleRelationship[];
+    diagrams: string[];
+  };
+  error?: string;
+  rateLimited?: boolean;
+}
+// Test Environment Layer Types (#16, #66)
+// ============================================================================
+
+/**
+ * A single contact_types entry from /api/v1/settings
+ */
+export interface ContactTypeConfig {
+  id: string;
+  parents?: string[];
+  person?: boolean;
+}
+
+/**
+ * A role entry from settings.roles, keyed by role name
+ */
+export interface RoleConfig {
+  name?: string;
+  offline?: boolean;
+}
+
+/**
+ * A transition entry from settings.transitions
+ */
+export type TransitionConfig = boolean | { disable?: boolean };
+
+/**
+ * Deployed configuration discovered from a running CHT instance
+ */
+export interface DiscoveredConfig {
+  contactTypes: ContactTypeConfig[];
+  roles: Record<string, RoleConfig>;
+  permissions: Record<string, string[]>;
+  transitions: Record<string, TransitionConfig>;
+  forms: string[];
+}
+
+/**
+ * Inputs to provision an environment (need a local code path OR a published version)
+ */
+export interface ProvisionOptions {
+  chtCorePath?: string;
+  version?: string;
+  network?: string;
+}
+
+/**
+ * Handle to a provisioned, reachable CHT environment
+ */
+export interface EnvironmentHandle {
+  url: string;
+  auth: { user: string; password: string };
+  network: string;
+  /** Working copy backing this env (set when source-built; needed by applyConfig/rebuild) */
+  chtCorePath?: string;
+  source: 'mock' | 'docker';
+}
+
+/**
+ * Result of seeding test data into the environment
+ */
+export interface TestDataResult {
+  placesCreated: number;
+  peopleCreated: number;
+  reportsCreated: number;
+  usersCreated: number;
+  warnings: string[];
+}
+
+/**
+ * Reset granularity (see Test Environment Layer recommendation, three-tier reset)
+ */
+export type ResetTier = 'couchdb' | 'restart' | 'full';

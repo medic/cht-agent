@@ -394,6 +394,7 @@ export class DocumentationSearchAgent {
       'data-sync': ['sync', 'replication', 'offline', 'couchdb', 'purge'],
       configuration: ['config', 'settings', 'cht-conf'],
       interoperability: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability', 'mediator'],
+      infrastructure: ['docker', 'helm', 'kubernetes', 'haproxy', 'ci', 'build', 'deploy', 'upgrade', 'infrastructure'],
     };
 
     const relatedDomains: CHTDomain[] = [];
@@ -524,6 +525,15 @@ export class DocumentationSearchAgent {
           topics: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability'],
           relevantSections: ['Outbound Push', 'FHIR Resources', 'OpenHIM Mediators'],
           codeExamples: ['outbound push configuration', 'FHIR resource mapping'],
+        },
+      ],
+      infrastructure: [
+        {
+          url: 'https://docs.communityhealthtoolkit.org/hosting/',
+          title: 'Hosting & Deployment',
+          topics: ['docker', 'helm', 'kubernetes', 'haproxy', 'ci', 'upgrade', 'deployment'],
+          relevantSections: ['Self Hosting', 'Upgrading', 'Docker Compose'],
+          codeExamples: ['docker-compose setup', 'helm chart values'],
         },
       ],
     };

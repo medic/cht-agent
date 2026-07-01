@@ -18,14 +18,22 @@
     "example:research": "node dist/examples/research-supervisor-example.js",
     "example:full": "node dist/examples/full-workflow-example.js",
     "validate-cli": "node dist/scripts/validate-cli.js",
-    "validate-ticket": "node dist/cli/validate-ticket.js"
+    "validate-ticket": "node dist/cli/validate-ticket.js",
+    "validate-schema": "ts-node src/scripts/validate-schema.ts",
+    "open-review-pr": "ts-node src/scripts/open-review-pr.ts",
+    "run-pipeline": "ts-node src/scripts/run-pipeline.ts",
+    "smoke-test": "ts-node src/scripts/smoke-test.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.3.12",
-    "@langchain/core": "^1.1.17",
+    "@langchain/core": "^1.2.1",
     "@langchain/langgraph": "^1.1.2",
+    "@langchain/openai": "^1.5.3",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "diff": "^8.0.4",
     "dotenv": "^16.6.1",
+    "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.1",
     "typescript": "^5.9.3",
     "zod": "^3.25.76"
