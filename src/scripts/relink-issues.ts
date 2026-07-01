@@ -21,13 +21,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import matter from 'gray-matter';
-import { collectLinkedIssueRefs, sameRepoClosingRefs } from './issue-linkage';
+import { classifyNumber, resolveRealIssue, ClassifyCache, ResolveResult, NumberKind, ExecFn } from './gh-classify';
 
-/** Exec function type — wraps execFileSync or a test double. */
-export type ExecFn = (file: string, args: string[]) => string;
+/** Exec function type (single source: gh-classify) — re-exported for callers/tests. */
+export type { ExecFn };
 
 export type RelinkStatus = 'relinked' | 'unchanged' | 'flagged';
-type RelinkSource = 'gh' | 'title-body' | 'filename-token';
+type RelinkSource = 'gh' | 'filename-token';
 
 export interface RelinkResult {
   file: string;
@@ -95,30 +95,11 @@ function ghAvailable(exec: ExecFn): boolean {
   }
 }
 
-interface GhResult {
-  issues: number[];
-  closingRefCount: number;
-}
-
-/**
- * Resolve the issues a PR closes via gh, using the SAME merge logic as the
- * scraper. Returns null on any gh/parse failure so the caller can fall back.
- */
-function resolveViaGh(prNumber: number, repo: string, exec: ExecFn): GhResult | null {
-  try {
-    const raw = exec('gh', [
-      'pr', 'view', String(prNumber), '--repo', repo,
-      '--json', 'title,body,closingIssuesReferences',
-    ]);
-    const meta = JSON.parse(raw);
-    const refs = collectLinkedIssueRefs(meta.title ?? '', meta.body ?? '', sameRepoClosingRefs(meta, repo));
-    return {
-      issues: refs.map(r => r.number),
-      closingRefCount: refs.filter(r => r.source === 'closing-ref').length,
-    };
-  } catch {
-    return null;
-  }
+/** gh state threaded through resolution: online flag, injected exec, per-run cache. */
+interface GhCtx {
+  online: boolean;
+  exec: ExecFn;
+  cache: ClassifyCache;
 }
 
 type Resolution =
@@ -128,53 +109,52 @@ type Resolution =
 const relink = (to: number, source: RelinkSource, tokenMismatch?: boolean): Resolution =>
   ({ kind: 'relink', to, source, tokenMismatch });
 const flag = (reason: string): Resolution => ({ kind: 'flag', reason });
-
-/** Single sidebar closing-ref is ground truth; use it even if the token disagrees. */
-function resolveFromSidebar(authoritative: number, token: Token | null): Resolution {
-  const tokenMismatch = token ? token.issueNumber !== authoritative : undefined;
-  return relink(authoritative, 'gh', tokenMismatch);
-}
-
-/** No sidebar link — gh fell back to title/body, so require the token to agree. */
-function resolveFromTitleBody(authoritative: number, token: Token | null): Resolution {
-  if (token && token.issueNumber !== authoritative) {
-    return flag(`no sidebar link; gh title/body says ${authoritative} but filename token says ${token.issueNumber} — verify`);
-  }
-  return relink(authoritative, 'title-body');
-}
-
-/** Decide from a gh resolution: flag multi-issue / no-issue, else relink. */
-function resolveFromGh(gh: GhResult, token: Token | null): Resolution {
-  if (gh.closingRefCount > 1) {
-    return flag(`multi-issue PR: sidebar closes ${gh.issues.slice(0, gh.closingRefCount).join(', ')} — choose manually`);
-  }
-  if (gh.issues.length === 0) {
-    return flag('gh resolves no issue for this PR — verify (may close none)');
-  }
-  const authoritative = gh.issues[0];
-  return gh.closingRefCount === 1
-    ? resolveFromSidebar(authoritative, token)
-    : resolveFromTitleBody(authoritative, token);
-}
+const errMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /**
- * Decide the true issue for an affected draft. gh is authoritative when online;
- * otherwise (or on gh failure) the filename token is used, and tokenless files flag.
+ * Resolve an affected draft's true issue: try the source PR's closing-refs first
+ * (most authoritative), then follow the stored issueNumber if it is itself a PR.
  */
-function resolveAffected(filename: string, pr: SourcePr, online: boolean, exec: ExecFn): Resolution {
-  const token = parseFilenameToken(filename);
-  if (online) {
-    const gh = resolveViaGh(pr.prNumber, pr.repo, exec);
-    if (gh) return resolveFromGh(gh, token);
+function resolveAffectedIssue(src: SourcePr, issueNumber: number | undefined, gh: GhCtx): ResolveResult {
+  const bySource = resolveRealIssue(src.repo, src.prNumber, gh.exec, gh.cache);
+  // A multi-issue source is ambiguous — surface it, don't fall through and guess off issueNumber.
+  if (bySource.issue !== null || bySource.reason === 'multi-issue') return bySource;
+  if (issueNumber !== undefined && issueNumber !== src.prNumber) {
+    return resolveRealIssue(src.repo, issueNumber, gh.exec, gh.cache);
   }
-  if (token) return relink(token.issueNumber, 'filename-token');
-  return flag('tokenless and no gh resolution — manual relink required');
+  return bySource;
+}
+
+/** Offline: use the filename token, or flag when there is none. */
+function resolveOffline(token: Token | null): Resolution {
+  return token
+    ? relink(token.issueNumber, 'filename-token')
+    : flag('tokenless and offline — manual relink required');
 }
 
 /**
- * Rewrite exactly the three identity lines in the frontmatter block, repo-agnostic
- * (cht-core | cht-interoperability). Throws if any line is missing or not unique,
- * so a malformed draft is flagged rather than silently corrupted. Body untouched.
+ * Decide the true issue for an affected draft. Online, gh is authoritative
+ * (closing-refs only; a PR is followed to the issue it closes) and a transient gh
+ * error flags rather than dropping. Offline, the filename token is used.
+ */
+function resolveAffected(ctx: FileCtx, src: SourcePr, gh: GhCtx): Resolution {
+  if (!gh.online) return resolveOffline(ctx.token);
+  let resolved: ResolveResult;
+  try {
+    resolved = resolveAffectedIssue(src, ctx.issueNumber, gh);
+  } catch (err) {
+    return flag(`gh error resolving #${src.prNumber} (${errMessage(err)}) — manual`);
+  }
+  if (resolved.issue === null) return flag(`could not resolve to a single issue (${resolved.reason}) — manual`);
+  const token = ctx.token;
+  return relink(resolved.issue, 'gh', token ? token.issueNumber !== resolved.issue : undefined);
+}
+
+/**
+ * Rewrite exactly the three identity lines in the frontmatter block. Handles the
+ * medic cht-core and cht-interoperability repos (the id/issueUrl patterns are
+ * fixed to those owners/repos). Throws if any line is missing or not unique, so a
+ * malformed draft is flagged rather than silently corrupted. Body untouched.
  */
 export function rewriteFrontmatter(content: string, repo: string, newIssue: number): string {
   const block = /^(---\r?\n)([\s\S]*?\r?\n)(---\r?\n?)/.exec(content);
@@ -248,15 +228,13 @@ interface Classification {
 const unchanged = (file: string, finalIssue?: number): Classification =>
   ({ result: { file, status: 'unchanged' }, finalIssue });
 
-/** Classify an aliased draft (issueNumber === PR number) via resolveAffected. */
-function classifyAffected(ctx: FileCtx, src: SourcePr, online: boolean, exec: ExecFn): Classification {
-  const res = resolveAffected(ctx.file, src, online, exec);
-  if (res.kind === 'flag') {
-    return {
-      result: { file: ctx.file, status: 'flagged', from: ctx.issueNumber, reason: res.reason },
-      finalIssue: ctx.issueNumber,
-    };
-  }
+const flaggedClass = (ctx: FileCtx, reason: string): Classification =>
+  ({ result: { file: ctx.file, status: 'flagged', from: ctx.issueNumber, reason }, finalIssue: ctx.issueNumber });
+
+/** Resolve an affected draft (alias, or issueNumber that doesn't resolve to a real issue). */
+function classifyAffected(ctx: FileCtx, src: SourcePr, gh: GhCtx): Classification {
+  const res = resolveAffected(ctx, src, gh);
+  if (res.kind === 'flag') return flaggedClass(ctx, res.reason);
   return {
     result: {
       file: ctx.file, status: 'relinked', from: ctx.issueNumber,
@@ -266,31 +244,43 @@ function classifyAffected(ctx: FileCtx, src: SourcePr, online: boolean, exec: Ex
   };
 }
 
-/** Non-aliased draft: flag when its issueNumber disagrees with the filename token; else unchanged. */
+/** Offline (token-only) fallback: flag when issueNumber disagrees with the filename token. */
 function classifySuspect(ctx: FileCtx): Classification {
   const t = ctx.token;
   if (t && ctx.issueNumber !== undefined && ctx.issueNumber !== t.issueNumber) {
-    return {
-      result: {
-        file: ctx.file, status: 'flagged', from: ctx.issueNumber,
-        reason: `suspect: issueNumber ${ctx.issueNumber} disagrees with filename token ${t.issueNumber} — verify against gh`,
-      },
-      finalIssue: ctx.issueNumber,
-    };
+    return flaggedClass(ctx, `suspect: issueNumber ${ctx.issueNumber} disagrees with filename token ${t.issueNumber} — verify against gh`);
   }
   return unchanged(ctx.file, ctx.issueNumber);
 }
 
-function classify(ctx: FileCtx, online: boolean, exec: ExecFn): Classification {
-  const src = ctx.src;
-  if (!src) return unchanged(ctx.file, ctx.issueNumber); // old-convention file, not the alias bug
-  if (ctx.issueNumber === src.prNumber) return classifyAffected(ctx, src, online, exec);
-  return classifySuspect(ctx);
+/**
+ * Non-alias draft with a source_pr. Online, verify issueNumber is a real issue:
+ * a PR/missing number is affected (relink), a real issue is unchanged (a stale
+ * filename-token mismatch is suppressed, so re-runs stay idempotent). Offline,
+ * fall back to the token-only suspect check.
+ */
+function classifyNonAlias(ctx: FileCtx, src: SourcePr, gh: GhCtx): Classification {
+  if (!gh.online || ctx.issueNumber === undefined) return classifySuspect(ctx);
+  let kind: NumberKind;
+  try {
+    kind = classifyNumber(src.repo, ctx.issueNumber, gh.exec, gh.cache);
+  } catch (err) {
+    return flaggedClass(ctx, `could not verify issueNumber ${ctx.issueNumber} (${errMessage(err)}) — manual`);
+  }
+  if (kind !== 'issue') return classifyAffected(ctx, src, gh);
+  return unchanged(ctx.file, ctx.issueNumber);
 }
 
-function planFile(file: string, online: boolean, exec: ExecFn): FilePlan {
+function classify(ctx: FileCtx, gh: GhCtx): Classification {
+  const src = ctx.src;
+  if (!src) return unchanged(ctx.file, ctx.issueNumber); // old-convention file, not the alias bug
+  if (ctx.issueNumber === src.prNumber) return classifyAffected(ctx, src, gh);
+  return classifyNonAlias(ctx, src, gh);
+}
+
+function planFile(file: string, gh: GhCtx): FilePlan {
   const ctx = readCtx(file);
-  const { result, finalIssue } = classify(ctx, online, exec);
+  const { result, finalIssue } = classify(ctx, gh);
   return { file, content: ctx.content, result, finalIssue };
 }
 
@@ -359,7 +349,7 @@ function writeRelink(p: FilePlan, defaultRepo: string): void {
     fs.writeFileSync(p.file, rewriteFrontmatter(p.content, repo, p.result.to as number), 'utf8');
   } catch (err) {
     p.result.status = 'flagged';
-    p.result.reason = `rewrite failed: ${err instanceof Error ? err.message : String(err)}`;
+    p.result.reason = `rewrite failed: ${errMessage(err)}`;
   }
 }
 
@@ -376,7 +366,8 @@ function applyRelinks(plans: FilePlan[], repo: string): void {
 export function relinkIssues(opts: RelinkOptions = {}): RelinkResult[] {
   const cfg = resolveConfig(opts);
   warnIfOffline(cfg.online);
-  const plans = walkMarkdown(cfg.dir).map(f => planFile(f, cfg.online, cfg.exec));
+  const gh: GhCtx = { online: cfg.online, exec: cfg.exec, cache: new Map() };
+  const plans = walkMarkdown(cfg.dir).map(f => planFile(f, gh));
   detectCollisions(plans);
   if (cfg.apply) applyRelinks(plans, cfg.repo);
   return plans.map(p => p.result);

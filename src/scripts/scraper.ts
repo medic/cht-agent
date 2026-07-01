@@ -14,9 +14,13 @@
 import { execFileSync } from 'node:child_process';
 import { LinkedIssue, ReviewComment, ScrapedPR, ScraperError } from '../types/pipeline';
 import { IssueRef, collectLinkedIssueRefs, sameRepoClosingRefs } from './issue-linkage';
+import { resolveRealIssue, ClassifyCache, ExecFn, GhTransientError } from './gh-classify';
 
 /** Options shared across all execFileSync calls. */
 const EXEC_OPTS = { maxBuffer: 50 * 1024 * 1024, encoding: 'utf8' as const };
+
+/** gh runner passed to gh-classify; proxyquire mocks the underlying execFileSync in tests. */
+const ghExec: ExecFn = (file, args) => execFileSync(file, args, EXEC_OPTS) as string;
 
 /**
  * Validates that a value is a positive integer suitable for use as a PR number.
@@ -61,31 +65,63 @@ function checkOrgMembership(username: string): boolean {
   }
 }
 
+/** Hydrate an issue's body+comments via `gh issue view`; null on any fetch failure. */
+function hydrateIssue(n: number, repo: string): LinkedIssue | null {
+  try {
+    const raw = ghExec('gh', ['issue', 'view', String(n), '--repo', repo, '--json', 'body,comments']);
+    const parsed = JSON.parse(raw);
+    const comments: string[] = (parsed.comments ?? []).map((c: { body: string }) => c.body);
+    return { number: n, body: parsed.body ?? '', comments };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Hydrates each collected issue reference via `gh issue view`, preserving order.
- * A failed fetch (404/permissions/bad JSON) drops that issue rather than
- * returning an empty stub — an unresolvable reference must not count as a real
- * linked issue downstream (e.g. flipping a filter skip into a distill).
+ * Resolve a ref to the real issue number it denotes, or null to drop it. closing-refs
+ * are trusted issues; title/body numbers are verified (a PR is followed to its closing
+ * issue). A transient gh error propagates (GhTransientError) rather than silently
+ * dropping a linkage, which would flip a filter skip into a distill.
+ */
+function resolveRef(ref: IssueRef, repo: string, cache: ClassifyCache): number | null {
+  return ref.source === 'closing-ref' ? ref.number : resolveRealIssue(repo, ref.number, ghExec, cache).issue;
+}
+
+/** Resolve + dedup + hydrate one ref; marks `seen` only on a successful new issue. */
+function linkOneRef(ref: IssueRef, repo: string, cache: ClassifyCache, seen: Set<number>): LinkedIssue | null {
+  const issueNum = resolveRef(ref, repo, cache);
+  if (issueNum === null || seen.has(issueNum)) return null;
+  const hydrated = hydrateIssue(issueNum, repo);
+  if (hydrated) seen.add(issueNum);
+  return hydrated;
+}
+
+/**
+ * Hydrate the collected refs into linked issues, preserving descending-authority
+ * order and deduping by resolved issue number so linkedIssues[0] stays the most
+ * authoritative issue.
  */
 function fetchLinkedIssues(refs: IssueRef[], repo: string): LinkedIssue[] {
-  return refs
-    .map((ref): LinkedIssue | null => {
-      try {
-        const raw = execFileSync(
-          'gh',
-          ['issue', 'view', String(ref.number), '--repo', repo, '--json', 'body,comments'],
-          EXEC_OPTS
-        );
-        const parsed = JSON.parse(raw);
-        const commentBodies: string[] = (parsed.comments ?? []).map(
-          (c: { body: string }) => c.body
-        );
-        return { number: ref.number, body: parsed.body ?? '', comments: commentBodies };
-      } catch {
-        return null;
-      }
-    })
-    .filter((issue): issue is LinkedIssue => issue !== null);
+  const cache: ClassifyCache = new Map();
+  const seen = new Set<number>();
+  const out: LinkedIssue[] = [];
+  for (const ref of refs) {
+    const hydrated = linkOneRef(ref, repo, cache, seen);
+    if (hydrated) out.push(hydrated);
+  }
+  return out;
+}
+
+/** Wrap a transient gh failure as ScraperError so scrapePR keeps its ScraperError-only contract (fail-loud, cause preserved). */
+function resolveLinkedIssues(refs: IssueRef[], repo: string, prNumber: number): LinkedIssue[] {
+  try {
+    return fetchLinkedIssues(refs, repo);
+  } catch (err) {
+    if (err instanceof GhTransientError) {
+      throw new ScraperError(`Transient gh failure resolving linked issues for #${prNumber}: ${err.message}`, prNumber, { cause: err });
+    }
+    throw err;
+  }
 }
 
 /**
@@ -265,9 +301,10 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   // Preserve the original fetch order (diff before reviews) so a diff error surfaces first.
   const diff = fetchDiff(prNumber, repo);
   const reviews = parseReviews(fetchReviews(prNumber, repo), prNumber);
-  const linkedIssues: LinkedIssue[] = fetchLinkedIssues(
-    collectLinkedIssueRefs(prTitle, prBody, sameRepoClosingRefs(meta, repo)),
-    repo
+  const linkedIssues: LinkedIssue[] = resolveLinkedIssues(
+    collectLinkedIssueRefs(prTitle, prBody, sameRepoClosingRefs(meta, repo), repo),
+    repo,
+    prNumber
   );
 
   return {

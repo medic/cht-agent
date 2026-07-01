@@ -29,6 +29,22 @@ export function parseTitleIssue(prTitle: string): number | null {
 }
 
 /**
+ * Issue numbers referenced by Fixes/Closes/Resolves in a PR body. A full
+ * `github.com/<owner>/<repo>/issues/N` URL pointing at a different repo is
+ * dropped (cross-repo); a bare `#N` is same-repo by definition.
+ */
+function bodyIssueRefs(prBody: string, repo: string): number[] {
+  const pattern = /(?:fixes|closes|resolves)\s+(?:https?:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/|#)(\d+)/gi;
+  const out: number[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(prBody)) !== null) {
+    if (match[1] && match[1] !== repo) continue; // cross-repo URL — drop
+    out.push(Number.parseInt(match[2], 10));
+  }
+  return out;
+}
+
+/**
  * Merges the issue numbers a PR resolves from closingIssuesReferences (sidebar),
  * the title scope, and the body Fixes/Closes/Resolves keywords — deduped, ordered
  * by descending authority (so the first entry is the most authoritative), and
@@ -37,7 +53,8 @@ export function parseTitleIssue(prTitle: string): number | null {
 export function collectLinkedIssueRefs(
   prTitle: string,
   prBody: string,
-  closingRefs: { number: number }[]
+  closingRefs: { number: number }[],
+  repo: string
 ): IssueRef[] {
   const seen = new Set<number>();
   const refs: IssueRef[] = [];
@@ -53,11 +70,7 @@ export function collectLinkedIssueRefs(
   const titleIssue = parseTitleIssue(prTitle);
   if (titleIssue !== null) push(titleIssue, 'title');
 
-  const bodyPattern = /(?:fixes|closes|resolves)\s+(?:https?:\/\/github\.com\/[^/]+\/[^/]+\/issues\/|#)(\d+)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = bodyPattern.exec(prBody)) !== null) {
-    push(Number.parseInt(match[1], 10), 'body');
-  }
+  for (const n of bodyIssueRefs(prBody, repo)) push(n, 'body');
 
   return refs.slice(0, MAX_LINKED_ISSUES);
 }
@@ -73,5 +86,7 @@ export function sameRepoClosingRefs(
   const raw: Array<{ number: number; url?: string }> = Array.isArray(meta.closingIssuesReferences)
     ? meta.closingIssuesReferences
     : [];
-  return raw.filter(r => typeof r.url === 'string' && r.url.includes(`/${repo}/issues/`));
+  // Anchor to the host so a crafted path (e.g. github.com/attacker/medic/cht-core/issues/1) can't pass.
+  const prefix = `https://github.com/${repo}/issues/`;
+  return raw.filter(r => typeof r.url === 'string' && r.url.startsWith(prefix));
 }
