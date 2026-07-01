@@ -20,7 +20,7 @@ import matter from 'gray-matter';
 import type { SkipLogEntry, OpenReviewOptions, ReviewPRResult } from '../types/pipeline';
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
-import { ciGuardReason, dedupeByIssueId, DedupEntry } from './dedup';
+import { ciGuardReason, dedupeByIssueId, DedupEntry, DedupDrop } from './dedup';
 
 const DEFAULT_DOMAINS_DIR = path.join(REPO_ROOT, 'agent-memory', 'domains');
 
@@ -273,8 +273,21 @@ function rewriteFrontmatterOnDisk(draftPath: string, frontmatter: Record<string,
   fs.writeFileSync(draftPath, matter.stringify(content, frontmatter), 'utf8');
 }
 
+/** Return value of `collectValidPlans` — the dedup outcome plus derived per-domain plans. */
+interface CollectedPlans {
+  plans: Map<string, string[]>;
+  skipped: ReviewPRResult[];
+  /** Surviving entries after dedup; a `source_prs`-bearing entry needs its on-disk frontmatter rewritten before staging. */
+  kept: DedupEntry[];
+  /** Duplicates collapsed away by dedup; their _pending files must be removed so they don't resurface as a fresh singleton next run. */
+  dropped: DedupDrop[];
+}
+
 /**
- * Collects valid draft plans per domain and separates skipped domains.
+ * Collects valid draft plans per domain and separates skipped domains. Pure
+ * planning only — does not touch `_pending` file contents; the caller decides
+ * whether to apply the resulting frontmatter rewrites/deletions (dry-run must
+ * not mutate any files).
  *
  * Validates every domain's drafts against the schema and CI guard, then runs a
  * single cross-domain dedup pass (`dedupeByIssueId`) over all surviving drafts
@@ -283,17 +296,14 @@ function rewriteFrontmatterOnDisk(draftPath: string, frontmatter: Record<string,
  *
  * @param byDomain - Map of domain to its discovered draft paths.
  * @param logPath  - Path to the NDJSON audit log file.
- * @returns Object with `plans` (valid domains) and `skipped` (ReviewPRResult for empty domains).
+ * @returns `plans`/`skipped` for building results, plus `kept`/`dropped` for the caller to apply.
  *
  * @example
  * ```typescript
- * const { plans, skipped } = collectValidPlans(byDomain, '/tmp/skipped.ndjson');
+ * const { plans, skipped, kept, dropped } = collectValidPlans(byDomain, '/tmp/skipped.ndjson');
  * ```
  */
-function collectValidPlans(
-  byDomain: Map<string, string[]>,
-  logPath: string
-): { plans: Map<string, string[]>; skipped: ReviewPRResult[] } {
+function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): CollectedPlans {
   const allValid = Array.from(byDomain.entries()).flatMap(([domain, draftPaths]) =>
     findValidEntries(domain, draftPaths, logPath)
   );
@@ -301,11 +311,6 @@ function collectValidPlans(
   const { kept, dropped } = dedupeByIssueId(allValid);
   for (const drop of dropped) {
     writeSkipEntry(logPath, drop.path, drop.reason);
-  }
-  for (const entry of kept) {
-    if (entry.frontmatter.source_prs !== undefined) {
-      rewriteFrontmatterOnDisk(entry.path, entry.frontmatter);
-    }
   }
 
   const plans = new Map<string, string[]>();
@@ -321,7 +326,33 @@ function collectValidPlans(
       skipped.push({ domain, branch: '', filesPromoted: 0, status: 'skipped' });
     }
   }
-  return { plans, skipped };
+  return { plans, skipped, kept, dropped };
+}
+
+/**
+ * Applies the on-disk side effects of dedup: persists `source_prs` onto a
+ * collapsed canonical draft's frontmatter, and removes every collapsed
+ * duplicate from `_pending`. Apply-mode only — dry-run must report what would
+ * happen without mutating any draft file.
+ *
+ * @example
+ * ```typescript
+ * applyDedupMutations(kept, dropped);
+ * ```
+ */
+function applyDedupMutations(kept: DedupEntry[], dropped: DedupDrop[]): void {
+  for (const entry of kept) {
+    if (entry.frontmatter.source_prs !== undefined) {
+      rewriteFrontmatterOnDisk(entry.path, entry.frontmatter);
+    }
+  }
+  for (const drop of dropped) {
+    try {
+      fs.unlinkSync(drop.path);
+    } catch {
+      // Already gone — nothing to clean up.
+    }
+  }
 }
 
 /**
@@ -521,8 +552,10 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
   const exec: ExecFn = opts.execFn ??
     ((file: string, args: string[]) => execFileSync(file, args, { encoding: 'utf8' }) as string);
 
-  const { plans, skipped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
+  const { plans, skipped, kept, dropped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
   if (!apply) return [...skipped, ...buildDryRunResults(plans, date)];
+
+  applyDedupMutations(kept, dropped);
   return [...skipped, ...executeApply(plans, { domainsDir, date, exec })];
 }
 

@@ -2,8 +2,10 @@ import { expect } from 'chai';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'node:fs';
+import matter from 'gray-matter';
 import type { ReviewPRResult } from '../../src/types/pipeline';
 import { discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
+import { buildValidator } from '../../src/scripts/schema-utils';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -589,5 +591,80 @@ describe('openReviewPR — branch collision handling', () => {
     });
 
     expect(results[0].branch).to.equal('memory/review/contacts-20260520-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openReviewPR — dedup lifecycle (R3)
+// ---------------------------------------------------------------------------
+
+// A backport duplicate of VALID_FRONTMATTER's issue (same id/issueNumber, higher source PR).
+const BACKPORT_FRONTMATTER = VALID_FRONTMATTER
+  .replace('source_pr: medic/cht-core#42', 'source_pr: medic/cht-core#99')
+  .replace('title: Prevent duplicate contact creation', 'title: "4.7.x backport: Prevent duplicate contact creation"');
+
+describe('openReviewPR — dedup lifecycle', () => {
+  it('dry-run collapses duplicates in its count without mutating any pending file', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const originalPath = path.join(pendingDir, 'contacts', '42-original.md');
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+    const beforeOriginal = fs.readFileSync(originalPath, 'utf8');
+    const beforeBackport = fs.readFileSync(backportPath, 'utf8');
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+
+    const results = openReviewPR({ pendingDir, logPath, date: '20260520' });
+
+    expect(results).to.have.length(1);
+    expect(results[0].filesPromoted).to.equal(1);
+    // Dry-run must not touch _pending file contents, even the canonical draft
+    // that would gain a `source_prs` field once applied.
+    expect(fs.readFileSync(originalPath, 'utf8')).to.equal(beforeOriginal);
+    expect(fs.readFileSync(backportPath, 'utf8')).to.equal(beforeBackport);
+  });
+
+  it('apply promotes the lowest-PR-numbered canonical with source_prs and removes the duplicate from _pending', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const domainsDir = makeTmpDir();
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      'gh-pr': () => 'https://github.com/medic/cht-agent/pull/99\n',
+    });
+
+    const results = openReviewPR({ apply: true, pendingDir, domainsDir, logPath, date: '20260520', execFn: exec.fn });
+
+    expect(results).to.have.length(1);
+    expect(results[0].filesPromoted).to.equal(1);
+
+    // The duplicate is gone from _pending — it must not resurface as a fresh
+    // singleton group on the next run.
+    expect(fs.existsSync(backportPath)).to.equal(false);
+
+    // The canonical (lowest source PR number) draft was promoted, carrying source_prs.
+    const promotedPath = path.join(domainsDir, 'contacts', 'issues', '42-original.md');
+    expect(fs.existsSync(promotedPath)).to.equal(true);
+    const promotedFm = matter(fs.readFileSync(promotedPath, 'utf8')).data as Record<string, unknown>;
+    expect(promotedFm.source_pr).to.equal('medic/cht-core#42');
+    expect(promotedFm.source_prs).to.deep.equal(['medic/cht-core#42', 'medic/cht-core#99']);
+
+    // The rewritten frontmatter still validates against the schema.
+    const validate = buildValidator();
+    expect(validate(promotedFm)).to.equal(true);
   });
 });
