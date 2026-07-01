@@ -20,6 +20,7 @@ import matter from 'gray-matter';
 import type { SkipLogEntry, OpenReviewOptions, ReviewPRResult } from '../types/pipeline';
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
+import { ciGuardReason, dedupeByIssueId, DedupEntry } from './dedup';
 
 const DEFAULT_DOMAINS_DIR = path.join(REPO_ROOT, 'agent-memory', 'domains');
 
@@ -222,19 +223,23 @@ function parseDraft(draftPath: string, logPath: string): ReturnType<typeof matte
 }
 
 /**
- * Filters a list of draft paths to those that pass schema validation.
+ * Validates one domain's draft paths against the schema and the CI guard
+ * (`ciGuardReason` — rejects a mislinked draft or a slug/issueNumber
+ * contradiction). Passing drafts are returned as `DedupEntry` objects so the
+ * caller can run cross-domain dedup before promotion.
  *
+ * @param domain     - CHT domain these drafts were discovered under.
  * @param draftPaths - Array of absolute draft file paths to validate.
  * @param logPath    - Path to the NDJSON audit log file.
- * @returns Array of draft paths that passed schema validation.
+ * @returns Array of entries that passed schema validation and the CI guard.
  *
  * @example
  * ```typescript
- * const valid = findValidDrafts(['/tmp/drafts/42-foo.md'], '/tmp/skipped.ndjson');
+ * const valid = findValidEntries('contacts', ['/tmp/drafts/42-foo.md'], '/tmp/skipped.ndjson');
  * ```
  */
-function findValidDrafts(draftPaths: string[], logPath: string): string[] {
-  const valid: string[] = [];
+function findValidEntries(domain: string, draftPaths: string[], logPath: string): DedupEntry[] {
+  const valid: DedupEntry[] = [];
   for (const draftPath of draftPaths) {
     const parsed = parseDraft(draftPath, logPath);
     if (parsed === null) continue;
@@ -244,13 +249,37 @@ function findValidDrafts(draftPaths: string[], logPath: string): string[] {
       writeSkipEntry(logPath, draftPath, `Schema invalid: ${errors}`);
       continue;
     }
-    valid.push(draftPath);
+    const guardReason = ciGuardReason(draftPath, data);
+    if (guardReason !== null) {
+      writeSkipEntry(logPath, draftPath, `CI guard: ${guardReason}`);
+      continue;
+    }
+    valid.push({ domain, path: draftPath, frontmatter: data });
   }
   return valid;
 }
 
 /**
+ * Rewrites a draft's YAML frontmatter in place, preserving its markdown body.
+ * Used after dedup adds `source_prs` to a canonical draft's frontmatter.
+ *
+ * @example
+ * ```typescript
+ * rewriteFrontmatterOnDisk('/tmp/drafts/42-foo.md', { ...frontmatter, source_prs: [...] });
+ * ```
+ */
+function rewriteFrontmatterOnDisk(draftPath: string, frontmatter: Record<string, unknown>): void {
+  const { content } = matter(fs.readFileSync(draftPath, 'utf8'));
+  fs.writeFileSync(draftPath, matter.stringify(content, frontmatter), 'utf8');
+}
+
+/**
  * Collects valid draft plans per domain and separates skipped domains.
+ *
+ * Validates every domain's drafts against the schema and CI guard, then runs a
+ * single cross-domain dedup pass (`dedupeByIssueId`) over all surviving drafts
+ * so backport cherry-picks and multi-PR epics collapse into one canonical
+ * draft — regardless of which domain each duplicate landed in.
  *
  * @param byDomain - Map of domain to its discovered draft paths.
  * @param logPath  - Path to the NDJSON audit log file.
@@ -265,13 +294,30 @@ function collectValidPlans(
   byDomain: Map<string, string[]>,
   logPath: string
 ): { plans: Map<string, string[]>; skipped: ReviewPRResult[] } {
+  const allValid = Array.from(byDomain.entries()).flatMap(([domain, draftPaths]) =>
+    findValidEntries(domain, draftPaths, logPath)
+  );
+
+  const { kept, dropped } = dedupeByIssueId(allValid);
+  for (const drop of dropped) {
+    writeSkipEntry(logPath, drop.path, drop.reason);
+  }
+  for (const entry of kept) {
+    if (entry.frontmatter.source_prs !== undefined) {
+      rewriteFrontmatterOnDisk(entry.path, entry.frontmatter);
+    }
+  }
+
   const plans = new Map<string, string[]>();
+  for (const entry of kept) {
+    const existing = plans.get(entry.domain);
+    if (existing) existing.push(entry.path);
+    else plans.set(entry.domain, [entry.path]);
+  }
+
   const skipped: ReviewPRResult[] = [];
-  for (const [domain, draftPaths] of byDomain) {
-    const validDrafts = findValidDrafts(draftPaths, logPath);
-    if (validDrafts.length > 0) {
-      plans.set(domain, validDrafts);
-    } else {
+  for (const domain of byDomain.keys()) {
+    if (!plans.has(domain)) {
       skipped.push({ domain, branch: '', filesPromoted: 0, status: 'skipped' });
     }
   }

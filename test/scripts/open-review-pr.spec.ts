@@ -10,11 +10,11 @@ import { discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '
 // ---------------------------------------------------------------------------
 
 const VALID_FRONTMATTER = `---
-id: cht-core-42
+id: cht-core-1042
 category: bug
 domain: contacts
-issueNumber: 42
-issueUrl: https://github.com/medic/cht-core/issues/42
+issueNumber: 1042
+issueUrl: https://github.com/medic/cht-core/issues/1042
 title: Prevent duplicate contact creation
 lastUpdated: "2026-05-20"
 summary: "Race condition caused duplicate contacts"
@@ -56,11 +56,11 @@ const NO_FRONTMATTER = `# Just markdown, no YAML\n\nSome content.`;
 // A second complete draft using the canonical camelCase `lastUpdated` field —
 // confirms the converged schema validates camelCase natively (no aliasing).
 const CAMELCASE_FRONTMATTER = `---
-id: cht-core-43
+id: cht-core-1043
 category: improvement
 domain: contacts
-issueNumber: 43
-issueUrl: https://github.com/medic/cht-core/issues/43
+issueNumber: 1043
+issueUrl: https://github.com/medic/cht-core/issues/1043
 title: Fix duplicate detection using the canonical lastUpdated field
 lastUpdated: "2026-05-20"
 summary: "Confirms a full camelCase draft validates without aliasing"
