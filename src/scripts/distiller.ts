@@ -263,7 +263,7 @@ async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
 export function slugify(text: string): string {
   const slug = text
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[^a-z0-9\s-]/g, ' ')
     .trim()
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')

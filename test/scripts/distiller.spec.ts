@@ -671,7 +671,7 @@ describe('slugify', () => {
 
   it('should strip special characters', () => {
     const { slugify } = loadDistiller();
-    expect(slugify('feat(contacts)!: add bulk create')).to.equal('featcontacts-add-bulk-create');
+    expect(slugify('feat(contacts)!: add bulk create')).to.equal('feat-contacts-add-bulk-create');
   });
 
   it('should truncate to 60 chars', () => {

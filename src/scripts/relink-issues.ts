@@ -59,7 +59,7 @@ export interface RelinkOptions {
 
 const SOURCE_PR_RE = /^([^#]+)#(\d+)$/;
 const FILENAME_TOKEN_RE =
-  /^(\d+)-(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)?(\d+)-/;
+  /^(\d+)-(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)?-?(\d+)-/;
 const DEFAULT_REPO = 'medic/cht-core';
 
 interface SourcePr {
@@ -79,7 +79,11 @@ function parseSourcePr(ref: unknown): SourcePr | null {
   return { repo: m[1], prNumber: Number.parseInt(m[2], 10) };
 }
 
-/** Parse `8773-fix6299-slug` → { prNumber: 8773, issueNumber: 6299 }; null when tokenless. */
+/**
+ * Parse `8773-fix6299-slug` or `8773-fix-6299-slug` → { prNumber: 8773, issueNumber: 6299 };
+ * null when tokenless. Both forms are accepted because old drafts predate the
+ * slugify separator fix and are never rewritten.
+ */
 function parseFilenameToken(filename: string): Token | null {
   const m = FILENAME_TOKEN_RE.exec(path.basename(filename));
   return m ? { prNumber: Number.parseInt(m[1], 10), issueNumber: Number.parseInt(m[2], 10) } : null;
