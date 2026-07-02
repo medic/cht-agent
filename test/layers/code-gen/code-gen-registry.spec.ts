@@ -135,6 +135,22 @@ describe('CodeGenModuleRegistry', () => {
 });
 
 describe('ClaudeApiCodeGenModule', () => {
+  // Make this spec self-contained: the module reads ANTHROPIC_MODEL for its
+  // modelUsed default, so an ambient value (e.g. set by an agent harness or a
+  // developer shell) flips the documented-model assertion. Snapshot and clear
+  // it before every test, then restore.
+  let savedAnthropicModel: string | undefined;
+
+  beforeEach(() => {
+    savedAnthropicModel = process.env.ANTHROPIC_MODEL;
+    delete process.env.ANTHROPIC_MODEL;
+  });
+
+  afterEach(() => {
+    if (savedAnthropicModel !== undefined) process.env.ANTHROPIC_MODEL = savedAnthropicModel;
+    else delete process.env.ANTHROPIC_MODEL;
+  });
+
   const input: CodeGenModuleInput = {
     ticket: {
       issue: {
