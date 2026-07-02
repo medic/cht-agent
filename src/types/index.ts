@@ -282,7 +282,6 @@ export interface ContextAnalysisResult {
   reusablePatterns: CodePattern[];
   relevantDesignDecisions: DesignDecision[];
   recommendations: string[];
-  historicalSuccessRate: number; // 0-1
   relatedDomains: CHTDomain[];
   codeArchitectureSummary?: string;
 }

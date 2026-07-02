@@ -382,7 +382,6 @@ ${codeContextSection}
 ## Context Analysis
 **Similar Past Issues**: ${analysis.similarContexts.length}
 **Reusable Patterns**: ${analysis.reusablePatterns.length}
-**Historical Success Rate**: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%
 
 **Recommendations**:
 ${analysis.recommendations.map((rec, i) => `${i + 1}. ${rec}`).join('\n')}
@@ -432,7 +431,6 @@ Format your response as a structured plan that will guide the development team.`
     const keyFindings = [
       `${findings.documentationReferences.length} documentation references found`,
       `${analysis.similarContexts.length} similar past implementations identified`,
-      `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`,
       ...analysis.recommendations.slice(0, 2),
     ];
 

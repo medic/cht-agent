@@ -77,7 +77,6 @@ describe('ResearchSupervisor - layer routing (#134)', () => {
     reusablePatterns: [],
     relevantDesignDecisions: [],
     recommendations: ['Recommendation 1'],
-    historicalSuccessRate: 0.8,
     relatedDomains: [],
   };
 

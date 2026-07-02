@@ -142,12 +142,47 @@ const asEnum = <T extends string>(value: unknown, allowed: readonly T[]): T | un
     ? (value as T)
     : undefined;
 
+/** Bound the extracted snippet so a runaway draft can't bloat every analysis prompt. */
+const MAX_CONFIG_PATTERN_LENGTH = 4000;
+
+/**
+ * Pull the "## Config Pattern" section out of a cht-conf draft body — per
+ * TEMPLATE.md the before/after config snippet in that section IS the reusable
+ * pattern for config entries. Code-fence contents are kept verbatim (fenced
+ * lines starting with # are snippet comments, not markdown headings).
+ */
+function extractConfigPattern(body: string): string | undefined {
+  const lines = body.split('\n');
+  const start = lines.findIndex((line) => /^##\s+Config Pattern\s*$/.test(line));
+  if (start === -1) {
+    return undefined;
+  }
+
+  const section: string[] = [];
+  let inFence = false;
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+    } else if (!inFence && /^##\s/.test(line)) {
+      break;
+    }
+    section.push(line);
+  }
+
+  const text = section.join('\n').trim();
+  if (text.length === 0) {
+    return undefined;
+  }
+  return text.slice(0, MAX_CONFIG_PATTERN_LENGTH);
+}
+
 // Map a promoted-draft's frontmatter onto ResolvedIssueContext. Drafts come from merged
 // issues, so phase is 'completed'; tags are folded into components so overlap scoring has
 // signal against a ticket's technical context. Config fields are only set for cht-conf
 // drafts (layer defaults to cht-core, preserving today's behavior).
 function mapDraftToResolvedIssue(
   metadata: Record<string, unknown>,
+  body: string,
   domain: CHTDomain
 ): ResolvedIssueContext {
   const services = asStringArray(metadata.services);
@@ -176,15 +211,16 @@ function mapDraftToResolvedIssue(
     layer,
     configArtifact: asEnum<ConfigArtifact>(metadata.configArtifact, CONFIG_ARTIFACTS),
     mechanism: asEnum<ConfigMechanism>(metadata.mechanism, CONFIG_MECHANISMS),
+    fix: layer === 'cht-conf' ? extractConfigPattern(body) : undefined,
   };
 }
 
 function parseDraftIssue(filePath: string, domain: CHTDomain): ResolvedIssueContext | null {
-  const { metadata } = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
+  const { metadata, body } = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
   if (!metadata.domain && metadata.issueNumber === undefined) {
     return null;
   }
-  return mapDraftToResolvedIssue(metadata, domain);
+  return mapDraftToResolvedIssue(metadata, body, domain);
 }
 
 function scanDraftsForIssues(dirPath: string, domain: CHTDomain): ResolvedIssueContext[] {

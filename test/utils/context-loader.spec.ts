@@ -491,6 +491,122 @@ Content.`;
         expect(result[0].configArtifact).to.be.undefined;
       });
 
+      it('should extract the Config Pattern section into fix for cht-conf drafts', () => {
+        const draft = [
+          '---',
+          'id: cht-conf-pnc-001',
+          'category: bug',
+          'domain: forms-and-reports',
+          'issueNumber: 3',
+          'layer: cht-conf',
+          'configArtifact: form',
+          'mechanism: relevant',
+          '---',
+          '',
+          '## Problem',
+          '',
+          'Prompt appears after miscarriage.',
+          '',
+          '## Config Pattern',
+          '',
+          'One-line relevant change:',
+          '',
+          '```',
+          '# before',
+          "${pnc_visit} = 'yes'",
+          '# after',
+          "${pnc_visit} = 'yes' and ${pnc_outcome} != 'miscarriage'",
+          '```',
+          '',
+          '## Design Choices',
+          '',
+          'Kept to a single cell.',
+        ].join('\n');
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'pnc.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('forms-and-reports');
+
+        expect(result).to.have.lengthOf(1);
+        const fix = result[0].fix;
+        expect(fix).to.be.a('string');
+        // fenced snippet survives, including comment lines that look like headings
+        expect(fix).to.include('# before');
+        expect(fix).to.include("${pnc_outcome} != 'miscarriage'");
+        expect(fix).to.include('One-line relevant change:');
+        // the section ends at the next heading
+        expect(fix).to.not.include('Design Choices');
+        expect(fix).to.not.include('Kept to a single cell.');
+      });
+
+      it('should leave fix undefined when a cht-conf draft has no Config Pattern section', () => {
+        const draft = [
+          '---',
+          'id: cht-conf-002',
+          'domain: forms-and-reports',
+          'issueNumber: 4',
+          'layer: cht-conf',
+          '---',
+          '',
+          '## Problem',
+          '',
+          'No pattern recorded yet.',
+        ].join('\n');
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'no-pattern.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('forms-and-reports');
+
+        expect(result).to.have.lengthOf(1);
+        expect(result[0].fix).to.be.undefined;
+      });
+
+      it('should not extract fix for core drafts even when a Config Pattern section exists', () => {
+        const draft = [
+          '---',
+          'id: cht-core-005',
+          'domain: contacts',
+          'issueNumber: 5',
+          '---',
+          '',
+          '## Config Pattern',
+          '',
+          'Stray section in a core draft.',
+        ].join('\n');
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'core.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('contacts');
+
+        expect(result).to.have.lengthOf(1);
+        expect(result[0].layer).to.equal('cht-core');
+        expect(result[0].fix).to.be.undefined;
+      });
+
       it('should skip files with neither domain nor issueNumber', () => {
         const draft = `---
 title: not a real draft
