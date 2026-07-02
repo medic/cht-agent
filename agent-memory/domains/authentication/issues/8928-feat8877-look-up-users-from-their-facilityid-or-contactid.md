@@ -1,10 +1,10 @@
 ---
-id: cht-core-8928
+id: cht-core-8877
 category: feature
 domain: authentication
 domainFit: strong
-issueNumber: 8928
-issueUrl: https://github.com/medic/cht-core/issues/8928
+issueNumber: 8877
+issueUrl: https://github.com/medic/cht-core/issues/8877
 title: Extend GET /api/v2/users to look up users by facility_id and/or contact_id
 lastUpdated: '2026-06-23'
 summary: There was no way to query the users API to find which users are linked to a given facility or contact. This PR extends `GET /api/v2/users` to accept `facility_id` and/or `contact_id` query parameters (gated behind `can_view_users`), backed by a new `_users` db view and a migration that backfills `contact_id` onto existing user docs.

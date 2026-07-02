@@ -1,10 +1,10 @@
 ---
-id: cht-core-9723
+id: cht-core-9213
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 9723
-issueUrl: https://github.com/medic/cht-core/issues/9723
+issueNumber: 9213
+issueUrl: https://github.com/medic/cht-core/issues/9213
 title: Clear browser history on logout to prevent back-button navigation to authenticated admin pages
 lastUpdated: '2026-06-22'
 summary: After logging out of the AngularJS admin console, the browser back button could navigate the user back to previously authenticated pages. The fix cleans the browser history during logout so back navigation no longer returns to those pages.

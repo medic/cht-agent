@@ -1,10 +1,10 @@
 ---
-id: cht-core-10414
+id: cht-core-6784
 category: improvement
 domain: authentication
 domainFit: strong
-issueNumber: 10414
-issueUrl: https://github.com/medic/cht-core/issues/10414
+issueNumber: 6784
+issueUrl: https://github.com/medic/cht-core/issues/6784
 title: Show unsupported-browser message for Safari users on the login page
 lastUpdated: '2026-06-22'
 summary: Safari users reached the CHT login page with no indication the browser is unsupported, yielding a degraded experience. Added Safari detection that displays a localized 'unsupported browser' message advising users to switch to Chrome or Firefox.
