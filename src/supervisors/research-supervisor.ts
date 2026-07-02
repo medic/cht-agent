@@ -11,6 +11,7 @@ import { StateGraph, END, START, Annotation } from '@langchain/langgraph';
 import { ChatAnthropic } from '@langchain/anthropic';
 import {
   ArchitectureInsight,
+  CanonicalDiffResult,
   CHTLayer,
   ConfigArtifact,
   IssueTemplate,
@@ -339,7 +340,11 @@ export class ResearchSupervisor {
     // prompt byte-identical to before the layer work.
     const labelSources = issueDetails.technical_context.layer === 'investigate';
 
-    let codeContextSection = '\n**Note**: Code architecture context was unavailable for this analysis.\n';
+    // Rendered whether or not the wikis produced insights: a DeepWiki outage
+    // must not drop the config drift evidence from the plan prompt.
+    const canonicalDiffSection = this.formatCanonicalDiffSection(codeContext?.canonicalDiff);
+
+    let codeContextSection = `\n**Note**: Code architecture context was unavailable for this analysis.\n${canonicalDiffSection}`;
     if (codeContext && codeContext.architectureInsights.length > 0) {
       codeContextSection = `
 ## Code Architecture Context
@@ -352,6 +357,7 @@ ${codeContext.moduleRelationships.map((rel) => `- ${rel.source} → ${rel.target
 
 **Confidence**: ${(codeContext.confidence * 100).toFixed(0)}%
 ${codeContext.warnings.length > 0 ? `\n**Warnings**: ${codeContext.warnings.join(', ')}` : ''}
+${canonicalDiffSection}
 `;
     }
 
@@ -397,6 +403,34 @@ Create a detailed orchestration plan with:
 7. Estimated effort
 
 Format your response as a structured plan that will guide the development team.`;
+  }
+
+  /**
+   * Render the canonical-config diff for the plan prompt: for cht-conf tickets
+   * the drifted artifact (not cht-core code) is what the plan should target.
+   * The four-backtick fence keeps diff content that itself contains ``` from
+   * closing the block early.
+   */
+  private formatCanonicalDiffSection(canonicalDiff?: CanonicalDiffResult): string {
+    if (!canonicalDiff) {
+      return '';
+    }
+
+    const artifactLabel = canonicalDiff.artifactName
+      ? `${canonicalDiff.artifact} / ${canonicalDiff.artifactName}`
+      : canonicalDiff.artifact;
+
+    const lines = [
+      '',
+      `**Canonical Config Diff** (${canonicalDiff.status}): ${canonicalDiff.summary}`,
+      `- Suspect artifact: ${artifactLabel}`,
+    ];
+
+    if (canonicalDiff.diff) {
+      lines.push('````diff', canonicalDiff.diff, '````');
+    }
+
+    return lines.join('\n');
   }
 
   /**

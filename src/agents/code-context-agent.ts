@@ -5,6 +5,7 @@
  */
 
 import {
+  CanonicalDiffResult,
   CodeContextFindings,
   ArchitectureInsight,
   ModuleRelationship,
@@ -18,6 +19,7 @@ import {
 } from '../types';
 import { OpenDeepWikiClient, DeepWikiRateLimitError } from '../mcp';
 import { DEFAULT_DEEPWIKI_MCP_URL } from '../constants';
+import { diffAgainstCanonical, resolveDeploymentConfigRoot } from '../utils/canonical-diff';
 import { MockCodeContextData, MOCK_CODE_CONTEXT_DATA } from './code-context-agent.mock-data';
 
 const EMPTY_MOCK_CODE_CONTEXT_DATA: MockCodeContextData = {
@@ -108,6 +110,11 @@ export class CodeContextAgent {
       source: this.useMockMCP ? 'mock' : 'opendeepwiki',
     };
 
+    const canonicalDiff = this.maybeDiffCanonicalConfig(layer, configArtifact, issue);
+    if (canonicalDiff) {
+      findings.canonicalDiff = canonicalDiff;
+    }
+
     console.log(
       `[Code Context Agent] Found ${findings.architectureInsights.length} architecture insights`
     );
@@ -143,6 +150,33 @@ export class CodeContextAgent {
     }
 
     return repos;
+  }
+
+  /**
+   * For cht-conf tickets with a mounted deployment config, diff the suspect
+   * artifact against the canonical baseline. The util never throws; the mount
+   * being absent skips the diff so cht-core research is untouched.
+   */
+  private maybeDiffCanonicalConfig(
+    layer: CHTLayer | undefined,
+    configArtifact: ConfigArtifact | undefined,
+    issue: IssueTemplate
+  ): CanonicalDiffResult | undefined {
+    if (layer !== 'cht-conf' || !configArtifact) {
+      return undefined;
+    }
+
+    if (!resolveDeploymentConfigRoot()) {
+      console.log('[Code Context Agent] CHT_CONF_PATH not set — skipping canonical config diff');
+      return undefined;
+    }
+
+    const result = diffAgainstCanonical({
+      artifact: configArtifact,
+      artifactName: issue.issue.technical_context.artifactName,
+    });
+    console.log(`[Code Context Agent] Canonical diff (${result.status}): ${result.summary}`);
+    return result;
   }
 
   private buildSearchQuery(issue: IssueTemplate, configArtifact?: ConfigArtifact): string {

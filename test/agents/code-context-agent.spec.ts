@@ -2,7 +2,8 @@ import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { CodeContextAgent } from '../../src/agents/code-context-agent';
 import { OpenDeepWikiClient, DeepWikiRateLimitError } from '../../src/mcp';
-import { IssueTemplate, OpenDeepWikiMCPResponse } from '../../src/types';
+import * as canonicalDiff from '../../src/utils/canonical-diff';
+import { CanonicalDiffResult, IssueTemplate, OpenDeepWikiMCPResponse } from '../../src/types';
 
 describe('CodeContextAgent', () => {
   let agent: CodeContextAgent;
@@ -695,6 +696,68 @@ describe('CodeContextAgent', () => {
       expect(result.relevantRepos).to.deep.equal(['cht-conf']);
       expect(result.architectureInsights.length).to.be.greaterThan(0);
       expect(result.architectureInsights[0].sourceRepo).to.equal('cht-conf');
+    });
+  });
+
+  describe('canonical config diff (#134)', () => {
+    const fakeDiff: CanonicalDiffResult = {
+      artifact: 'form',
+      artifactName: 'pnc_followup',
+      relativePath: 'forms/app/pnc_followup.xlsx',
+      status: 'differs',
+      diff: '-old relevant\n+new relevant',
+      summary: 'forms/app/pnc_followup.xlsx differs from the canonical baseline',
+    };
+
+    const confIssue = () =>
+      createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          artifactName: 'pnc_followup',
+        },
+      });
+
+    it('should attach the canonical diff for cht-conf tickets when the mount is available', async () => {
+      sinon.stub(canonicalDiff, 'resolveDeploymentConfigRoot').returns('/mounted/config');
+      const diffStub = sinon.stub(canonicalDiff, 'diffAgainstCanonical').returns(fakeDiff);
+      const mockAgent = new CodeContextAgent({ useMockMCP: true });
+
+      const result = await mockAgent.search(confIssue());
+
+      expect(diffStub.calledOnce).to.be.true;
+      expect(diffStub.firstCall.args[0]).to.deep.equal({
+        artifact: 'form',
+        artifactName: 'pnc_followup',
+      });
+      expect(result.canonicalDiff).to.deep.equal(fakeDiff);
+    });
+
+    it('should skip the diff when the deployment config is not mounted', async () => {
+      sinon.stub(canonicalDiff, 'resolveDeploymentConfigRoot').returns(undefined);
+      const diffStub = sinon.stub(canonicalDiff, 'diffAgainstCanonical');
+      const mockAgent = new CodeContextAgent({ useMockMCP: true });
+
+      const result = await mockAgent.search(confIssue());
+
+      expect(diffStub.called).to.be.false;
+      expect(result.canonicalDiff).to.be.undefined;
+    });
+
+    it('should never diff for cht-core tickets even with the mount available', async () => {
+      sinon.stub(canonicalDiff, 'resolveDeploymentConfigRoot').returns('/mounted/config');
+      const diffStub = sinon.stub(canonicalDiff, 'diffAgainstCanonical');
+      const mockAgent = new CodeContextAgent({ useMockMCP: true });
+      const issue = createTestIssue({
+        technical_context: { domain: 'contacts', components: [] },
+      });
+
+      const result = await mockAgent.search(issue);
+
+      expect(diffStub.called).to.be.false;
+      expect(result.canonicalDiff).to.be.undefined;
     });
   });
 

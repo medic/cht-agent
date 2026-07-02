@@ -18,6 +18,9 @@ FROM node:22-bookworm
 # - pushInsteadOf rewrites only PUSH urls, so fetch/clone of public repos stays
 #   allowed; system config needs root, which the agent user lacks. --add is
 #   required (pushInsteadOf is multi-valued; a plain set drops the https value).
+# - python3 also serves cht-conf's convert-app-forms: its xls2xform-medic is a
+#   self-contained pyxform zipapp needing only a system Python >= 3.10
+#   (bookworm ships 3.11) — no pip packages required.
 # (Adapted from the cht-core PoC .devcontainer: "no remote at all" became
 # "remote read OK, push blocked".)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -61,7 +64,7 @@ COPY src ./src
 COPY agent-memory ./agent-memory
 COPY tickets ./tickets
 RUN npm run build \
-    && mkdir -p /workspace/cht-core /home/agent/.claude \
+    && mkdir -p /workspace/cht-core /workspace/cht-conf-project /home/agent/.claude \
     && chown -R agent:agent /app /workspace /home/agent/.claude
 
 # Sandbox init (layer 4) + agent-session rules (layer 5)
@@ -72,14 +75,14 @@ COPY docker/agent/settings.json /home/agent/.claude/settings.json
 RUN chmod 755 /usr/local/bin/agent-entrypoint.sh /usr/local/bin/init-agent-git.sh \
     && chown agent:agent /home/agent/.claude/CLAUDE.md /home/agent/.claude/settings.json
 
-# --- Extension point: code-generation tools (deferred — see #114) ---
-# The tool set is still being decided. When chosen, bake tools here (above
-# `USER agent` so they install system-wide), e.g.:
-#   RUN npm install -g @anthropic-ai/claude-code
-# Tools must respect the sandbox: no credentials baked, no Docker required.
-# NOTE: the ~/.claude/settings.json allow/deny lists and the .credentials.json
-# mount only take runtime effect once such a CLI is the execution layer — until
-# then they are inert. Re-audit both when this extension point is filled.
+# --- Code-generation layer: Claude Code CLI (#134) ---
+# Installed above `USER agent` so it lands system-wide. Respects the sandbox:
+# no credentials baked, no Docker required. Runtime auth is the READ-ONLY
+# ~/.claude/.credentials.json mount (claude-code OAuth), not an API key — with
+# this CLI as the execution layer the ~/.claude/settings.json allow/deny lists
+# and the credentials mount now take runtime effect (re-audited with #134 PR5:
+# settings.json is baked read-only above; the mount stays :ro in compose).
+RUN npm install -g @anthropic-ai/claude-code
 
 USER agent
 
@@ -90,16 +93,22 @@ RUN git config --global user.name "CHT Agent" \
     && git config --global user.email "agent@cht-agent.local" \
     && git config --global credential.helper "" \
     && git config --global push.default nothing \
-    && git config --global --add safe.directory /workspace/cht-core
+    && git config --global --add safe.directory /workspace/cht-core \
+    && git config --global --add safe.directory /workspace/cht-conf-project
 
 ENV CLAUDE_CONFIG_DIR=/home/agent/.claude
 ENV CHT_CORE_PATH=/workspace/cht-core
+# Deployment config mount (layer: cht-conf tickets develop HERE, never in
+# cht-core) and the canonical baseline it is diffed against (#134).
+ENV CHT_CONF_PATH=/workspace/cht-conf-project
+ENV CANONICAL_CONF=/workspace/cht-core/config/standard
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Reinforces the sandbox at runtime: unhealthy if cht-conf vanished or an ssh
-# binary ever appeared (the idle `sleep infinity` container is otherwise opaque).
+# Reinforces the sandbox at runtime: unhealthy if cht-conf or the Claude Code
+# CLI vanished, or an ssh binary ever appeared (the idle `sleep infinity`
+# container is otherwise opaque).
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 \
-  CMD command -v cht > /dev/null && ! command -v ssh > /dev/null
+  CMD command -v cht > /dev/null && command -v claude > /dev/null && ! command -v ssh > /dev/null
 
 # Entrypoint verifies every sandbox layer, then idles for `docker exec`.
 ENTRYPOINT ["/usr/local/bin/agent-entrypoint.sh"]
