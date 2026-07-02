@@ -76,9 +76,9 @@ const createContextAnalysis = (overrides: Partial<ContextAnalysisResult> = {}): 
 });
 
 describe('ResearchSupervisor - LLM provider routing', () => {
-  // This container exports an ambient LLM_PROVIDER / ANTHROPIC_MODEL and may
-  // have ANTHROPIC_API_KEY set. Routing is stub-driven so env can't flip a
-  // branch, but one test sets the key, so snapshot -> delete -> restore both.
+  // Developer/workbench environments may have LLM_PROVIDER or ANTHROPIC_API_KEY
+  // ambient. Routing is stub-driven so env can't flip a branch, but one test
+  // sets the key, so snapshot -> delete -> restore both.
   let savedProvider: string | undefined;
   let savedKey: string | undefined;
 
@@ -117,6 +117,7 @@ describe('ResearchSupervisor - LLM provider routing', () => {
       const schema = createChain.firstCall.args[0];
       expect(schema.parse({ plan: 'x' })).to.deep.equal({ plan: 'x' });
       expect(() => schema.parse({})).to.throw();
+      expect(() => schema.parse({ plan: '' })).to.throw();
     });
 
     it('routes generateOrchestrationPlan through the CLI chain, not ChatAnthropic', async () => {
