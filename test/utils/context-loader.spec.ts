@@ -379,36 +379,30 @@ Step-by-step workflow.`;
         expect(result).to.deep.equal([]);
       });
 
-      it('should return completed issues from markdown files', () => {
-        const completedIssue = `---
-id: issue-001
-phase: completed
+      it('should map pipeline-draft frontmatter onto ResolvedIssueContext', () => {
+        const draft = `---
+id: cht-core-9601
 category: feature
-domains: [contacts]
+domain: contacts
+issueNumber: 9601
+summary: Prevent duplicate sibling contact creation.
+services:
+  - webapp
+  - api
+techStack:
+  - typescript
+source_pr: medic/cht-core#9650
+tags:
+  - deduplication
+  - contacts
 ---
 
 Issue content.`;
 
-        const inProgressIssue = `---
-id: issue-002
-phase: in-progress
-category: bug
-domains: [contacts]
----
-
-Another issue.`;
-
-        let readCallCount = 0;
         const mockFs = {
           existsSync: () => true,
-          readdirSync: () => [
-            { name: 'issue-001.md', isDirectory: () => false },
-            { name: 'issue-002.md', isDirectory: () => false },
-          ],
-          readFileSync: () => {
-            readCallCount++;
-            return readCallCount === 1 ? completedIssue : inProgressIssue;
-          },
+          readdirSync: () => [{ name: '9601-prevent-dupes.md', isDirectory: () => false }],
+          readFileSync: () => draft,
         };
 
         const contextLoader = proxyquire('../../src/utils/context-loader', {
@@ -417,24 +411,119 @@ Another issue.`;
 
         const result = contextLoader.findResolvedIssuesByDomain('contacts');
 
-        // Only completed issues should be returned
         expect(result).to.have.lengthOf(1);
-        expect(result[0].id).to.equal('issue-001');
-        expect(result[0].phase).to.equal('completed');
+        const issue = result[0];
+        expect(issue.id).to.equal('cht-core-9601');
+        expect(issue.issue_number).to.equal(9601);
+        expect(issue.phase).to.equal('completed');
+        expect(issue.task_id).to.equal('medic/cht-core#9650');
+        expect(issue.domains).to.deep.equal(['contacts']);
+        // services map into components; tags fold into shared_libs for overlap signal
+        expect(issue.components.api).to.deep.equal(['api']);
+        expect(issue.components.webapp).to.deep.equal(['webapp']);
+        expect(issue.components.sentinel).to.deep.equal([]);
+        expect(issue.components.shared_libs).to.include('deduplication');
+        expect(issue.tags).to.deep.equal(['deduplication', 'contacts']);
+        // layer defaults to cht-core; no config fields for a core entry
+        expect(issue.layer).to.equal('cht-core');
+        expect(issue.configArtifact).to.be.undefined;
+        expect(issue.mechanism).to.be.undefined;
+      });
+
+      it('should map cht-conf config fields when present', () => {
+        const draft = `---
+id: cht-conf-pnc-001
+category: bug
+domain: forms-and-reports
+issueNumber: 1
+layer: cht-conf
+configArtifact: form
+mechanism: relevant
+summary: PNC follow-up prompts after miscarriage.
+---
+
+Config content.`;
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'pnc.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('forms-and-reports');
+
+        expect(result).to.have.lengthOf(1);
+        expect(result[0].layer).to.equal('cht-conf');
+        expect(result[0].configArtifact).to.equal('form');
+        expect(result[0].mechanism).to.equal('relevant');
+      });
+
+      it('should ignore unrecognized enum values for config fields', () => {
+        const draft = `---
+id: cht-conf-bad
+domain: forms-and-reports
+issueNumber: 2
+layer: not-a-layer
+configArtifact: not-an-artifact
+---
+
+Content.`;
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'bad.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('forms-and-reports');
+
+        expect(result).to.have.lengthOf(1);
+        // invalid layer falls back to the cht-core default; invalid artifact drops out
+        expect(result[0].layer).to.equal('cht-core');
+        expect(result[0].configArtifact).to.be.undefined;
+      });
+
+      it('should skip files with neither domain nor issueNumber', () => {
+        const draft = `---
+title: not a real draft
+---
+
+Content.`;
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'stray.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('contacts');
+        expect(result).to.deep.equal([]);
       });
 
       it('should recursively scan subdirectories', () => {
         const issue1 = `---
 id: issue-001
-phase: completed
-domains: [contacts]
+domain: contacts
+issueNumber: 1
 ---
 Content.`;
 
         const issue2 = `---
 id: issue-002
-phase: completed
-domains: [contacts]
+domain: contacts
+issueNumber: 2
 ---
 Content.`;
 

@@ -79,10 +79,20 @@ export class ResearchSupervisor {
       modelName: options.modelName,
     });
 
-    this.plannerModel = new ChatAnthropic({
-      model: options.modelName || 'claude-sonnet-4-20250514',
-      temperature: 0.3,
-    });
+    // Opus 4.6/4.7/4.8 and Fable 5 removed the sampling params (temperature/top_p/top_k):
+    // sending any returns 400. @langchain/anthropic still injects top_p/top_k = -1 by
+    // default, so for those models override them (and temperature) to undefined via
+    // invocationKwargs, which is spread last and dropped from the request when undefined.
+    const plannerModelName = options.modelName || 'claude-sonnet-4-20250514';
+    const dropsSamplingParams = /opus-4-[678]|fable/.test(plannerModelName);
+    this.plannerModel = new ChatAnthropic(
+      dropsSamplingParams
+        ? {
+          model: plannerModelName,
+          invocationKwargs: { temperature: undefined, top_p: undefined, top_k: undefined },
+        }
+        : { model: plannerModelName, temperature: 0.3 }
+    );
 
     this.graph = this.buildGraph();
   }

@@ -34,6 +34,31 @@ export const CHT_WORKFLOWS = [
  */
 export const CHT_SERVICES = ['api', 'webapp', 'sentinel', 'admin'] as const;
 
+/**
+ * The layer a ticket or context targets: the cht-core platform, the deployment's
+ * cht-conf configuration, or an unresolved bucket the Research Supervisor disambiguates.
+ * Mirrors the CHTLayer type and the schema.json CHTLayer enum — keep in sync.
+ */
+export const CHT_LAYERS = ['cht-core', 'cht-conf', 'investigate'] as const;
+
+/**
+ * cht-conf configuration artifacts a config ticket can implicate.
+ * Mirrors the ConfigArtifact type and the schema.json ConfigArtifact enum — keep in sync.
+ */
+export const CONFIG_ARTIFACTS = [
+  'form', 'contact-form', 'task', 'target', 'contact-summary', 'app-settings',
+  'messaging', 'purge', 'translations', 'resources', 'tooling',
+] as const;
+
+/**
+ * The config mechanism a fix turns on (the expression/hook actually edited).
+ * Mirrors the ConfigMechanism type and the schema.json ConfigMechanism enum — keep in sync.
+ */
+export const CONFIG_MECHANISMS = [
+  'relevant', 'constraint', 'calculation', 'appliesIf', 'resolvedIf', 'events',
+  'schedule', 'choices', 'validation', 'permissions',
+] as const;
+
 /** Audit log for PRs that were skipped or flagged during pipeline processing. */
 export const DEFAULT_PIPELINE_LOG_PATH = path.join(
   __dirname, '..', '..', 'agent-memory', '_skipped.ndjson'

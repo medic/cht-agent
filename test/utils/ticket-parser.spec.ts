@@ -88,6 +88,28 @@ describe('ticket-parser', () => {
         expect(result.issue.constraints).to.deep.equal([]);
       });
 
+      it('should leave layer unset when frontmatter omits it (inference defaults it)', () => {
+        const ticketPath = path.join(fixturesPath, 'minimal-ticket.md');
+        const result = parseTicketFile(ticketPath);
+
+        // The parser does not default layer — that happens during inference/enrichment so
+        // an explicit frontmatter value can win and inference can fill a genuine gap.
+        expect(result.issue.technical_context.layer).to.be.undefined;
+        expect(result.issue.technical_context.configArtifact).to.be.undefined;
+      });
+
+      it('should parse cht-conf layer and config fields', () => {
+        const ticketPath = path.join(fixturesPath, 'valid-ticket-cht-conf.md');
+        const result = parseTicketFile(ticketPath);
+
+        const ctx = result.issue.technical_context;
+        expect(ctx.layer).to.equal('cht-conf');
+        expect(ctx.configArtifact).to.equal('form');
+        expect(ctx.artifactName).to.equal('pnc_followup');
+        expect(ctx.chtConfVersion).to.equal('3.21.0');
+        expect(ctx.deploymentRef).to.equal('medic/standard');
+      });
+
       it('should parse asterisk bullet lists', () => {
         const ticketPath = path.join(fixturesPath, 'valid-ticket-asterisk.md');
         const result = parseTicketFile(ticketPath);
@@ -152,6 +174,12 @@ describe('ticket-parser', () => {
         const ticketPath = path.join(fixturesPath, 'invalid-domain.md');
 
         expect(() => parseTicketFile(ticketPath)).to.throw('Invalid domain');
+      });
+
+      it('should throw error for invalid layer', () => {
+        const ticketPath = path.join(fixturesPath, 'invalid-layer.md');
+
+        expect(() => parseTicketFile(ticketPath)).to.throw('Invalid layer');
       });
 
       it('should throw error for invalid type', () => {

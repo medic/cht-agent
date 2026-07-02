@@ -12,6 +12,9 @@ id: cht-core-<issue-number>
 category: bug|feature|improvement
 domain: contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|authentication|configuration|interoperability
 subDomain: <optional, e.g. "enketo", "replication", "purging", "sms-gateway">
+# layer: cht-conf            # optional; defaults to cht-core. Set to cht-conf for deployment-config entries.
+# configArtifact: form       # cht-conf only: form|contact-form|task|target|contact-summary|app-settings|messaging|purge|translations|resources|tooling
+# mechanism: relevant        # cht-conf only: relevant|constraint|calculation|appliesIf|resolvedIf|events|schedule|choices|validation|permissions
 issueNumber: <cht-core issue number>
 issueUrl: https://github.com/medic/cht-core/issues/<number>
 title: <brief title>
@@ -50,6 +53,10 @@ techStack:
 
 <Reusable patterns from the fix. Include file paths and brief code snippets where helpful.>
 
+<!-- For cht-conf entries (layer: cht-conf), use a "Config Pattern" section instead:
+the before/after config snippet (the actual `relevant` expression, `tasks.js` block,
+or app_settings fragment) is the reusable pattern, not a TypeScript diff. -->
+
 ## Design Choices
 
 <Why this approach was chosen over alternatives.>
@@ -82,6 +89,9 @@ techStack:
 | `category` | Yes | One of: `bug`, `feature`, `improvement` |
 | `domain` | Yes | Must match a `CHTDomain` value from `src/types/index.ts` |
 | `subDomain` | No | More specific area within the domain |
+| `layer` | No | `cht-core` (default) or `cht-conf`. Discriminates platform vs. deployment-config entries so similarity scoring never crosses layers |
+| `configArtifact` | No | cht-conf only: the configuration artifact (`form`, `task`, `app-settings`, …) — see `ConfigArtifact` in `src/types/index.ts` |
+| `mechanism` | No | cht-conf only: the config mechanism the fix edits (`relevant`, `appliesIf`, `constraint`, …) — see `ConfigMechanism` in `src/types/index.ts` |
 | `issueNumber` | Yes | The cht-core GitHub issue number |
 | `issueUrl` | Yes | Full URL to the issue |
 | `title` | Yes | Short descriptive title |
@@ -350,5 +360,71 @@ Migrated all contact-reading code to use the `cht-datasource` shared library, wh
 
 - #10019: Refactor code loading contacts via shared-libs/lineage to use cht-datasource
 - #10091: Refactor existing getWithLineage functions to use shared-libs/lineage
+```
+
+### Example 4: Configuration Fix (cht-conf)
+
+A `layer: cht-conf` entry. The reusable pattern is the before/after config snippet (a
+**Config Pattern** section replaces **Code Patterns**), and `configArtifact`/`mechanism`
+record which artifact and expression the fix edits.
+
+```yaml
+---
+id: cht-core-0
+category: bug
+domain: forms-and-reports
+subDomain: enketo
+layer: cht-conf
+configArtifact: form
+mechanism: relevant
+issueNumber: 0
+issueUrl: https://github.com/medic/cht-core/issues/0
+title: PNC follow-up still prompts the next visit date after a miscarriage
+lastUpdated: 2026-06-25
+summary: The PNC app form kept prompting for the next visit date even when the recorded outcome was a miscarriage, because the "next visit date" question's `relevant` did not exclude the miscarriage outcome.
+services:
+  - webapp
+techStack:
+  - xlsform
+  - enketo
+---
+
+## Problem
+
+After a CHW recorded a miscarriage in the PNC follow-up form, the form still asked for the next PNC visit date, confusing CHWs and producing meaningless follow-up tasks.
+
+## Root Cause
+
+The `next_visit_date` question's `relevant` expression only checked that the PNC group was active; it did not exclude the case where `pnc_outcome = 'miscarriage'`, so the question stayed visible for every outcome.
+
+## Config Pattern
+
+The fix is a one-line `relevant` change in `forms/app/pnc_followup.xlsx` (the `next_visit_date` row):
+
+```
+# before
+${pnc_visit} = 'yes'
+
+# after
+${pnc_visit} = 'yes' and ${pnc_outcome} != 'miscarriage'
+```
+
+`chtConfActions`: `convert-app-forms`, `upload-app-forms`.
+
+## Design Choices
+
+Excluded the outcome in the question's own `relevant` rather than splitting the group, keeping the change to a single cell and avoiding a form-structure rewrite.
+
+## Related Files
+
+- forms/app/pnc_followup.xlsx
+
+## Testing
+
+Converted and uploaded the form to a test instance, seeded a miscarriage report, and confirmed the next-visit-date prompt no longer appears for that outcome.
+
+## Related Issues
+
+- (deployment config repo) similar skip-logic fix in the ANC follow-up form
 ```
 

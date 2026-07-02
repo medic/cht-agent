@@ -203,7 +203,7 @@ export const runResearchWorkflow = async (
 
   console.log('🤖 Initializing Research Supervisor...\n');
   const supervisor = new ResearchSupervisor({
-    modelName: 'claude-sonnet-4-20250514',
+    modelName: process.env.RESEARCH_MODEL || 'claude-sonnet-4-20250514',
     useMockMCP: false,
   });
 
