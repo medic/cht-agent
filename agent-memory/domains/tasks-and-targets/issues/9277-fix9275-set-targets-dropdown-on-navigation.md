@@ -1,10 +1,10 @@
 ---
-id: cht-core-9277
+id: cht-core-9275
 category: bug
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9277
-issueUrl: https://github.com/medic/cht-core/issues/9277
+issueNumber: 9275
+issueUrl: https://github.com/medic/cht-core/issues/9275
 title: Set targets dropdown selection on navigation in the analytics filter component
 lastUpdated: '2026-06-23'
 summary: The analytics filter's targets dropdown was not being set correctly when navigating, leaving it out of sync with the active targets view. The fix updates analytics-filter.component.ts to set the dropdown selection on navigation.
