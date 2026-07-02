@@ -332,18 +332,6 @@ function printFileEntry(f: GeneratedFile, includeDescription: boolean): void {
 }
 
 /**
- * Verify cht-core path exists and is a valid directory
- */
-export const verifyChtCorePath = async (chtCorePath: string): Promise<boolean> => {
-  try {
-    const stats = await fs.promises.stat(chtCorePath);
-    return stats.isDirectory();
-  } catch {
-    return false;
-  }
-};
-
-/**
  * Read existing file from cht-core (for context/patterns)
  */
 export const readFromChtCore = async (
@@ -371,21 +359,5 @@ export const listChtCoreDirectory = async (
     });
   } catch {
     return [];
-  }
-};
-
-/**
- * Check if a file exists in cht-core
- */
-export const fileExistsInChtCore = async (
-  relativePath: string,
-  chtCorePath: string
-): Promise<boolean> => {
-  const fullPath = path.join(chtCorePath, relativePath);
-  try {
-    await fs.promises.access(fullPath, fs.constants.F_OK);
-    return true;
-  } catch {
-    return false;
   }
 };

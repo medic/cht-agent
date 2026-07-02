@@ -818,16 +818,4 @@ Respond with a JSON object:
     console.log(`[Development Supervisor] Cleared staging directory: ${stagingPath}`);
   }
 
-  /**
-   * Get all generated files from the development state
-   */
-  getAllGeneratedFiles(state: DevelopmentState): GeneratedFile[] {
-    const allFiles: GeneratedFile[] = [];
-
-    if (state.codeGeneration) {
-      allFiles.push(...state.codeGeneration.files);
-    }
-
-    return allFiles;
-  }
 }

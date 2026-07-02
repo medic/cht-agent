@@ -125,16 +125,6 @@ export class TodoTracker {
   }
 
   /**
-   * Convenience method: start and complete immediately (for quick tasks)
-   */
-  quick(content: string, activeForm: string): string {
-    const id = this.add(content, activeForm);
-    this.start(id);
-    this.complete(id);
-    return id;
-  }
-
-  /**
    * Convenience method: start a tracked item, run an async function, and mark complete/failed.
    */
   async run<T>(
@@ -161,13 +151,6 @@ export class TodoTracker {
    */
   getAll(): Todo[] {
     return Array.from(this.todos.values());
-  }
-
-  /**
-   * Get todos by status
-   */
-  getByStatus(status: TodoStatus): Todo[] {
-    return this.getAll().filter(todo => todo.status === status);
   }
 
   /**

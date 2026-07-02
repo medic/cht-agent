@@ -109,45 +109,6 @@ export const executeFullWorkflow = async (
 };
 
 /**
- * Execute research-only workflow
- * Useful when you want to run just the research phase
- */
-export const executeResearchOnly = async (
-  researchSupervisor: ResearchSupervisor,
-  ticket: IssueTemplate
-): Promise<ResearchWorkflowResult> => {
-  const result = await executeResearchWorkflow(researchSupervisor, ticket);
-  displayResearchCompletion(result);
-  return result;
-};
-
-/**
- * Execute development-only workflow
- * Useful when you already have research results and want to run just development
- */
-export const executeDevelopmentOnly = async (
-  developmentSupervisor: DevelopmentSupervisor,
-  researchResult: ResearchWorkflowResult,
-  developmentOptions: DevelopmentOptions
-): Promise<DevelopmentWorkflowResult | null> => {
-  if (!researchResult.result) {
-    console.error('❌ No research result available for development');
-    return null;
-  }
-
-  const developmentInput = createDevelopmentInput(researchResult.result, developmentOptions);
-
-  if (!developmentInput) {
-    console.error('❌ Failed to create development input from research results');
-    return null;
-  }
-
-  const result = await executeDevelopmentWorkflow(developmentSupervisor, developmentInput);
-  displayDevelopmentCompletion(result, developmentOptions);
-  return result;
-};
-
-/**
  * Display final full workflow summary
  */
 export const displayFullWorkflowSummary = (result: FullWorkflowResult): void => {

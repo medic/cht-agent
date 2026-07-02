@@ -11,7 +11,6 @@
 
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
 import {
-  IssueTemplate,
   DevelopmentState,
   DevelopmentInput,
   DevelopmentOptions,
@@ -343,36 +342,3 @@ function displayDevelopmentNeedsReview(): void {
   console.log('   3. Re-run development with more specific feedback');
   console.log();
 }
-
-/**
- * Run complete workflow: Research -> Development
- * This chains research and development together
- */
-export const executeFullWorkflow = async (
-  _issue: IssueTemplate,
-  researchResult: ResearchState,
-  developmentSupervisor: DevelopmentSupervisor,
-  options: DevelopmentOptions
-): Promise<DevelopmentWorkflowResult> => {
-  console.log('\n🚀 Starting Development Phase...\n');
-
-  // Create development input from research results
-  const developmentInput = createDevelopmentInput(researchResult, options);
-
-  if (!developmentInput) {
-    return {
-      approved: false,
-      result: undefined,
-      iterationCount: 0,
-      filesWritten: [],
-    };
-  }
-
-  // Execute development workflow
-  const result = await executeDevelopmentWorkflow(developmentSupervisor, developmentInput);
-
-  // Display completion status
-  displayDevelopmentCompletion(result, options);
-
-  return result;
-};

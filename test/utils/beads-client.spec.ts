@@ -141,33 +141,14 @@ describe('BeadsClient (v9a.4) — bd CLI wrapper', () => {
     expect(calls[0].args).to.deep.equal(['close', 'cht-1']);
   });
 
-  it('show() returns the first element when bd emits an array', async () => {
-    const { BeadsClient } = loadClient([{ stdout: '[{"id":"cht-1","title":"only one"}]' }]);
-    const client = new BeadsClient();
-    const issue = await client.show('cht-1');
-    expect(issue.id).to.equal('cht-1');
-    expect(issue.title).to.equal('only one');
-  });
-
-  it('listComments returns the parsed array, or [] when bd returns a non-array', async () => {
-    const arr = [{ text: 'hi', created_at: 'now' }];
-    const { BeadsClient: ClientA } = loadClient([{ stdout: JSON.stringify(arr) }]);
-    const a = await new ClientA().listComments('cht-1');
-    expect(a).to.deep.equal(arr);
-
-    const { BeadsClient: ClientB } = loadClient([{ stdout: '{"not":"array"}' }]);
-    const b = await new ClientB().listComments('cht-1');
-    expect(b).to.deep.equal([]);
-  });
-
   it('rejects with a formatted error when bd exits non-zero, including stderr context', async () => {
     const err = Object.assign(new Error('exit 1'), { code: 'EXIT' as string });
     const { BeadsClient } = loadClient([{ err, stdout: '', stderr: 'bd: not authenticated' }]);
     const client = new BeadsClient();
     let caught: Error | null = null;
-    try { await client.show('cht-x'); } catch (e) { caught = e as Error; }
+    try { await client.close('cht-x'); } catch (e) { caught = e as Error; }
     expect(caught).to.not.equal(null);
-    expect(caught!.message).to.match(/bd show failed/);
+    expect(caught!.message).to.match(/bd close failed/);
     expect(caught!.message).to.match(/not authenticated/);
   });
 });

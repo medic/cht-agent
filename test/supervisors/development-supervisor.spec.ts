@@ -143,7 +143,6 @@ const buildSupervisorWithStubAgents = (
     writeToStaging: (state: DevelopmentState) => Promise<{ stagingPath: string; writtenFiles: string[] }>;
     writeToChtCore: (state: DevelopmentState, chtCorePath: string) => Promise<string[]>;
     clearStaging: (stagingPath: string) => Promise<void>;
-    getAllGeneratedFiles: (state: DevelopmentState) => GeneratedFile[];
   };
 };
 
@@ -356,23 +355,5 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     let threw = false;
     try { await supervisor.clearStaging(stagePath); } catch { threw = true; }
     expect(threw).to.equal(false);
-  });
-
-  it('getAllGeneratedFiles returns codeGeneration files', async () => {
-    const generate = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate);
-    const state = mkDevState({
-      ...baseValidInputFragment,
-      codeGeneration: mkCodeGenResult([mkFile('src/a.ts')]),
-    });
-    const all = supervisor.getAllGeneratedFiles(state);
-    expect(all.map(f => f.relativePath).sort()).to.deep.equal(['src/a.ts'].sort());
-  });
-
-  it('getAllGeneratedFiles returns an empty array when state has no codeGen', () => {
-    const generate = sinon.stub();
-    const supervisor = buildSupervisorWithStubAgents(generate);
-    const all = supervisor.getAllGeneratedFiles(mkDevState());
-    expect(all).to.deep.equal([]);
   });
 });

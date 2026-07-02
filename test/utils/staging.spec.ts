@@ -6,11 +6,9 @@ import {
   clearStaging,
   copyToTarget,
   createStagingDirectory,
-  fileExistsInChtCore,
   generateDiffs,
   listChtCoreDirectory,
   readFromChtCore,
-  verifyChtCorePath,
   writeToChtCore,
   writeToStaging,
 } from '../../src/utils/staging';
@@ -167,22 +165,6 @@ describe('staging.ts (v9a.3)', () => {
     });
   });
 
-  describe('verifyChtCorePath', () => {
-    it('returns true for an existing directory', async () => {
-      expect(await verifyChtCorePath(scratch)).to.equal(true);
-    });
-
-    it('returns false for a missing path', async () => {
-      expect(await verifyChtCorePath(path.join(scratch, 'missing'))).to.equal(false);
-    });
-
-    it('returns false for a path that exists but is a file (not a directory)', async () => {
-      const filePath = path.join(scratch, 'a-file.ts');
-      await fs.writeFile(filePath, '', 'utf-8');
-      expect(await verifyChtCorePath(filePath)).to.equal(false);
-    });
-  });
-
   describe('readFromChtCore', () => {
     it('returns content of an existing file relative to the chtCorePath', async () => {
       await fs.writeFile(path.join(scratch, 'foo.ts'), 'foo\n', 'utf-8');
@@ -211,17 +193,6 @@ describe('staging.ts (v9a.3)', () => {
     it('returns an empty array for a missing directory rather than throwing', async () => {
       const entries = await listChtCoreDirectory('does-not-exist', scratch);
       expect(entries).to.deep.equal([]);
-    });
-  });
-
-  describe('fileExistsInChtCore', () => {
-    it('returns true for an existing file', async () => {
-      await fs.writeFile(path.join(scratch, 'x.ts'), '', 'utf-8');
-      expect(await fileExistsInChtCore('x.ts', scratch)).to.equal(true);
-    });
-
-    it('returns false for a missing file', async () => {
-      expect(await fileExistsInChtCore('y.ts', scratch)).to.equal(false);
     });
   });
 

@@ -336,11 +336,6 @@ export interface AgentMessage {
 // ============================================================================
 
 /**
- * Available MCP tools for CHT documentation
- */
-export type MCPToolName = 'search_docs' | 'ask_question' | 'get_sources';
-
-/**
  * Parameters for search_docs MCP tool
  */
 export interface MCPSearchDocsParams {
@@ -437,14 +432,6 @@ export interface HumanFeedback {
  * Validation checkpoint types
  */
 export type ValidationCheckpoint = 'research' | 'implementation';
-
-/**
- * Research state with human feedback support
- */
-export interface ResearchStateWithFeedback extends ResearchState {
-  humanFeedback?: HumanFeedback;
-  iterationCount: number;
-}
 
 // ============================================================================
 // DEVELOPMENT SUPERVISOR TYPES

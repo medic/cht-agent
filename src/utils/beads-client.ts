@@ -93,18 +93,6 @@ export class BeadsClient {
     await this.exec(['close', id]);
   }
 
-  async show(id: string): Promise<BeadsIssue> {
-    const result = await this.exec(['show', id, '--json']);
-    if (Array.isArray(result)) return result[0] as BeadsIssue;
-    return result as BeadsIssue;
-  }
-
-  async listComments(id: string): Promise<BeadsComment[]> {
-    const result = await this.exec(['comments', id, '--json']);
-    if (Array.isArray(result)) return result as BeadsComment[];
-    return [];
-  }
-
   async configSet(key: string, value: string): Promise<void> {
     await this.exec(['config', 'set', key, value]);
   }
@@ -240,9 +228,5 @@ export class BeadsCodeGenSession {
 
   getSessionId(): string | null {
     return this.sessionId;
-  }
-
-  getPlanItemIds(): Map<string, string> {
-    return this.planItemIds;
   }
 }
