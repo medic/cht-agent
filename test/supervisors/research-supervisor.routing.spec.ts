@@ -87,7 +87,10 @@ describe('ResearchSupervisor - layer routing (#134)', () => {
     (supervisor as any).docSearchAgent = { search: sinon.stub().resolves(researchFindings) };
     (supervisor as any).codeContextAgent = { search: searchStub };
     (supervisor as any).contextAgent = { analyze: sinon.stub().resolves(contextAnalysis) };
-    (supervisor as any).plannerModel = { invoke: sinon.stub().resolves({ content: 'the plan' }) };
+    // 02c replaced the `plannerModel: ChatAnthropic` field with a `planner: PlannerInvoker`
+    // whose invoke() resolves the plan text directly (string, not a { content } message),
+    // so the stub targets the renamed field and returns a string.
+    (supervisor as any).planner = { invoke: sinon.stub().resolves('the plan') };
 
     const result = await supervisor.research(issue);
     return { searchStub, result };

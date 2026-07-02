@@ -12,6 +12,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
+import { z } from 'zod';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { CHTDomain, CHTLayer, ConfigArtifact, IssueTemplate } from '../types';
 import { CHT_DOMAINS, CHT_LAYERS, CONFIG_ARTIFACTS } from '../constants';
 
@@ -142,6 +144,21 @@ Pitfalls (Common Misclassifications to Avoid):
 // Derived from the single taxonomy source so it can't drift from CHT_DOMAINS.
 const VALID_DOMAINS: readonly CHTDomain[] = CHT_DOMAINS;
 
+// CLI-mode structured-output schema. `domain` is validated against the same
+// taxonomy source (CHT_DOMAINS) that parseLLMResponse's VALID_DOMAINS check uses,
+// and INFERENCE_SHAPE matches the prompt's "Respond in this exact JSON format" block.
+const inferenceSchema = z.object({
+  domain: z.enum(CHT_DOMAINS),
+  components: z.array(z.string()).optional(),
+  // layer/configArtifact are optional strings (not enums) so the CLI path stays
+  // tolerant like the API path: absent/unrecognized values fall back to defaults in
+  // toInferenceResult rather than failing zod validation.
+  layer: z.string().optional(),
+  configArtifact: z.string().optional(),
+  reasoning: z.string().optional(),
+});
+const INFERENCE_SHAPE = '{"domain": "domain-name", "components": ["component1", "component2"], "layer": "cht-core", "configArtifact": "form", "reasoning": "Brief explanation"}';
+
 const extractJson = (content: string): string => {
   const jsonRegex = /\{[^{}]*(?:\{[^{}]*}[^{}]*)*}/;
   const match = jsonRegex.exec(content);
@@ -171,6 +188,32 @@ const parseJsonSafe = (
   }
 };
 
+// Map a validated (domain, components, layer, configArtifact) tuple into an
+// InferenceResult, applying PR2's tolerant defaults. Shared by both provider paths
+// (API text-parse and CLI structured chain) so the layer/configArtifact tolerance is
+// single-sourced: an absent or unrecognized layer defaults to cht-core; an
+// unrecognized configArtifact is dropped. These never fail inference.
+const toInferenceResult = (raw: {
+  domain: CHTDomain;
+  components?: string[];
+  layer?: string;
+  configArtifact?: string;
+}): InferenceResult => {
+  const layer: CHTLayer = (CHT_LAYERS as readonly string[]).includes(raw.layer ?? '')
+    ? (raw.layer as CHTLayer)
+    : 'cht-core';
+  const configArtifact = (CONFIG_ARTIFACTS as readonly string[]).includes(raw.configArtifact ?? '')
+    ? (raw.configArtifact as ConfigArtifact)
+    : undefined;
+
+  return {
+    domain: raw.domain,
+    components: Array.isArray(raw.components) ? raw.components : [],
+    layer,
+    ...(configArtifact ? { configArtifact } : {}),
+  };
+};
+
 const parseLLMResponse = (content: string): InferenceResult => {
   const result = parseJsonSafe(extractJson(content));
 
@@ -182,21 +225,12 @@ const parseLLMResponse = (content: string): InferenceResult => {
     throw new Error(`LLM returned invalid domain: "${result.domain}". Must be one of: ${VALID_DOMAINS.join(', ')}`);
   }
 
-  // Tolerant: an absent or unrecognized layer defaults to cht-core; an unrecognized
-  // configArtifact is dropped. These never fail inference (backward-compatible).
-  const layer: CHTLayer = (CHT_LAYERS as readonly string[]).includes(result.layer ?? '')
-    ? (result.layer as CHTLayer)
-    : 'cht-core';
-  const configArtifact = (CONFIG_ARTIFACTS as readonly string[]).includes(result.configArtifact ?? '')
-    ? (result.configArtifact as ConfigArtifact)
-    : undefined;
-
-  return {
+  return toInferenceResult({
     domain: result.domain as CHTDomain,
-    components: Array.isArray(result.components) ? result.components : [],
-    layer,
-    ...(configArtifact ? { configArtifact } : {}),
-  };
+    components: result.components,
+    layer: result.layer,
+    configArtifact: result.configArtifact,
+  });
 };
 
 /**
@@ -206,11 +240,6 @@ const inferUsingLLM = async (
   issue: IssueTemplate,
   modelName: string = 'claude-sonnet-4-20250514'
 ): Promise<InferenceResult> => {
-  const model = new ChatAnthropic({
-    model: modelName,
-    temperature: 0.2,
-  });
-
   // Format reference data for the prompt
   const similarImplementations = formatListForPrompt(
     issue.issue.reference_data?.similar_implementations || [],
@@ -281,6 +310,15 @@ Respond in this exact JSON format:
   "reasoning": "Brief explanation of the domain, layer, and (if cht-conf) the artifact"
 }`;
 
+  // CLI mode: route through the CLI provider's structured-output adapter. modelName
+  // is unused here — the claude binary reads ANTHROPIC_MODEL itself. Single-shot, so
+  // no chain caching (unlike filter.ts's per-batch chain).
+  if (isUsingCLIProvider()) {
+    const parsed = await createStructuredCliChain(inferenceSchema, INFERENCE_SHAPE).invoke(prompt);
+    return toInferenceResult(parsed);
+  }
+
+  const model = new ChatAnthropic({ model: modelName, temperature: 0.2 });
   const response = await model.invoke(prompt);
   const content = typeof response.content === 'string'
     ? response.content

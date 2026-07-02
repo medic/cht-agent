@@ -2,8 +2,13 @@ import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
+import { isUsingCLIProvider } from '../llm/factory';
 
 export const validateEnvironment = () => {
+  if (isUsingCLIProvider()) {
+    console.log('🔌 LLM provider: claude-cli — no ANTHROPIC_API_KEY required\n');
+    return;
+  }
   if (!process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
     console.log('\nPlease create a .env file with your Anthropic API key:');
