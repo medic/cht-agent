@@ -41,3 +41,18 @@ commits on this branch. Base: `main` @ `ed07177`.
 - Notes / deviations: `npm run validate-schema` over full corpus: 64 passed,
   0 failed, 3 skipped (READMEs/TEMPLATE). Relink tool specs green in suite.
   Adversarial verification fan-out run post-merge (see mission report).
+
+## S4 — 8 promote branches, Stream-B order @ cbe5f0f, f7c9894, 7f080ac, e847284, b2ebdc5, 2d62a58, 7897869, 193d885
+- Tests: 712 → 712 (corpus-only merges)   Lint: clean
+- Conflicts: none (all eight purely additive — 0 modified files vs main under
+  `agent-memory/domains/**`)
+- Notes / deviations: context-loader gate (one-off script, not committed) —
+  loaded counts per domain: messaging 27, infrastructure 49,
+  forms-and-reports 57, tasks-and-targets 35, authentication 39, contacts 54,
+  interoperability 16, configuration 10, data-sync 24. Matches expectations
+  once legacy corpora are accounted for: only messaging/forms-and-reports/
+  contacts/interoperability/data-sync had 10 legacy files each on main; the
+  newer domains (infrastructure, tasks-and-targets, authentication,
+  configuration) had none. Mission's "forms-and-reports ≈47" counted promoted
+  drafts only; cumulative is 47+10=57. contacts 54 (44+10) and data-sync 24
+  (14+10) match the mission's cumulative numbers exactly.
