@@ -316,6 +316,13 @@ export interface ResearchState {
     timestamp: string;
   }>;
   issue?: IssueTemplate;
+  /**
+   * Layer routing, lifted out of the ticket at graph init so agents receive it
+   * explicitly (and later disambiguation of `investigate` can update it without
+   * rewriting the ticket). Absent for tickets that predate the layer field.
+   */
+  layer?: CHTLayer;
+  configArtifact?: ConfigArtifact;
   researchFindings?: ResearchFindings;
   codeContextFindings?: CodeContextFindings;
   contextAnalysis?: ContextAnalysisResult;
@@ -410,6 +417,12 @@ export interface ArchitectureInsight {
   description: string;
   patterns: string[];
   dependencies: string[];
+  /**
+   * The DeepWiki repo the insight came from (cht-core, cht-conf, …). Keeps
+   * findings attributable when several wikis are merged — most importantly for
+   * layer: investigate tickets, which query the cht-core and cht-conf wikis together.
+   */
+  sourceRepo?: string;
 }
 
 /**

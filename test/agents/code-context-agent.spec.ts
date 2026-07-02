@@ -217,6 +217,36 @@ describe('CodeContextAgent', () => {
 
       expect(query).to.include('Add contact search feature');
     });
+
+    it('should include configArtifact and artifactName for config tickets', () => {
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          artifactName: 'pnc_followup',
+        },
+      });
+
+      const query = (agent as any).buildSearchQuery(issue, 'form');
+
+      expect(query).to.include('form');
+      expect(query).to.include('pnc_followup');
+    });
+
+    it('should leave the query unchanged when no config fields are present', () => {
+      const issue = createTestIssue({
+        title: 'Add contact search feature',
+        technical_context: { domain: 'contacts', components: ['api/contacts'] },
+      });
+
+      const withRouting = (agent as any).buildSearchQuery(issue, undefined);
+      const withoutRouting = (agent as any).buildSearchQuery(issue);
+
+      expect(withRouting).to.equal(withoutRouting);
+      expect(withRouting).to.equal('contacts api/contacts Add contact search feature');
+    });
   });
 
   describe('determineRepos', () => {
@@ -269,6 +299,44 @@ describe('CodeContextAgent', () => {
       const repos = (agent as any).determineRepos('authentication');
 
       expect(repos).to.deep.equal(['cht-core']);
+    });
+
+    it('should target only the cht-conf wiki for the cht-conf layer', () => {
+      expect((agent as any).determineRepos('contacts', 'cht-conf')).to.deep.equal(['cht-conf']);
+      expect((agent as any).determineRepos('forms-and-reports', 'cht-conf')).to.deep.equal([
+        'cht-conf',
+      ]);
+    });
+
+    it('should add the cht-conf wiki to the domain repos for the investigate layer', () => {
+      expect((agent as any).determineRepos('contacts', 'investigate')).to.deep.equal([
+        'cht-core',
+        'cht-conf',
+      ]);
+      expect((agent as any).determineRepos('data-sync', 'investigate')).to.deep.equal([
+        'cht-core',
+        'cht-watchdog',
+        'cht-conf',
+      ]);
+    });
+
+    it('should not duplicate cht-conf for investigate in the configuration domain', () => {
+      expect((agent as any).determineRepos('configuration', 'investigate')).to.deep.equal([
+        'cht-core',
+        'cht-conf',
+      ]);
+    });
+
+    it('should keep the domain-based selection for the cht-core layer', () => {
+      expect((agent as any).determineRepos('contacts', 'cht-core')).to.deep.equal(['cht-core']);
+      expect((agent as any).determineRepos('data-sync', 'cht-core')).to.deep.equal([
+        'cht-core',
+        'cht-watchdog',
+      ]);
+      expect((agent as any).determineRepos('configuration', 'cht-core')).to.deep.equal([
+        'cht-core',
+        'cht-conf',
+      ]);
     });
   });
 
@@ -478,6 +546,133 @@ describe('CodeContextAgent', () => {
 
       expect(result.warnings).to.have.lengthOf(1);
       expect(result.warnings[0]).to.include('Rate limited');
+    });
+  });
+
+  describe('layer-aware target selection (#134)', () => {
+    const confCatalogFixture = {
+      repository: 'medic/cht-conf',
+      documents: [{ title: 'Forms Overview', path: '5-forms.1-overview' }],
+    };
+
+    const confDocumentFixture = {
+      repository: 'medic/cht-conf',
+      path: '5-forms.1-overview',
+      title: 'Forms Overview',
+      content: '# Forms Overview\n\nHow cht-conf converts and uploads app forms.\n',
+    };
+
+    const stubClientForRouting = (agentInstance: CodeContextAgent) => {
+      const stubClient = sinon.createStubInstance(OpenDeepWikiClient);
+      stubClient.getDocumentCatalog.resolves(confCatalogFixture);
+      stubClient.readFullDocument.resolves(confDocumentFixture);
+      (agentInstance as any).deepWikiClient = stubClient;
+      return stubClient;
+    };
+
+    it('should query only the cht-conf wiki for layer: cht-conf tickets', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubClientForRouting(realAgent);
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: ['forms'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+
+      const result = await realAgent.search(issue);
+
+      expect(stubClient.getDocumentCatalog.calledOnceWith('cht-conf')).to.be.true;
+      expect(result.relevantRepos).to.deep.equal(['cht-conf']);
+      expect(result.architectureInsights).to.have.lengthOf(1);
+      expect(result.architectureInsights[0].sourceRepo).to.equal('cht-conf');
+    });
+
+    it('should query both wikis, merged and labelled, for layer: investigate tickets', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubClientForRouting(realAgent);
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'contacts',
+          components: [],
+          layer: 'investigate',
+        },
+      });
+
+      const result = await realAgent.search(issue);
+
+      expect(stubClient.getDocumentCatalog.calledTwice).to.be.true;
+      const queriedRepos = stubClient.getDocumentCatalog.args.map(args => args[0]);
+      expect(queriedRepos).to.deep.equal(['cht-core', 'cht-conf']);
+      expect(result.relevantRepos).to.deep.equal(['cht-core', 'cht-conf']);
+
+      const sourceRepos = result.architectureInsights.map(insight => insight.sourceRepo);
+      expect(sourceRepos).to.include('cht-core');
+      expect(sourceRepos).to.include('cht-conf');
+    });
+
+    it('should keep the domain-based selection for layer: cht-core tickets', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubClientForRouting(realAgent);
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'contacts',
+          components: [],
+          layer: 'cht-core',
+        },
+      });
+
+      const result = await realAgent.search(issue);
+
+      expect(stubClient.getDocumentCatalog.calledOnceWith('cht-core')).to.be.true;
+      expect(result.relevantRepos).to.deep.equal(['cht-core']);
+    });
+
+    it('should behave exactly as before for tickets without a layer', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubClientForRouting(realAgent);
+      const issue = createTestIssue({
+        technical_context: { domain: 'contacts', components: [] },
+      });
+
+      const result = await realAgent.search(issue);
+
+      expect(stubClient.getDocumentCatalog.calledOnceWith('cht-core')).to.be.true;
+      expect(result.relevantRepos).to.deep.equal(['cht-core']);
+    });
+
+    it('should prefer the routing passed by the supervisor over the ticket', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      const stubClient = stubClientForRouting(realAgent);
+      const issue = createTestIssue({
+        technical_context: { domain: 'contacts', components: [] },
+      });
+
+      const result = await realAgent.search(issue, { layer: 'cht-conf' });
+
+      expect(stubClient.getDocumentCatalog.calledOnceWith('cht-conf')).to.be.true;
+      expect(result.relevantRepos).to.deep.equal(['cht-conf']);
+    });
+
+    it('should route layer: cht-conf tickets to cht-conf mock data in mock mode', async () => {
+      const mockAgent = new CodeContextAgent({ useMockMCP: true });
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+
+      const result = await mockAgent.search(issue);
+
+      expect(result.source).to.equal('mock');
+      expect(result.relevantRepos).to.deep.equal(['cht-conf']);
+      expect(result.architectureInsights.length).to.be.greaterThan(0);
+      expect(result.architectureInsights[0].sourceRepo).to.equal('cht-conf');
     });
   });
 

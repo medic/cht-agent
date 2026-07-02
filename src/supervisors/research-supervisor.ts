@@ -10,6 +10,9 @@
 import { StateGraph, END, START, Annotation } from '@langchain/langgraph';
 import { ChatAnthropic } from '@langchain/anthropic';
 import {
+  ArchitectureInsight,
+  CHTLayer,
+  ConfigArtifact,
   IssueTemplate,
   ResearchState,
   ResearchFindings,
@@ -28,6 +31,16 @@ const ResearchStateAnnotation = Annotation.Root({
     default: () => [],
   }),
   issue: Annotation<IssueTemplate | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  // Layer routing, lifted out of the ticket at init so nodes receive it through
+  // state (a later disambiguation step can update it without rewriting the ticket)
+  layer: Annotation<CHTLayer | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  configArtifact: Annotation<ConfigArtifact | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -173,7 +186,10 @@ export class ResearchSupervisor {
     }
 
     try {
-      const findings = await this.codeContextAgent.search(state.issue);
+      const findings = await this.codeContextAgent.search(state.issue, {
+        layer: state.layer,
+        configArtifact: state.configArtifact,
+      });
 
       return {
         codeContextFindings: findings,
@@ -324,7 +340,7 @@ export class ResearchSupervisor {
 ## Code Architecture Context
 **Repos Analyzed**: ${codeContext.relevantRepos.join(', ')}
 **Architecture Insights**: ${codeContext.architectureInsights.length}
-${codeContext.architectureInsights.map((insight) => `- **${insight.component}**: ${insight.description} (patterns: ${insight.patterns.join(', ')})`).join('\n')}
+${codeContext.architectureInsights.map((insight) => this.formatInsightLine(insight)).join('\n')}
 
 **Module Relationships**: ${codeContext.moduleRelationships.length}
 ${codeContext.moduleRelationships.map((rel) => `- ${rel.source} → ${rel.target} (${rel.relationship}): ${rel.description}`).join('\n')}
@@ -377,6 +393,16 @@ Create a detailed orchestration plan with:
 7. Estimated effort
 
 Format your response as a structured plan that will guide the development team.`;
+  }
+
+  /**
+   * Render one architecture insight for the plan prompt, labelled with the wiki
+   * it came from when known (investigate tickets merge cht-core and cht-conf findings)
+   */
+  private formatInsightLine(insight: ArchitectureInsight): string {
+    const repoLabel = insight.sourceRepo ? `[${insight.sourceRepo}] ` : '';
+    const patterns = insight.patterns.join(', ');
+    return `- ${repoLabel}**${insight.component}**: ${insight.description} (patterns: ${patterns})`;
   }
 
   /**
@@ -590,6 +616,8 @@ Format your response as a structured plan that will guide the development team.`
         },
       ],
       issue: issue,
+      layer: issue.issue.technical_context.layer,
+      configArtifact: issue.issue.technical_context.configArtifact,
       researchFindings: undefined,
       codeContextFindings: undefined,
       contextAnalysis: undefined,

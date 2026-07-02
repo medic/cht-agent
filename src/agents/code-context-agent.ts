@@ -9,6 +9,8 @@ import {
   ArchitectureInsight,
   ModuleRelationship,
   CHTDomain,
+  CHTLayer,
+  ConfigArtifact,
   IssueTemplate,
   OpenDeepWikiMCPResponse,
   DeepWikiCatalogEntry,
@@ -47,19 +49,32 @@ export class CodeContextAgent {
   }
 
   /**
-   * Main entry point for code context search
+   * Main entry point for code context search.
+   *
+   * The optional routing argument carries the layer/configArtifact the Research
+   * Supervisor plumbed through graph state; direct callers may omit it, in which
+   * case the values fall back to the ticket's own technical_context.
    */
-  async search(issue: IssueTemplate): Promise<CodeContextFindings> {
+  async search(
+    issue: IssueTemplate,
+    routing: { layer?: CHTLayer; configArtifact?: ConfigArtifact } = {}
+  ): Promise<CodeContextFindings> {
+    const layer = routing.layer ?? issue.issue.technical_context.layer;
+    const configArtifact = routing.configArtifact ?? issue.issue.technical_context.configArtifact;
+
     console.log('\n[Code Context Agent] Starting code context search...');
     console.log(`[Code Context Agent] Domain: ${issue.issue.technical_context.domain}`);
+    if (layer) {
+      console.log(`[Code Context Agent] Layer: ${layer}`);
+    }
     console.log(`[Code Context Agent] Issue: ${issue.issue.title}`);
 
     const domain = issue.issue.technical_context.domain || 'configuration';
 
-    const repos = this.determineRepos(domain);
+    const repos = this.determineRepos(domain, layer);
     console.log(`[Code Context Agent] Searching repos: ${repos.join(', ')}`);
 
-    const searchQuery = this.buildSearchQuery(issue);
+    const searchQuery = this.buildSearchQuery(issue, configArtifact);
     console.log(`[Code Context Agent] Search query: ${searchQuery}`);
 
     const allInsights: ArchitectureInsight[] = [];
@@ -101,7 +116,18 @@ export class CodeContextAgent {
     return findings;
   }
 
-  private determineRepos(domain: CHTDomain): string[] {
+  /**
+   * Select the DeepWiki targets for the search. The ticket's layer drives the
+   * choice: cht-conf tickets query only the cht-conf wiki, investigate tickets
+   * query the cht-conf wiki alongside the domain-based repos (findings are
+   * merged and labelled via sourceRepo), and cht-core — or a ticket without a
+   * layer — keeps the domain-based selection unchanged.
+   */
+  private determineRepos(domain: CHTDomain, layer?: CHTLayer): string[] {
+    if (layer === 'cht-conf') {
+      return ['cht-conf'];
+    }
+
     const repos = ['cht-core'];
 
     if (domain === 'configuration') {
@@ -112,13 +138,26 @@ export class CodeContextAgent {
       repos.push('cht-watchdog');
     }
 
+    if (layer === 'investigate' && !repos.includes('cht-conf')) {
+      repos.push('cht-conf');
+    }
+
     return repos;
   }
 
-  private buildSearchQuery(issue: IssueTemplate): string {
+  private buildSearchQuery(issue: IssueTemplate, configArtifact?: ConfigArtifact): string {
     const { title, technical_context } = issue.issue;
-    const terms = [technical_context.domain, ...technical_context.components, title].join(' ');
-    return terms;
+    const terms = [technical_context.domain, ...technical_context.components, title];
+
+    // Config tickets: bias document selection toward the suspect artifact
+    if (configArtifact) {
+      terms.push(configArtifact);
+    }
+    if (technical_context.artifactName) {
+      terms.push(technical_context.artifactName);
+    }
+
+    return terms.join(' ');
   }
 
   /**
@@ -399,7 +438,10 @@ export class CodeContextAgent {
     }
 
     return {
-      insights: response.data.architectureInsights,
+      insights: response.data.architectureInsights.map(insight => ({
+        ...insight,
+        sourceRepo: repo,
+      })),
       relationships: response.data.moduleRelationships,
       diagrams: response.data.diagrams,
       warnings,
