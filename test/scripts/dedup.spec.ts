@@ -15,11 +15,11 @@ describe('sourcePrNumber', () => {
   });
 
   it('returns null for a non-string value', () => {
-    expect(sourcePrNumber(undefined)).to.equal(null);
+    expect(sourcePrNumber(undefined)).to.be.null;
   });
 
   it('returns null when there is no trailing #number', () => {
-    expect(sourcePrNumber('medic/cht-core')).to.equal(null);
+    expect(sourcePrNumber('medic/cht-core')).to.be.null;
   });
 });
 
@@ -43,7 +43,7 @@ describe('slugIssueNumber', () => {
   });
 
   it('returns null when the slug has no such prefix', () => {
-    expect(slugIssueNumber('10043-fix-a-typo.md')).to.equal(null);
+    expect(slugIssueNumber('10043-fix-a-typo.md')).to.be.null;
   });
 
   it('extracts the issue number from the new hyphen-separated slug format', () => {
@@ -84,7 +84,7 @@ describe('ciGuardReason', () => {
       issueNumber: 10036,
       source_pr: 'medic/cht-core#10043',
     });
-    expect(reason).to.equal(null);
+    expect(reason).to.be.null;
   });
 });
 
@@ -99,7 +99,7 @@ describe('dedupeByIssueId', () => {
     const { kept, dropped } = dedupeByIssueId([entry('data-sync', 'a.md', 'cht-core-8985', 'medic/cht-core#9027')]);
     expect(kept).to.have.length(1);
     expect(dropped).to.have.length(0);
-    expect(kept[0].frontmatter.source_prs).to.equal(undefined);
+    expect(kept[0].frontmatter.source_prs).to.be.undefined;
   });
 
   it('collapses a backport pair into the lowest-numbered PR, tagging source_prs', () => {

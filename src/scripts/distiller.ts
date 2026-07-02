@@ -272,7 +272,7 @@ export function slugify(text: string): string {
 }
 
 /** Backport marker: a "(cherry picked from commit ...)" note or a trailing "(#NNNN)" title suffix. */
-const BACKPORT_MARKER = /cherry[- ]?picked from commit|\(#\d+\)\s*$/i;
+const BACKPORT_MARKER = /(cherry[- ]?picked from commit)|(\(#\d+\)\s*$)/i;
 
 /**
  * Heuristic confidence gradient, replacing the previous hardcoded `'medium'`.

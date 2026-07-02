@@ -238,23 +238,29 @@ function parseDraft(draftPath: string, logPath: string): ReturnType<typeof matte
  * const valid = findValidEntries('contacts', ['/tmp/drafts/42-foo.md'], '/tmp/skipped.ndjson');
  * ```
  */
+/** Parses, schema-validates, and CI-guards a single draft. Returns null (and logs) on any failure. */
+function validateDraft(domain: string, draftPath: string, logPath: string): DedupEntry | null {
+  const parsed = parseDraft(draftPath, logPath);
+  if (parsed === null) return null;
+  const data = normalizeFrontmatter(parsed.data as Record<string, unknown>);
+  if (!validate(data)) {
+    const errors = (validate.errors ?? []).map(e => e.message ?? 'invalid').join('; ');
+    writeSkipEntry(logPath, draftPath, `Schema invalid: ${errors}`);
+    return null;
+  }
+  const guardReason = ciGuardReason(draftPath, data);
+  if (guardReason !== null) {
+    writeSkipEntry(logPath, draftPath, `CI guard: ${guardReason}`);
+    return null;
+  }
+  return { domain, path: draftPath, frontmatter: data };
+}
+
 function findValidEntries(domain: string, draftPaths: string[], logPath: string): DedupEntry[] {
   const valid: DedupEntry[] = [];
   for (const draftPath of draftPaths) {
-    const parsed = parseDraft(draftPath, logPath);
-    if (parsed === null) continue;
-    const data = normalizeFrontmatter(parsed.data as Record<string, unknown>);
-    if (!validate(data)) {
-      const errors = (validate.errors ?? []).map(e => e.message ?? 'invalid').join('; ');
-      writeSkipEntry(logPath, draftPath, `Schema invalid: ${errors}`);
-      continue;
-    }
-    const guardReason = ciGuardReason(draftPath, data);
-    if (guardReason !== null) {
-      writeSkipEntry(logPath, draftPath, `CI guard: ${guardReason}`);
-      continue;
-    }
-    valid.push({ domain, path: draftPath, frontmatter: data });
+    const entry = validateDraft(domain, draftPath, logPath);
+    if (entry !== null) valid.push(entry);
   }
   return valid;
 }
@@ -313,20 +319,29 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
     writeSkipEntry(logPath, drop.path, drop.reason);
   }
 
+  const plans = buildPlansByDomain(kept);
+  const skipped = buildSkippedDomains(byDomain, plans);
+  return { plans, skipped, kept, dropped };
+}
+
+function buildPlansByDomain(kept: DedupEntry[]): Map<string, string[]> {
   const plans = new Map<string, string[]>();
   for (const entry of kept) {
     const existing = plans.get(entry.domain);
     if (existing) existing.push(entry.path);
     else plans.set(entry.domain, [entry.path]);
   }
+  return plans;
+}
 
+function buildSkippedDomains(byDomain: Map<string, string[]>, plans: Map<string, string[]>): ReviewPRResult[] {
   const skipped: ReviewPRResult[] = [];
   for (const domain of byDomain.keys()) {
     if (!plans.has(domain)) {
       skipped.push({ domain, branch: '', filesPromoted: 0, status: 'skipped' });
     }
   }
-  return { plans, skipped, kept, dropped };
+  return skipped;
 }
 
 /**
@@ -341,11 +356,19 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
  * ```
  */
 function applyDedupMutations(kept: DedupEntry[], dropped: DedupDrop[]): void {
+  rewriteCanonicalFrontmatter(kept);
+  removeDroppedDrafts(dropped);
+}
+
+function rewriteCanonicalFrontmatter(kept: DedupEntry[]): void {
   for (const entry of kept) {
     if (entry.frontmatter.source_prs !== undefined) {
       rewriteFrontmatterOnDisk(entry.path, entry.frontmatter);
     }
   }
+}
+
+function removeDroppedDrafts(dropped: DedupDrop[]): void {
   for (const drop of dropped) {
     try {
       fs.unlinkSync(drop.path);
