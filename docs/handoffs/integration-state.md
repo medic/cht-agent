@@ -71,3 +71,30 @@ commits on this branch. Base: `main` @ `ed07177`.
   complete; no branch content lost; conventions ground rules upheld —
   claude-cli.ts/factory.ts/types.ts byte-identical to main,
   codeContextFindings wiring intact, package-lock identical to main).
+
+## S6 — `feat/llm-provider-unification` (4a5c5b1, 02c) @ 3c63016
+- Tests: 820 → 845 (+25)   Lint: clean
+- Conflicts (hand-unioned, both features survive):
+  - `src/supervisors/research-supervisor.ts`: took 02c's constructor-time
+    planner selection (`isUsingCLIProvider() ? createCliPlanner() :
+    createApiPlanner(...)`); ported 134's P0 sampling fix
+    (`/opus-4-[678]|fable/` → `invocationKwargs` undefined overrides) into
+    `createApiPlanner` with its original comment. No `plannerModel` remnants;
+    `codeContextFindings` wiring intact (4 occurrences).
+  - `src/utils/domain-inference.ts`: import union; `inferUsingLLM` keeps
+    134's `Promise<InferenceResult>` + tolerant layer/configArtifact mapping
+    (single-sourced in a shared `toInferenceResult()` used by BOTH provider
+    paths); 02c's CLI structured-chain routing adopted; `inferenceSchema` and
+    `INFERENCE_SHAPE` extended with optional `layer`/`configArtifact` so CLI
+    mode returns them.
+  - `test/utils/domain-inference.spec.ts`: import union; both parents' suites
+    kept; two 02c CLI-path assertions widened with `layer: 'cht-core'` (the
+    union legitimately widens the return shape).
+- Notes / deviations: two sibling specs auto-merged without markers but were
+  semantically stale and fixed: 02c's `research-supervisor-llm-routing.spec.ts`
+  fixture dropped its `historicalSuccessRate` line (134 deliberately removed
+  the field, asserted by 134's own tests); 134's
+  `research-supervisor.routing.spec.ts` planner stub renamed
+  `plannerModel` → `planner` (02c's field rename), resolving a plan string.
+  Gate: default-path no-regression (routing spec) + CLI-path tests
+  (llm-routing, display-helpers specs) green inside the 845.
