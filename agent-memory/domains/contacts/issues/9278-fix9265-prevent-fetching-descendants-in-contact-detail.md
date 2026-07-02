@@ -1,10 +1,10 @@
 ---
-id: cht-core-9278
+id: cht-core-9265
 category: bug
 domain: contacts
 domainFit: strong
-issueNumber: 9278
-issueUrl: https://github.com/medic/cht-core/issues/9278
+issueNumber: 9265
+issueUrl: https://github.com/medic/cht-core/issues/9265
 title: Prevent contact detail from fetching descendants when user has a single assigned facility, fixing empty facility ID on app reload
 lastUpdated: '2026-06-23'
 summary: On app reload the contact detail view received an empty facility ID (normally populated by the contact list) and wrongly fetched descendants. The fix subscribes to the facility ID in the contacts effect constructor so it is ready early, and hides descendants when the user has exactly one assigned facility.

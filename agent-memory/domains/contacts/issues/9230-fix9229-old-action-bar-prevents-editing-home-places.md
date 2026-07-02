@@ -1,10 +1,10 @@
 ---
-id: cht-core-9230
+id: cht-core-9229
 category: bug
 domain: contacts
 domainFit: strong
-issueNumber: 9230
-issueUrl: https://github.com/medic/cht-core/issues/9230
+issueNumber: 9229
+issueUrl: https://github.com/medic/cht-core/issues/9229
 title: Remove stale old-action-bar logic that blocked editing of home places in the contacts detail view
 lastUpdated: '2026-06-23'
 summary: Leftover logic from the deprecated action bar in the contacts content component prevented users from editing their home place. The fix removes/corrects that logic so the edit action is available for home places again.

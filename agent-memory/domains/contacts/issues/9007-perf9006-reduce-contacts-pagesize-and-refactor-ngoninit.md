@@ -1,10 +1,10 @@
 ---
-id: cht-core-9007
+id: cht-core-9006
 category: improvement
 domain: contacts
 domainFit: strong
-issueNumber: 9007
-issueUrl: https://github.com/medic/cht-core/issues/9007
+issueNumber: 9006
+issueUrl: https://github.com/medic/cht-core/issues/9006
 title: Reduce contacts page_size and refactor contacts ngOnInit to async/await with unified try/catch to improve contact-list Apdex
 lastUpdated: '2026-06-23'
 summary: The contacts list page had a low Apdex (slow initial render). This PR reduces the contacts page_size so fewer contacts are fetched on initialization and refactors ngOnInit to async/await with a single unified try/catch for cleaner async control flow and consolidated error handling.

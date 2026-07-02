@@ -1,10 +1,10 @@
 ---
-id: cht-core-8995
+id: cht-core-8994
 category: improvement
 domain: contacts
 domainFit: strong
-issueNumber: 8995
-issueUrl: https://github.com/medic/cht-core/issues/8995
+issueNumber: 8994
+issueUrl: https://github.com/medic/cht-core/issues/8994
 title: Fetch reports once in contact details page by passing docs (not IDs) to the contact view model generator
 lastUpdated: '2026-06-23'
 summary: The contact details page fetched report docs more than once — loading them and then re-fetching inside addHeading. The PR threads already-fetched docs through the view-model generator and summary services, eliminating the redundant fetch.
