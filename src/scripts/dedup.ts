@@ -146,54 +146,41 @@ function sourcePrRef(frontmatter: Record<string, unknown>): string | null {
  * // dropped === [{ path: 'a.md', reason: '...' }]
  * ```
  */
-/** Stringifies a frontmatter `id` for grouping, without falling back to `[object Object]`. */
-function draftId(frontmatter: Record<string, unknown>): string {
-  const rawId = frontmatter.id;
-  return typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : '';
-}
-
-function groupByIssueId(entries: DedupEntry[]): Map<string, DedupEntry[]> {
+export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR typescript:S3776 -- linear grouping/sort, not worth splitting
   const groups = new Map<string, DedupEntry[]>();
   for (const entry of entries) {
-    const id = draftId(entry.frontmatter);
+    const rawId = entry.frontmatter.id;
+    const id = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : '';
     const group = groups.get(id);
     if (group) group.push(entry);
     else groups.set(id, [entry]);
   }
-  return groups;
-}
 
-/** Picks the canonical entry (lowest source PR, path tiebreak) and builds drop reasons for the rest. */
-function collapseGroup(group: DedupEntry[]): { canonical: DedupEntry; dropped: DedupDrop[] } {
-  const ranked = [...group].sort((a, b) => {
-    const pa = sourcePrNumber(a.frontmatter.source_pr) ?? Infinity;
-    const pb = sourcePrNumber(b.frontmatter.source_pr) ?? Infinity;
-    return pa === pb ? a.path.localeCompare(b.path) : pa - pb;
-  });
-  const [canonical, ...rest] = ranked;
-  const sourcePrs = ranked.map(e => sourcePrRef(e.frontmatter)).filter((s): s is string => s !== null);
-  canonical.frontmatter.source_prs = sourcePrs;
-  const dropped = rest.map(dup => ({
-    path: dup.path,
-    reason:
-      `duplicate of ${String(canonical.frontmatter.id)} — collapsed into ` +
-      `${sourcePrRef(canonical.frontmatter) ?? 'canonical'} (source_prs: ${sourcePrs.join(', ')})`,
-  }));
-  return { canonical, dropped };
-}
-
-export function dedupeByIssueId(entries: DedupEntry[]): DedupResult {
   const kept: DedupEntry[] = [];
   const dropped: DedupDrop[] = [];
 
-  for (const group of groupByIssueId(entries).values()) {
+  for (const group of groups.values()) {
     if (group.length === 1) {
       kept.push(group[0]);
       continue;
     }
-    const { canonical, dropped: groupDropped } = collapseGroup(group);
+    const ranked = [...group].sort((a, b) => {
+      const pa = sourcePrNumber(a.frontmatter.source_pr) ?? Infinity;
+      const pb = sourcePrNumber(b.frontmatter.source_pr) ?? Infinity;
+      return pa === pb ? a.path.localeCompare(b.path) : pa - pb;
+    });
+    const [canonical, ...rest] = ranked;
+    const sourcePrs = ranked.map(e => sourcePrRef(e.frontmatter)).filter((s): s is string => s !== null);
+    canonical.frontmatter.source_prs = sourcePrs;
     kept.push(canonical);
-    dropped.push(...groupDropped);
+    for (const dup of rest) {
+      dropped.push({
+        path: dup.path,
+        reason:
+          `duplicate of ${String(canonical.frontmatter.id)} — collapsed into ` +
+          `${sourcePrRef(canonical.frontmatter) ?? 'canonical'} (source_prs: ${sourcePrs.join(', ')})`,
+      });
+    }
   }
 
   return { kept, dropped };
