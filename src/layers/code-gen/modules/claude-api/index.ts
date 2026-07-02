@@ -8,6 +8,8 @@ import {
 import { LLMProvider, LLMToolDefinition, ToolHandler, createAnthropicProvider, getAPIConfigFromEnv } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
+import { runApiCompileGate } from './compile-gate';
+import { CompileValidationResult } from '../../../../agents/compile-validator';
 import {
   PlanSchema,
   FileContentAssertions,
@@ -263,6 +265,13 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     this.runPostCallValidation(files, plan, manifest);
     this.logGeneratedFiles(files, manifest);
 
+    // Type-check the generated files against cht-core (parity with the CLI path).
+    // Guarded on shutdown; the gate degrades to a skip in non-git workspaces.
+    let compile: CompileValidationResult = { passed: true, issues: [] };
+    if (!isShutdownRequested()) {
+      compile = await runApiCompileGate(input.targetDirectory, files);
+    }
+
     return {
       files,
       explanation:
@@ -270,6 +279,9 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
         `targeting the ${input.ticket.issue.technical_context.domain} domain.`,
       tokensUsed: totalTokens,
       modelUsed: llm.modelName,
+      crossFileIssues: compile.issues.length > 0 ? compile.issues : undefined,
+      compileGateSkipped: compile.skipped,
+      compileGateSkipReason: compile.skipReason,
     };
   }
 
