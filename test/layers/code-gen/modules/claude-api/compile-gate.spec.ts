@@ -119,6 +119,40 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(compileStub.calledOnce).to.equal(true);
   });
 
+  it('rejects absolute file paths (outside cht-core)', async () => {
+    const run = load();
+    const warnSpy = sinon.stub(console, 'warn');
+    await run(CHT, [file('/etc/evil.ts'), file('ok.ts')]);
+    expect(writeStub.calledOnce).to.equal(true);
+    expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'ok.ts'));
+    expect(warnSpy.called).to.equal(true);
+  });
+
+  it('skips when the compile validator itself throws', async () => {
+    const run = load();
+    compileStub.rejects(new Error('tsc process exploded'));
+    const result = await run(CHT, [file()]);
+    expect(result.skipped).to.equal(true);
+    expect(result.skipReason).to.match(/compile gate raised/);
+    expect(rollbackStub.calledOnce).to.equal(true);
+  });
+
+  it('includes the stash-pop line in the recovery checklist when a stash was taken', async () => {
+    const run = load();
+    snapshotStub.resolves({ headSha: 'abc1234', stashRef: 'stash@{0}', stashName: 'api-gate' });
+    rollbackStub.resolves({ reset: 'failed', clean: 'ok', stashPop: 'failed', errors: ['reset failed'] });
+    const errSpy = sinon.stub(console, 'error');
+    let threw = false;
+    try {
+      await run(CHT, [file()]);
+    } catch {
+      threw = true;
+    }
+    expect(threw).to.equal(true);
+    const logged = errSpy.getCalls().map(c => String(c.args[0])).join('\n');
+    expect(logged).to.match(/git stash pop stash@\{0\}/);
+  });
+
   it('skips compilation (no compileCheck) when every file is out of bounds', async () => {
     const run = load();
     sinon.stub(console, 'warn');
