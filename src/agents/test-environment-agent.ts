@@ -36,6 +36,7 @@ import { runBucket, runChtConf } from '../utils/cht-conf-runner';
 import { BulkDoc, bulkDocs, fetchDocRevs, fetchFormRevs, fetchSettings } from '../utils/cht-api';
 import {
   classifySeededDocs,
+  cleanSeededDocs,
   countCreatedUsers,
   hasUsersCsv,
   parseUploadDocsSummary,
@@ -61,6 +62,19 @@ const DEFAULT_CONFIG_ACTIONS: ConfigUploadAction[] = [
 
 // CouchDB id prefix of installed form docs (form:pregnancy -> pregnancy).
 const FORM_DOC_PREFIX = 'form:';
+
+/**
+ * Decode a URL userinfo component. Userinfo SHOULD be percent-encoded, but a
+ * raw '%' in a hand-typed CHT_URL password must not crash provision with an
+ * opaque URIError — fall back to the literal value.
+ */
+const decodeUserinfo = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
 
 /**
  * Build the cht-conf instance URL with embedded credentials
@@ -234,8 +248,22 @@ export class TestEnvironmentAgent {
       // resolved URL is canonicalized (no trailing slash) — paths are appended
       // to it everywhere, and it keys the seeded-doc tracking map.
       const envUrl = process.env.CHT_URL?.trim() || undefined;
-      const url = (options.url ?? envUrl ?? DEFAULT_ENV_URL).replace(/\/+$/, '');
-      const auth = options.auth ?? DEFAULT_AUTH;
+      const resolved = new URL(options.url ?? envUrl ?? DEFAULT_ENV_URL);
+      // Strip any embedded basic-auth creds: handle.url is logged everywhere,
+      // and undici's fetch() rejects credentialed URLs outright. They survive
+      // only as an auth fallback.
+      const embeddedAuth = resolved.username
+        ? { user: decodeUserinfo(resolved.username), password: decodeUserinfo(resolved.password) }
+        : undefined;
+      resolved.username = '';
+      resolved.password = '';
+      const url = resolved.toString().replace(/\/+$/, '');
+      // COUCHDB_USER/COUCHDB_PASSWORD is the same seam scripts/test-env-up.sh
+      // uses for the bring-up, so a non-default password needs no code change.
+      const envAuth = process.env.COUCHDB_PASSWORD
+        ? { user: process.env.COUCHDB_USER ?? DEFAULT_AUTH.user, password: process.env.COUCHDB_PASSWORD }
+        : undefined;
+      const auth = options.auth ?? embeddedAuth ?? envAuth ?? DEFAULT_AUTH;
 
       // The agent runs no Docker — the human brings the environment up.
       const target = options.chtCorePath ?? '<cht-core>';
@@ -315,12 +343,22 @@ export class TestEnvironmentAgent {
   async discoverConfig(handle: EnvironmentHandle): Promise<DiscoveredConfig> {
     console.log(`[Test Environment Agent] Discovering config from ${handle.url}...`);
 
-    const config = this.useMockDocker
-      ? structuredClone(MOCK_TEST_ENV_DATA.config)
-      : parseDiscoveredConfig(
-        await fetchSettings(handle.url, handle.auth),
-        await fetchFormRevs(handle.url, handle.auth)
-      );
+    let config: DiscoveredConfig;
+    if (this.useMockDocker) {
+      config = structuredClone(MOCK_TEST_ENV_DATA.config);
+    } else {
+      const settings = await fetchSettings(handle.url, handle.auth);
+      if (!Array.isArray(settings.contact_types)) {
+        // Discovery reflects only what the instance returns (like the other
+        // parsers), so surface that cht-core is running on its built-in
+        // default hierarchy rather than synthesizing types the API never sent.
+        console.warn(
+          '[Test Environment Agent] Instance settings define no contact_types — cht-core falls back to ' +
+            'its built-in default hierarchy; seeded default-hierarchy places will be counted as unknown types.'
+        );
+      }
+      config = parseDiscoveredConfig(settings, await fetchFormRevs(handle.url, handle.auth));
+    }
 
     console.log(
       `[Test Environment Agent] Discovered ${config.contactTypes.length} contact types, ` +
@@ -361,6 +399,14 @@ export class TestEnvironmentAgent {
         timeoutMs: options.timeoutMs,
       };
       const warnings: string[] = [];
+
+      // csv-to-docs never cleans json_docs (it writes alongside what is
+      // there), so clear a previous run's docs first — otherwise a superseded
+      // dataset would be re-uploaded and counted as this run's data.
+      const staleDocs = cleanSeededDocs(dataPath);
+      if (staleDocs > 0) {
+        console.log(`[Test Environment Agent] Cleared ${staleDocs} stale json_docs file(s) from a previous run`);
+      }
 
       // Docs: CSV -> json_docs -> instance, in one ordered cht-conf process.
       const docsRun = await runChtConf({
@@ -410,7 +456,13 @@ export class TestEnvironmentAgent {
         console.log('[Test Environment Agent] No users.csv in the data project — skipping create-users');
       }
 
-      this.seededData.set(handle.url, { dataPath, docIds: seeded.map((doc) => doc.id) });
+      // Only a successful, non-empty seed defines the reset worklist — a
+      // failed or empty re-seed must not clobber a live one (docs from the
+      // earlier seed are still on the instance). Deterministic ids mean a
+      // successful follow-up seed re-covers a failed run's partial upload.
+      if (docsOk && seeded.length > 0) {
+        this.seededData.set(handle.url, { dataPath, docIds: seeded.map((doc) => doc.id) });
+      }
 
       const result: TestDataResult = {
         placesCreated: counts.places,
@@ -471,8 +523,10 @@ export class TestEnvironmentAgent {
   /**
    * couchdb-tier reset: delete the tracked seeded docs at their CURRENT revs
    * (sentinel may have bumped them), then reseed pristine copies from the
-   * tracked json_docs. Throws when the wipe or the reseed does not fully
-   * apply — a half-reset environment must not pass as clean.
+   * tracked json_docs. The reseed source is pre-flighted BEFORE the wipe so a
+   * vanished data project fails closed instead of leaving the instance empty.
+   * Throws when the wipe or the reseed does not fully apply — a half-reset
+   * environment must not pass as clean.
    */
   private async resetCouchdbTier(handle: EnvironmentHandle): Promise<void> {
     const tracked = this.seededData.get(handle.url);
@@ -482,6 +536,17 @@ export class TestEnvironmentAgent {
           'nothing to wipe (seed with prepareTestData first)'
       );
       return;
+    }
+
+    // Pre-flight the reseed source BEFORE the destructive wipe: if the data
+    // project's json_docs are gone, wiping would leave the environment empty
+    // while this method reports success.
+    const onDisk = readSeededDocs(tracked.dataPath);
+    if (onDisk.length === 0) {
+      throw new Error(
+        `couchdb reset: ${tracked.dataPath}/json_docs has no docs to reseed from — ` +
+          're-run prepareTestData instead of resetting'
+      );
     }
 
     console.log(
@@ -516,13 +581,22 @@ export class TestEnvironmentAgent {
     if (!runSucceeded(reseed)) {
       throw new Error(`couchdb reset: reseed failed — ${describeRunFailure('upload-docs', reseed)}`);
     }
+    // upload-docs exits 0 with NO summary when it uploaded nothing, and the
+    // summary total is only the on-disk file count — so require a summary and
+    // measure it against what the pre-flight saw, never against itself.
     const summary = parseUploadDocsSummary(reseed.output);
-    if (summary && summary.uploaded < summary.total) {
-      throw new Error(`couchdb reset: reseed uploaded only ${summary.uploaded} of ${summary.total} docs`);
+    const uploadedCount = summary?.uploaded ?? 0;
+    if (uploadedCount < onDisk.length) {
+      throw new Error(`couchdb reset: reseed uploaded only ${uploadedCount} of ${onDisk.length} docs`);
     }
 
+    // The reseeded docs are the new tracked state (the dataset may have
+    // changed since the wiped set was seeded).
+    this.seededData.set(handle.url, { dataPath: tracked.dataPath, docIds: onDisk.map((doc) => doc.id) });
+
     console.log(
-      `[Test Environment Agent] couchdb reset complete — ${tracked.docIds.length} doc(s) wiped and reseeded`
+      `[Test Environment Agent] couchdb reset complete — ` +
+        `${tracked.docIds.length} doc(s) wiped, ${onDisk.length} reseeded`
     );
   }
 

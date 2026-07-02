@@ -85,13 +85,27 @@ describe('TestEnvironmentAgent', () => {
 
     describe('real mode (useMockDocker: false)', () => {
       let fetchStub: sinon.SinonStub;
+      // Provision reads these; isolate every test from the workbench env.
+      const PROVISION_ENV_KEYS = ['CHT_URL', 'COUCHDB_USER', 'COUCHDB_PASSWORD'];
+      const priorProvisionEnv: Record<string, string | undefined> = {};
 
       beforeEach(() => {
         fetchStub = sinon.stub(globalThis, 'fetch' as any);
+        for (const key of PROVISION_ENV_KEYS) {
+          priorProvisionEnv[key] = process.env[key];
+          delete process.env[key];
+        }
       });
 
       afterEach(() => {
         sinon.restore();
+        for (const key of PROVISION_ENV_KEYS) {
+          if (priorProvisionEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = priorProvisionEnv[key];
+          }
+        }
       });
 
       it('returns a docker handle once the environment is healthy', async () => {
@@ -134,15 +148,7 @@ describe('TestEnvironmentAgent', () => {
       });
 
       describe('CHT_URL fallback', () => {
-        const priorChtUrl = process.env.CHT_URL;
-
-        afterEach(() => {
-          if (priorChtUrl === undefined) {
-            delete process.env.CHT_URL;
-          } else {
-            process.env.CHT_URL = priorChtUrl;
-          }
-        });
+        // Env save/clear/restore is handled by the enclosing describe.
 
         it('falls back to process.env.CHT_URL when no url option is given', async () => {
           fetchStub.resolves({ ok: true, status: 200 });
@@ -184,6 +190,55 @@ describe('TestEnvironmentAgent', () => {
 
           expect(handle.url).to.equal('https://cht.example');
           expect(fetchStub.firstCall.args[0]).to.equal('https://cht.example/api/v2/monitoring');
+        });
+
+        it('strips embedded credentials out of the URL (logged + fetch()ed) into the auth fallback', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          // undici's fetch() rejects credentialed URLs, and handle.url is logged.
+          process.env.CHT_URL = 'https://ops:p%40ss@cht.example';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.url).to.equal('https://cht.example');
+          expect(handle.auth).to.deep.equal({ user: 'ops', password: 'p@ss' });
+          expect(fetchStub.firstCall.args[0]).to.equal('https://cht.example/api/v2/monitoring');
+        });
+
+        it('tolerates a raw % in embedded credentials instead of crashing provision', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://ops:p%ss@cht.example';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.auth).to.deep.equal({ user: 'ops', password: 'p%ss' });
+          expect(handle.url).to.equal('https://cht.example');
+        });
+
+        it('honors the COUCHDB_USER/COUCHDB_PASSWORD env seam (test-env-up.sh parity)', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.COUCHDB_USER = 'admin';
+          process.env.COUCHDB_PASSWORD = 'not-the-default';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.auth).to.deep.equal({ user: 'admin', password: 'not-the-default' });
+        });
+
+        it('prefers explicit auth over URL-embedded and env credentials', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://ops:urlpass@cht.example';
+          process.env.COUCHDB_PASSWORD = 'envpass';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({
+            version: '4.18.0',
+            auth: { user: 'explicit', password: 'explicitpass' },
+          });
+
+          expect(handle.auth).to.deep.equal({ user: 'explicit', password: 'explicitpass' });
         });
       });
     });
@@ -499,6 +554,16 @@ describe('TestEnvironmentAgent', () => {
           expect((error as Error).message).to.include('HTTP 503');
         }
       });
+
+      it('keeps contactTypes empty but warns when the instance defines none (built-in default hierarchy)', async () => {
+        settingsStub.resolves({ roles: {} });
+        const warnSpy = sinon.spy(console, 'warn');
+
+        const config = await realAgent.discoverConfig(dockerHandle);
+
+        expect(config.contactTypes).to.deep.equal([]);
+        expect(warnSpy.args.flat().join(' ')).to.include('no contact_types');
+      });
     });
   });
 
@@ -571,6 +636,7 @@ describe('TestEnvironmentAgent', () => {
       let runChtConfStub: sinon.SinonStub;
       let readSeededDocsStub: sinon.SinonStub;
       let hasUsersCsvStub: sinon.SinonStub;
+      let cleanSeededDocsStub: sinon.SinonStub;
 
       beforeEach(() => {
         realAgent = new TestEnvironmentAgent({ useMockDocker: false });
@@ -579,6 +645,7 @@ describe('TestEnvironmentAgent', () => {
         runChtConfStub.onCall(1).resolves(okRun(ansiInfo('Creating user alice')));
         readSeededDocsStub = sinon.stub(testData, 'readSeededDocs').returns(seededDocs);
         hasUsersCsvStub = sinon.stub(testData, 'hasUsersCsv').returns(true);
+        cleanSeededDocsStub = sinon.stub(testData, 'cleanSeededDocs').returns(0);
       });
 
       afterEach(() => {
@@ -592,6 +659,15 @@ describe('TestEnvironmentAgent', () => {
         } catch (error) {
           expect((error as Error).message).to.include('dataPath');
         }
+      });
+
+      it('clears a previous run\'s stale json_docs before converting', async () => {
+        cleanSeededDocsStub.returns(3);
+
+        await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(cleanSeededDocsStub.calledOnceWith(dataPath)).to.equal(true);
+        expect(cleanSeededDocsStub.calledBefore(runChtConfStub)).to.equal(true);
       });
 
       it('runs csv-to-docs + upload-docs, then create-users, via the runner', async () => {
@@ -729,17 +805,19 @@ describe('TestEnvironmentAgent', () => {
 
         let agentUnderTest: TestEnvironmentAgent;
         let runChtConfStub: sinon.SinonStub;
+        let readSeededDocsStub: sinon.SinonStub;
         let fetchDocRevsStub: sinon.SinonStub;
         let bulkDocsStub: sinon.SinonStub;
 
         beforeEach(() => {
           agentUnderTest = new TestEnvironmentAgent({ useMockDocker: false });
           runChtConfStub = sinon.stub(chtConfRunner, 'runChtConf');
-          sinon.stub(testData, 'readSeededDocs').returns([
+          readSeededDocsStub = sinon.stub(testData, 'readSeededDocs').returns([
             { id: 'place-1', type: 'clinic' },
             { id: 'person-1', type: 'person' },
           ]);
           sinon.stub(testData, 'hasUsersCsv').returns(false);
+          sinon.stub(testData, 'cleanSeededDocs').returns(0);
           fetchDocRevsStub = sinon.stub(chtApi, 'fetchDocRevs').resolves([
             { id: 'place-1', rev: '7-live' },
             { id: 'person-1', rev: '2-live' },
@@ -838,6 +916,64 @@ describe('TestEnvironmentAgent', () => {
           } catch (error) {
             expect((error as Error).message).to.include('reseed uploaded only 1 of 2');
           }
+        });
+
+        it('fails closed BEFORE the wipe when the reseed source is gone', async () => {
+          await seedTracking();
+          readSeededDocsStub.returns([]); // json_docs vanished since seeding
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('no docs to reseed from');
+          }
+          expect(fetchDocRevsStub.called).to.equal(false);
+          expect(bulkDocsStub.called).to.equal(false);
+        });
+
+        it('throws when the reseed uploads nothing (upload-docs prints no summary)', async () => {
+          await seedTracking();
+          runChtConfStub.resolves(okRun(ansiInfo('No docs directory found at /mnt/test-data/json_docs.')));
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('reseed uploaded only 0 of 2');
+          }
+        });
+
+        it('refreshes the tracking to the reseeded docs when the dataset shrank', async () => {
+          await seedTracking();
+          readSeededDocsStub.returns([{ id: 'place-1', type: 'clinic' }]);
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 1 of 1 docs uploaded OK.')));
+          await agentUnderTest.reset(dockerHandle, 'couchdb'); // wipes 2, reseeds 1
+
+          fetchDocRevsStub.resetHistory();
+          fetchDocRevsStub.resolves([{ id: 'place-1', rev: '9-x' }]);
+          bulkDocsStub.resolves([{ id: 'place-1', ok: true }]);
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1']);
+        });
+
+        it('does not let a failed re-seed clobber the wipe worklist', async () => {
+          await seedTracking();
+          // A later seeding attempt fails after its json_docs were cleaned.
+          readSeededDocsStub.returns([]);
+          runChtConfStub.resolves({ exitCode: 1, output: 'ERROR boom', timedOut: false });
+          await agentUnderTest.prepareTestData(dockerHandle, seedConfig, { dataPath: '/mnt/other-data' });
+
+          // The original worklist must still drive the wipe.
+          readSeededDocsStub.returns([
+            { id: 'place-1', type: 'clinic' },
+            { id: 'person-1', type: 'person' },
+          ]);
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1', 'person-1']);
         });
 
         it('teardown clears the tracking, so a later couchdb reset is a no-op', async () => {

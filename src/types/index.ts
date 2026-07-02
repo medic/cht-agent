@@ -657,7 +657,13 @@ export interface ProvisionOptions {
    * options.url ?? process.env.CHT_URL ?? https://nginx (cht-agent-net).
    */
   url?: string;
-  /** Credentials for the instance (default: medic/password — cht-docker-compose.sh defaults). */
+  /**
+   * Credentials for the instance. Real-path fallback order: options.auth,
+   * then creds embedded in the resolved URL (always stripped from handle.url
+   * — logged URLs and fetch() must stay cred-free), then
+   * COUCHDB_USER/COUCHDB_PASSWORD env (the scripts/test-env-up.sh seam),
+   * then medic/password (cht-docker-compose.sh defaults).
+   */
   auth?: { user: string; password: string };
   /** Readiness polling tuning (the human may take minutes to bring the env up). */
   readiness?: ReadinessOptions;

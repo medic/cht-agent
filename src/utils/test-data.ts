@@ -14,7 +14,7 @@
  * "Creating user <username>" before each POST /api/v1/users.
  */
 
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { DiscoveredConfig } from '../types';
 
@@ -67,6 +67,26 @@ export const countCreatedUsers = (output: string): number => {
 
 /** True when the data project has a users.csv for create-users to consume. */
 export const hasUsersCsv = (dataPath: string): boolean => existsSync(join(dataPath, 'users.csv'));
+
+/**
+ * Remove the .doc.json files a previous csv-to-docs run left behind in
+ * `<dataPath>/json_docs`. csv-to-docs never cleans the directory (it warns
+ * "There are already docs in <dir>" and writes alongside), so without this a
+ * superseded dataset's docs would be re-uploaded and counted as the current
+ * run's data. Only *.doc.json files are removed — upload-docs report logs and
+ * anything else stay. Returns how many files were removed.
+ */
+export const cleanSeededDocs = (dataPath: string): number => {
+  const docDir = join(dataPath, 'json_docs');
+  if (!existsSync(docDir)) {
+    return 0;
+  }
+  const names = readdirSync(docDir).filter((name) => name.endsWith(DOC_FILE_EXTENSION));
+  for (const name of names) {
+    unlinkSync(join(docDir, name));
+  }
+  return names.length;
+};
 
 /**
  * Read the docs csv-to-docs generated at `<dataPath>/json_docs`. Returns []

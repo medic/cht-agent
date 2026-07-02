@@ -1,10 +1,11 @@
 import { expect } from 'chai';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   SeededDoc,
   classifySeededDocs,
+  cleanSeededDocs,
   countCreatedUsers,
   hasUsersCsv,
   parseUploadDocsSummary,
@@ -113,6 +114,28 @@ describe('test-data', () => {
         writeFileSync(join(dataPath, 'json_docs', 'broken.doc.json'), '{not json');
 
         expect(() => readSeededDocs(dataPath)).to.throw();
+      });
+    });
+
+    describe('cleanSeededDocs', () => {
+      it('removes only the .doc.json files, keeping report logs and other project files', () => {
+        writeDoc('stale-1', { type: 'clinic' });
+        writeDoc('stale-2', { type: 'person' });
+        writeFileSync(join(dataPath, 'json_docs', 'upload-docs.1.log.json'), '{}');
+        writeFileSync(join(dataPath, 'users.csv'), 'username,password,roles\n');
+
+        const removed = cleanSeededDocs(dataPath);
+
+        expect(removed).to.equal(2);
+        expect(readSeededDocs(dataPath)).to.deep.equal([]);
+        expect(hasUsersCsv(dataPath)).to.equal(true); // files outside json_docs untouched
+        expect(readdirSync(join(dataPath, 'json_docs'))).to.deep.equal(['upload-docs.1.log.json']);
+      });
+
+      it('returns 0 when json_docs does not exist', () => {
+        rmSync(join(dataPath, 'json_docs'), { recursive: true });
+
+        expect(cleanSeededDocs(dataPath)).to.equal(0);
       });
     });
   });
