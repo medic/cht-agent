@@ -1,10 +1,10 @@
 ---
-id: cht-core-10803
+id: cht-core-10802
 category: bug
 domain: messaging
 domainFit: strong
-issueNumber: 10803
-issueUrl: https://github.com/medic/cht-core/issues/10803
+issueNumber: 10802
+issueUrl: https://github.com/medic/cht-core/issues/10802
 title: Check current task/message state before processing a due scheduled message in the due_tasks transition
 lastUpdated: '2026-06-22'
 summary: The due_tasks schedule could (re)process scheduled messages whose state had already changed since the view was indexed, risking duplicate or unwanted sends. The fix re-checks each message's current status on the loaded document before processing it.
