@@ -56,3 +56,18 @@ commits on this branch. Base: `main` @ `ed07177`.
   configuration) had none. Mission's "forms-and-reports ≈47" counted promoted
   drafts only; cumulative is 47+10=57. contacts 54 (44+10) and data-sync 24
   (14+10) match the mission's cumulative numbers exactly.
+
+## S5 — `66-test-environment-layer-implementation` (710a023, phases 1–3) @ 80e2ec4
+- Tests: 712 → 820 (+108)   Lint: clean
+- Conflicts: none — the anticipated `src/types/index.ts` overlap auto-merged;
+  union verified against both parents (all 193 lines of #66's type additions
+  present; 134's CHTLayer/ConfigArtifact/CanonicalDiff additions present; the
+  only non-additive delta vs the #66 branch is 134's deliberate removal of
+  `historicalSuccessRate` from f63cc8b, correctly carried).
+- Notes / deviations: mission ballpark said "~640+"; actual 820 (ballpark was
+  written before mission-02b's +75 Phase-3 tests landed).
+  `docker/cht-agent-net.override.yml` present; test-environment specs green.
+  S0–S3 adversarial verification fan-out returned 3/3 pass (schema union
+  complete; no branch content lost; conventions ground rules upheld —
+  claude-cli.ts/factory.ts/types.ts byte-identical to main,
+  codeContextFindings wiring intact, package-lock identical to main).
