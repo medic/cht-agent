@@ -104,8 +104,8 @@ PR1 — add a single-sourced layer/configArtifact/mechanism taxonomy (constants 
 schema.json + drift-lock test), extend ResolvedIssueContext, and fix the Context
 Analysis loader to read the canonical agent-memory/domains/<domain>/issues/ corpus
 (dropping the empty legacy path and the phase: completed filter). layer defaults
-to cht-core, so cht-core behavior is unchanged. Resolves the context-analysis
-memory-pipeline schema-bridge issue (Option 1).
+to cht-core, so cht-core behavior is unchanged. Advances #135 (loading/schema
+half, Option 1; scoring + dedupe are PR4).
 
 PR2 — accept and infer layer/configArtifact on tickets: optional layer,
 configArtifact, artifactName, chtConfVersion, deploymentRef on technical_context
@@ -214,7 +214,11 @@ knowledge-base/resolved-issues/by-domain path and the phase: completed filter
 that left the agent with zero contexts. layer defaults to cht-core, so cht-core
 behavior is unchanged; unrecognized enum values are dropped.
 
-Resolves the context-analysis memory-pipeline schema bridge (Option 1).
+Advances #135 (the context-analysis memory-loading bug) — the loading/schema
+half (Option 1: canonical path + mapped schema + tests). Does NOT close #135:
+scoring (real-field similarity, dedupe-by-id, success-rate) lands in PR4, and
+trustworthy dedupe also waits on the #129 distiller/metadata fix (corrupted
+issueNumber). Use "Advances #135", not "Closes #135".
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ```
@@ -338,8 +342,13 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 **Depends on:** PR1 (schema); soft-depends PR2 (layer in state). Add a strong `layer`
 match + `configArtifact`/`mechanism` overlap to `calculateSimilarityScore`; filter
 `findSimilarIssues` by `layer` first; emit the config snippet as the pattern for cht-conf
-entries. **Also addresses the remaining schema-bridge concerns:** de-duplicate similar
-issues by id and drop the synthetic `historicalSuccessRate`.
+entries. **Finishes #135** (criteria 3/4/5): de-duplicate similar issues by id and drop the
+synthetic `historicalSuccessRate`. PR4 is the PR that should `Close #135`.
+
+> **Gated on the #129 distiller bug for the dedupe step.** The review on #129 found the
+> distiller stored PR numbers as `issueNumber` in 136/261 drafts (#10792 appears 3×), so
+> dedupe-by-id is untrustworthy until the metadata is corrected (hybrid scraper-fix +
+> deterministic metadata rewrite proposed on #129). Land PR4's dedupe after/with that fix.
 
 **Files:** `src/agents/context-analysis-agent.ts` (+ its spec).
 

@@ -17,7 +17,7 @@ to `cht-core` everywhere.
 
 ### Why
 
-Two things block cht-conf support and the full Research Supervisor demo:
+Two things block cht-conf support and Research Demo:
 
 1. **The taxonomy has no way to say "this is a config issue, not a platform issue."**
    Without a `layer` discriminator, a config ticket and a cht-core fix score against each
@@ -55,18 +55,33 @@ Two things block cht-conf support and the full Research Supervisor demo:
   "Config Pattern" note (config snippet replaces "Code Patterns" for cht-conf entries), and
   a cht-conf worked example (the PNC miscarriage skip-logic from the design doc).
 
-### Resolves the schema-bridge issue (`context-analysis-memory-pipeline-schema-bridge.md`)
+### Advances #135 (Context Analysis memory-loading bug) — does NOT close it
 
-| Concern | How this PR addresses it |
+This is the GitHub-filed version of the local `context-analysis-memory-pipeline-schema-bridge.md`
+draft. PR1 satisfies the **loading/schema** half (Option 1) but leaves the **scoring** half
+to PR4, so it should be linked with `Advances #135`, not `Closes`.
+
+| #135 acceptance criterion | This PR |
 |---|---|
-| Reads an empty legacy path / requires `phase: completed` | Reads `domains/<domain>/issues/` directly; legacy path + phase filter dropped |
-| Lossy `services`→`components`, `tags`-as-components | Mapping kept for overlap signal, but documented; field-level scoring is PR4 |
-| Duplicate issue ids in results | Single canonical source removes the cross-path dup; result-level de-dup is PR4 |
-| Synthetic `historicalSuccessRate` | Not introduced here; removal lands with the scoring rewrite in PR4 |
+| 1. Reads canonical pipeline corpus (no empty legacy path / no `phase: completed`) | ✅ Reads `domains/<domain>/issues/` directly; legacy path + phase filter dropped |
+| 2. Single agreed schema/contract documented | ✅ Loader mapping + `ResolvedIssueContext` fields + `TEMPLATE.md`/`schema.json` |
+| 6. Tests cover new schema loading/mapping | ✅ New loader-mapping tests |
+| 3. Similarity scoring uses real draft fields (not tag-as-component) | ⏳ **PR4** (Context Analysis scoring) |
+| 4. Results de-duplicated by issue id | ⏳ **PR4** — *and* gated on the #129 data bug below |
+| 5. `historicalSuccessRate` real or removed | ⏳ **PR4** |
 
-> PR4 (Context Analysis scoring) finishes the schema-bridge acceptance criteria
-> (field-level scoring, result de-dup, success-rate removal). PR1 makes the corpus
-> readable; PR4 makes it well-scored.
+> PR1 makes the corpus *readable* (criteria 1, 2, 6); PR4 makes it *well-scored*
+> (criteria 3, 4, 5). #135 closes when PR4 lands.
+
+**Dependency on the PR #129 distiller bug (corrupted `issueNumber`):** the review on #129
+([sugat009](https://github.com/medic/cht-agent/pull/129#pullrequestreview-4581031652),
+[reply](https://github.com/medic/cht-agent/pull/129#issuecomment-4811679095)) found that
+the distiller's fallback `issueNumber = pr.linkedIssues[0]?.number ?? pr.prNumber` stored
+**PR numbers as issue ids in 136/261 drafts** (e.g. #10792 appears 3×). PR1's loader maps
+`id`/`issue_number` straight from that frontmatter, so it inherits whatever the corpus
+holds — it does not introduce the bug, but **#135 criterion 4 (dedupe by issue id) can't be
+trusted until the distiller/metadata fix lands** (the hybrid scraper-fix + metadata-only
+rewrite proposed on #129). PR4's dedupe should land after, or alongside, that correction.
 
 ### Included: PR2 (layer-aware tickets + domain inference)
 
@@ -115,4 +130,6 @@ for those models, and a `RESEARCH_MODEL` env override makes the planner model se
   seeding-v2 prompt and no longer applies — `main` already enumerates all domains via
   `CHT_DOMAINS.length`).
 
-Closes nothing on its own; advances #134 and resolves the schema-bridge issue's Option 1.
+Advances #134; advances #135 (the loading/schema half — Option 1). Closes neither: #134
+needs PR3–PR6, and #135 needs PR4's scoring rewrite (plus the #129 distiller/metadata fix
+for trustworthy dedupe). Use `Advances #134` / `Advances #135` in the PR, not `Closes`.
