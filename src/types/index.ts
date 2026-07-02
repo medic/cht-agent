@@ -282,7 +282,6 @@ export interface ContextAnalysisResult {
   reusablePatterns: CodePattern[];
   relevantDesignDecisions: DesignDecision[];
   recommendations: string[];
-  historicalSuccessRate: number; // 0-1
   relatedDomains: CHTDomain[];
   codeArchitectureSummary?: string;
 }
@@ -316,6 +315,13 @@ export interface ResearchState {
     timestamp: string;
   }>;
   issue?: IssueTemplate;
+  /**
+   * Layer routing, lifted out of the ticket at graph init so agents receive it
+   * explicitly (and later disambiguation of `investigate` can update it without
+   * rewriting the ticket). Absent for tickets that predate the layer field.
+   */
+  layer?: CHTLayer;
+  configArtifact?: ConfigArtifact;
   researchFindings?: ResearchFindings;
   codeContextFindings?: CodeContextFindings;
   contextAnalysis?: ContextAnalysisResult;
@@ -410,6 +416,12 @@ export interface ArchitectureInsight {
   description: string;
   patterns: string[];
   dependencies: string[];
+  /**
+   * The DeepWiki repo the insight came from (cht-core, cht-conf, …). Keeps
+   * findings attributable when several wikis are merged — most importantly for
+   * layer: investigate tickets, which query the cht-core and cht-conf wikis together.
+   */
+  sourceRepo?: string;
 }
 
 /**
@@ -423,6 +435,27 @@ export interface ModuleRelationship {
 }
 
 /**
+ * Outcome of comparing a deployment's config artifact against the canonical
+ * baseline (#134). Produced by src/utils/canonical-diff.ts.
+ */
+export interface CanonicalDiffResult {
+  artifact: ConfigArtifact;
+  artifactName?: string;
+  /** Project-relative path that was compared (the first candidate found). */
+  relativePath?: string;
+  status:
+    | 'differs'
+    | 'identical'
+    | 'binary-differs'
+    | 'missing-in-canonical'
+    | 'missing-in-deployment'
+    | 'unavailable';
+  /** Line diff for text artifacts (canonical = -, deployment = +), truncated. */
+  diff?: string;
+  summary: string;
+}
+
+/**
  * Code context findings from OpenDeepWiki Code Context Agent
  */
 export interface CodeContextFindings {
@@ -433,6 +466,12 @@ export interface CodeContextFindings {
   warnings: string[];
   confidence: number; // 0-1
   source: 'opendeepwiki' | 'mock';
+  /**
+   * For layer: cht-conf tickets with a mounted deployment config: the suspect
+   * artifact's delta against the canonical baseline. Absent when the mount or
+   * the layer/artifact routing does not apply.
+   */
+  canonicalDiff?: CanonicalDiffResult;
 }
 
 /**

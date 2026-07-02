@@ -21,6 +21,7 @@
 set -uo pipefail
 
 CHT_CORE_PATH="${CHT_CORE_PATH:-/workspace/cht-core}"
+CHT_CONF_PATH="${CHT_CONF_PATH:-/workspace/cht-conf-project}"
 FAILURES=0
 WARNINGS=0
 
@@ -46,12 +47,15 @@ export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 EOF
 fi
 
-# 2. Pre-push hook in the working copy (defense in depth — push is already
-# blocked at the system git config and there is nothing to authenticate with).
-if git -C "$CHT_CORE_PATH" rev-parse --git-dir > /dev/null 2>&1; then
-  HOOKS_DIR="$(git -C "$CHT_CORE_PATH" rev-parse --absolute-git-dir)/hooks"
-  mkdir -p "$HOOKS_DIR" 2>/dev/null || true
-  cat > "$HOOKS_DIR/pre-push" 2>/dev/null << 'HOOK'
+# 2. Pre-push hook in each mounted working copy (defense in depth — push is
+# already blocked at the system git config and there is nothing to
+# authenticate with).
+install_pre_push_hook() {
+  local repo_path="$1" label="$2"
+  local hooks_dir
+  hooks_dir="$(git -C "$repo_path" rev-parse --absolute-git-dir)/hooks"
+  mkdir -p "$hooks_dir" 2>/dev/null || true
+  cat > "$hooks_dir/pre-push" 2>/dev/null << 'HOOK'
 #!/bin/bash
 echo "========================================"
 echo "  BLOCKED: the cht-agent cannot push."
@@ -62,15 +66,27 @@ exit 1
 HOOK
   # set -e is intentionally off; if .git/hooks is owned by another uid the
   # write fails silently, so verify and warn rather than assume L4 is up.
-  if [[ -f "$HOOKS_DIR/pre-push" ]] && chmod +x "$HOOKS_DIR/pre-push" 2>/dev/null; then
-    ok "pre-push hook installed in working copy"
+  if [[ -f "$hooks_dir/pre-push" ]] && chmod +x "$hooks_dir/pre-push" 2>/dev/null; then
+    ok "pre-push hook installed in $label"
   else
-    warn "could not install pre-push hook (working copy .git owned by another uid?) — L4 degraded; push still blocked by L2/L3"
+    warn "could not install pre-push hook in $label (.git owned by another uid?) — L4 degraded; push still blocked by L2/L3"
   fi
+}
+
+if git -C "$CHT_CORE_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+  install_pre_push_hook "$CHT_CORE_PATH" "cht-core working copy"
 else
   # Cloning in here is impossible by design: the hardened .git/config shadow
   # mount requires the .git directory to exist before the container starts.
   warn "cht-core working copy not found at $CHT_CORE_PATH — run docker/scripts/bootstrap-workspace.sh on the HOST, then restart"
+fi
+
+# The deployment config mount (#134) gets the same hook when a real config
+# repo is mounted. The committed placeholder (marker file) and non-git mounts
+# are fine — there is nothing to push from them.
+if [[ ! -e "$CHT_CONF_PATH/.cht-conf-placeholder" ]] \
+    && git -C "$CHT_CONF_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+  install_pre_push_hook "$CHT_CONF_PATH" "deployment config repo"
 fi
 
 echo "[cht-agent] Sandbox verification:"
@@ -79,7 +95,10 @@ echo "[cht-agent] Sandbox verification:"
 # multi-valued, so a "some value exists" check would miss a clobbered https
 # rewrite (which is the scheme the agent's clones actually use).
 SYS_REWRITES="$(git config --system --get-all url.error://push-blocked-by-policy.pushInsteadOf 2>/dev/null)"
-for scheme in "https://github.com/" "git@github.com:" "ssh://git@github.com/"; do
+# The bare https:// and http:// entries are the #134 catch-alls: they cover
+# embedded-credential URLs and non-GitHub remotes (e.g. a mounted deployment
+# config repo), which the github.com prefixes alone do not.
+for scheme in "https://github.com/" "git@github.com:" "ssh://git@github.com/" "https://" "http://"; do
   if printf '%s\n' "$SYS_REWRITES" | grep -qxF "$scheme"; then
     ok "system pushInsteadOf rewrites $scheme push URLs to error://"
   else
@@ -146,6 +165,14 @@ if [[ -e "$CHT_CORE_PATH/.git/config" ]]; then
   else
     ok "working copy .git/config is read-only"
   fi
+fi
+
+# Deployment config repo (#134): no .git/config shadow mount (its .git may not
+# exist before start), so pushes from it rely on the catch-all pushInsteadOf
+# rewrites (L2, checked above) plus the pre-push hook (L4, installed above).
+if [[ ! -e "$CHT_CONF_PATH/.cht-conf-placeholder" ]] \
+    && git -C "$CHT_CONF_PATH" rev-parse --git-dir > /dev/null 2>&1; then
+  ok "deployment config repo mounted at $CHT_CONF_PATH (push blocked by catch-all rewrite + hook)"
 fi
 
 # Read path stays open: cht-conf present for the Test Environment Layer

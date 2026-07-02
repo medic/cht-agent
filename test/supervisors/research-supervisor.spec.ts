@@ -47,7 +47,6 @@ describe('ResearchSupervisor - Pure Functions', () => {
     reusablePatterns: [],
     relevantDesignDecisions: [],
     recommendations: ['Recommendation 1'],
-    historicalSuccessRate: 0.8,
     relatedDomains: ['contacts'],
     ...overrides,
   });

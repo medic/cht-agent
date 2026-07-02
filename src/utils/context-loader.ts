@@ -142,13 +142,61 @@ const asEnum = <T extends string>(value: unknown, allowed: readonly T[]): T | un
     ? (value as T)
     : undefined;
 
+/** Bound the extracted snippet so a runaway draft can't bloat every analysis prompt. */
+const MAX_CONFIG_PATTERN_LENGTH = 4000;
+
+/**
+ * Pull the "## Config Pattern" section out of a cht-conf draft body — per
+ * TEMPLATE.md the before/after config snippet in that section IS the reusable
+ * pattern for config entries. Code fences are tracked both while locating the
+ * heading (a fenced quotation of the template, as in TEMPLATE.md's own
+ * examples, must not anchor extraction) and while collecting the section
+ * (fenced lines starting with # are snippet comments, not markdown headings).
+ */
+function extractConfigPattern(body: string): string | undefined {
+  const lines = body.split('\n');
+
+  let start = -1;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) {
+      inFence = !inFence;
+    } else if (!inFence && /^##\s+Config Pattern\s*$/.test(lines[i])) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) {
+    return undefined;
+  }
+
+  const section: string[] = [];
+  inFence = false;
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+    } else if (!inFence && /^##\s/.test(line)) {
+      break;
+    }
+    section.push(line);
+  }
+
+  const text = section.join('\n').trim();
+  if (text.length === 0) {
+    return undefined;
+  }
+  return text.slice(0, MAX_CONFIG_PATTERN_LENGTH);
+}
+
 // Map a promoted-draft's frontmatter onto ResolvedIssueContext. Drafts come from merged
 // issues, so phase is 'completed'; tags are folded into components so overlap scoring has
 // signal against a ticket's technical context. Config fields are only set for cht-conf
 // drafts (layer defaults to cht-core, preserving today's behavior).
 function mapDraftToResolvedIssue(
   metadata: Record<string, unknown>,
-  domain: CHTDomain
+  body: string,
+  domain: CHTDomain,
+  fileSlug: string
 ): ResolvedIssueContext {
   const services = asStringArray(metadata.services);
   const tags = asStringArray(metadata.tags);
@@ -156,8 +204,13 @@ function mapDraftToResolvedIssue(
 
   const layer = asEnum<CHTLayer>(metadata.layer, CHT_LAYERS) ?? 'cht-core';
 
+  // With neither an id nor an issueNumber, fall back to the file name so two
+  // such drafts never share an id (the similarity dedupe keys on it).
+  const fallbackId =
+    metadata.issueNumber === undefined ? `draft-${fileSlug}` : `cht-core-${metadata.issueNumber}`;
+
   return {
-    id: typeof metadata.id === 'string' ? metadata.id : `cht-core-${metadata.issueNumber ?? 'unknown'}`,
+    id: typeof metadata.id === 'string' ? metadata.id : fallbackId,
     issue_number: typeof metadata.issueNumber === 'number' ? metadata.issueNumber : undefined,
     timestamp: typeof metadata.lastUpdated === 'string' ? metadata.lastUpdated : '',
     category: typeof metadata.category === 'string' ? metadata.category : 'unknown',
@@ -176,15 +229,16 @@ function mapDraftToResolvedIssue(
     layer,
     configArtifact: asEnum<ConfigArtifact>(metadata.configArtifact, CONFIG_ARTIFACTS),
     mechanism: asEnum<ConfigMechanism>(metadata.mechanism, CONFIG_MECHANISMS),
+    fix: layer === 'cht-conf' ? extractConfigPattern(body) : undefined,
   };
 }
 
 function parseDraftIssue(filePath: string, domain: CHTDomain): ResolvedIssueContext | null {
-  const { metadata } = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
+  const { metadata, body } = parseFrontmatter(fs.readFileSync(filePath, 'utf-8'));
   if (!metadata.domain && metadata.issueNumber === undefined) {
     return null;
   }
-  return mapDraftToResolvedIssue(metadata, domain);
+  return mapDraftToResolvedIssue(metadata, body, domain, path.basename(filePath, '.md'));
 }
 
 function scanDraftsForIssues(dirPath: string, domain: CHTDomain): ResolvedIssueContext[] {

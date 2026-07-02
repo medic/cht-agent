@@ -126,39 +126,6 @@ describe('ContextAnalysisAgent', () => {
     });
   });
 
-  describe('calculateSuccessRate', () => {
-    it('should return 0.5 for empty contexts', () => {
-      const rate = (agent as any).calculateSuccessRate([]);
-
-      expect(rate).to.equal(0.5);
-    });
-
-    it('should return 1.0 when all contexts are completed', () => {
-      const contexts = [
-        createResolvedContext({ phase: 'completed' }),
-        createResolvedContext({ phase: 'completed' }),
-        createResolvedContext({ phase: 'completed' }),
-      ];
-
-      const rate = (agent as any).calculateSuccessRate(contexts);
-
-      expect(rate).to.equal(1.0);
-    });
-
-    it('should calculate correct ratio for mixed phases', () => {
-      const contexts = [
-        createResolvedContext({ phase: 'completed' }),
-        createResolvedContext({ phase: 'completed' }),
-        createResolvedContext({ phase: 'implementation' as any }), // Not completed
-        createResolvedContext({ phase: 'validation' as any }), // Not completed
-      ];
-
-      const rate = (agent as any).calculateSuccessRate(contexts);
-
-      expect(rate).to.equal(0.5); // 2 out of 4
-    });
-  });
-
   describe('findCommonComponents', () => {
     it('should return empty array for empty contexts', () => {
       const common = (agent as any).findCommonComponents([]);
@@ -273,7 +240,8 @@ describe('ContextAnalysisAgent', () => {
 
       expect(result.similarContexts).to.deep.equal([]);
       expect(result.recommendations).to.include('Domain not specified - unable to analyze context');
-      expect(result.historicalSuccessRate).to.equal(0.5);
+      // #135: the synthetic success rate is gone
+      expect(result).to.not.have.property('historicalSuccessRate');
     });
 
     it('should return related domains when domain overview exists', async () => {
@@ -292,20 +260,21 @@ describe('ContextAnalysisAgent', () => {
       expect(result.relatedDomains).to.deep.equal(['forms-and-reports']);
     });
 
-    it('should calculate historical success rate from similar contexts', async () => {
+    it('should not report a synthetic historical success rate (#135)', async () => {
       const issue = createTestIssue();
 
       sinon.stub(contextLoader, 'loadDomainOverview').returns(null);
       sinon.stub(contextLoader, 'loadDomainComponents').returns(null);
       sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
         createResolvedContext({ phase: 'completed', category: 'feature', domains: ['contacts'] }),
-        createResolvedContext({ id: 'r2', phase: 'completed', category: 'feature', domains: ['contacts'] }),
+        createResolvedContext({ id: 'r2', issue_number: 2, phase: 'completed', category: 'feature', domains: ['contacts'] }),
       ]);
       sinon.stub(contextLoader, 'getRelatedDomains').returns([]);
 
       const result = await agent.analyze(issue);
 
-      expect(result.historicalSuccessRate).to.equal(1.0);
+      expect(result.similarContexts.length).to.be.greaterThan(0);
+      expect(result).to.not.have.property('historicalSuccessRate');
     });
 
     it('should extract patterns from similar contexts', async () => {
@@ -322,6 +291,451 @@ describe('ContextAnalysisAgent', () => {
       const result = await agent.analyze(issue);
 
       expect(result.reusablePatterns.length).to.be.greaterThan(0);
+    });
+  });
+
+  describe('layer scoping and dedupe (#134/#135)', () => {
+    it('should never surface cht-conf entries for a cht-core ticket', () => {
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'core-1',
+          issue_number: 1,
+          category: 'feature',
+          domains: ['contacts'],
+        }),
+        createResolvedContext({
+          id: 'conf-1',
+          issue_number: 2,
+          category: 'feature',
+          domains: ['contacts'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'feature',
+        technical_context: { domain: 'contacts', components: [] },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'contacts');
+
+      expect(result.map((r: any) => r.id)).to.deep.equal(['core-1']);
+    });
+
+    it('should only surface cht-conf entries for a cht-conf ticket', () => {
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'core-1',
+          issue_number: 1,
+          category: 'bug',
+          domains: ['forms-and-reports'],
+        }),
+        createResolvedContext({
+          id: 'conf-1',
+          issue_number: 2,
+          category: 'bug',
+          domains: ['forms-and-reports'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          mechanism: 'relevant',
+        }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'bug',
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'forms-and-reports');
+
+      expect(result.map((r: any) => r.id)).to.deep.equal(['conf-1']);
+    });
+
+    it('should keep both layers in play for an investigate ticket', () => {
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'core-1',
+          issue_number: 1,
+          category: 'feature',
+          domains: ['contacts'],
+        }),
+        createResolvedContext({
+          id: 'conf-1',
+          issue_number: 2,
+          category: 'feature',
+          domains: ['contacts'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'feature',
+        technical_context: {
+          domain: 'contacts',
+          components: [],
+          layer: 'investigate',
+          configArtifact: 'form',
+        },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'contacts');
+
+      const ids = result.map((r: any) => r.id);
+      expect(ids).to.include('core-1');
+      expect(ids).to.include('conf-1');
+    });
+
+    it('should de-duplicate similar issues by issue id on a relinked corpus', () => {
+      // Fixture mirrors the post-#129-relink corpus: two drafts distilled from
+      // different PRs of the SAME GitHub issue share a trustworthy issueNumber.
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'contacts/9601-dedupe-check',
+          issue_number: 9601,
+          category: 'feature',
+          domains: ['contacts'],
+          components: { api: ['contacts-controller'] },
+        }),
+        createResolvedContext({
+          id: 'contacts/9601-dedupe-modal',
+          issue_number: 9601,
+          category: 'feature',
+          domains: ['contacts'],
+          components: {},
+        }),
+        createResolvedContext({
+          id: 'contacts/8000-other',
+          issue_number: 8000,
+          category: 'feature',
+          domains: ['contacts'],
+          components: {},
+        }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'feature',
+        technical_context: { domain: 'contacts', components: ['contacts-controller'] },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'contacts');
+
+      // The higher-scoring draft of issue 9601 survives; its duplicate does not
+      expect(result.map((r: any) => r.id)).to.deep.equal([
+        'contacts/9601-dedupe-check',
+        'contacts/8000-other',
+      ]);
+    });
+
+    it('should keep entries without issue_number distinct', () => {
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({ id: 'r1', category: 'feature', domains: ['contacts'] }),
+        createResolvedContext({ id: 'r2', category: 'feature', domains: ['contacts'] }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'feature',
+        technical_context: { domain: 'contacts', components: [] },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'contacts');
+
+      expect(result).to.have.lengthOf(2);
+    });
+
+    it('should exclude cross-layer entries even when they would clear the score threshold', () => {
+      // Mutation guard for the layer filter itself: without it, this conf
+      // entry scores 0.2 (category) + 0.2 (mechanism named in the ticket text)
+      // = 0.4 through the config path and would surface for a core ticket.
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'conf-leak',
+          issue_number: 7,
+          category: 'bug',
+          domains: ['forms-and-reports'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          mechanism: 'relevant',
+        }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'bug',
+        description: 'The relevant expression hides the question for online users',
+        technical_context: { domain: 'forms-and-reports', components: [] },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'forms-and-reports');
+
+      expect(result).to.deep.equal([]);
+    });
+  });
+
+  describe('config-aware scoring (#134)', () => {
+    const confTicket = createTestIssue({
+      type: 'bug',
+      description: 'The relevant expression keeps the question visible after a miscarriage',
+      technical_context: {
+        domain: 'forms-and-reports',
+        components: [],
+        layer: 'cht-conf',
+        configArtifact: 'form',
+      },
+    });
+
+    it('should rank a matching configArtifact above a non-matching one', () => {
+      const matching = createResolvedContext({
+        category: 'bug',
+        layer: 'cht-conf',
+        configArtifact: 'form',
+      });
+      const nonMatching = createResolvedContext({
+        category: 'bug',
+        layer: 'cht-conf',
+        configArtifact: 'task',
+      });
+
+      const scoreMatching = (agent as any).calculateSimilarityScore(confTicket, matching);
+      const scoreNonMatching = (agent as any).calculateSimilarityScore(confTicket, nonMatching);
+
+      expect(scoreMatching).to.be.greaterThan(scoreNonMatching);
+    });
+
+    it('should add mechanism overlap when the ticket text names the mechanism', () => {
+      const namedMechanism = createResolvedContext({
+        category: 'bug',
+        layer: 'cht-conf',
+        configArtifact: 'form',
+        mechanism: 'relevant',
+      });
+      const otherMechanism = createResolvedContext({
+        category: 'bug',
+        layer: 'cht-conf',
+        configArtifact: 'form',
+        mechanism: 'events',
+      });
+
+      const scoreNamed = (agent as any).calculateSimilarityScore(confTicket, namedMechanism);
+      const scoreOther = (agent as any).calculateSimilarityScore(confTicket, otherMechanism);
+
+      expect(scoreNamed).to.be.greaterThan(scoreOther);
+    });
+
+    it('should ignore core-shaped component overlap for cht-conf entries', () => {
+      const ticketWithComponents = createTestIssue({
+        type: 'bug',
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: ['contacts-controller'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+      const overlapWrongArtifact = createResolvedContext({
+        category: 'bug',
+        layer: 'cht-conf',
+        configArtifact: 'task',
+        components: { api: ['contacts-controller'] },
+      });
+      const matchingArtifactNoOverlap = createResolvedContext({
+        category: 'bug',
+        layer: 'cht-conf',
+        configArtifact: 'form',
+        components: {},
+      });
+
+      const scoreOverlap = (agent as any).calculateSimilarityScore(
+        ticketWithComponents,
+        overlapWrongArtifact
+      );
+      const scoreArtifact = (agent as any).calculateSimilarityScore(
+        ticketWithComponents,
+        matchingArtifactNoOverlap
+      );
+
+      expect(scoreArtifact).to.be.greaterThan(scoreOverlap);
+    });
+
+    it('should keep the original scoring for core-core pairs', () => {
+      const issue = createTestIssue({
+        type: 'feature',
+        technical_context: { domain: 'contacts', components: [] },
+      });
+      const resolved = createResolvedContext({ category: 'feature', domains: ['contacts'] });
+
+      const score = (agent as any).calculateSimilarityScore(issue, resolved);
+
+      // category (0.3) + domain (0.4), no component overlap
+      expect(score).to.be.closeTo(0.7, 0.0001);
+    });
+
+    it('should match mechanisms on word boundaries only', () => {
+      const prevents = createTestIssue({
+        type: 'bug',
+        description: 'validation prevents saving the form',
+        technical_context: { domain: 'forms-and-reports', components: [], layer: 'cht-conf' },
+      });
+      const irrelevant = createTestIssue({
+        type: 'bug',
+        description: 'the field is irrelevant to CHWs',
+        technical_context: { domain: 'forms-and-reports', components: [], layer: 'cht-conf' },
+      });
+
+      // 'events' inside 'prevents' and 'relevant' inside 'irrelevant' must not fire
+      expect((agent as any).ticketMentionsMechanism(prevents, 'events')).to.be.false;
+      expect((agent as any).ticketMentionsMechanism(irrelevant, 'relevant')).to.be.false;
+      expect((agent as any).ticketMentionsMechanism(confTicket, 'relevant')).to.be.true;
+    });
+
+    it('should not treat the investigate layer as a mismatch against config entries', () => {
+      // Without the investigate compatibility bonus, config entries are capped
+      // at 0.7 while core entries can reach 1.0 for the one ticket shape that
+      // sees a mixed pool.
+      const investigateTicket = createTestIssue({
+        type: 'bug',
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'investigate',
+          configArtifact: 'form',
+        },
+      });
+      const confEntry = createResolvedContext({
+        id: 'conf-1',
+        category: 'bug',
+        domains: ['forms-and-reports'],
+        layer: 'cht-conf',
+        configArtifact: 'form',
+      });
+      const coreEntry = createResolvedContext({
+        id: 'core-1',
+        category: 'bug',
+        domains: ['forms-and-reports'],
+      });
+
+      const confScore = (agent as any).calculateSimilarityScore(investigateTicket, confEntry);
+      const coreScore = (agent as any).calculateSimilarityScore(investigateTicket, coreEntry);
+
+      // conf: category 0.2 + layer-compat 0.3 + artifact 0.3 = 0.8
+      // core (core path): category 0.3 + domain 0.4 = 0.7
+      expect(confScore).to.be.closeTo(0.8, 0.0001);
+      expect(confScore).to.be.greaterThan(coreScore);
+    });
+  });
+
+  describe('config patterns and design decisions (#134)', () => {
+    const snippet = "# before\n${pnc_visit} = 'yes'\n# after\n${pnc_visit} = 'yes' and ${pnc_outcome} != 'miscarriage'";
+
+    const confContext = createResolvedContext({
+      id: 'conf-1',
+      issue_number: 2,
+      category: 'bug',
+      domains: ['forms-and-reports'],
+      layer: 'cht-conf',
+      configArtifact: 'form',
+      mechanism: 'relevant',
+      summary: 'PNC follow-up prompted after miscarriage',
+      fix: snippet,
+    });
+
+    it('should emit the config snippet as the pattern for cht-conf entries', () => {
+      const patterns = (agent as any).extractPatterns([confContext], null);
+
+      expect(patterns).to.have.lengthOf(1);
+      expect(patterns[0].example).to.equal(snippet);
+      expect(patterns[0].pattern).to.include('relevant');
+      expect(patterns[0].pattern).to.include('form');
+      expect(patterns[0].description).to.include('PNC follow-up');
+    });
+
+    it('should fall back to an issue reference when the snippet is missing', () => {
+      const withoutFix = createResolvedContext({
+        id: 'conf-2',
+        layer: 'cht-conf',
+        configArtifact: 'task',
+        fix: undefined,
+      });
+
+      const patterns = (agent as any).extractPatterns([withoutFix], null);
+
+      expect(patterns).to.have.lengthOf(1);
+      expect(patterns[0].example).to.include('conf-2');
+    });
+
+    it('should not group cht-conf entries into core component patterns', () => {
+      const confA = createResolvedContext({
+        id: 'conf-a',
+        layer: 'cht-conf',
+        configArtifact: 'form',
+        components: { api: ['shared-component'] },
+      });
+      const confB = createResolvedContext({
+        id: 'conf-b',
+        layer: 'cht-conf',
+        configArtifact: 'form',
+        components: { api: ['shared-component'] },
+      });
+
+      const patterns = (agent as any).extractPatterns([confA, confB], null);
+
+      expect(patterns).to.have.lengthOf(2);
+      const names = patterns.map((p: any) => p.pattern);
+      expect(names.some((n: string) => n.includes('implementation pattern'))).to.be.false;
+    });
+
+    it('should still group core entries into component patterns', () => {
+      const coreA = createResolvedContext({ id: 'core-a', components: { api: ['shared'] } });
+      const coreB = createResolvedContext({ id: 'core-b', components: { api: ['shared'] } });
+
+      const patterns = (agent as any).extractPatterns([coreA, coreB], null);
+
+      expect(patterns).to.have.lengthOf(1);
+      expect(patterns[0].pattern).to.equal('shared implementation pattern');
+    });
+
+    it('should emit a config-layer design decision for cht-conf entries', () => {
+      const decisions = (agent as any).extractDesignDecisions(
+        [confContext],
+        'forms-and-reports'
+      );
+
+      expect(decisions).to.have.lengthOf(1);
+      expect(decisions[0].decision).to.include('config layer');
+      expect(decisions[0].decision).to.include('form');
+      expect(decisions[0].decision).to.include('relevant');
+      expect(decisions[0].rationale).to.include('PNC follow-up');
+    });
+
+    it('should analyze a cht-conf ticket end to end against config entries only', async () => {
+      sinon.stub(contextLoader, 'loadDomainOverview').returns(null);
+      sinon.stub(contextLoader, 'loadDomainComponents').returns(null);
+      sinon.stub(contextLoader, 'getRelatedDomains').returns([]);
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'core-1',
+          issue_number: 1,
+          category: 'bug',
+          domains: ['forms-and-reports'],
+        }),
+        confContext,
+      ]);
+
+      const issue = createTestIssue({
+        type: 'bug',
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+
+      const result = await agent.analyze(issue);
+
+      expect(result.similarContexts.map((c) => c.id)).to.deep.equal(['conf-1']);
+      expect(result.reusablePatterns).to.have.lengthOf(1);
+      expect(result.reusablePatterns[0].example).to.equal(snippet);
+      expect(result).to.not.have.property('historicalSuccessRate');
     });
   });
 

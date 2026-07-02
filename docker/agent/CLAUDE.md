@@ -14,9 +14,17 @@ image and compose level, so violating them will fail anyway. Don't try.
   system git config and there are no write credentials in this container —
   do not attempt to work around that.
 - **Never change a remote.** No `git remote set-url`, `git remote add`, or
-  editing `.git/config` (it is mounted read-only in the working copy).
+  editing `.git/config` (mounted read-only in the cht-core working copy; in
+  the deployment config repo pushes are blocked by a catch-all rewrite and a
+  pre-push hook — leave both alone).
 - Work on the cht-core working copy at `$CHT_CORE_PATH` (`/workspace/cht-core`):
   create a local branch off `main`, commit locally as you go.
+- **`layer: cht-conf` tickets are developed in the deployment config repo at
+  `$CHT_CONF_PATH` (`/workspace/cht-conf-project`), never in cht-core.** Use
+  the cht-conf toolchain (`convert-app-forms`, `upload-app-forms`,
+  `upload-app-settings`, …) and commit locally there. If that path holds the
+  committed placeholder (a `.cht-conf-placeholder` marker file), no deployment
+  config is mounted — stop and ask the operator instead of improvising.
 
 ## Docker
 

@@ -10,6 +10,10 @@
 import { StateGraph, END, START, Annotation } from '@langchain/langgraph';
 import { ChatAnthropic } from '@langchain/anthropic';
 import {
+  ArchitectureInsight,
+  CanonicalDiffResult,
+  CHTLayer,
+  ConfigArtifact,
   IssueTemplate,
   ResearchState,
   ResearchFindings,
@@ -28,6 +32,16 @@ const ResearchStateAnnotation = Annotation.Root({
     default: () => [],
   }),
   issue: Annotation<IssueTemplate | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  // Layer routing, lifted out of the ticket at init so nodes receive it through
+  // state (a later disambiguation step can update it without rewriting the ticket)
+  layer: Annotation<CHTLayer | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  configArtifact: Annotation<ConfigArtifact | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -173,7 +187,10 @@ export class ResearchSupervisor {
     }
 
     try {
-      const findings = await this.codeContextAgent.search(state.issue);
+      const findings = await this.codeContextAgent.search(state.issue, {
+        layer: state.layer,
+        configArtifact: state.configArtifact,
+      });
 
       return {
         codeContextFindings: findings,
@@ -318,19 +335,29 @@ export class ResearchSupervisor {
   ): string {
     const { issue: issueDetails } = issue;
 
-    let codeContextSection = '\n**Note**: Code architecture context was unavailable for this analysis.\n';
+    // Source labels only appear for investigate tickets (the one case where
+    // two wikis are merged by layer routing), keeping every other ticket's
+    // prompt byte-identical to before the layer work.
+    const labelSources = issueDetails.technical_context.layer === 'investigate';
+
+    // Rendered whether or not the wikis produced insights: a DeepWiki outage
+    // must not drop the config drift evidence from the plan prompt.
+    const canonicalDiffSection = this.formatCanonicalDiffSection(codeContext?.canonicalDiff);
+
+    let codeContextSection = `\n**Note**: Code architecture context was unavailable for this analysis.\n${canonicalDiffSection}`;
     if (codeContext && codeContext.architectureInsights.length > 0) {
       codeContextSection = `
 ## Code Architecture Context
 **Repos Analyzed**: ${codeContext.relevantRepos.join(', ')}
 **Architecture Insights**: ${codeContext.architectureInsights.length}
-${codeContext.architectureInsights.map((insight) => `- **${insight.component}**: ${insight.description} (patterns: ${insight.patterns.join(', ')})`).join('\n')}
+${codeContext.architectureInsights.map((insight) => this.formatInsightLine(insight, labelSources)).join('\n')}
 
 **Module Relationships**: ${codeContext.moduleRelationships.length}
 ${codeContext.moduleRelationships.map((rel) => `- ${rel.source} → ${rel.target} (${rel.relationship}): ${rel.description}`).join('\n')}
 
 **Confidence**: ${(codeContext.confidence * 100).toFixed(0)}%
 ${codeContext.warnings.length > 0 ? `\n**Warnings**: ${codeContext.warnings.join(', ')}` : ''}
+${canonicalDiffSection}
 `;
     }
 
@@ -361,7 +388,6 @@ ${codeContextSection}
 ## Context Analysis
 **Similar Past Issues**: ${analysis.similarContexts.length}
 **Reusable Patterns**: ${analysis.reusablePatterns.length}
-**Historical Success Rate**: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%
 
 **Recommendations**:
 ${analysis.recommendations.map((rec, i) => `${i + 1}. ${rec}`).join('\n')}
@@ -377,6 +403,46 @@ Create a detailed orchestration plan with:
 7. Estimated effort
 
 Format your response as a structured plan that will guide the development team.`;
+  }
+
+  /**
+   * Render the canonical-config diff for the plan prompt: for cht-conf tickets
+   * the drifted artifact (not cht-core code) is what the plan should target.
+   * The four-backtick fence keeps diff content that itself contains ``` from
+   * closing the block early.
+   */
+  private formatCanonicalDiffSection(canonicalDiff?: CanonicalDiffResult): string {
+    if (!canonicalDiff) {
+      return '';
+    }
+
+    const artifactLabel = canonicalDiff.artifactName
+      ? `${canonicalDiff.artifact} / ${canonicalDiff.artifactName}`
+      : canonicalDiff.artifact;
+
+    const lines = [
+      '',
+      `**Canonical Config Diff** (${canonicalDiff.status}): ${canonicalDiff.summary}`,
+      `- Suspect artifact: ${artifactLabel}`,
+    ];
+
+    if (canonicalDiff.diff) {
+      lines.push('````diff', canonicalDiff.diff, '````');
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Render one architecture insight for the plan prompt. The sourceRepo label
+   * is rendered only when the caller asks for it (investigate tickets, whose
+   * findings merge the cht-core and cht-conf wikis) — every other ticket keeps
+   * its pre-layer prompt format.
+   */
+  private formatInsightLine(insight: ArchitectureInsight, labelSource: boolean): string {
+    const repoLabel = labelSource && insight.sourceRepo ? `[${insight.sourceRepo}] ` : '';
+    const patterns = insight.patterns.join(', ');
+    return `- ${repoLabel}**${insight.component}**: ${insight.description} (patterns: ${patterns})`;
   }
 
   /**
@@ -399,7 +465,6 @@ Format your response as a structured plan that will guide the development team.`
     const keyFindings = [
       `${findings.documentationReferences.length} documentation references found`,
       `${analysis.similarContexts.length} similar past implementations identified`,
-      `Historical success rate: ${(analysis.historicalSuccessRate * 100).toFixed(0)}%`,
       ...analysis.recommendations.slice(0, 2),
     ];
 
@@ -590,6 +655,8 @@ Format your response as a structured plan that will guide the development team.`
         },
       ],
       issue: issue,
+      layer: issue.issue.technical_context.layer,
+      configArtifact: issue.issue.technical_context.configArtifact,
       researchFindings: undefined,
       codeContextFindings: undefined,
       contextAnalysis: undefined,

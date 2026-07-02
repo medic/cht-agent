@@ -13,6 +13,8 @@ import {
   CodePattern,
   DesignDecision,
   CHTDomain,
+  CHTLayer,
+  ConfigMechanism,
   DomainComponents,
 } from '../types';
 import {
@@ -51,7 +53,6 @@ export class ContextAnalysisAgent {
         reusablePatterns: [],
         relevantDesignDecisions: [],
         recommendations: ['Domain not specified - unable to analyze context'],
-        historicalSuccessRate: 0.5,
         relatedDomains: [],
       };
     }
@@ -83,9 +84,6 @@ export class ContextAnalysisAgent {
     );
     console.log(`[Context Analysis Agent] Generated ${recommendations.length} recommendations`);
 
-    // Calculate historical success rate
-    const successRate = this.calculateSuccessRate(similarContexts);
-
     // Get related domains
     const relatedDomains = domainOverview ? getRelatedDomains(domain) : [];
 
@@ -94,13 +92,15 @@ export class ContextAnalysisAgent {
       reusablePatterns: patterns,
       relevantDesignDecisions: designDecisions,
       recommendations,
-      historicalSuccessRate: successRate,
       relatedDomains,
     };
   }
 
   /**
-   * Find similar issues from knowledge base
+   * Find similar issues from knowledge base. Entries are scoped to the ticket's
+   * layer first (a config ticket must never surface platform fixes and vice
+   * versa; investigate tickets keep both layers in play), then scored, then
+   * de-duplicated by issue id.
    */
   private findSimilarIssues(issue: IssueTemplate, domain: CHTDomain): ResolvedIssueContext[] {
     // Load resolved issues for this domain
@@ -111,23 +111,70 @@ export class ContextAnalysisAgent {
       return [];
     }
 
+    const ticketLayer: CHTLayer = issue.issue.technical_context.layer ?? 'cht-core';
+    const layerScoped = resolvedIssues.filter((resolved) => {
+      if (ticketLayer === 'investigate') {
+        return true;
+      }
+      return (resolved.layer ?? 'cht-core') === ticketLayer;
+    });
+
     // Score and rank issues by similarity
-    const scoredIssues = resolvedIssues.map((resolved) => ({
+    const scoredIssues = layerScoped.map((resolved) => ({
       issue: resolved,
       score: this.calculateSimilarityScore(issue, resolved),
     }));
 
-    return scoredIssues
-      .toSorted((a, b) => b.score - a.score)
+    return this.dedupeByIssueId(scoredIssues.toSorted((a, b) => b.score - a.score))
       .slice(0, 5)
       .filter((item) => item.score > 0.3)
       .map((item) => item.issue);
   }
 
   /**
-   * Calculate similarity score between current issue and resolved issue
+   * The corpus can hold several drafts distilled from the same GitHub issue
+   * (one per source PR). The #129 relink made the issue id trustworthy, so keep
+   * only the highest-scoring entry per issue (the input is sorted by score).
+   * Entries without an issue_number fall back to their draft id — the loader
+   * derives it from the draft's file name when frontmatter has neither field,
+   * so distinct files keep distinct keys.
+   */
+  private dedupeByIssueId(
+    sorted: Array<{ issue: ResolvedIssueContext; score: number }>
+  ): Array<{ issue: ResolvedIssueContext; score: number }> {
+    const seen = new Set<string>();
+    return sorted.filter(({ issue }) => {
+      const key = issue.issue_number === undefined ? issue.id : String(issue.issue_number);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /**
+   * Calculate similarity score between current issue and resolved issue.
+   * Core tickets keep the original category/domain/component scoring; when
+   * either side is a cht-conf entry the config-shaped scoring applies instead
+   * (strong layer match plus configArtifact/mechanism overlap — core-shaped
+   * service/component overlap carries no signal for config fixes).
    */
   private calculateSimilarityScore(current: IssueTemplate, resolved: ResolvedIssueContext): number {
+    const ticketLayer: CHTLayer = current.issue.technical_context.layer ?? 'cht-core';
+    const entryLayer: CHTLayer = resolved.layer ?? 'cht-core';
+
+    if (ticketLayer !== 'cht-conf' && entryLayer !== 'cht-conf') {
+      return this.calculateCoreSimilarityScore(current, resolved);
+    }
+
+    return this.calculateConfigSimilarityScore(current, resolved, ticketLayer, entryLayer);
+  }
+
+  private calculateCoreSimilarityScore(
+    current: IssueTemplate,
+    resolved: ResolvedIssueContext
+  ): number {
     let score = 0;
 
     // Category match
@@ -167,19 +214,74 @@ export class ContextAnalysisAgent {
     return Math.min(score, 1);
   }
 
+  private calculateConfigSimilarityScore(
+    current: IssueTemplate,
+    resolved: ResolvedIssueContext,
+    ticketLayer: CHTLayer,
+    entryLayer: CHTLayer
+  ): number {
+    let score = 0;
+
+    // Category match (weaker than for core: config fixes cluster by artifact, not type)
+    if (resolved.category === current.issue.type) {
+      score += 0.2;
+    }
+
+    // Strong layer match. An investigate ticket treats both layers as
+    // compatible — it is the one case with a mixed candidate pool, and without
+    // this its config entries would be capped at 0.7 while core entries (scored
+    // by the core path) can reach 1.0. For cht-conf tickets the pool is all-conf
+    // after layer scoping, so the term simply keeps conf scores comparable.
+    if (ticketLayer === entryLayer || ticketLayer === 'investigate') {
+      score += 0.3;
+    }
+
+    // Suspect artifact match: the strongest config signal
+    const ticketArtifact = current.issue.technical_context.configArtifact;
+    if (ticketArtifact && resolved.configArtifact === ticketArtifact) {
+      score += 0.3;
+    }
+
+    // Mechanism overlap: the entry's mechanism is named in the ticket text
+    if (resolved.mechanism && this.ticketMentionsMechanism(current, resolved.mechanism)) {
+      score += 0.2;
+    }
+
+    return Math.min(score, 1);
+  }
+
+  private ticketMentionsMechanism(current: IssueTemplate, mechanism: ConfigMechanism): boolean {
+    const haystack = [
+      current.issue.title,
+      current.issue.description,
+      ...current.issue.technical_context.components,
+    ].join(' ');
+
+    // Word-boundary match: 'events' must not fire inside 'prevents', nor
+    // 'relevant' inside 'irrelevant'. Mechanisms are plain \w tokens, so no
+    // regex escaping is needed.
+    return new RegExp(`\\b${mechanism}\\b`, 'i').test(haystack);
+  }
+
   /**
-   * Extract reusable patterns from similar contexts
+   * Extract reusable patterns from similar contexts. Core entries are grouped
+   * by frequently-shared components; for cht-conf entries the reusable pattern
+   * is the config snippet itself (the before/after expression from the draft's
+   * Config Pattern section), one pattern per entry.
    */
   private extractPatterns(
     contexts: ResolvedIssueContext[],
     _domainComponents: DomainComponents | null
   ): CodePattern[] {
+    const coreContexts = contexts.filter((context) => !this.isConfigContext(context));
+    const configContexts = contexts.filter((context) => this.isConfigContext(context));
+
     const patterns: CodePattern[] = [];
 
-    // Group contexts by components
+    // Group core contexts by components
     const componentGroups = new Map<string, ResolvedIssueContext[]>();
 
-    contexts.forEach((context) => {
+    coreContexts.forEach((context) => {
       const allComponents = [
         ...(context.components.api || []),
         ...(context.components.webapp || []),
@@ -195,23 +297,46 @@ export class ContextAnalysisAgent {
     });
 
     // Create patterns for frequently used components
-    componentGroups.forEach((contexts, component) => {
-      if (contexts.length >= 2) {
+    componentGroups.forEach((groupContexts, component) => {
+      if (groupContexts.length >= 2) {
         patterns.push({
           pattern: `${component} implementation pattern`,
           description: `Commonly used pattern for ${component}`,
-          example: `See resolved issues: ${contexts.map((c) => c.id).join(', ')}`,
-          domain: contexts[0].domains[0],
-          frequency: contexts.length,
+          example: `See resolved issues: ${groupContexts.map((c) => c.id).join(', ')}`,
+          domain: groupContexts[0].domains[0],
+          frequency: groupContexts.length,
         });
       }
+    });
+
+    configContexts.forEach((context) => {
+      patterns.push(this.buildConfigPattern(context));
     });
 
     return patterns;
   }
 
+  private isConfigContext(context: ResolvedIssueContext): boolean {
+    return (context.layer ?? 'cht-core') === 'cht-conf';
+  }
+
+  private buildConfigPattern(context: ResolvedIssueContext): CodePattern {
+    const mechanism = context.mechanism ?? 'config';
+    const artifact = context.configArtifact ?? 'configuration';
+
+    return {
+      pattern: `${mechanism} fix for ${artifact} (${context.id})`,
+      description: context.summary || `Config fix from ${context.id}`,
+      example: context.fix ?? `See resolved issue: ${context.id}`,
+      domain: context.domains[0],
+      frequency: 1,
+    };
+  }
+
   /**
-   * Extract design decisions from similar contexts
+   * Extract design decisions from similar contexts. Core entries derive a
+   * tech-stack decision; cht-conf entries record that the fix belongs at the
+   * config layer (artifact + mechanism), pointing at the reusable snippet.
    */
   private extractDesignDecisions(
     contexts: ResolvedIssueContext[],
@@ -223,6 +348,11 @@ export class ContextAnalysisAgent {
     // In production, these would be extracted from the full context files
 
     contexts.forEach((context) => {
+      if (this.isConfigContext(context)) {
+        decisions.push(this.buildConfigDesignDecision(context, domain));
+        return;
+      }
+
       if (context.tech_stack && context.tech_stack.length > 0) {
         decisions.push({
           decision: `Use ${context.tech_stack.join(', ')} for ${context.category}`,
@@ -235,6 +365,22 @@ export class ContextAnalysisAgent {
     });
 
     return decisions;
+  }
+
+  private buildConfigDesignDecision(
+    context: ResolvedIssueContext,
+    domain: CHTDomain
+  ): DesignDecision {
+    const mechanism = context.mechanism ?? 'configuration';
+    const artifact = context.configArtifact ?? 'config artifact';
+
+    return {
+      decision: `Fix at the config layer: edit the ${artifact} ${mechanism}, not cht-core code`,
+      rationale: context.summary || `Successfully resolved in ${context.id}`,
+      alternatives: [],
+      consequences: [`Reusable config snippet available from ${context.id}`],
+      domain,
+    };
   }
 
   /**
@@ -332,18 +478,4 @@ export class ContextAnalysisAgent {
       .slice(0, 3);
   }
 
-  /**
-   * Calculate historical success rate from similar contexts
-   */
-  private calculateSuccessRate(contexts: ResolvedIssueContext[]): number {
-    if (contexts.length === 0) {
-      return 0.5; // Neutral when no history
-    }
-
-    // All resolved issues are successful (phase: completed)
-    // In a more complete system, we might track rollbacks, reverts, etc.
-    const successfulContexts = contexts.filter((c) => c.phase === 'completed');
-
-    return successfulContexts.length / contexts.length;
-  }
 }
