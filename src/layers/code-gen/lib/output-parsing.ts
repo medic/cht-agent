@@ -144,6 +144,17 @@ function applyNormalizedBlock(result: string, block: SearchReplaceBlock): string
     console.log(`[Code Gen Lib]   Search block not found (${preview}...)`);
     return null;
   }
+  // The whole-line slice below is only correct when the normalized match spans
+  // whole lines. A mid-line match would drop the line prefix before the match
+  // (and the suffix after it), so reject it as not-found rather than corrupt the file.
+  const matchEnd = normalizedIdx + normalizedSearch.length;
+  const startAligned = normalizedIdx === 0 || normalizedResult[normalizedIdx - 1] === '\n';
+  const endAligned = matchEnd === normalizedResult.length || normalizedResult[matchEnd] === '\n';
+  if (!startAligned || !endAligned) {
+    const preview = block.search.substring(0, 80).replaceAll('\n', String.raw`\n`);
+    console.log(`[Code Gen Lib]   Search block matched mid-line, rejecting (${preview}...)`);
+    return null;
+  }
   const linesBeforeMatch = normalizedResult.substring(0, normalizedIdx).split('\n').length - 1;
   const searchLineCount = block.search.split('\n').length;
   const originalLines = result.split('\n');

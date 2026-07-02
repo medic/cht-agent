@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { parseSingleFileContent } from '../../../../src/layers/code-gen/lib/output-parsing';
+import { parseSingleFileContent, applySearchReplace } from '../../../../src/layers/code-gen/lib/output-parsing';
 
 describe('parseSingleFileContent', () => {
   describe('trailing newline preservation (C1)', () => {
@@ -32,5 +32,33 @@ describe('parseSingleFileContent', () => {
       const input = '=== FILE: src/x.ts ===\nPURPOSE: A test\n--- CONTENT START ---\nexport const x = 1;\n--- CONTENT END ---';
       expect(parseSingleFileContent(input)).to.equal('export const x = 1;\n');
     });
+  });
+});
+
+describe('applySearchReplace (whitespace-tolerant fallback)', () => {
+  it('applies an exact whole-line match directly', () => {
+    const original = 'alpha\nbeta\ngamma\n';
+    const result = applySearchReplace(original, [{ search: 'beta', replace: 'BETA' }]);
+    expect(result).to.equal('alpha\nBETA\ngamma\n');
+  });
+
+  it('applies a boundary-aligned match via the normalized fallback', () => {
+    // Trailing whitespace on the target line defeats the exact match and forces
+    // the normalized fallback; the match is line-aligned, so it applies cleanly.
+    const original = 'line one\nold code   \nline three\n';
+    const result = applySearchReplace(original, [{ search: 'old code\nline three', replace: 'NEW BODY' }]);
+    expect(result).to.not.equal(null);
+    expect(result).to.contain('line one');
+    expect(result).to.contain('NEW BODY');
+    expect(result).to.not.contain('old code');
+  });
+
+  it('rejects a mid-line normalized match instead of corrupting the line prefix', () => {
+    // Exact match fails (embedded tab) and the normalized match lands mid-line
+    // ('y = 2;' inside 'const x = 1; const y = 2;'). The old slice logic dropped
+    // the 'const x = 1; const ' prefix; the fix rejects it (returns null).
+    const original = 'const x = 1; const y = 2;\t\nnext line\n';
+    const result = applySearchReplace(original, [{ search: 'y = 2;\nnext line', replace: 'REPLACED' }]);
+    expect(result).to.equal(null);
   });
 });
