@@ -3,14 +3,35 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { IssueTemplate, CHTDomain } from '../../src/types';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../../src/utils/domain-inference';
+import type { InvokeOptions } from '../../src/llm/types';
 
 const proxyquire = require('proxyquire').noCallThru();
 
-// Note: Tests for inferDomainAndComponents and enrichIssueTemplate
-// are limited because they require mocking the ChatAnthropic LLM.
-// The @langchain/anthropic package is ESM-only which creates conflicts
-// with the current test setup. Integration tests or a separate ESM test
-// runner would be needed for full coverage.
+// Shared, file-scope helpers so the mocked-LLM, CLI-provider, and explicit-API
+// describes all use one issue factory and one rejection asserter.
+const makeIssue = (over: Partial<IssueTemplate['issue']> = {}): IssueTemplate => ({
+  issue: {
+    title: 'T', type: 'feature', priority: 'medium', description: 'd',
+    technical_context: { domain: undefined as unknown as CHTDomain, components: [] },
+    requirements: ['r'], acceptance_criteria: ['a'], constraints: ['c'],
+    ...over,
+  },
+});
+
+const expectReject = async (p: Promise<unknown>, re: RegExp): Promise<void> => {
+  try {
+    await p;
+  } catch (e) {
+    expect((e as Error).message).to.match(re);
+    return;
+  }
+  throw new Error('expected promise to reject');
+};
+
+interface RecordedCall {
+  prompt: string;
+  options?: InvokeOptions;
+}
 
 describe('domain-inference', () => {
   // Helper to create test issue template
@@ -125,16 +146,21 @@ describe('domain-inference', () => {
 });
 
 describe('domain-inference (mocked LLM)', () => {
-  const makeIssue = (over: Partial<IssueTemplate['issue']> = {}): IssueTemplate => ({
-    issue: {
-      title: 'T', type: 'feature', priority: 'medium', description: 'd',
-      technical_context: { domain: undefined as unknown as CHTDomain, components: [] },
-      requirements: ['r'], acceptance_criteria: ['a'], constraints: ['c'],
-      ...over,
-    },
+  // This suite is the default (API-key) path no-regression suite. It exercises the
+  // REAL isUsingCLIProvider (only '@langchain/anthropic'/'node:fs' are stubbed), so
+  // LLM_PROVIDER must be unset — an ambient claude-cli would reroute these to the CLI
+  // chain and the ChatAnthropic stub below would never run.
+  let savedProvider: string | undefined;
+  beforeEach(() => {
+    savedProvider = process.env.LLM_PROVIDER;
+    delete process.env.LLM_PROVIDER;
+  });
+  afterEach(() => {
+    if (savedProvider === undefined) delete process.env.LLM_PROVIDER;
+    else process.env.LLM_PROVIDER = savedProvider;
   });
 
-  // Replace the ESM-only ChatAnthropic with a stub whose invoke returns canned
+  // Replace ChatAnthropic with a stub whose invoke returns canned
   // content, so the inference logic is gated without a live API call.
   const loadInference = (
     invokeImpl: () => Promise<{ content: unknown }>,
@@ -149,16 +175,6 @@ describe('domain-inference (mocked LLM)', () => {
     };
     if (fsStub) stubs['node:fs'] = fsStub;
     return { mod: proxyquire('../../src/utils/domain-inference', stubs), invokeStub };
-  };
-
-  const expectReject = async (p: Promise<unknown>, re: RegExp): Promise<void> => {
-    try {
-      await p;
-    } catch (e) {
-      expect((e as Error).message).to.match(re);
-      return;
-    }
-    throw new Error('expected promise to reject');
   };
 
   it('returns ticket domain/components without calling the LLM when both are present', async () => {
@@ -230,5 +246,129 @@ describe('domain-inference (mocked LLM)', () => {
     const fsStub = { existsSync: () => true, readFileSync: () => { throw new Error('EACCES'); } };
     const { mod } = loadInference(async () => ({ content: '{"domain":"contacts","components":[]}' }), fsStub);
     expect((await mod.inferDomainAndComponents(makeIssue())).domain).to.equal('contacts');
+  });
+});
+
+describe('domain-inference (CLI provider path)', () => {
+  // Integration-grade loader: compose the REAL structured-cli adapter over a fake
+  // provider, then inject it into domain-inference. The '@langchain/anthropic' ctor
+  // is a tripwire that throws if constructed — asserting the CLI branch is taken.
+  const loadCliInference = (response: unknown) => {
+    const calls: RecordedCall[] = [];
+    const fakeProvider = {
+      invokeForJSON: async <T>(prompt: string, options?: InvokeOptions): Promise<T> => {
+        calls.push({ prompt, options });
+        return response as T;
+      },
+    };
+    const structuredCli = proxyquire('../../src/llm/structured-cli', {
+      './factory': { createLLMProviderFromEnv: () => fakeProvider, isUsingCLIProvider: () => true },
+    });
+    const anthropicCtor = sinon.stub().throws(new Error('ChatAnthropic constructed in CLI mode'));
+    const mod = proxyquire('../../src/utils/domain-inference', {
+      '../llm/structured-cli': structuredCli,
+      '@langchain/anthropic': { ChatAnthropic: anthropicCtor },
+    });
+    return { mod, calls, anthropicCtor };
+  };
+
+  it('routes through the CLI chain, resolving domain + components without constructing ChatAnthropic', async () => {
+    const { mod, calls, anthropicCtor } = loadCliInference({ domain: 'messaging', components: ['api/sms'], reasoning: 'x' });
+    const res = await mod.inferDomainAndComponents(makeIssue());
+    expect(res).to.deep.equal({ domain: 'messaging', components: ['api/sms'] });
+    expect(anthropicCtor.called).to.equal(false);
+    expect(calls.length).to.equal(1);
+  });
+
+  it('forwards the built prompt (title, roster, adapter suffix, shape keys) to the provider', async () => {
+    const title = 'Send SMS when a task is overdue';
+    const { mod, calls } = loadCliInference({ domain: 'messaging', components: [] });
+    await mod.inferDomainAndComponents(makeIssue({ title }));
+    const prompt = calls[0].prompt;
+    expect(prompt).to.include(title);
+    expect(prompt).to.include('infrastructure -');
+    expect(prompt).to.include('Return a single JSON object');
+    expect(prompt).to.include('"domain"');
+    expect(prompt).to.include('"components"');
+    expect(prompt).to.include('"reasoning"');
+  });
+
+  it('invokes the provider one-shot: disableTools true, maxTurns 1', async () => {
+    const { mod, calls } = loadCliInference({ domain: 'contacts', components: [] });
+    await mod.inferDomainAndComponents(makeIssue());
+    expect(calls[0].options?.disableTools).to.equal(true);
+    expect(calls[0].options?.maxTurns).to.equal(1);
+  });
+
+  it('rejects when the provider returns a domain outside the taxonomy (zod enum)', async () => {
+    const { mod, calls } = loadCliInference({ domain: 'nope', components: [] });
+    await expectReject(mod.inferDomainAndComponents(makeIssue()), /nope|invalid/i);
+    expect(calls.length).to.equal(1);
+  });
+
+  it('defaults components to [] when the provider omits the components key', async () => {
+    const { mod, calls } = loadCliInference({ domain: 'configuration', reasoning: 'domain only' });
+    const res = await mod.inferDomainAndComponents(makeIssue());
+    expect(res.domain).to.equal('configuration');
+    expect(res.components).to.deep.equal([]);
+    expect(calls.length).to.equal(1);
+  });
+
+  it('rejects a non-array components value (deliberate strictness vs the API path coercion)', async () => {
+    const { mod, calls } = loadCliInference({ domain: 'contacts', components: 'api/x' });
+    await expectReject(mod.inferDomainAndComponents(makeIssue()), /array|expected/i);
+    expect(calls.length).to.equal(1);
+  });
+
+  it('enrichIssueTemplate keeps ticket components when the CLI returns none, but takes the inferred domain', async () => {
+    const { mod, calls } = loadCliInference({ domain: 'data-sync', components: [] });
+    const issue = makeIssue({ technical_context: { domain: undefined as unknown as CHTDomain, components: ['keep/me'] } });
+    const enriched = await mod.enrichIssueTemplate(issue);
+    expect(enriched.issue.technical_context.domain).to.equal('data-sync');
+    expect(enriched.issue.technical_context.components).to.deep.equal(['keep/me']);
+    expect(calls.length).to.equal(1);
+  });
+
+  it('short-circuits to ticket values without calling the provider when both domain and components are present', async () => {
+    const { mod, calls } = loadCliInference({ domain: 'messaging', components: ['ignored'] });
+    const res = await mod.inferDomainAndComponents(
+      makeIssue({ technical_context: { domain: 'contacts', components: ['api/x'] } }),
+    );
+    expect(res).to.deep.equal({ domain: 'contacts', components: ['api/x'] });
+    expect(calls.length).to.equal(0);
+  });
+});
+
+describe('domain-inference (explicit API selection, no regression)', () => {
+  // Force the API branch (isUsingCLIProvider stubbed false) with a CLI-chain tripwire
+  // stub, and record the ChatAnthropic constructor args to lock in default/override model.
+  const loadApiInference = () => {
+    const ctorArgs: Array<Record<string, unknown>> = [];
+    const invoke = sinon.stub().resolves({ content: '{"domain":"contacts","components":["api/x"]}' });
+    const FakeChatAnthropic = function FakeChatAnthropic(this: object, args: Record<string, unknown>) {
+      ctorArgs.push(args);
+      return Object.assign(this, { invoke });
+    } as unknown as { new (args: Record<string, unknown>): { invoke: typeof invoke } };
+    const createCliChainStub = sinon.stub();
+    const mod = proxyquire('../../src/utils/domain-inference', {
+      '../llm/structured-cli': { isUsingCLIProvider: () => false, createStructuredCliChain: createCliChainStub },
+      '@langchain/anthropic': { ChatAnthropic: FakeChatAnthropic },
+    });
+    return { mod, ctorArgs, createCliChainStub };
+  };
+
+  it('uses ChatAnthropic with the default model + temperature, never the CLI chain', async () => {
+    const { mod, ctorArgs, createCliChainStub } = loadApiInference();
+    const res = await mod.inferDomainAndComponents(makeIssue());
+    expect(res.domain).to.equal('contacts');
+    expect(createCliChainStub.called).to.equal(false);
+    expect(ctorArgs[0]).to.deep.equal({ model: 'claude-sonnet-4-20250514', temperature: 0.2 });
+  });
+
+  it('passes an explicit modelName override through to the ChatAnthropic constructor', async () => {
+    const { mod, ctorArgs, createCliChainStub } = loadApiInference();
+    await mod.inferDomainAndComponents(makeIssue(), 'my-model');
+    expect(createCliChainStub.called).to.equal(false);
+    expect(ctorArgs[0]).to.deep.equal({ model: 'my-model', temperature: 0.2 });
   });
 });

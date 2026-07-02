@@ -12,6 +12,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ChatAnthropic } from '@langchain/anthropic';
+import { z } from 'zod';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { CHTDomain, IssueTemplate } from '../types';
 import { CHT_DOMAINS } from '../constants';
 
@@ -142,6 +144,16 @@ Pitfalls (Common Misclassifications to Avoid):
 // Derived from the single taxonomy source so it can't drift from CHT_DOMAINS.
 const VALID_DOMAINS: readonly CHTDomain[] = CHT_DOMAINS;
 
+// CLI-mode structured-output schema. `domain` is validated against the same
+// taxonomy source (CHT_DOMAINS) that parseLLMResponse's VALID_DOMAINS check uses,
+// and INFERENCE_SHAPE matches the prompt's "Respond in this exact JSON format" block.
+const inferenceSchema = z.object({
+  domain: z.enum(CHT_DOMAINS),
+  components: z.array(z.string()).optional(),
+  reasoning: z.string().optional(),
+});
+const INFERENCE_SHAPE = '{"domain": "domain-name", "components": ["component1", "component2"], "reasoning": "Brief explanation"}';
+
 const extractJson = (content: string): string => {
   const jsonRegex = /\{[^{}]*(?:\{[^{}]*}[^{}]*)*}/;
   const match = jsonRegex.exec(content);
@@ -184,11 +196,6 @@ const inferUsingLLM = async (
   issue: IssueTemplate,
   modelName: string = 'claude-sonnet-4-20250514'
 ): Promise<{ domain: CHTDomain; components: string[] }> => {
-  const model = new ChatAnthropic({
-    model: modelName,
-    temperature: 0.2,
-  });
-
   // Format reference data for the prompt
   const similarImplementations = formatListForPrompt(
     issue.issue.reference_data?.similar_implementations || [],
@@ -246,6 +253,15 @@ Respond in this exact JSON format:
   "reasoning": "Brief explanation of why this domain and these components"
 }`;
 
+  // CLI mode: route through the CLI provider's structured-output adapter. modelName
+  // is unused here — the claude binary reads ANTHROPIC_MODEL itself. Single-shot, so
+  // no chain caching (unlike filter.ts's per-batch chain).
+  if (isUsingCLIProvider()) {
+    const parsed = await createStructuredCliChain(inferenceSchema, INFERENCE_SHAPE).invoke(prompt);
+    return { domain: parsed.domain, components: parsed.components ?? [] };
+  }
+
+  const model = new ChatAnthropic({ model: modelName, temperature: 0.2 });
   const response = await model.invoke(prompt);
   const content = typeof response.content === 'string'
     ? response.content

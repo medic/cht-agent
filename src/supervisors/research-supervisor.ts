@@ -20,6 +20,8 @@ import {
 import { DocumentationSearchAgent } from '../agents/documentation-search-agent';
 import { CodeContextAgent } from '../agents/code-context-agent';
 import { ContextAnalysisAgent } from '../agents/context-analysis-agent';
+import { z } from 'zod';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 
 // Define the state annotation for type safety
 const ResearchStateAnnotation = Annotation.Root({
@@ -57,12 +59,53 @@ const ResearchStateAnnotation = Annotation.Root({
   }),
 });
 
+/**
+ * Minimal invoke-only planner surface. Both providers reduce to
+ * prompt-in / plan-text-out; parsePlanResponse only consumes the text as the
+ * plan summary, so no streaming/callback support is needed (the API path was
+ * already a plain .invoke()).
+ */
+interface PlannerInvoker {
+  invoke(prompt: string): Promise<string>;
+}
+
+const planSchema = z.object({ plan: z.string().min(1) });
+// JSON envelope for CLI mode: invokeForJSON requires a JSON object response,
+// but parsePlanResponse consumes free text, so the schema wraps the plan text.
+const PLAN_SHAPE = '{"plan": "<the complete orchestration plan as plain text>"}';
+
+/**
+ * API-keyed planner. Preserves the original construction args/timing and
+ * content normalization verbatim: ChatAnthropic is built here (throwing without
+ * a key), and its .invoke() response content is normalized string-or-JSON.
+ */
+const createApiPlanner = (modelName?: string): PlannerInvoker => {
+  const model = new ChatAnthropic({ model: modelName || 'claude-sonnet-4-20250514', temperature: 0.3 });
+  return {
+    invoke: async (prompt: string): Promise<string> => {
+      const response = await model.invoke(prompt);
+      return typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+    },
+  };
+};
+
+/**
+ * CLI planner. Runs on `claude -p` (no API key; model selected via
+ * ANTHROPIC_MODEL), unwrapping the JSON envelope back to the plan text.
+ */
+const createCliPlanner = (): PlannerInvoker => {
+  const chain = createStructuredCliChain(planSchema, PLAN_SHAPE);
+  return {
+    invoke: async (prompt: string): Promise<string> => (await chain.invoke(prompt)).plan,
+  };
+};
+
 export class ResearchSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly docSearchAgent: DocumentationSearchAgent;
   private readonly codeContextAgent: CodeContextAgent;
   private readonly contextAgent: ContextAnalysisAgent;
-  private readonly plannerModel: ChatAnthropic;
+  private readonly planner: PlannerInvoker;
 
   constructor(options: { modelName?: string; useMockMCP?: boolean } = {}) {
     this.docSearchAgent = new DocumentationSearchAgent({
@@ -79,10 +122,10 @@ export class ResearchSupervisor {
       modelName: options.modelName,
     });
 
-    this.plannerModel = new ChatAnthropic({
-      model: options.modelName || 'claude-sonnet-4-20250514',
-      temperature: 0.3,
-    });
+    // Constructor-time selection is required: ChatAnthropic throws at
+    // construction without a key, so CLI mode must never construct it, and API
+    // mode must keep that constructor-throw timing.
+    this.planner = isUsingCLIProvider() ? createCliPlanner() : createApiPlanner(options.modelName);
 
     this.graph = this.buildGraph();
   }
@@ -285,10 +328,7 @@ export class ResearchSupervisor {
 
     const prompt = this.buildPlanPrompt(issue, findings, analysis, codeContext);
 
-    const response = await this.plannerModel.invoke(prompt);
-    const content = typeof response.content === 'string'
-      ? response.content
-      : JSON.stringify(response.content);
+    const content = await this.planner.invoke(prompt);
 
     // Parse the response into structured plan
     const plan = this.parsePlanResponse(content, issue, { findings, analysis, codeContext });
