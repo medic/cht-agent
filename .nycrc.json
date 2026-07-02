@@ -1,9 +1,9 @@
 {
   "check-coverage": true,
-  "branches": 60,
-  "lines": 78,
-  "functions": 72,
-  "statements": 78,
+  "branches": 72,
+  "lines": 86,
+  "functions": 84,
+  "statements": 85,
   "exclude": [
     "coverage/**",
     "dist/**",
