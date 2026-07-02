@@ -1,10 +1,10 @@
 ---
-id: cht-core-10730
+id: cht-core-10729
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10730
-issueUrl: https://github.com/medic/cht-core/issues/10730
+issueNumber: 10729
+issueUrl: https://github.com/medic/cht-core/issues/10729
 title: Fix string-list field parsing and parseArray null crash in smsparser.js, plus comment/log typos
 lastUpdated: '2026-06-22'
 summary: Two bugs in the SMS report parser meant string-list form fields never matched (a for...of loop iterated element values instead of indices) and parseArray could throw a TypeError on a null field definition; both were fixed, alongside correcting 'becuase'/'succesfully' typos in comments and logs.
