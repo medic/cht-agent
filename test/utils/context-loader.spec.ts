@@ -607,6 +607,83 @@ Content.`;
         expect(result[0].fix).to.be.undefined;
       });
 
+      it('should ignore a fenced quotation of the Config Pattern heading', () => {
+        // TEMPLATE.md-style drafts can quote the template inside a code fence;
+        // the extractor must anchor on the real section, not the quotation.
+        const draft = [
+          '---',
+          'id: cht-conf-quote',
+          'domain: forms-and-reports',
+          'issueNumber: 9',
+          'layer: cht-conf',
+          '---',
+          '',
+          '## Problem',
+          '',
+          'The entry template was pasted for reference:',
+          '',
+          '```',
+          '## Config Pattern',
+          '',
+          '<the reusable snippet goes here>',
+          '```',
+          '',
+          '## Config Pattern',
+          '',
+          'The real snippet.',
+          '',
+          '## Design Choices',
+          '',
+          'Kept small.',
+        ].join('\n');
+
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => [{ name: 'quote.md', isDirectory: () => false }],
+          readFileSync: () => draft,
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('forms-and-reports');
+
+        expect(result).to.have.lengthOf(1);
+        expect(result[0].fix).to.equal('The real snippet.');
+      });
+
+      it('should give drafts without id or issueNumber distinct file-based ids', () => {
+        const draftFor = (name: string) => [
+          '---',
+          'domain: contacts',
+          `summary: ${name}`,
+          '---',
+          '',
+          'Content.',
+        ].join('\n');
+
+        let fileIndex = 0;
+        const names = ['first-draft.md', 'second-draft.md'];
+        const mockFs = {
+          existsSync: () => true,
+          readdirSync: () => names.map((name) => ({ name, isDirectory: () => false })),
+          readFileSync: () => draftFor(names[fileIndex++]),
+        };
+
+        const contextLoader = proxyquire('../../src/utils/context-loader', {
+          'node:fs': mockFs,
+        });
+
+        const result = contextLoader.findResolvedIssuesByDomain('contacts');
+
+        expect(result).to.have.lengthOf(2);
+        expect(result.map((r: any) => r.id)).to.deep.equal([
+          'draft-first-draft',
+          'draft-second-draft',
+        ]);
+      });
+
       it('should skip files with neither domain nor issueNumber', () => {
         const draft = `---
 title: not a real draft

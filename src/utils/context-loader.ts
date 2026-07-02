@@ -148,18 +148,30 @@ const MAX_CONFIG_PATTERN_LENGTH = 4000;
 /**
  * Pull the "## Config Pattern" section out of a cht-conf draft body — per
  * TEMPLATE.md the before/after config snippet in that section IS the reusable
- * pattern for config entries. Code-fence contents are kept verbatim (fenced
- * lines starting with # are snippet comments, not markdown headings).
+ * pattern for config entries. Code fences are tracked both while locating the
+ * heading (a fenced quotation of the template, as in TEMPLATE.md's own
+ * examples, must not anchor extraction) and while collecting the section
+ * (fenced lines starting with # are snippet comments, not markdown headings).
  */
 function extractConfigPattern(body: string): string | undefined {
   const lines = body.split('\n');
-  const start = lines.findIndex((line) => /^##\s+Config Pattern\s*$/.test(line));
+
+  let start = -1;
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*```/.test(lines[i])) {
+      inFence = !inFence;
+    } else if (!inFence && /^##\s+Config Pattern\s*$/.test(lines[i])) {
+      start = i;
+      break;
+    }
+  }
   if (start === -1) {
     return undefined;
   }
 
   const section: string[] = [];
-  let inFence = false;
+  inFence = false;
   for (const line of lines.slice(start + 1)) {
     if (/^\s*```/.test(line)) {
       inFence = !inFence;
@@ -183,7 +195,8 @@ function extractConfigPattern(body: string): string | undefined {
 function mapDraftToResolvedIssue(
   metadata: Record<string, unknown>,
   body: string,
-  domain: CHTDomain
+  domain: CHTDomain,
+  fileSlug: string
 ): ResolvedIssueContext {
   const services = asStringArray(metadata.services);
   const tags = asStringArray(metadata.tags);
@@ -191,8 +204,13 @@ function mapDraftToResolvedIssue(
 
   const layer = asEnum<CHTLayer>(metadata.layer, CHT_LAYERS) ?? 'cht-core';
 
+  // With neither an id nor an issueNumber, fall back to the file name so two
+  // such drafts never share an id (the similarity dedupe keys on it).
+  const fallbackId =
+    metadata.issueNumber === undefined ? `draft-${fileSlug}` : `cht-core-${metadata.issueNumber}`;
+
   return {
-    id: typeof metadata.id === 'string' ? metadata.id : `cht-core-${metadata.issueNumber ?? 'unknown'}`,
+    id: typeof metadata.id === 'string' ? metadata.id : fallbackId,
     issue_number: typeof metadata.issueNumber === 'number' ? metadata.issueNumber : undefined,
     timestamp: typeof metadata.lastUpdated === 'string' ? metadata.lastUpdated : '',
     category: typeof metadata.category === 'string' ? metadata.category : 'unknown',
@@ -220,7 +238,7 @@ function parseDraftIssue(filePath: string, domain: CHTDomain): ResolvedIssueCont
   if (!metadata.domain && metadata.issueNumber === undefined) {
     return null;
   }
-  return mapDraftToResolvedIssue(metadata, body, domain);
+  return mapDraftToResolvedIssue(metadata, body, domain, path.basename(filePath, '.md'));
 }
 
 function scanDraftsForIssues(dirPath: string, domain: CHTDomain): ResolvedIssueContext[] {

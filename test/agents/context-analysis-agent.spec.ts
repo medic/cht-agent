@@ -443,6 +443,32 @@ describe('ContextAnalysisAgent', () => {
 
       expect(result).to.have.lengthOf(2);
     });
+
+    it('should exclude cross-layer entries even when they would clear the score threshold', () => {
+      // Mutation guard for the layer filter itself: without it, this conf
+      // entry scores 0.2 (category) + 0.2 (mechanism named in the ticket text)
+      // = 0.4 through the config path and would surface for a core ticket.
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([
+        createResolvedContext({
+          id: 'conf-leak',
+          issue_number: 7,
+          category: 'bug',
+          domains: ['forms-and-reports'],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          mechanism: 'relevant',
+        }),
+      ]);
+
+      const issue = createTestIssue({
+        type: 'bug',
+        description: 'The relevant expression hides the question for online users',
+        technical_context: { domain: 'forms-and-reports', components: [] },
+      });
+      const result = (agent as any).findSimilarIssues(issue, 'forms-and-reports');
+
+      expect(result).to.deep.equal([]);
+    });
   });
 
   describe('config-aware scoring (#134)', () => {
@@ -541,6 +567,59 @@ describe('ContextAnalysisAgent', () => {
 
       // category (0.3) + domain (0.4), no component overlap
       expect(score).to.be.closeTo(0.7, 0.0001);
+    });
+
+    it('should match mechanisms on word boundaries only', () => {
+      const prevents = createTestIssue({
+        type: 'bug',
+        description: 'validation prevents saving the form',
+        technical_context: { domain: 'forms-and-reports', components: [], layer: 'cht-conf' },
+      });
+      const irrelevant = createTestIssue({
+        type: 'bug',
+        description: 'the field is irrelevant to CHWs',
+        technical_context: { domain: 'forms-and-reports', components: [], layer: 'cht-conf' },
+      });
+
+      // 'events' inside 'prevents' and 'relevant' inside 'irrelevant' must not fire
+      expect((agent as any).ticketMentionsMechanism(prevents, 'events')).to.be.false;
+      expect((agent as any).ticketMentionsMechanism(irrelevant, 'relevant')).to.be.false;
+      expect((agent as any).ticketMentionsMechanism(confTicket, 'relevant')).to.be.true;
+    });
+
+    it('should not treat the investigate layer as a mismatch against config entries', () => {
+      // Without the investigate compatibility bonus, config entries are capped
+      // at 0.7 while core entries can reach 1.0 for the one ticket shape that
+      // sees a mixed pool.
+      const investigateTicket = createTestIssue({
+        type: 'bug',
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'investigate',
+          configArtifact: 'form',
+        },
+      });
+      const confEntry = createResolvedContext({
+        id: 'conf-1',
+        category: 'bug',
+        domains: ['forms-and-reports'],
+        layer: 'cht-conf',
+        configArtifact: 'form',
+      });
+      const coreEntry = createResolvedContext({
+        id: 'core-1',
+        category: 'bug',
+        domains: ['forms-and-reports'],
+      });
+
+      const confScore = (agent as any).calculateSimilarityScore(investigateTicket, confEntry);
+      const coreScore = (agent as any).calculateSimilarityScore(investigateTicket, coreEntry);
+
+      // conf: category 0.2 + layer-compat 0.3 + artifact 0.3 = 0.8
+      // core (core path): category 0.3 + domain 0.4 = 0.7
+      expect(confScore).to.be.closeTo(0.8, 0.0001);
+      expect(confScore).to.be.greaterThan(coreScore);
     });
   });
 

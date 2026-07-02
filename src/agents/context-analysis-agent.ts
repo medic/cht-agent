@@ -135,8 +135,9 @@ export class ContextAnalysisAgent {
    * The corpus can hold several drafts distilled from the same GitHub issue
    * (one per source PR). The #129 relink made the issue id trustworthy, so keep
    * only the highest-scoring entry per issue (the input is sorted by score).
-   * Entries without an issue_number fall back to their draft id, which never
-   * collides across distinct drafts.
+   * Entries without an issue_number fall back to their draft id — the loader
+   * derives it from the draft's file name when frontmatter has neither field,
+   * so distinct files keep distinct keys.
    */
   private dedupeByIssueId(
     sorted: Array<{ issue: ResolvedIssueContext; score: number }>
@@ -226,8 +227,12 @@ export class ContextAnalysisAgent {
       score += 0.2;
     }
 
-    // Strong layer match (matters for investigate tickets, which see both layers)
-    if (ticketLayer === entryLayer) {
+    // Strong layer match. An investigate ticket treats both layers as
+    // compatible — it is the one case with a mixed candidate pool, and without
+    // this its config entries would be capped at 0.7 while core entries (scored
+    // by the core path) can reach 1.0. For cht-conf tickets the pool is all-conf
+    // after layer scoping, so the term simply keeps conf scores comparable.
+    if (ticketLayer === entryLayer || ticketLayer === 'investigate') {
       score += 0.3;
     }
 
@@ -250,11 +255,12 @@ export class ContextAnalysisAgent {
       current.issue.title,
       current.issue.description,
       ...current.issue.technical_context.components,
-    ]
-      .join(' ')
-      .toLowerCase();
+    ].join(' ');
 
-    return haystack.includes(mechanism.toLowerCase());
+    // Word-boundary match: 'events' must not fire inside 'prevents', nor
+    // 'relevant' inside 'irrelevant'. Mechanisms are plain \w tokens, so no
+    // regex escaping is needed.
+    return new RegExp(`\\b${mechanism}\\b`, 'i').test(haystack);
   }
 
   /**
