@@ -51,6 +51,11 @@ export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
       death_reporting: { disable: false },
     },
     forms: ['delivery', 'pregnancy', 'assessment'],
+    formVersions: {
+      delivery: '1-mockrev',
+      pregnancy: '1-mockrev',
+      assessment: '1-mockrev',
+    },
   },
   testData: {
     placesCreated: 3,
@@ -58,5 +63,21 @@ export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
     reportsCreated: 4,
     usersCreated: 2,
     warnings: [],
+    succeeded: true,
+    // One id per mock place/person/report (users are accounts, not docs).
+    seededDocIds: [
+      'mock-place-district-1',
+      'mock-place-health-center-1',
+      'mock-place-clinic-1',
+      'mock-person-1',
+      'mock-person-2',
+      'mock-person-3',
+      'mock-person-4',
+      'mock-person-5',
+      'mock-report-delivery-1',
+      'mock-report-pregnancy-1',
+      'mock-report-pregnancy-2',
+      'mock-report-assessment-1',
+    ],
   },
 };

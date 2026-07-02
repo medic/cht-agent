@@ -474,6 +474,14 @@ export interface DiscoveredConfig {
   permissions: Record<string, string[]>;
   transitions: Record<string, TransitionConfig>;
   forms: string[];
+  /**
+   * Installed form id -> CouchDB revision of its `form:<id>` doc. The rev is
+   * the change-detection hash for the apply -> verify loop: re-discover after
+   * applyConfig and a changed rev proves the upload took (an unchanged rev
+   * matches cht-conf's `skipped` status). Populated by the real discovery
+   * path; optional so hand-built configs (tests, fixtures) stay lightweight.
+   */
+  formVersions?: Record<string, string>;
 }
 
 /**
@@ -562,6 +570,68 @@ export interface ChtConfRunOptions {
 }
 
 /**
+ * Inputs to a generic cht-conf invocation (the low-level runner under
+ * runBucket, also driving the test-data verbs csv-to-docs / upload-docs /
+ * create-users). Verbs run in order inside ONE `cht` process.
+ */
+export interface ChtConfExecOptions {
+  /** cht-conf actions to run, in order (e.g. ['csv-to-docs', 'upload-docs']). */
+  verbs: string[];
+  /** The instance URL WITH embedded credentials (https://user:pass@host). */
+  instanceUrl: string;
+  /** Project folder passed to cht-conf `--source`. */
+  configPath: string;
+  /** Positional args appended after the verbs (e.g. a form filter). */
+  extraArgs?: string[];
+  /**
+   * Working directory for the spawned process. cht-conf writes report files
+   * (upload-docs.<ts>.log.json) into its cwd, so data runs point this at the
+   * data project to keep droppings out of the repo. Defaults to the agent cwd.
+   */
+  cwd?: string;
+  /** Log label ("[cht-conf] <label> ..."); defaults to the joined verbs. */
+  logLabel?: string;
+  /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
+  bin?: string;
+  /** Timeout in ms before the process is killed. */
+  timeoutMs?: number;
+}
+
+/**
+ * Raw outcome of a generic cht-conf invocation. Never a rejection — spawn
+ * errors and timeouts are folded in so callers can aggregate without
+ * per-invocation try/catch. Callers interpret `output` (cht-conf logs
+ * everything to stdout) with the parsers in src/utils/test-data.ts.
+ */
+export interface ChtConfExecResult {
+  /** Process exit code; null when it never exited cleanly (killed / not started). */
+  exitCode: number | null;
+  /** Interleaved stdout+stderr of the run. */
+  output: string;
+  /** True when the run was killed by the timeout. */
+  timedOut: boolean;
+  /** Set when the process could not be spawned at all (e.g. binary missing). */
+  startError?: string;
+}
+
+/**
+ * Inputs to prepareTestData's real path. The data project is a cht-conf
+ * project folder: docs come from `<dataPath>/csv/*.csv` (csv-to-docs naming:
+ * place.<type>.csv, person.csv, report.<form>.csv, contact.csv, users.csv),
+ * and user accounts from `<dataPath>/users.csv` (hand-written, or generated
+ * by csv-to-docs from users.*.csv inputs). create-users only runs when that
+ * file exists — cht-conf throws on a missing users.csv.
+ */
+export interface PrepareTestDataOptions {
+  /** cht-conf project folder holding csv/ (required by the real path). */
+  dataPath?: string;
+  /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
+  bin?: string;
+  /** Per-invocation timeout in ms before the process is killed. */
+  timeoutMs?: number;
+}
+
+/**
  * Tuning for readiness polling (see src/utils/cht-readiness.ts)
  */
 export interface ReadinessOptions {
@@ -582,7 +652,10 @@ export interface ProvisionOptions {
   chtCorePath?: string;
   version?: string;
   network?: string;
-  /** Target URL of the running instance (default: https://nginx on cht-agent-net). */
+  /**
+   * Target URL of the running instance. Real-path fallback order:
+   * options.url ?? process.env.CHT_URL ?? https://nginx (cht-agent-net).
+   */
   url?: string;
   /** Credentials for the instance (default: medic/password — cht-docker-compose.sh defaults). */
   auth?: { user: string; password: string };
@@ -611,6 +684,14 @@ export interface TestDataResult {
   reportsCreated: number;
   usersCreated: number;
   warnings: string[];
+  /** True when every cht-conf seeding invocation exited cleanly. */
+  succeeded: boolean;
+  /**
+   * _ids of the docs seeded via csv-to-docs + upload-docs (evidence for the
+   * QA verify step; also what the couchdb-tier reset wipes and reseeds).
+   * User ACCOUNTS created by create-users are not docs and are not listed.
+   */
+  seededDocIds: string[];
 }
 
 /**
