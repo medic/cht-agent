@@ -10,3 +10,13 @@ commits on this branch. Base: `main` @ `ed07177`.
   558 (571 is where the suite lands after S1's +13). Gate passed: `git status`
   clean after `npm test` — no `agent-memory/_skipped.ndjson` pollution, and
   the suite is green with ambient `ANTHROPIC_MODEL` set (both fixes active).
+
+## S1 — `134-cht-conf` (8822abb) @ f6cdec2
+- Tests: 558 → 571 (+13, as expected)   Lint: clean
+- Conflicts: none
+- Notes / deviations: mission described the branch as "single commit f63cc8b";
+  it actually carries f63cc8b plus docs commit 8822abb (#135 closure-mapping
+  correction in PR handoffs) — both merged. Fixture gate passed:
+  `parseTicketFile('test/fixtures/valid-ticket-cht-conf.md')` →
+  `technical_context.layer: "cht-conf"`, `configArtifact: "form"`,
+  `artifactName: "pnc_followup"`.
