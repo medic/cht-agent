@@ -142,4 +142,102 @@ describe('ResearchSupervisor - layer routing (#134)', () => {
     expect(result.layer).to.equal('investigate');
     expect(result.configArtifact).to.equal('task');
   });
+
+  describe('formatInsightLine', () => {
+    const insight = {
+      component: 'Contact Management',
+      description: 'Handles CRUD for people and places',
+      patterns: ['Data Flow', 'Architecture'],
+      dependencies: [],
+      sourceRepo: 'cht-conf',
+    };
+
+    it('should label the source wiki when asked (investigate tickets)', () => {
+      const supervisor = new ResearchSupervisor({ useMockMCP: true });
+
+      const line = (supervisor as any).formatInsightLine(insight, true);
+
+      expect(line).to.equal(
+        '- [cht-conf] **Contact Management**: Handles CRUD for people and places (patterns: Data Flow, Architecture)'
+      );
+    });
+
+    it('should render the pre-layer format when labelling is off', () => {
+      const supervisor = new ResearchSupervisor({ useMockMCP: true });
+
+      const line = (supervisor as any).formatInsightLine(insight, false);
+
+      expect(line).to.equal(
+        '- **Contact Management**: Handles CRUD for people and places (patterns: Data Flow, Architecture)'
+      );
+    });
+
+    it('should never render an empty label for unlabelled insights', () => {
+      const supervisor = new ResearchSupervisor({ useMockMCP: true });
+
+      const line = (supervisor as any).formatInsightLine(
+        { ...insight, sourceRepo: undefined },
+        true
+      );
+
+      expect(line).to.equal(
+        '- **Contact Management**: Handles CRUD for people and places (patterns: Data Flow, Architecture)'
+      );
+    });
+  });
+
+  it('should not label insight lines in the plan prompt for tickets without a layer', async () => {
+    const supervisor = new ResearchSupervisor({ useMockMCP: true });
+    const issue = createTestIssue();
+    const labelledFindings: CodeContextFindings = {
+      ...codeContextFindings,
+      architectureInsights: [
+        {
+          component: 'Contacts',
+          description: 'desc',
+          patterns: ['p'],
+          dependencies: [],
+          sourceRepo: 'cht-core',
+        },
+      ],
+    };
+
+    const prompt = (supervisor as any).buildPlanPrompt(
+      issue,
+      researchFindings,
+      contextAnalysis,
+      labelledFindings
+    );
+
+    expect(prompt).to.include('- **Contacts**: desc (patterns: p)');
+    expect(prompt).to.not.include('[cht-core]');
+  });
+
+  it('should label insight lines in the plan prompt for investigate tickets', async () => {
+    const supervisor = new ResearchSupervisor({ useMockMCP: true });
+    const issue = createTestIssue({
+      technical_context: { domain: 'contacts', components: [], layer: 'investigate' },
+    });
+    const labelledFindings: CodeContextFindings = {
+      ...codeContextFindings,
+      architectureInsights: [
+        {
+          component: 'Forms',
+          description: 'desc',
+          patterns: ['p'],
+          dependencies: [],
+          sourceRepo: 'cht-conf',
+        },
+      ],
+    };
+
+    const prompt = (supervisor as any).buildPlanPrompt(
+      issue,
+      researchFindings,
+      contextAnalysis,
+      labelledFindings
+    );
+
+    expect(prompt).to.include('- [cht-conf] **Forms**: desc (patterns: p)');
+  });
 });

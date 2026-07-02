@@ -220,19 +220,21 @@ describe('CodeContextAgent', () => {
 
     it('should include configArtifact and artifactName for config tickets', () => {
       const issue = createTestIssue({
+        title: 'Skip logic broken',
         technical_context: {
-          domain: 'forms-and-reports',
+          domain: 'tasks-and-targets',
           components: [],
           layer: 'cht-conf',
-          configArtifact: 'form',
+          configArtifact: 'task',
           artifactName: 'pnc_followup',
         },
       });
 
-      const query = (agent as any).buildSearchQuery(issue, 'form');
+      const query = (agent as any).buildSearchQuery(issue, 'task');
 
-      expect(query).to.include('form');
-      expect(query).to.include('pnc_followup');
+      // exact match: the artifact terms must be appended, not found by accident
+      // inside another term (e.g. 'form' inside 'forms-and-reports')
+      expect(query).to.equal('tasks-and-targets Skip logic broken task pnc_followup');
     });
 
     it('should leave the query unchanged when no config fields are present', () => {
@@ -654,6 +656,26 @@ describe('CodeContextAgent', () => {
 
       expect(stubClient.getDocumentCatalog.calledOnceWith('cht-conf')).to.be.true;
       expect(result.relevantRepos).to.deep.equal(['cht-conf']);
+    });
+
+    it('should prefer the supervisor-passed configArtifact over the ticket value', async () => {
+      const realAgent = new CodeContextAgent({ useMockMCP: false });
+      stubClientForRouting(realAgent);
+      const querySpy = sinon.spy(realAgent as any, 'buildSearchQuery');
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+        },
+      });
+
+      await realAgent.search(issue, { layer: 'cht-conf', configArtifact: 'task' });
+
+      // a disambiguation step may update the artifact in state without
+      // rewriting the ticket — the routed value must win
+      expect(querySpy.firstCall.args[1]).to.equal('task');
     });
 
     it('should route layer: cht-conf tickets to cht-conf mock data in mock mode', async () => {

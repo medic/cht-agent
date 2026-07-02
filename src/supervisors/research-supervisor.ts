@@ -334,13 +334,18 @@ export class ResearchSupervisor {
   ): string {
     const { issue: issueDetails } = issue;
 
+    // Source labels only appear for investigate tickets (the one case where
+    // two wikis are merged by layer routing), keeping every other ticket's
+    // prompt byte-identical to before the layer work.
+    const labelSources = issueDetails.technical_context.layer === 'investigate';
+
     let codeContextSection = '\n**Note**: Code architecture context was unavailable for this analysis.\n';
     if (codeContext && codeContext.architectureInsights.length > 0) {
       codeContextSection = `
 ## Code Architecture Context
 **Repos Analyzed**: ${codeContext.relevantRepos.join(', ')}
 **Architecture Insights**: ${codeContext.architectureInsights.length}
-${codeContext.architectureInsights.map((insight) => this.formatInsightLine(insight)).join('\n')}
+${codeContext.architectureInsights.map((insight) => this.formatInsightLine(insight, labelSources)).join('\n')}
 
 **Module Relationships**: ${codeContext.moduleRelationships.length}
 ${codeContext.moduleRelationships.map((rel) => `- ${rel.source} → ${rel.target} (${rel.relationship}): ${rel.description}`).join('\n')}
@@ -396,11 +401,13 @@ Format your response as a structured plan that will guide the development team.`
   }
 
   /**
-   * Render one architecture insight for the plan prompt, labelled with the wiki
-   * it came from when known (investigate tickets merge cht-core and cht-conf findings)
+   * Render one architecture insight for the plan prompt. The sourceRepo label
+   * is rendered only when the caller asks for it (investigate tickets, whose
+   * findings merge the cht-core and cht-conf wikis) — every other ticket keeps
+   * its pre-layer prompt format.
    */
-  private formatInsightLine(insight: ArchitectureInsight): string {
-    const repoLabel = insight.sourceRepo ? `[${insight.sourceRepo}] ` : '';
+  private formatInsightLine(insight: ArchitectureInsight, labelSource: boolean): string {
+    const repoLabel = labelSource && insight.sourceRepo ? `[${insight.sourceRepo}] ` : '';
     const patterns = insight.patterns.join(', ');
     return `- ${repoLabel}**${insight.component}**: ${insight.description} (patterns: ${patterns})`;
   }
