@@ -20,3 +20,12 @@ commits on this branch. Base: `main` @ `ed07177`.
   `parseTicketFile('test/fixtures/valid-ticket-cht-conf.md')` →
   `technical_context.layer: "cht-conf"`, `configArtifact: "form"`,
   `artifactName: "pnc_followup"`.
+
+## S2 — `134-pr5` stack (36942fb; contains PR3+PR4) @ 05410b6
+- Tests: 571 → 652 (+81)   Lint: clean
+- Conflicts: none (stacked on S1 as expected)
+- Notes / deviations: gate specs present and green — routing
+  (`test/supervisors/research-supervisor.routing.spec.ts`), scoring
+  (config-aware scoring specs inside `context-analysis-agent.spec.ts` /
+  `context-loader.spec.ts`), canonical diff (`test/utils/canonical-diff.spec.ts`,
+  `dev-target.spec.ts`). Individual PR branches 134-pr3/pr4/pr5 left intact.
