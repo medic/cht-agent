@@ -228,12 +228,13 @@ describe('filterPR', () => {
       const { filterPR } = loadFilter();
       // Bug label + linked issue, but every file is under api/ — a single service.
       // The bug distill rule requires ≥2 services, so it must NOT fire; with the LLM
-      // skipped the PR falls through to flag-for-human.
+      // skipped the PR falls through to flag-for-human — which writes a skip-log
+      // entry, so the log must be redirected away from the real tracked file.
       const result: FilterResult = await filterPR(makePR({
         labels: ['Type: Bug'],
         linkedIssues: [LINKED_ISSUE],
         fileList: ['api/a.ts', 'api/b.ts'],
-      }), { skipLlm: true });
+      }), { logPath: tmpLogPath(), skipLlm: true });
       expect(result.decision).to.equal('flag-for-human');
     });
   });
