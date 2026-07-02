@@ -1,10 +1,10 @@
 ---
-id: cht-core-9021
+id: cht-core-8917
 category: feature
 domain: interoperability
 domainFit: strong
-issueNumber: 9021
-issueUrl: https://github.com/medic/cht-core/issues/9021
+issueNumber: 8917
+issueUrl: https://github.com/medic/cht-core/issues/8917
 title: Serve Android App Links verification file at /.well-known/assetlinks.json from the assetlinks property in app_settings.json
 lastUpdated: '2026-06-23'
 summary: CHT partners had no built-in way to enable Android App Links verification, which requires serving a Digital Asset Links file declaring the authorized app. This PR adds an API route that serves the configurable `assetlinks` property from app_settings.json at /.well-known/assetlinks.json so Android can verify the app-to-domain association.
