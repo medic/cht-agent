@@ -38,9 +38,22 @@ function skipped(reason: string): CompileValidationResult {
  * cht-core; the only upstream scope check (validateAgainstManifest) is log-only.
  * Returns the absolute paths actually written.
  */
+/** Real path of the nearest existing ancestor of `target` (target itself if it exists). */
+function nearestExistingRealPath(target: string): string {
+  let current = target;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return fs.realpathSync(current);
+}
+
 function materializeGuarded(chtCorePath: string, files: ReadonlyArray<GeneratedFile>): string[] {
   const root = path.resolve(chtCorePath);
   const rootPrefix = root + path.sep;
+  const realRoot = fs.realpathSync(root);
+  const realRootPrefix = realRoot + path.sep;
   const written: string[] = [];
   for (const file of files) {
     if (path.isAbsolute(file.path)) {
@@ -50,6 +63,14 @@ function materializeGuarded(chtCorePath: string, files: ReadonlyArray<GeneratedF
     const full = path.resolve(root, file.path);
     if (full === root || !full.startsWith(rootPrefix)) {
       console.warn(`${LOG} Skipping out-of-bounds file path (path traversal): ${file.path}`);
+      continue;
+    }
+    // The lexical check above is defeated if an existing ancestor directory is a
+    // symlink pointing outside cht-core (writeFileSync follows symlinks). Re-check
+    // that the real path of the nearest existing ancestor stays inside cht-core.
+    const realAncestor = nearestExistingRealPath(path.dirname(full));
+    if (realAncestor !== realRoot && !realAncestor.startsWith(realRootPrefix)) {
+      console.warn(`${LOG} Skipping file that escapes cht-core via a symlinked directory: ${file.path}`);
       continue;
     }
     fs.mkdirSync(path.dirname(full), { recursive: true });

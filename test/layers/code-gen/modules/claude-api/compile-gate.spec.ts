@@ -14,18 +14,26 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   let existsSyncStub: sinon.SinonStub;
   let mkdirStub: sinon.SinonStub;
   let writeStub: sinon.SinonStub;
+  let realpathSyncStub: sinon.SinonStub;
 
   // (Re)build the stubs and load the module fresh; workspace, compile-validator,
-  // and node:fs are all stubbed so no real git/tsc/disk is touched.
+  // and node:fs are all stubbed so no real git/tsc/disk is touched. realpathSync
+  // defaults to identity (no symlinks); tests override it to simulate an escape.
   const load = () => {
     snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, stashName: null });
     rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
     compileStub = sinon.stub().resolves({ passed: true, issues: [] });
-    existsSyncStub = sinon.stub().returns(true); // .git present by default
+    existsSyncStub = sinon.stub().returns(true); // .git present + ancestors exist by default
     mkdirStub = sinon.stub();
     writeStub = sinon.stub();
+    realpathSyncStub = sinon.stub().callsFake((p: string) => p); // identity: no symlinks
     const mod = proxyquire('../../../../../src/layers/code-gen/modules/claude-api/compile-gate', {
-      'node:fs': { existsSync: existsSyncStub, mkdirSync: mkdirStub, writeFileSync: writeStub },
+      'node:fs': {
+        existsSync: existsSyncStub,
+        mkdirSync: mkdirStub,
+        writeFileSync: writeStub,
+        realpathSync: realpathSyncStub,
+      },
       '../claude-code-cli/workspace': { snapshotChtCore: snapshotStub, rollbackChtCore: rollbackStub },
       '../../../../agents/compile-validator': { compileCheck: compileStub },
     });
@@ -123,6 +131,17 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     const run = load();
     const warnSpy = sinon.stub(console, 'warn');
     await run(CHT, [file('/etc/evil.ts'), file('ok.ts')]);
+    expect(writeStub.calledOnce).to.equal(true);
+    expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'ok.ts'));
+    expect(warnSpy.called).to.equal(true);
+  });
+
+  it('rejects a file whose lexically-in-bounds path escapes via a symlinked ancestor directory', async () => {
+    const run = load();
+    const warnSpy = sinon.stub(console, 'warn');
+    // 'app/link' is (pretends to be) a symlink whose real path is outside cht-core.
+    realpathSyncStub.withArgs(path.resolve(CHT, 'app/link')).returns('/tmp/outside/SECRET');
+    await run(CHT, [file('app/link/pwned.ts'), file('ok.ts')]);
     expect(writeStub.calledOnce).to.equal(true);
     expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'ok.ts'));
     expect(warnSpy.called).to.equal(true);
