@@ -1,10 +1,10 @@
 ---
-id: cht-core-8996
+id: cht-core-9118
 category: improvement
 domain: infrastructure
 domainFit: strong
-issueNumber: 8996
-issueUrl: https://github.com/medic/cht-core/issues/8996
+issueNumber: 9118
+issueUrl: https://github.com/medic/cht-core/issues/9118
 title: Use a published Helm repository for cht-deploy instead of a vendored local chart
 lastUpdated: '2026-06-23'
 summary: cht-deploy bundled its own copy of the CHT Helm chart (templates plus a packaged cht-chart-4.x.tgz) inside cht-core; this PR reworks the deploy tooling to pull the chart from the shared medic/helm-charts Helm repository, removing the duplicated chart sources.
