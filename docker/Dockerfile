@@ -18,6 +18,11 @@ FROM node:22-bookworm
 # - pushInsteadOf rewrites only PUSH urls, so fetch/clone of public repos stays
 #   allowed; system config needs root, which the agent user lacks. --add is
 #   required (pushInsteadOf is multi-valued; a plain set drops the https value).
+#   The bare https:// and http:// rewrites are catch-alls (#134): they close
+#   embedded-credential URLs (https://user:token@github.com/... does not match
+#   the github.com prefix) and non-GitHub hosts, e.g. remotes of a mounted
+#   deployment-config repo. In-container pushes are impossible by design;
+#   the host user pushes from the host.
 # - python3 also serves cht-conf's convert-app-forms: its xls2xform-medic is a
 #   self-contained pyxform zipapp needing only a system Python >= 3.10
 #   (bookworm ships 3.11) — no pip packages required.
@@ -32,6 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && git config --system --add url."error://push-blocked-by-policy".pushInsteadOf "git@github.com:" \
     && git config --system --add url."error://push-blocked-by-policy".pushInsteadOf "https://github.com/" \
     && git config --system --add url."error://push-blocked-by-policy".pushInsteadOf "ssh://git@github.com/" \
+    && git config --system --add url."error://push-blocked-by-policy".pushInsteadOf "https://" \
+    && git config --system --add url."error://push-blocked-by-policy".pushInsteadOf "http://" \
     && git config --system push.default nothing \
     && git config --system credential.helper "" \
     && git config --system transfer.fsckObjects true \

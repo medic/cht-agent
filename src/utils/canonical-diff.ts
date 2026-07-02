@@ -25,9 +25,28 @@ const MAX_DIFF_CELLS = 4_000_000;
 
 const BINARY_EXTENSIONS = new Set(['.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf']);
 
-/** The deployment config root: only ever the CHT_CONF_PATH mount. */
-export const resolveDeploymentConfigRoot = (): string | undefined =>
-  process.env.CHT_CONF_PATH || undefined;
+/**
+ * Marker file committed in docker/conf-placeholder: the compose default mounts
+ * that placeholder so core-only sessions need no setup, and the container
+ * always has CHT_CONF_PATH set — the marker is how "no real deployment config
+ * is mounted" stays detectable, keeping the fail-closed paths reachable.
+ */
+const PLACEHOLDER_MARKER = '.cht-conf-placeholder';
+
+export const isPlaceholderRoot = (root: string): boolean =>
+  fs.existsSync(path.join(root, PLACEHOLDER_MARKER));
+
+/**
+ * The deployment config root: the CHT_CONF_PATH mount, unless it is the
+ * committed placeholder (then there is no deployment config).
+ */
+export const resolveDeploymentConfigRoot = (): string | undefined => {
+  const root = process.env.CHT_CONF_PATH;
+  if (!root) {
+    return undefined;
+  }
+  return isPlaceholderRoot(root) ? undefined : root;
+};
 
 /** The canonical baseline root: CANONICAL_CONF, or cht-core's standard config. */
 export const resolveCanonicalConfigRoot = (): string => {
@@ -99,11 +118,29 @@ const isBinary = (filePath: string, content: Buffer): boolean => {
 /**
  * Longest-common-subsequence line diff: canonical lines prefixed '-',
  * deployment lines prefixed '+', unchanged lines ' '. Runs of unchanged lines
- * are collapsed to one line of context on each side.
+ * are collapsed to one line of context on each side. The common prefix and
+ * suffix are trimmed before the LCS table is built, so a one-line drift in a
+ * several-thousand-line app_settings.json stays well under the size cap.
  */
 const buildLineDiff = (canonicalText: string, deploymentText: string): string | undefined => {
-  const a = canonicalText.split('\n');
-  const b = deploymentText.split('\n');
+  const allA = canonicalText.split('\n');
+  const allB = deploymentText.split('\n');
+
+  let prefix = 0;
+  while (prefix < allA.length && prefix < allB.length && allA[prefix] === allB[prefix]) {
+    prefix++;
+  }
+  let suffix = 0;
+  while (
+    suffix < allA.length - prefix &&
+    suffix < allB.length - prefix &&
+    allA[allA.length - 1 - suffix] === allB[allB.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const a = allA.slice(prefix, allA.length - suffix);
+  const b = allB.slice(prefix, allB.length - suffix);
 
   if (a.length * b.length > MAX_DIFF_CELLS) {
     return undefined;
@@ -145,6 +182,14 @@ const buildLineDiff = (canonicalText: string, deploymentText: string): string | 
     j++;
   }
 
+  // Re-add one line of context from the trimmed prefix/suffix
+  if (prefix > 0) {
+    raw.unshift(` ${allA[prefix - 1]}`);
+  }
+  if (suffix > 0) {
+    raw.push(` ${allA[allA.length - suffix]}`);
+  }
+
   // Collapse long unchanged runs to one context line each side of a change
   const collapsed: string[] = [];
   raw.forEach((line, index) => {
@@ -160,6 +205,13 @@ const buildLineDiff = (canonicalText: string, deploymentText: string): string | 
       collapsed.push('…');
     }
   });
+
+  if (prefix > 1) {
+    collapsed.unshift('…');
+  }
+  if (suffix > 1) {
+    collapsed.push('…');
+  }
 
   const text = collapsed.join('\n');
   if (text.length > MAX_DIFF_LENGTH) {
@@ -312,6 +364,78 @@ const binaryDiffWithXmlFallback = (
   };
 };
 
+interface FacetPresence {
+  relativePath: string;
+  deploymentPath: string;
+  canonicalPath: string;
+  inDeployment: boolean;
+  inCanonical: boolean;
+}
+
+const isDirectoryAt = (target: string): boolean =>
+  fs.existsSync(target) && fs.statSync(target).isDirectory();
+
+/**
+ * Compare every facet of the artifact that exists on both sides; the first
+ * one that differs is the artifact's delta. Comparing only the first-found
+ * facet would report a form as identical when its .xlsx matches but its
+ * .properties.json (an independent facet) drifted.
+ */
+const diffComparableFacets = (
+  options: CanonicalDiffOptions,
+  facets: FacetPresence[]
+): CanonicalDiffResult | undefined => {
+  let identicalResult: CanonicalDiffResult | undefined;
+
+  for (const facet of facets) {
+    const result = diffExistingFile(options, facet.relativePath, facet.canonicalPath, facet.deploymentPath);
+    if (result.status !== 'identical') {
+      return result;
+    }
+    identicalResult = identicalResult ?? result;
+  }
+
+  return identicalResult;
+};
+
+const diffUnpairedFacets = (
+  options: CanonicalDiffOptions,
+  facets: FacetPresence[]
+): CanonicalDiffResult => {
+  const deploymentOnly = facets.filter((facet) => facet.inDeployment);
+  const canonicalOnly = facets.filter((facet) => facet.inCanonical);
+
+  if (deploymentOnly.length > 0 && canonicalOnly.length > 0) {
+    const deploymentNames = deploymentOnly.map((facet) => facet.relativePath).join(', ');
+    const canonicalNames = canonicalOnly.map((facet) => facet.relativePath).join(', ');
+    return {
+      artifact: options.artifact,
+      artifactName: options.artifactName,
+      relativePath: deploymentOnly[0].relativePath,
+      status: 'differs',
+      summary: `${options.artifact} exists as ${deploymentNames} in the deployment but as ${canonicalNames} in the canonical baseline — no directly comparable facet`,
+    };
+  }
+
+  if (deploymentOnly.length > 0) {
+    return {
+      artifact: options.artifact,
+      artifactName: options.artifactName,
+      relativePath: deploymentOnly[0].relativePath,
+      status: 'missing-in-canonical',
+      summary: `${deploymentOnly[0].relativePath} is a deployment-specific artifact with no canonical counterpart`,
+    };
+  }
+
+  return {
+    artifact: options.artifact,
+    artifactName: options.artifactName,
+    relativePath: canonicalOnly[0].relativePath,
+    status: 'missing-in-deployment',
+    summary: `${canonicalOnly[0].relativePath} exists in the canonical baseline but not in the deployment config`,
+  };
+};
+
 /**
  * Diff the suspect artifact in the deployment config against the canonical
  * baseline. Never throws — every failure mode maps to a CanonicalDiffResult.
@@ -321,10 +445,10 @@ export const diffAgainstCanonical = (options: CanonicalDiffOptions): CanonicalDi
     const deploymentRoot = options.deploymentRoot ?? resolveDeploymentConfigRoot();
     const canonicalRoot = options.canonicalRoot ?? resolveCanonicalConfigRoot();
 
-    if (!deploymentRoot || !fs.existsSync(deploymentRoot)) {
+    if (!deploymentRoot || !fs.existsSync(deploymentRoot) || isPlaceholderRoot(deploymentRoot)) {
       return unavailable(
         options,
-        'deployment config not mounted — set CHT_CONF_PATH to the deployment config repo to enable the canonical diff'
+        'deployment config not mounted — set CHT_CONF_PATH to the deployment config repo (the default mount is the committed placeholder) to enable the canonical diff'
       );
     }
     if (!fs.existsSync(canonicalRoot)) {
@@ -335,47 +459,44 @@ export const diffAgainstCanonical = (options: CanonicalDiffOptions): CanonicalDi
     }
 
     const candidates = artifactCandidatePaths(options.artifact, options.artifactName);
-    const inDeployment = candidates.find((candidate) =>
-      fs.existsSync(path.join(deploymentRoot, candidate))
-    );
-
-    if (inDeployment === undefined) {
-      const inCanonical = candidates.find((candidate) =>
-        fs.existsSync(path.join(canonicalRoot, candidate))
-      );
-      if (inCanonical !== undefined) {
+    const facets: FacetPresence[] = candidates
+      .map((relativePath) => {
+        const deploymentPath = path.join(deploymentRoot, relativePath);
+        const canonicalPath = path.join(canonicalRoot, relativePath);
         return {
-          artifact: options.artifact,
-          artifactName: options.artifactName,
-          relativePath: inCanonical,
-          status: 'missing-in-deployment',
-          summary: `${inCanonical} exists in the canonical baseline but not in the deployment config`,
+          relativePath,
+          deploymentPath,
+          canonicalPath,
+          inDeployment: fs.existsSync(deploymentPath),
+          inCanonical: fs.existsSync(canonicalPath),
         };
-      }
+      })
+      .filter((facet) => facet.inDeployment || facet.inCanonical);
+
+    if (facets.length === 0) {
       return unavailable(
         options,
         `could not locate the ${options.artifact} artifact in the deployment config (tried: ${candidates.join(', ')})`
       );
     }
 
-    const deploymentPath = path.join(deploymentRoot, inDeployment);
-    const canonicalPath = path.join(canonicalRoot, inDeployment);
-
-    if (fs.statSync(deploymentPath).isDirectory()) {
-      return diffDirectoryArtifact(options, inDeployment, canonicalPath, deploymentPath);
+    // Directory candidates (unnamed form/translations artifacts) are always a
+    // single candidate: compare listings, or report the missing side.
+    const first = facets[0];
+    if (isDirectoryAt(first.deploymentPath) || isDirectoryAt(first.canonicalPath)) {
+      if (first.inDeployment && first.inCanonical) {
+        return diffDirectoryArtifact(options, first.relativePath, first.canonicalPath, first.deploymentPath);
+      }
+      return diffUnpairedFacets(options, facets);
     }
 
-    if (!fs.existsSync(canonicalPath)) {
-      return {
-        artifact: options.artifact,
-        artifactName: options.artifactName,
-        relativePath: inDeployment,
-        status: 'missing-in-canonical',
-        summary: `${inDeployment} is a deployment-specific artifact with no canonical counterpart`,
-      };
+    const comparable = facets.filter((facet) => facet.inDeployment && facet.inCanonical);
+    const compared = diffComparableFacets(options, comparable);
+    if (compared) {
+      return compared;
     }
 
-    return diffExistingFile(options, inDeployment, canonicalPath, deploymentPath);
+    return diffUnpairedFacets(options, facets.filter((facet) => !(facet.inDeployment && facet.inCanonical)));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return unavailable(options, `canonical diff failed: ${message}`);

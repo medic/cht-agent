@@ -10,6 +10,7 @@
  */
 
 import { CHTLayer } from '../types';
+import { resolveDeploymentConfigRoot } from './canonical-diff';
 
 const DEFAULT_CHT_CORE_PATH = '/workspace/cht-core';
 
@@ -27,10 +28,13 @@ export const resolveDevelopmentTarget = (layer?: CHTLayer): DevelopmentTarget =>
   }
 
   if (layer === 'cht-conf') {
-    const repoPath = process.env.CHT_CONF_PATH;
+    // Placeholder-aware: inside the container CHT_CONF_PATH is always set and
+    // always exists (the compose default mounts the committed placeholder), so
+    // the gate must fail closed unless a REAL deployment config is mounted.
+    const repoPath = resolveDeploymentConfigRoot();
     if (!repoPath) {
       throw new Error(
-        'layer: cht-conf tickets need CHT_CONF_PATH (the deployment config mount) to develop against'
+        'layer: cht-conf tickets need CHT_CONF_PATH pointing at a real deployment config mount (not the committed placeholder) to develop against'
       );
     }
     return { repoPath, toolchain: 'cht-conf' };

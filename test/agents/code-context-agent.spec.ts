@@ -759,6 +759,46 @@ describe('CodeContextAgent', () => {
       expect(diffStub.called).to.be.false;
       expect(result.canonicalDiff).to.be.undefined;
     });
+
+    it('should not diff for cht-core tickets that carry a configArtifact', async () => {
+      // the gate must key on the layer, not just on artifact presence
+      sinon.stub(canonicalDiff, 'resolveDeploymentConfigRoot').returns('/mounted/config');
+      const diffStub = sinon.stub(canonicalDiff, 'diffAgainstCanonical');
+      const mockAgent = new CodeContextAgent({ useMockMCP: true });
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-core',
+          configArtifact: 'form',
+          artifactName: 'pnc_followup',
+        },
+      });
+
+      const result = await mockAgent.search(issue);
+
+      expect(diffStub.called).to.be.false;
+      expect(result.canonicalDiff).to.be.undefined;
+    });
+
+    it('should not diff for investigate tickets until they are disambiguated', async () => {
+      sinon.stub(canonicalDiff, 'resolveDeploymentConfigRoot').returns('/mounted/config');
+      const diffStub = sinon.stub(canonicalDiff, 'diffAgainstCanonical');
+      const mockAgent = new CodeContextAgent({ useMockMCP: true });
+      const issue = createTestIssue({
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'investigate',
+          configArtifact: 'form',
+        },
+      });
+
+      const result = await mockAgent.search(issue);
+
+      expect(diffStub.called).to.be.false;
+      expect(result.canonicalDiff).to.be.undefined;
+    });
   });
 
   describe('selectRelevantDocs', () => {

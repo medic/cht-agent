@@ -95,11 +95,31 @@ describe('canonical-diff', () => {
 
     it('should default the canonical root to cht-core standard config', () => {
       delete process.env.CANONICAL_CONF;
-      process.env.CHT_CORE_PATH = '/workspace/cht-core';
+      // deliberately NOT the built-in default, so a dropped env lookup fails here
+      process.env.CHT_CORE_PATH = '/custom/cht-core-checkout';
 
       expect(resolveCanonicalConfigRoot()).to.equal(
-        path.join('/workspace/cht-core', 'config', 'standard')
+        path.join('/custom/cht-core-checkout', 'config', 'standard')
       );
+    });
+
+    it('should treat the committed placeholder as not mounted', () => {
+      fs.writeFileSync(path.join(deploymentRoot, '.cht-conf-placeholder'), '# marker\n');
+      process.env.CHT_CONF_PATH = deploymentRoot;
+
+      expect(resolveDeploymentConfigRoot()).to.be.undefined;
+
+      const result = diffAgainstCanonical({ artifact: 'task', canonicalRoot });
+      expect(result.status).to.equal('unavailable');
+    });
+
+    it('should treat an explicitly passed placeholder root as unavailable', () => {
+      fs.writeFileSync(path.join(deploymentRoot, '.cht-conf-placeholder'), '# marker\n');
+      write(canonicalRoot, 'tasks.js', 'module.exports = [];\n');
+
+      const result = diff('task');
+
+      expect(result.status).to.equal('unavailable');
     });
   });
 
@@ -242,6 +262,90 @@ describe('canonical-diff', () => {
       expect(result.diff).to.include('-l6');
       expect(result.diff).to.include('+l6-changed');
       expect(result.diff).to.not.include(' l2');
+    });
+
+    it('should diff a one-line drift in a file too large for a full LCS table', () => {
+      // 3000x3000 lines would exceed the cell cap; the common prefix/suffix
+      // trim must reduce it to the single drifted line.
+      const base = Array.from({ length: 3000 }, (_, i) => `"setting_${i}": ${i},`);
+      const drifted = [...base];
+      drifted[1500] = '"setting_1500": 99999,';
+      write(canonicalRoot, 'app_settings.json', base.join('\n'));
+      write(deploymentRoot, 'app_settings.json', drifted.join('\n'));
+
+      const result = diff('app-settings');
+
+      expect(result.status).to.equal('differs');
+      expect(result.diff).to.be.a('string');
+      expect(result.diff).to.include('-"setting_1500": 1500,');
+      expect(result.diff).to.include('+"setting_1500": 99999,');
+    });
+
+    it('should skip the inline diff when files differ beyond the size cap', () => {
+      const canonicalLines = Array.from({ length: 2500 }, (_, i) => `canonical ${i}`);
+      const deploymentLines = Array.from({ length: 2500 }, (_, i) => `deployment ${i}`);
+      write(canonicalRoot, 'tasks.js', canonicalLines.join('\n'));
+      write(deploymentRoot, 'tasks.js', deploymentLines.join('\n'));
+
+      const result = diff('task');
+
+      expect(result.status).to.equal('differs');
+      expect(result.diff).to.be.undefined;
+      expect(result.summary).to.include('too large');
+    });
+
+    it('should truncate oversized diffs with an explicit marker', () => {
+      write(canonicalRoot, 'tasks.js', 'short\n');
+      write(deploymentRoot, 'tasks.js', `${'x'.repeat(6000)}\n`);
+
+      const result = diff('task');
+
+      expect(result.status).to.equal('differs');
+      expect(result.diff).to.be.a('string');
+      expect(result.diff).to.match(/… \(diff truncated\)$/);
+    });
+
+    it('should report drift in a sibling facet when the first facet is identical', () => {
+      // The .properties.json facet is independent of the spreadsheet: a form
+      // whose xlsx matches but whose properties drifted must not read 'identical'.
+      const xlsx = path.join('forms', 'app', 'pnc.xlsx');
+      const props = path.join('forms', 'app', 'pnc.properties.json');
+      write(canonicalRoot, xlsx, Buffer.from([0x50, 0x4b, 0x00, 0x01]));
+      write(deploymentRoot, xlsx, Buffer.from([0x50, 0x4b, 0x00, 0x01]));
+      write(canonicalRoot, props, '{"title":"PNC"}\n');
+      write(deploymentRoot, props, '{"title":"PNC visit"}\n');
+
+      const result = diff('form', 'pnc');
+
+      expect(result.status).to.equal('differs');
+      expect(result.relativePath).to.equal(props);
+      expect(result.diff).to.include('+{"title":"PNC visit"}');
+    });
+
+    it('should report a facet mismatch instead of missing-in-canonical', () => {
+      // Deployment committed only the converted xml; canonical ships only the
+      // xlsx. There is no comparable facet, but the form is NOT deployment-specific.
+      write(deploymentRoot, path.join('forms', 'app', 'pnc.xml'), '<form/>\n');
+      write(canonicalRoot, path.join('forms', 'app', 'pnc.xlsx'), Buffer.from([0x50, 0x4b, 0x00]));
+
+      const result = diff('form', 'pnc');
+
+      expect(result.status).to.equal('differs');
+      expect(result.summary).to.include('no directly comparable facet');
+    });
+
+    it('should keep binary-differs when the xlsx differs but its xml is identical', () => {
+      const xlsx = path.join('forms', 'app', 'pnc.xlsx');
+      const xml = path.join('forms', 'app', 'pnc.xml');
+      write(canonicalRoot, xlsx, Buffer.from([0x50, 0x4b, 0x00, 0x01]));
+      write(deploymentRoot, xlsx, Buffer.from([0x50, 0x4b, 0x00, 0x02]));
+      write(canonicalRoot, xml, '<bind relevant="same"/>\n');
+      write(deploymentRoot, xml, '<bind relevant="same"/>\n');
+
+      const result = diff('form', 'pnc');
+
+      expect(result.status).to.equal('binary-differs');
+      expect(result.summary).to.include('binary');
     });
   });
 });

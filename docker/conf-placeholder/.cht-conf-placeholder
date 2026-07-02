@@ -1,0 +1,5 @@
+# Marker file: this directory is the committed CHT_CONF_PATH placeholder, not
+# a real deployment config. src/utils/canonical-diff.ts and dev-target.ts
+# treat a root containing this file as "no deployment config mounted", keeping
+# their fail-closed paths reachable inside the container (where CHT_CONF_PATH
+# is always set). Do not create a file with this name in a real config repo.

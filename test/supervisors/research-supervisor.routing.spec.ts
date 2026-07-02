@@ -239,4 +239,41 @@ describe('ResearchSupervisor - layer routing (#134)', () => {
 
     expect(prompt).to.include('- [cht-conf] **Forms**: desc (patterns: p)');
   });
+
+  it('should keep the canonical diff in the plan prompt when the wikis return no insights', async () => {
+    // A DeepWiki outage degrades insights to [] with warnings, but the config
+    // drift evidence must still reach the planner.
+    const supervisor = new ResearchSupervisor({ useMockMCP: true });
+    const issue = createTestIssue({
+      technical_context: {
+        domain: 'forms-and-reports',
+        components: [],
+        layer: 'cht-conf',
+        configArtifact: 'form',
+      },
+    });
+    const findingsWithDiffOnly: CodeContextFindings = {
+      ...codeContextFindings,
+      architectureInsights: [],
+      canonicalDiff: {
+        artifact: 'form',
+        artifactName: 'pnc_followup',
+        relativePath: 'forms/app/pnc_followup.xml',
+        status: 'differs',
+        diff: '-old\n+new',
+        summary: 'forms/app/pnc_followup.xml differs from the canonical baseline',
+      },
+    };
+
+    const prompt = (supervisor as any).buildPlanPrompt(
+      issue,
+      researchFindings,
+      contextAnalysis,
+      findingsWithDiffOnly
+    );
+
+    expect(prompt).to.include('Code architecture context was unavailable');
+    expect(prompt).to.include('**Canonical Config Diff** (differs)');
+    expect(prompt).to.include('forms/app/pnc_followup.xml differs');
+  });
 });

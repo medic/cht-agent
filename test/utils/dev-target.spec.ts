@@ -1,4 +1,7 @@
 import { expect } from 'chai';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { resolveDevelopmentTarget } from '../../src/utils/dev-target';
 
 describe('dev-target', () => {
@@ -23,11 +26,11 @@ describe('dev-target', () => {
   });
 
   it('should route layer: cht-conf development to the config repo mount', () => {
-    process.env.CHT_CONF_PATH = '/workspace/cht-conf-project';
+    process.env.CHT_CONF_PATH = '/mounted/deployment-config';
 
     const target = resolveDevelopmentTarget('cht-conf');
 
-    expect(target.repoPath).to.equal('/workspace/cht-conf-project');
+    expect(target.repoPath).to.equal('/mounted/deployment-config');
     expect(target.toolchain).to.equal('cht-conf');
   });
 
@@ -37,16 +40,29 @@ describe('dev-target', () => {
     expect(() => resolveDevelopmentTarget('cht-conf')).to.throw('CHT_CONF_PATH');
   });
 
+  it('should fail closed when CHT_CONF_PATH points at the committed placeholder', () => {
+    const placeholder = fs.mkdtempSync(path.join(os.tmpdir(), 'conf-placeholder-'));
+    try {
+      fs.writeFileSync(path.join(placeholder, '.cht-conf-placeholder'), '# marker\n');
+      process.env.CHT_CONF_PATH = placeholder;
+
+      expect(() => resolveDevelopmentTarget('cht-conf')).to.throw('placeholder');
+    } finally {
+      fs.rmSync(placeholder, { recursive: true, force: true });
+    }
+  });
+
   it('should refuse to resolve an ambiguous investigate ticket', () => {
     expect(() => resolveDevelopmentTarget('investigate')).to.throw('disambiguated');
   });
 
   it('should keep cht-core tickets on the cht-core working copy', () => {
-    process.env.CHT_CORE_PATH = '/workspace/cht-core';
+    // deliberately NOT the built-in default, so a dropped env lookup fails here
+    process.env.CHT_CORE_PATH = '/custom/cht-core-checkout';
 
     const target = resolveDevelopmentTarget('cht-core');
 
-    expect(target.repoPath).to.equal('/workspace/cht-core');
+    expect(target.repoPath).to.equal('/custom/cht-core-checkout');
     expect(target.toolchain).to.equal('cht-core');
   });
 
