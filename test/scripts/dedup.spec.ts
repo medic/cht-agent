@@ -89,8 +89,10 @@ describe('ciGuardReason', () => {
 });
 
 describe('dedupeByIssueId', () => {
-  function entry(domain: string, path: string, id: string, sourcePr: string): DedupEntry {
-    return { domain, path, frontmatter: { id, source_pr: sourcePr } };
+  function entry(domain: string, path: string, id: string, sourcePr?: string): DedupEntry {
+    const fm: Record<string, unknown> = { id };
+    if (sourcePr !== undefined) fm.source_pr = sourcePr;
+    return { domain, path, frontmatter: fm };
   }
 
   it('keeps a single draft unchanged', () => {
@@ -133,5 +135,57 @@ describe('dedupeByIssueId', () => {
     expect(kept).to.have.length(1);
     expect(kept[0].path).to.equal('p2.md');
     expect(dropped).to.have.length(2);
+  });
+
+  it('uses alphabetical path tiebreaker when both entries lack source_pr', () => {
+    const a = { domain: 'data-sync', path: 'b.md', frontmatter: { id: 'cht-core-1' } };
+    const b = { domain: 'data-sync', path: 'a.md', frontmatter: { id: 'cht-core-1' } };
+    const { kept, dropped } = dedupeByIssueId([a, b]);
+    expect(kept).to.have.length(1);
+    expect(kept[0].path).to.equal('a.md');
+    expect(dropped).to.have.length(1);
+    expect(dropped[0].path).to.equal('b.md');
+  });
+
+  it('uses alphabetical path tiebreaker when both entries have the same source_pr', () => {
+    const a = entry('data-sync', 'b.md', 'cht-core-2', 'medic/cht-core#500');
+    const b = entry('data-sync', 'a.md', 'cht-core-2', 'medic/cht-core#500');
+    const { kept, dropped } = dedupeByIssueId([a, b]);
+    expect(kept).to.have.length(1);
+    expect(kept[0].path).to.equal('a.md');
+    expect(dropped).to.have.length(1);
+    expect(dropped[0].path).to.equal('b.md');
+  });
+
+  it('picks the lowest source PR even when others are sourceless', () => {
+    const withSrc = entry('data-sync', 'b.md', 'cht-core-3', 'medic/cht-core#100');
+    const noSrcA = { domain: 'data-sync', path: 'a.md', frontmatter: { id: 'cht-core-3' } };
+    const noSrcB = { domain: 'data-sync', path: 'c.md', frontmatter: { id: 'cht-core-3' } };
+    const { kept, dropped } = dedupeByIssueId([noSrcA, withSrc, noSrcB]);
+    expect(kept).to.have.length(1);
+    expect(kept[0].path).to.equal('b.md');
+    expect(dropped).to.have.length(2);
+  });
+
+  it('uses alphabetical tiebreaker when duplicate drafts share the same source PR number', () => {
+    const a = entry('data-sync', 'a.md', 'cht-core-8985', 'medic/cht-core#9027');
+    const b = entry('data-sync', 'b.md', 'cht-core-8985', 'medic/cht-core#9027');
+    const { kept, dropped } = dedupeByIssueId([b, a]);
+
+    expect(kept).to.have.length(1);
+    expect(kept[0].path).to.equal('a.md');
+    expect(dropped).to.have.length(1);
+    expect(dropped[0].path).to.equal('b.md');
+  });
+
+  it('uses alphabetical tiebreaker when duplicate drafts both lack source_pr', () => {
+    const a = entry('data-sync', 'a.md', 'cht-core-8985');
+    const b = entry('data-sync', 'b.md', 'cht-core-8985');
+    const { kept, dropped } = dedupeByIssueId([b, a]);
+
+    expect(kept).to.have.length(1);
+    expect(kept[0].path).to.equal('a.md');
+    expect(dropped).to.have.length(1);
+    expect(dropped[0].path).to.equal('b.md');
   });
 });
