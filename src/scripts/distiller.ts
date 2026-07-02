@@ -136,7 +136,7 @@ function getDistillChain() {
  * Build the distillation prompt from a ScrapedPR.
  * Truncates long fields to keep cost predictable.
  */
-function buildPrompt(pr: ScrapedPR): string {
+export function buildPrompt(pr: ScrapedPR): string {
   const body = (pr.prBody ?? '').slice(0, BODY_LIMIT);
   const fileList = pr.fileList.slice(0, 50).join('\n');
 
@@ -253,8 +253,9 @@ export function slugify(text: string): string {
  * Build the camelCase frontmatter object for a draft, matching agent-memory/schema.json.
  *
  * The pipeline is PR-driven but the schema is issue-centric, so issueNumber/issueUrl/id
- * are derived from the first linked issue, falling back to the PR number when the PR
- * closes no issue (keeps id, issueNumber, and issueUrl mutually consistent).
+ * are derived from the first (most authoritative) linked issue. PRs that close no
+ * tracked issue are flagged for human triage in distillPR and never reach this
+ * function, so a missing linked issue here is a programming error and throws.
  *
  * @example
  * ```typescript
@@ -264,7 +265,13 @@ export function slugify(text: string): string {
  */
 export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<string, unknown> {
   const today = new Date().toISOString().slice(0, 10);
-  const issueNumber = pr.linkedIssues[0]?.number ?? pr.prNumber;
+  const issueNumber = pr.linkedIssues[0]?.number;
+  if (issueNumber === undefined) {
+    throw new Error(
+      `buildFrontmatter requires a linked issue; PR #${pr.prNumber} has none ` +
+        `(no-issue PRs are flagged upstream, not distilled)`
+    );
+  }
 
   return {
     id: `cht-core-${issueNumber}`,
@@ -425,6 +432,11 @@ export async function distillPR(
   opts: DistillOptions = {}
 ): Promise<DistillResult> {
   const { logPath, outputDir, distillFn } = resolveDistillOpts(opts);
+
+  // Issue-centric corpus: flag no-issue PRs for triage rather than aliasing the PR number.
+  if (pr.linkedIssues.length === 0) {
+    return flagForHuman(pr.prNumber, 'PR closes no tracked issue', logPath);
+  }
 
   let draft: DistillDraft;
   try {

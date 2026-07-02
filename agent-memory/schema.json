@@ -97,7 +97,7 @@
         "id": {
           "type": "string",
           "pattern": "^cht-(core|interoperability)-[1-9][0-9]*$",
-          "description": "Unique identifier, format: cht-(core|interoperability)-<issue-number>"
+          "description": "Identifier, format: cht-(core|interoperability)-<issue-number>. Not globally unique — several PRs can resolve one issue, so consumers dedup on issueNumber (see #135)."
         },
         "category": {
           "$ref": "#/definitions/CHTCategory"
@@ -127,9 +127,9 @@
           "description": "For cht-conf entries: the config mechanism the fix edits"
         },
         "issueNumber": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 1,
-          "description": "The source GitHub issue number"
+          "description": "The source GitHub issue number, or null when the source PR closes no issue and the linkage is pending manual resolution (see #135)"
         },
         "issueUrl": {
           "type": "string",
@@ -228,6 +228,10 @@
         "stale": {
           "type": "boolean",
           "description": "Set to true by the freshness process when source files have changed significantly"
+        },
+        "resolvedIssue": {
+          "type": "boolean",
+          "description": "True once the issue linkage has been verified against GitHub (relink tool or manual audit); false marks a draft whose linkage is known-unresolved, e.g. issueNumber is null because the source PR closes no issue (see #135)"
         }
       }
     },
