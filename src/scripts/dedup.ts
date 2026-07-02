@@ -163,9 +163,11 @@ export function dedupeByIssueId(entries: DedupEntry[]): DedupResult {
       kept.push(group[0]);
       continue;
     }
-    const ranked = [...group].sort(
-      (a, b) => (sourcePrNumber(a.frontmatter.source_pr) ?? Infinity) - (sourcePrNumber(b.frontmatter.source_pr) ?? Infinity)
-    );
+    const ranked = [...group].sort((a, b) => {
+      const pa = sourcePrNumber(a.frontmatter.source_pr) ?? Infinity;
+      const pb = sourcePrNumber(b.frontmatter.source_pr) ?? Infinity;
+      return pa === pb ? a.path.localeCompare(b.path) : pa - pb;
+    });
     const [canonical, ...rest] = ranked;
     const sourcePrs = ranked.map(e => sourcePrRef(e.frontmatter)).filter((s): s is string => s !== null);
     canonical.frontmatter.source_prs = sourcePrs;
