@@ -29,3 +29,15 @@ commits on this branch. Base: `main` @ `ed07177`.
   (config-aware scoring specs inside `context-analysis-agent.spec.ts` /
   `context-loader.spec.ts`), canonical diff (`test/utils/canonical-diff.spec.ts`,
   `dev-target.spec.ts`). Individual PR branches 134-pr3/pr4/pr5 left intact.
+
+## S3 — `memory/promote-data-sync` (4a5ea3b) @ fa17314
+- Tests: 652 → 712 (+60)   Lint: clean
+- Conflicts: none — the expected `agent-memory/schema.json` conflict did not
+  materialize; git auto-merged it (134's CHTLayer/ConfigArtifact/
+  ConfigMechanism definitions + layer/configArtifact frontmatter props landed
+  in different hunks than #129 A.4's nullable `issueNumber` + `resolvedIssue`).
+  Union verified by hand against both parents: all additions from both sides
+  present. `agent-memory/TEMPLATE.md` untouched by data-sync — no union needed.
+- Notes / deviations: `npm run validate-schema` over full corpus: 64 passed,
+  0 failed, 3 skipped (READMEs/TEMPLATE). Relink tool specs green in suite.
+  Adversarial verification fan-out run post-merge (see mission report).
