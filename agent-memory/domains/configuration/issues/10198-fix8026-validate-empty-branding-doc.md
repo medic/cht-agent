@@ -1,10 +1,10 @@
 ---
-id: cht-core-10198
+id: cht-core-8026
 category: bug
 domain: configuration
 domainFit: strong
-issueNumber: 10198
-issueUrl: https://github.com/medic/cht-core/issues/10198
+issueNumber: 8026
+issueUrl: https://github.com/medic/cht-core/issues/8026
 title: Validate empty branding doc to prevent exception in admin branding controller
 lastUpdated: '2026-06-22'
 summary: An empty branding JSON uploaded via the cht tool caused the admin branding controller to throw because it assumed certain keys existed when populating $scope; the fix checks for key existence and scaffolds the minimal set of keys the template needs.

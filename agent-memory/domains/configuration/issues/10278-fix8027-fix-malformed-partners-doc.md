@@ -1,10 +1,10 @@
 ---
-id: cht-core-10278
+id: cht-core-8027
 category: bug
 domain: configuration
 domainFit: strong
-issueNumber: 10278
-issueUrl: https://github.com/medic/cht-core/issues/10278
+issueNumber: 8027
+issueUrl: https://github.com/medic/cht-core/issues/8027
 title: Defensively handle malformed partners branding document missing its 'resources' property to prevent fatal crashes in Admin app and Webapp
 lastUpdated: '2026-06-22'
 summary: A malformed partners document (empty content {}) uploaded via the cht tool caused fatal TypeErrors in both the Admin app and Webapp because code assumed the resources property existed. The fix adds null checks and initializes an empty resources object so the UI stays functional and users can repair the document.
