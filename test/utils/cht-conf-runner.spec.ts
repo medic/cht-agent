@@ -2,7 +2,7 @@ import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { EventEmitter } from 'node:events';
 import { buildChtConfArgs, classifyChtConfOutput } from '../../src/utils/cht-conf-runner';
-import { ChtConfRunOptions, ConfigActionResult } from '../../src/types';
+import { ChtConfExecOptions, ChtConfExecResult, ChtConfRunOptions, ConfigActionResult } from '../../src/types';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const proxyquire = require('proxyquire').noCallThru();
@@ -39,7 +39,11 @@ const loadRunner = (proc: EventEmitter) => {
   const mod = proxyquire('../../src/utils/cht-conf-runner', {
     'node:child_process': { spawn: spawnStub },
   });
-  return { runBucket: mod.runBucket as (o: ChtConfRunOptions) => Promise<ConfigActionResult>, spawnLog };
+  return {
+    runBucket: mod.runBucket as (o: ChtConfRunOptions) => Promise<ConfigActionResult>,
+    runChtConf: mod.runChtConf as (o: ChtConfExecOptions) => Promise<ChtConfExecResult>,
+    spawnLog,
+  };
 };
 
 describe('cht-conf-runner', () => {
@@ -55,10 +59,18 @@ describe('cht-conf-runner', () => {
       expect(args).to.include('upload-app-forms');
     });
 
-    it('appends the artifact as a positional filter for form buckets', () => {
+    it('appends the artifact as a `--`-separated form filter for form buckets', () => {
       const args = buildChtConfArgs(baseOpts({ action: 'app-forms', artifact: 'pregnancy' }));
 
-      expect(args[args.length - 1]).to.equal('pregnancy');
+      // main.js rejects bare positionals as unsupported actions; only
+      // `-- <arg>` reaches environment.extraArgs / args-form-filter.
+      expect(args.slice(-2)).to.deep.equal(['--', 'pregnancy']);
+    });
+
+    it('does not emit a dangling `--` separator when there is no artifact', () => {
+      const args = buildChtConfArgs(baseOpts({ action: 'app-forms' }));
+
+      expect(args).to.not.include('--');
     });
 
     it('does not append the artifact for non-form buckets', () => {
@@ -113,6 +125,119 @@ describe('cht-conf-runner', () => {
 
     it('defaults to uploaded on a clean exit with ambiguous output', () => {
       expect(classifyChtConfOutput('done', 0)).to.equal('uploaded');
+    });
+  });
+
+  describe('runChtConf', () => {
+    const execOpts = (overrides: Partial<ChtConfExecOptions> = {}): ChtConfExecOptions => ({
+      verbs: ['csv-to-docs', 'upload-docs'],
+      instanceUrl: 'https://medic:password@nginx/',
+      configPath: '/mnt/data',
+      ...overrides,
+    });
+
+    afterEach(() => {
+      sinon.restore();
+    });
+
+    it('spawns the verbs in order after the url, source, and autonomous-safe flags', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf, spawnLog } = loadRunner(proc);
+
+      const promise = runChtConf(execOpts({ extraArgs: ['pregnancy'] }));
+      proc.emit('close', 0);
+      await promise;
+
+      const args = spawnLog[0].args;
+      expect(args[0]).to.equal('--url=https://medic:password@nginx/');
+      expect(args[1]).to.equal('--source=/mnt/data');
+      expect(args).to.include('--force');
+      // Verbs run in the given order; extras ride after the `--` separator
+      // (a bare positional would make cht-conf throw "Unsupported action(s)").
+      expect(args.slice(-4)).to.deep.equal(['csv-to-docs', 'upload-docs', '--', 'pregnancy']);
+    });
+
+    it('passes the cwd through so cht-conf report files land in the data project', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf, spawnLog } = loadRunner(proc);
+
+      const promise = runChtConf(execOpts({ cwd: '/mnt/data' }));
+      proc.emit('close', 0);
+      await promise;
+
+      expect(spawnLog[0].opts.cwd).to.equal('/mnt/data');
+    });
+
+    it('does not set a cwd (and never a shell) unless asked', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf, spawnLog } = loadRunner(proc);
+
+      const promise = runChtConf(execOpts());
+      proc.emit('close', 0);
+      await promise;
+
+      expect(spawnLog[0].opts).to.not.have.property('cwd');
+      expect(spawnLog[0].opts).to.not.have.property('shell');
+    });
+
+    it('applies the minimal env allow-list to the child', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf, spawnLog } = loadRunner(proc);
+      const prior = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'sk-should-not-leak';
+
+      const promise = runChtConf(execOpts());
+      proc.emit('close', 0);
+      await promise;
+
+      const childEnv = spawnLog[0].opts.env as NodeJS.ProcessEnv;
+      expect(childEnv).to.not.have.property('ANTHROPIC_API_KEY');
+      expect(childEnv).to.have.property('PATH');
+      if (prior === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = prior;
+      }
+    });
+
+    it('collects interleaved stdout and stderr into output with the exit code', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf } = loadRunner(proc);
+
+      const promise = runChtConf(execOpts());
+      proc.stdout.emit('data', Buffer.from('INFO Summary: 3 of 3 docs uploaded OK.\n'));
+      proc.stderr.emit('data', Buffer.from('some stderr noise\n'));
+      proc.emit('close', 3);
+
+      const result = await promise;
+      expect(result.exitCode).to.equal(3);
+      expect(result.timedOut).to.equal(false);
+      expect(result.output).to.include('Summary: 3 of 3 docs uploaded OK.');
+      expect(result.output).to.include('some stderr noise');
+    });
+
+    it('kills the process and reports timedOut when the run times out', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf } = loadRunner(proc);
+
+      // Tiny timeout, and the fake proc never emits 'close' → the timer fires.
+      const result = await runChtConf(execOpts({ timeoutMs: 5 }));
+
+      expect(proc.kill.calledWith('SIGTERM')).to.equal(true);
+      expect(result.timedOut).to.equal(true);
+      expect(result.exitCode).to.equal(null);
+    });
+
+    it('folds a spawn failure into startError instead of rejecting', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf } = loadRunner(proc);
+
+      const promise = runChtConf(execOpts());
+      proc.emit('error', new Error('ENOENT'));
+
+      const result = await promise;
+      expect(result.startError).to.equal('ENOENT');
+      expect(result.exitCode).to.equal(null);
     });
   });
 
