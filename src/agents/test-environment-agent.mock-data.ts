@@ -1,4 +1,11 @@
-import { ConfigActionResult, ConfigUploadAction, DiscoveredConfig, TestDataResult } from '../types';
+import {
+  ConfigActionResult,
+  ConfigUploadAction,
+  DiscoveredConfig,
+  TestDataResult,
+  VerifyArtifactOptions,
+  VerifyArtifactResult,
+} from '../types';
 import { CONFIG_ACTION_COMMANDS } from '../utils/cht-conf-runner';
 
 /**
@@ -25,6 +32,26 @@ export const mockConfigActionResult = (action: ConfigUploadAction): ConfigAction
   commands: [...CONFIG_ACTION_COMMANDS[action]],
   warnings: [],
 });
+
+/**
+ * Build a passing mock verifyArtifact result (mock mode has no live instance to
+ * fetch from, so it echoes each expected bind as satisfied).
+ */
+export const mockVerifyArtifactResult = (options: VerifyArtifactOptions): VerifyArtifactResult => {
+  const checks = options.expectedBinds.map((bind) => ({
+    nodeset: bind.nodeset,
+    expected: bind.relevant,
+    actual: bind.relevant,
+    passed: true,
+  }));
+  return {
+    artifact: options.artifactName,
+    configArtifact: options.configArtifact,
+    passed: true,
+    checks,
+    summary: `${options.artifactName}: all ${checks.length} bind assertion(s) passed (mock)`,
+  };
+};
 
 export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
   url: 'https://nginx',

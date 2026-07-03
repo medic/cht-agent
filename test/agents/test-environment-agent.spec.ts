@@ -12,6 +12,7 @@ import {
   EnvironmentHandle,
   ProvisionOptions,
   ResetTier,
+  VerifyArtifactOptions,
 } from '../../src/types';
 
 describe('TestEnvironmentAgent', () => {
@@ -1006,6 +1007,86 @@ describe('TestEnvironmentAgent', () => {
       };
 
       expect(await realAgent.teardown(handle)).to.equal(undefined);
+    });
+  });
+
+  describe('verifyArtifact (mission 04 A2 — deployed-XML content assertion)', () => {
+    const YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";
+    const PLANTED_GATE =
+      "selected(../pregnancy_summary/visit_option, 'yes') or selected(../pregnancy_summary/visit_option, 'miscarriage')";
+    const modelXml = (dangerRelevant: string): string =>
+      '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+      `<bind nodeset="/data/danger_signs" relevant="${dangerRelevant}"/>` +
+      `<bind nodeset="/data/safe_pregnancy_practices" relevant="${YES_GATE}"/>` +
+      `<bind nodeset="/data/summary" relevant="${YES_GATE}"/>` +
+      '</model></h:head></h:html>';
+    const PLANTED_XML = modelXml(PLANTED_GATE);
+    const CORRECTED_XML = modelXml(YES_GATE);
+    const verifyOptions: VerifyArtifactOptions = {
+      configArtifact: 'form',
+      artifactName: 'pregnancy_home_visit',
+      expectedBinds: [
+        { nodeset: '/data/danger_signs', relevant: YES_GATE },
+        { nodeset: '/data/safe_pregnancy_practices', relevant: YES_GATE },
+        { nodeset: '/data/summary', relevant: YES_GATE },
+      ],
+    };
+
+    it('returns a passing mock result in mock mode (no live instance to fetch)', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.verifyArtifact(handle, verifyOptions);
+
+      expect(result.passed).to.equal(true);
+      expect(result.checks).to.have.lengthOf(3);
+    });
+
+    describe('real mode (useMockDocker: false)', () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      const dockerHandle: EnvironmentHandle = {
+        url: 'https://nginx',
+        auth: { user: 'medic', password: 'password' },
+        network: 'cht-agent-net',
+        source: 'docker',
+      };
+
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      it('FAILS against the planted XForm — danger_signs mismatches, siblings pass (red baseline)', async () => {
+        const stub = sinon.stub(chtApi, 'fetchFormXml').resolves(PLANTED_XML);
+
+        const result = await realAgent.verifyArtifact(dockerHandle, verifyOptions);
+
+        expect(result.passed).to.equal(false);
+        expect(stub.calledOnceWith('https://nginx', dockerHandle.auth, 'pregnancy_home_visit')).to.equal(true);
+        const danger = result.checks.find((c) => c.nodeset === '/data/danger_signs');
+        expect(danger?.passed).to.equal(false);
+        expect(danger?.actual).to.equal(PLANTED_GATE);
+        const siblings = result.checks.filter((c) => c.nodeset !== '/data/danger_signs');
+        expect(siblings.every((c) => c.passed)).to.equal(true);
+      });
+
+      it('PASSES against the corrected XForm — every bind matches (green fix proof)', async () => {
+        sinon.stub(chtApi, 'fetchFormXml').resolves(CORRECTED_XML);
+
+        const result = await realAgent.verifyArtifact(dockerHandle, verifyOptions);
+
+        expect(result.passed).to.equal(true);
+        expect(result.checks.every((c) => c.passed)).to.equal(true);
+      });
+
+      it('throws for a non-form artifact (tier 1 supports form only)', async () => {
+        const badOptions = { ...verifyOptions, configArtifact: 'task' } as unknown as VerifyArtifactOptions;
+
+        try {
+          await realAgent.verifyArtifact(dockerHandle, badOptions);
+          expect.fail('expected verifyArtifact to reject a non-form artifact');
+        } catch (error) {
+          expect((error as Error).message).to.include('configArtifact: form only');
+        }
+      });
     });
   });
 });

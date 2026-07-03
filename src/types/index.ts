@@ -642,6 +642,56 @@ export interface ConfigApplyResult {
   warnings: string[];
 }
 
+// ============================================================================
+// QA VERIFY TYPES (mission 04 A2 — deployed-content assertion, G3)
+// ============================================================================
+
+/**
+ * One XForm bind whose `relevant` expression the QA verify step asserts against
+ * the deployed form (target bind + the siblings that must stay unchanged).
+ */
+export interface FormBindExpectation {
+  /** The bind nodeset, e.g. '/data/danger_signs'. */
+  nodeset: string;
+  /** The exact `relevant` expression the deployed bind must carry. */
+  relevant: string;
+}
+
+/** Per-bind outcome of verifying a deployed form's binds. */
+export interface FormBindCheck {
+  nodeset: string;
+  expected: string;
+  /** The `relevant` actually found on the deployed bind (absent if the bind is missing). */
+  actual?: string;
+  passed: boolean;
+  note?: string;
+}
+
+/** Config-artifact kinds the QA verify step can content-assert (tier 1: form only). */
+export type VerifyArtifactType = 'form';
+
+/**
+ * Inputs to TestEnvironmentAgent.verifyArtifact — real content verification of
+ * a deployed artifact (not "the CouchDB rev changed"). For a form: fetch the
+ * uploaded XForm and assert each expected bind's `relevant`.
+ */
+export interface VerifyArtifactOptions {
+  configArtifact: VerifyArtifactType;
+  /** The artifact id (a form id like `pregnancy_home_visit`). */
+  artifactName: string;
+  /** The target bind + sibling binds, each with the `relevant` it must carry. */
+  expectedBinds: FormBindExpectation[];
+}
+
+/** Outcome of verifyArtifact: the per-bind checks plus a rolled-up pass/fail. */
+export interface VerifyArtifactResult {
+  artifact: string;
+  configArtifact: VerifyArtifactType;
+  passed: boolean;
+  checks: FormBindCheck[];
+  summary: string;
+}
+
 /**
  * Inputs to a single cht-conf bucket invocation (see src/utils/cht-conf-runner.ts).
  * The runner builds the `cht` argv from these; the agent never embeds credentials

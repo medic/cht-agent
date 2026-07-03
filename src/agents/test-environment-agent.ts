@@ -29,11 +29,18 @@ import {
   RoleConfig,
   TestDataResult,
   TransitionConfig,
+  VerifyArtifactOptions,
+  VerifyArtifactResult,
 } from '../types';
-import { MOCK_TEST_ENV_DATA, mockConfigActionResult } from './test-environment-agent.mock-data';
+import {
+  MOCK_TEST_ENV_DATA,
+  mockConfigActionResult,
+  mockVerifyArtifactResult,
+} from './test-environment-agent.mock-data';
 import { waitForReady } from '../utils/cht-readiness';
 import { runBucket, runChtConf } from '../utils/cht-conf-runner';
-import { BulkDoc, bulkDocs, fetchDocRevs, fetchFormRevs, fetchSettings } from '../utils/cht-api';
+import { BulkDoc, bulkDocs, fetchDocRevs, fetchFormRevs, fetchFormXml, fetchSettings } from '../utils/cht-api';
+import { verifyFormBinds } from '../utils/xform-inspect';
 import {
   classifySeededDocs,
   cleanSeededDocs,
@@ -365,6 +372,48 @@ export class TestEnvironmentAgent {
         `${Object.keys(config.roles).length} roles, ${config.forms.length} forms`
     );
     return config;
+  }
+
+  /**
+   * Content-verify a deployed artifact against the ticket's acceptance criterion
+   * (mission 04 A2, closes G3). For `configArtifact: form` it fetches the
+   * uploaded XForm (GET /api/v1/forms/<form>.xml) and asserts each expected
+   * bind's `relevant` — the target bind now carries the corrected expression AND
+   * the sibling binds are unchanged. This is a real content assertion, run BOTH
+   * as the red reproduction baseline (against the buggy deployed form, expected
+   * to fail) and the green fix proof (against the corrected form, expected to
+   * pass). The pre/post `formVersions` rev diff (discoverConfig before/after
+   * applyConfig) is captured by the QA workflow as corroboration.
+   */
+  async verifyArtifact(
+    handle: EnvironmentHandle,
+    options: VerifyArtifactOptions
+  ): Promise<VerifyArtifactResult> {
+    if (options.configArtifact !== 'form') {
+      throw new Error(
+        `verifyArtifact currently supports configArtifact: form only (got ${options.configArtifact})`
+      );
+    }
+    console.log(
+      `[Test Environment Agent] Verifying ${options.artifactName} ` +
+        `(${options.expectedBinds.length} bind assertion(s)) <- ${handle.url}`
+    );
+
+    if (this.useMockDocker) {
+      const mock = mockVerifyArtifactResult(options);
+      console.log(`[Test Environment Agent] (mock) ${mock.summary}`);
+      return mock;
+    }
+
+    const xml = await fetchFormXml(handle.url, handle.auth, options.artifactName);
+    const { passed, checks } = verifyFormBinds(xml, options.expectedBinds);
+    const failed = checks.filter((check) => !check.passed);
+    const summary = passed
+      ? `${options.artifactName}: all ${checks.length} bind assertion(s) passed`
+      : `${options.artifactName}: ${failed.length} of ${checks.length} bind assertion(s) failed ` +
+        `(${failed.map((check) => check.nodeset).join(', ')})`;
+    console.log(`[Test Environment Agent] ${summary}`);
+    return { artifact: options.artifactName, configArtifact: 'form', passed, checks, summary };
   }
 
   /**

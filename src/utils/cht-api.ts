@@ -106,6 +106,37 @@ export const fetchSettings = async (
   return settings as Record<string, unknown>;
 };
 
+/**
+ * Fetch the deployed XForm for a single form as raw text/xml
+ * (GET /api/v1/forms/<form>.xml). cht-core's forms controller serves the
+ * installed form's XML straight from its CouchDB `form:<id>` doc, so this reads
+ * back exactly what `upload-app-forms` pushed \u2014 the QA verify step diffs the
+ * returned binds' `relevant` against the ticket's acceptance criterion (real
+ * content assertion, not just a changed rev). Bounded + authed like every
+ * request here; credentials travel only in the Authorization header.
+ */
+export const fetchFormXml = async (
+  url: string,
+  auth: ChtAuth,
+  formId: string,
+  options: ChtRequestOptions = {}
+): Promise<string> => {
+  const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const path = `/api/v1/forms/${encodeURIComponent(formId)}.xml`;
+  const response = await fetch(`${url}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: basicAuth(auth),
+      Accept: 'application/xml, text/xml',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    throw new Error(`CHT request failed: GET ${path} -> HTTP ${response.status}`);
+  }
+  return response.text();
+};
+
 // _all_docs key range covering every `form:<id>` doc. \ufff0 is the
 // conventional high-sentinel: it sorts after any real form id character.
 const FORM_RANGE_QUERY = new URLSearchParams({

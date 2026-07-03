@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
-import { bulkDocs, fetchDocRevs, fetchFormRevs, fetchSettings } from '../../src/utils/cht-api';
+import { bulkDocs, fetchDocRevs, fetchFormRevs, fetchFormXml, fetchSettings } from '../../src/utils/cht-api';
 
 describe('cht-api', () => {
   let fetchStub: sinon.SinonStub;
@@ -108,6 +108,41 @@ describe('cht-api', () => {
       const revs = await fetchFormRevs(URL_BASE, auth);
 
       expect(revs).to.deep.equal([{ id: 'form:live', rev: '1-live' }]);
+    });
+  });
+
+  describe('fetchFormXml', () => {
+    const xmlResponse = (body: string, status = 200) => ({
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => body,
+    });
+
+    it('GETs /api/v1/forms/<form>.xml with basic auth and returns the raw xml', async () => {
+      fetchStub.resolves(xmlResponse('<h:html/>'));
+
+      const xml = await fetchFormXml(URL_BASE, auth, 'pregnancy_home_visit');
+
+      expect(xml).to.equal('<h:html/>');
+      expect(fetchStub.firstCall.args[0]).to.equal('https://nginx/api/v1/forms/pregnancy_home_visit.xml');
+      const init = fetchStub.firstCall.args[1];
+      expect(init.method).to.equal('GET');
+      expect(init.headers.Authorization).to.equal(EXPECTED_AUTH);
+      expect(init.signal).to.be.instanceOf(AbortSignal);
+    });
+
+    it('throws with the path and status (never the password) on an HTTP error', async () => {
+      fetchStub.resolves(xmlResponse('not found', 404));
+
+      try {
+        await fetchFormXml(URL_BASE, auth, 'missing');
+        expect.fail('expected fetchFormXml to reject');
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).to.include('/api/v1/forms/missing.xml');
+        expect(message).to.include('404');
+        expect(message).to.not.include('password');
+      }
     });
   });
 
