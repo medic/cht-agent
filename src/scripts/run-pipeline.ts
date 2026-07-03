@@ -318,7 +318,13 @@ async function runFilter(
   return result;
 }
 
-export async function processSinglePR(prNum: number, repo: string, force = false, tag = ' ', sessionId?: string): Promise<void> {
+export async function processSinglePR(
+  prNum: number,
+  repo: string,
+  force = false,
+  tag = ' ',
+  sessionId: string | undefined = undefined
+): Promise<void> {
   const { trace, handler } = startTrace({
     name: 'memory-pipeline-pr',
     sessionId,
