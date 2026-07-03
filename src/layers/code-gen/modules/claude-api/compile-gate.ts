@@ -51,18 +51,10 @@ interface ChtCoreRoots {
 }
 
 /**
- * The symlink-escape half of the guard, split out to keep pathSafetyReason's
- * cognitive complexity low. `full` is the already-resolved absolute target.
+ * A pre-existing symlink AT the leaf is also followed by writeFileSync, even a
+ * dangling one (which existsSync/realpathSync miss). lstat detects it either way.
  */
-function symlinkEscapeReason(full: string, filePath: string, roots: ChtCoreRoots): string | null {
-  // A symlinked ancestor directory pointing outside cht-core defeats the lexical
-  // check, because writeFileSync follows symlinks.
-  const realAncestor = nearestExistingRealPath(path.dirname(full));
-  if (realAncestor !== roots.realRoot && !realAncestor.startsWith(roots.realRootPrefix)) {
-    return `path escapes cht-core via a symlinked directory: ${filePath}`;
-  }
-  // A pre-existing symlink AT the leaf is also followed by writeFileSync, even a
-  // dangling one (which existsSync/realpathSync miss). lstat detects it either way.
+function leafSymlinkReason(full: string, filePath: string): string | null {
   try {
     if (fs.lstatSync(full).isSymbolicLink()) {
       return `path is a pre-existing symlink (would write outside cht-core): ${filePath}`;
@@ -74,6 +66,20 @@ function symlinkEscapeReason(full: string, filePath: string, roots: ChtCoreRoots
     }
   }
   return null;
+}
+
+/**
+ * The symlink-escape half of the guard, split out to keep pathSafetyReason's
+ * cognitive complexity low. `full` is the already-resolved absolute target.
+ */
+function symlinkEscapeReason(full: string, filePath: string, roots: ChtCoreRoots): string | null {
+  // A symlinked ancestor directory pointing outside cht-core defeats the lexical
+  // check, because writeFileSync follows symlinks.
+  const realAncestor = nearestExistingRealPath(path.dirname(full));
+  if (realAncestor !== roots.realRoot && !realAncestor.startsWith(roots.realRootPrefix)) {
+    return `path escapes cht-core via a symlinked directory: ${filePath}`;
+  }
+  return leafSymlinkReason(full, filePath);
 }
 
 /**
