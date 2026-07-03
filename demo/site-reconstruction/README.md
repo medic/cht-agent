@@ -313,3 +313,104 @@ on its own (2a) rather than the bucket. The seed-data verbs (`csv-to-docs`,
 With settings, forms, seed docs, and users uploaded, log in as the sample user and drive
 the workflow named in the ticket. The bug should now reproduce against the reconstructed
 state - hand that repro to the fix layer.
+
+---
+
+## Part 5 - Recovering config from a LIVE deployment (no cht-conf source repo)
+
+The checklist above assumes you can collect scrubbed source artifacts. When you have
+**admin API access but NOT the partner's cht-conf source repo**, most of the config is
+recoverable directly from the running deployment (verified against cht-conf 6.5.0 source
++ CHT docs). One piece is not.
+
+### 5a. Settings - fully recoverable (upload WITHOUT recompiling)
+
+`cht --url=<admin-url> backup-app-settings` writes the deployed settings JSON (it calls
+`api().getAppSettings()`) - the compiled, running state. Rename the timestamped output to
+`<root>/app_settings.json` and upload it **verbatim**, skipping compilation:
+
+```bash
+cht --url=$URL backup-app-settings                    # writes app_settings.<ts>.json
+mv app_settings.<ts>.json <root>/app_settings.json
+cht --url=$URL --source=<root> $FLAGS upload-app-settings   # NO compile-app-settings
+```
+
+**Do NOT `compile-app-settings`** on a deployment-recovered, pre-compiled artifact:
+recompilation re-derives `contact_summary`/`tasks`/`targets`/`purge` from a source tree
+you do not have and would clobber them. The agent's runner exposes this as the
+**`app-settings-only`** bucket (`upload-app-settings` with no compile;
+`src/utils/cht-conf-runner.ts` `CONFIG_ACTION_COMMANDS`); keep the compile+upload
+`app-settings` bucket only for when a real source tree + `.eslintrc` are present.
+
+### 5b. Form XML - recoverable
+
+`cht --url=<admin-url> backup-all-forms` fetches each form doc with attachments and writes
+the deployed `.xml` (+ a `context.json`) per form. Place `<name>.xml` under
+`<root>/forms/app/`. You can `upload-app-forms` from `.xml` directly (no `convert` needed).
+
+### 5c. Form XLSX - NOT recoverable (the one gap)
+
+The `.xlsx` source is never uploaded to CouchDB - only `.xml`/`.properties.json` are. To
+*edit* a form you either edit the `.xml` XForm directly, or re-author the xlsx. For a small
+`relevant` fix, editing the `.xml` bind and re-uploading is the pragmatic path (this is what
+the PNC demo's fix asserts on). For a from-scratch real-site run this gap means form editing
+is authoring-only until you rebuild the xlsx.
+
+### 5d. Baseline for the canonical diff
+
+Provide a `CANONICAL_CONF` (or a mounted cht-core exposing `config/standard`) with the same
+relative paths, so `diffAgainstCanonical` can isolate the drift. For a bug planted in
+`config/default` (like the demo), the meaningful baseline is the **unplanted `config/default`
+at the matched cht-core version**, not `config/standard`.
+
+### 5e. `.cht-conf-placeholder` must be ABSENT at the mount root
+
+Its presence makes the diff/gate treat the mount as "no real config"
+(`resolveDeploymentConfigRoot` / `isPlaceholderRoot`). A recovered site must not carry it.
+
+### CRITICAL - the config-type boundary (what a deployment alone CANNOT yield)
+
+`compile-app-settings` leaves some artifacts as readable JSON in `app_settings.json` and
+webpack+terser-**minifies** others into it. The agentic tool triages the ticket's config
+type and, when the fix needs source a deployment cannot yield, **fails loudly / requests the
+source repo** rather than editing minified JS (`src/utils/config-type.ts`
+`classifyConfigType`/`guardConfigFix`, unit-tested):
+
+| Config type | Fixable from deployment alone? | Mechanism |
+|---|---|---|
+| App forms (`relevant`, calc, choices) | YES | edit `.xml` bind, re-upload (`.xlsx` lost = authoring only) |
+| Permissions / roles | YES | plain JSON in `app_settings.json` |
+| Contact hierarchy (`contact_types`) | YES (ID changes need doc updates) | plain JSON |
+| Schedules / transitions / purge config | YES | plain JSON |
+| Translations / resources | YES if backed up | `.properties` / `resources/` |
+| Target **definitions** (id/type/goal/icon/translation_key) | YES | readable JSON in `app_settings.tasks.targets.items[]` |
+| **Task/target EMISSION LOGIC + nools rules** | **NO - needs source repo** | webpack+terser-minified & variable-mangled into `app_settings.tasks.rules`; no source maps (cht-conf PR #215), no server-side copy |
+| **Contact-summary** | **NO - needs source repo** | ~76KB minified webpack bundle in `app_settings.contact_summary` |
+
+Routing rule: JSON-shaped config + form XML -> fixable from the mount; task/target/
+contact-summary LOGIC -> require a mounted source repo (`CHT_CONF_PATH` pointing at real
+`tasks.js`/`targets.js`/`contact-summary*.js`), else out of scope for a deployment-only
+fix. The guard's message is **qualified** ("needs source repo - or reconstruct via the
+reconstruct-rules skill once available", not an unconditional refusal): the declarative
+task/target *scaffold* survives minification, so a future `reconstruct-rules` skill can
+rebuild readable source and verify by recompile-diff + `cht-conf-test-harness` emission
+equivalence (designs: `issue-cht-ai-tools-reconstruct-rules-skill.md` +
+`issue-cht-agent-tasks-targets-memory.md`). `contact_summary` and legacy nools stay a hard
+stop even then. The PNC demo bug is a form `relevant` (the fixable column), so the closed
+loop runs; the guard exists so the tool is honest about the bugs it cannot fix without source.
+
+---
+
+## Part 6 - Seeding dummy data (two supported tools)
+
+- **cht-conf `csv-to-docs`** (the path the QA phase uses). `build-seed-data.ts` turns a
+  scrubbed contact/report export + the app_settings hierarchy into `<dataPath>/csv/*.csv`
+  (+ `users.csv`), then `csv-to-docs` / `upload-docs` / `create-users` load them (Part 2c/2d).
+  Run via `npm run demo:build-seed -- --export <docs.json> --app-settings <app_settings.json>
+  --users <users.json> --out <dir>`.
+- **`medic/test-data-generator`** (standalone repo) - the faster way to fill an instance with
+  plausible *volume* when you have no export to scrub. A JS design file (`export default` a
+  `DocDesign`) + Faker generates contacts/reports and pushes CouchDB docs **directly** to the
+  instance (no CSV): set `COUCH_URL=http://user:pass@host/medic`, then `npm run generate
+  <design.js>` (or global `tdg <design.js>`). It does **not** scaffold config (data only), and
+  warns against production use.
