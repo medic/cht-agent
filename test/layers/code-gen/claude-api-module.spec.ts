@@ -1,11 +1,23 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { ClaudeApiCodeGenModule, createClaudeApiCodeGenModule, PlanItem } from '../../../src/layers/code-gen/modules/claude-api/index';
+import type { PlanItem } from '../../../src/layers/code-gen/modules/claude-api/index';
 import {
   CodeGenModuleInput,
   ContextFile,
 } from '../../../src/layers/code-gen/interface';
 import { LLMProvider, LLMResponse, LLMMessage, InvokeOptions } from '../../../src/llm';
+
+// Load the module with the compile gate stubbed to a benign pass, so these
+// generate() calls never invoke the real snapshot/tsc/rollback gate (which would
+// mutate a real repo if targetDirectory happened to be a git checkout). Shutdown
+// is stubbed off so the suite is order-independent of the shutdown singleton.
+const proxyquire = require('proxyquire').noCallThru();
+const MODULE_PATH = '../../../src/layers/code-gen/modules/claude-api/index';
+const { ClaudeApiCodeGenModule, createClaudeApiCodeGenModule } = proxyquire(MODULE_PATH, {
+  './compile-gate': { runApiCompileGate: async () => ({ passed: true, issues: [] }) },
+  '../../../../utils/shutdown': { isShutdownRequested: () => false },
+}) as typeof import('../../../src/layers/code-gen/modules/claude-api/index');
 
 describe('ClaudeApiCodeGenModule', () => {
   let invokeStub: sinon.SinonStub;
