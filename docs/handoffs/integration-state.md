@@ -150,3 +150,25 @@ commits on this branch. Base: `main` @ `ed07177`.
   bridge coverage; .nycrc thresholds lowered to 63's (60/78/72/78) — follow-up
   to ratchet back up; `63-review-fixes` mirror branch being assembled in a
   separate worktree (tip recorded in the mission report).
+
+## S8 — `126-langfuse-refactor` (88a340f) @ 7ce85b7 (+ cd0cd05 lock, 96be5ec lint fix)
+- Tests: 1308 → 1312 (+4)   Lint: clean
+- Conflicts (resolved by hand, ~6 min — well inside the 1 h timebox):
+  - `src/scripts/run-pipeline.ts`: kept main's #119 batch/concurrency
+    structure (BatchCtx/BatchState, runWorker, rate-limit abort,
+    RATE_LIMIT_EXIT_CODE); re-applied 126's `startTrace` instrumentation by
+    hand — trace + scrape span + distill score + trace.update on both
+    decision branches + `flushAsync`, with `sessionId: randomUUID()` threaded
+    through `BatchCtx` and `runFilter` passing `langfuseHandler` to
+    `filterPR`.
+  - `src/scripts/distiller.ts`: kept #135's `resolveDistillOpts` + no-issue
+    flagging; threaded `opts.langfuseHandler` into the default `distillFn`.
+  - `package.json`: +langfuse/langfuse-langchain (union); lock taken from
+    ours in the merge, regenerated via `npm install` as its own commit
+    (cd0cd05) per conventions.
+  - `.env.example`: union — LANGFUSE_* block appended after ours.
+- Notes / deviations: one post-merge lint fix (default-param-last on the new
+  `processSinglePR` signature, 96be5ec). Gate passed: full suite green with
+  `LANGFUSE_ENABLED=false` (observability no-op specs included). New clean
+  files: `src/observability/index.ts`, its spec, `docs/observability.md`,
+  Langfuse handoff docs.
