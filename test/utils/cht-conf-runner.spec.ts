@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { EventEmitter } from 'node:events';
-import { buildChtConfArgs, classifyChtConfOutput } from '../../src/utils/cht-conf-runner';
+import { buildChtConfArgs, classifyChtConfOutput, CONFIG_ACTION_COMMANDS } from '../../src/utils/cht-conf-runner';
 import { ChtConfExecOptions, ChtConfExecResult, ChtConfRunOptions, ConfigActionResult } from '../../src/types';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -77,6 +77,13 @@ describe('cht-conf-runner', () => {
       const args = buildChtConfArgs(baseOpts({ action: 'app-settings', artifact: 'pregnancy' }));
 
       expect(args).to.not.include('pregnancy');
+    });
+
+    it('app-settings-only uploads without compiling (pre-compiled deployment recovery)', () => {
+      expect(CONFIG_ACTION_COMMANDS['app-settings-only']).to.deep.equal(['upload-app-settings']);
+      const args = buildChtConfArgs(baseOpts({ action: 'app-settings-only' }));
+      expect(args).to.include('upload-app-settings');
+      expect(args).to.not.include('compile-app-settings');
     });
   });
 

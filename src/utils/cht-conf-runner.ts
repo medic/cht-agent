@@ -34,6 +34,10 @@ import {
  */
 export const CONFIG_ACTION_COMMANDS: Record<ConfigUploadAction, string[]> = {
   'app-settings': ['compile-app-settings', 'upload-app-settings'],
+  // Upload a pre-compiled app_settings.json verbatim, skipping compile — the
+  // path for a deployment recovered via `backup-app-settings` (recompiling from
+  // a source tree you do not have would clobber contact-summary/tasks/targets).
+  'app-settings-only': ['upload-app-settings'],
   'app-forms': ['convert-app-forms', 'upload-app-forms'],
   'contact-forms': ['convert-contact-forms', 'upload-contact-forms'],
   resources: ['upload-resources', 'upload-branding', 'upload-custom-translations'],
