@@ -172,3 +172,42 @@ commits on this branch. Base: `main` @ `ed07177`.
   `LANGFUSE_ENABLED=false` (observability no-op specs included). New clean
   files: `src/observability/index.ts`, its spec, `docs/observability.md`,
   Langfuse handoff docs.
+
+## S9 — demo assets @ 5b1a705, 3e98156, 3817c56 (all `demo:` commits)
+- Tests: 1312 → 1312   Lint: clean (demo/ added to eslint ignorePatterns —
+  demo assets sit outside tsconfig.eslint's project, not part of the
+  build/test surface)
+- Conflicts: n/a (new files)
+- Assets:
+  - `demo/site-reconstruction/README.md` — artifact checklist + exact
+    cht-conf upload paths, every command verified against the INSTALLED
+    cht-conf 6.5.0 source with file:line citations (upload-app-settings
+    reads a compiled app_settings.json and does not compile; forms via
+    convert-app-forms + upload-app-forms; seed via csv-to-docs → upload-docs;
+    users via create-users; the `--` argv rule for extra args; https://nginx
+    self-signed-cert conventions).
+  - `demo/site-reconstruction/build-seed-data.ts` (+ synthetic sample/) —
+    scrubbed contact/report export + app_settings `contact_types` hierarchy →
+    csv-to-docs CSVs (contact.<type>.csv per type, report.<form>.csv per
+    form) and create-users users.csv. Validated end-to-end on the sample:
+    7 contacts/4 types, 3 reports/2 forms, 2 users, design doc skipped.
+  - `tickets/demo-cht-conf-site.md` — template with frontmatter
+    `layer: cht-conf`; parse-verified (frontmatter precedence → routing with
+    no LLM call); valid defaults + HTML comments for operator placeholders.
+  - `demo/config-pnc-demo/` — cht-core `config/default` @ 57ea922 (v5.2.0),
+    pruned to the upload surface (~2 MB, no .js sources; app_settings.json
+    ships compiled). Planted bug: `pregnancy_home_visit` `danger_signs`
+    group `relevant` (survey!K153) gains
+    `or selected(../pregnancy_summary/visit_option, 'miscarriage')` — the
+    form keeps prompting after a miscarriage. Edited surgically in the xlsx
+    (shared string split; sibling cells K173/K205 keep the original), XML
+    reconverted with cht-conf 6.5.0. Documented in PLANTED-BUG.md; paired
+    filled-in ticket `tickets/demo-pnc-relevant.md` (parse-verified,
+    domain: forms-and-reports, configArtifact: form).
+- Notes / deviations: the mission said "PNC/miscarriage follow-up form";
+  config/default's miscarriage-continuation logic actually lives in
+  `pregnancy_home_visit` (the PNC danger-sign follow-up forms have no
+  miscarriage branch), so the bug is planted there — same symptom, real form.
+  Open question for the operator: the demo ticket advertises
+  chtConfVersion 6.5.0 (the converting tool) while the config content is
+  cht-core 5.2.0's — confirm which the demo should state.
