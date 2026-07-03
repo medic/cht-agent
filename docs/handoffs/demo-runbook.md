@@ -6,6 +6,20 @@ step. The demo drives `tickets/demo-pnc-relevant.md` against `demo/config-pnc-de
 `pregnancy_home_visit`: the `danger_signs` group is shown for a *miscarriage*
 outcome; see `demo/config-pnc-demo/PLANTED-BUG.md`).
 
+### The goal — reconstruct a live project, don't break production
+
+We never touch the live project's instance or data. The operator provides
+**read-only downloads of the live project's current config** (`backup-app-settings`
++ `backup-all-forms`) in a local directory. That config **already contains the
+real bug** — we reconstruct it faithfully on a **throwaway test instance** and fill
+it with **dummy data that conforms to the live `app_settings` hierarchy**, so the
+symptom reproduces exactly as it does in production while real contacts, hierarchy,
+roles and users are never involved. The loop then reproduces the symptom, generates
+the change, uploads the *new* config, verifies it behaves better than the live
+config did, and **reports the required change back to the operator** to apply on the
+real project themselves. `demo/config-pnc-demo` is the stand-in for such a
+downloaded live config; its planted `danger_signs` bug stands in for the real bug.
+
 **Legend:** `[OPERATOR]` = a human step (bring-up, credentials, image build).
 `[AGENT]` = the agent runs it. Steps whose real execution needs a live instance
 or Claude OAuth are marked **operator-verified** and were NOT executed in the
@@ -48,29 +62,59 @@ curl -k https://localhost/api/v2/monitoring          # readiness (no auth requir
 Verify nginx is on `cht-agent-net`. `/api/v2/monitoring` needs **no auth** and is
 the readiness probe the agent polls (`version`, `date.uptime`).
 
-## 2. [OPERATOR] Seed "broken prod"
+**TLS.** nginx presents either a **self-signed** cert or a **local-IP
+service-signed** cert (a local CA). cht-conf trusts it with
+`--accept-self-signed-certs`. The agent's own `fetch` (readiness poll,
+`discoverConfig`, `verifyArtifact`/`fetchFormXml`) does **no** self-signed handling
+by design, so set one of these on the agent process (step 3):
+- self-signed → `NODE_TLS_REJECT_UNAUTHORIZED=0`, or
+- local-IP service-signed → `NODE_EXTRA_CA_CERTS=/path/to/local-ca.crt` (preferred —
+  keeps verification on).
 
-Mount the demo (or reconstructed) config at `CHT_CONF_PATH` and upload it to the
-instance so the miscarriage symptom is LIVE, then seed dummy data. The
-`app-settings` bucket compiles first, which needs the full source tree +
-`.eslintrc`; the demo config has a pre-compiled `app_settings.json`, so for it
-drive `upload-app-settings` alone (see `demo/site-reconstruction/README.md` §2a).
+## 2. [OPERATOR] Reconstruct the live project on the test env (config + dummy data)
+
+Reconstruct the live project's *current* (buggy) state on the throwaway test
+instance, with dummy data — never the live instance or its data. Two sub-steps.
+
+**2a — download the live config (read-only) into a local dir.** The operator runs
+these against the LIVE project and hands over the resulting directory as
+`CHT_CONF_PATH` (for the demo, that dir is `demo/config-pnc-demo`):
+
+```bash
+# [OPERATOR] on the LIVE project — read-only backups, no writes:
+cht --url=<live-admin-url> --accept-self-signed-certs backup-app-settings   # → app_settings.json (compiled, running state)
+cht --url=<live-admin-url> --accept-self-signed-certs backup-all-forms      # → forms/app/*.xml (deployed XForms)
+```
+
+**2b — reconstruct on the TEST env + seed dummy data.** Upload the downloaded
+config to the test instance, then fill it with dummy data that conforms to the
+live `app_settings` contact hierarchy (so behaviour matches production but no real
+contacts/hierarchy/roles/users are involved). The downloaded `app_settings.json`
+is **already compiled** — upload it verbatim, do **not** recompile (recompiling
+needs a source tree you do not have and would clobber the minified
+contact-summary/tasks/targets; see `demo/site-reconstruction/README.md` §2a and
+the `app-settings-only` bucket):
 
 ```bash
 URL='https://medic:password@nginx'
 FLAGS='--force --skip-git-check --skip-version-check --skip-dependency-check --skip-translation-check --accept-self-signed-certs'
-cht --url=$URL --source=$CHT_CONF_PATH $FLAGS upload-app-settings convert-app-forms upload-app-forms
-# dummy data — build CSVs from a scrubbed export, then upload:
-npm run demo:build-seed -- --export <export.json> --app-settings $CHT_CONF_PATH/app_settings.json --users <users.json> --out $CHT_TEST_DATA_PATH
+# downloaded forms are .xml already (backup-all-forms), so no convert needed:
+cht --url=$URL --source=$CHT_CONF_PATH $FLAGS upload-app-settings upload-app-forms
+#   (demo stand-in has the .xlsx too → use: upload-app-settings convert-app-forms upload-app-forms)
+
+# dummy data conforming to the live app_settings hierarchy:
+npm run demo:build-seed -- --export <scrubbed-export.json> --app-settings $CHT_CONF_PATH/app_settings.json --users <users.json> --out $CHT_TEST_DATA_PATH
 cht --url=$URL --source=$CHT_TEST_DATA_PATH $FLAGS csv-to-docs upload-docs create-users
 ```
 
-`demo:build-seed` was rehearsed on `demo/site-reconstruction/sample/` →
-7 contacts across 4 types (district_hospital → health_center → clinic → person),
-3 reports (assessment, pregnancy), a 2-row `users.csv`; the emitted CSVs match
-the `app_settings` `contact_types` hierarchy. (Alternative data tool:
-`medic/test-data-generator` — a JS+Faker design file that pushes docs directly to
-`COUCH_URL`, no CSV; noted in `demo/site-reconstruction/README.md`.)
+The test env now mirrors the live project's behaviour — the symptom reproduces
+as-is — but on dummy data. `demo:build-seed` was rehearsed on
+`demo/site-reconstruction/sample/` → 7 contacts across 4 types (district_hospital
+→ health_center → clinic → person), 3 reports (assessment, pregnancy), a 2-row
+`users.csv`; the emitted CSVs match the `app_settings` `contact_types` hierarchy.
+(Alternative data tool for plausible *volume*: `medic/test-data-generator` — a
+JS+Faker design file that pushes docs directly to `COUCH_URL`, no CSV; noted in
+`demo/site-reconstruction/README.md`.)
 
 ## 3. [OPERATOR] Rebuild + start the agent runtime
 
@@ -82,9 +126,10 @@ CLI provider + OAuth mount + instance env:
 LLM_PROVIDER=claude-cli
 ANTHROPIC_MODEL=claude-opus-4-8      # override so the run does not burn the Fable session budget
 CHT_URL=https://nginx
-CHT_CONF_PATH=/path/to/demo/config-pnc-demo   # the corrected config lands here (A1)
+NODE_EXTRA_CA_CERTS=/path/to/local-ca.crt   # local-IP service-signed cert; OR NODE_TLS_REJECT_UNAUTHORIZED=0 for self-signed
+CHT_CONF_PATH=/path/to/live-config-download  # the downloaded live (buggy) config from step 2; Development writes the fix here (A1)
 CHT_CORE_PATH=/path/to/cht-core               # required by full.ts; provisioning source
-CANONICAL_CONF=/path/to/unplanted/config-default   # baseline for canonical-diff (see step 4)
+CANONICAL_CONF=/path/to/reference-config      # matched reference baseline for canonical-diff (see step 4)
 # for the QA phase (step 6): CHT_TEST_DATA_PATH=/path/to/seed-project (optional)
 ```
 
@@ -101,9 +146,12 @@ docker exec … npm run research tickets/demo-pnc-relevant.md
   ```
   `layer: cht-conf` routes to the config layer and targets the `cht-conf-wiki`
   corpus; frontmatter wins over inference (no LLM call needed to route).
-- **Canonical diff** pinpoints the drift. Against the unplanted baseline
-  (`CANONICAL_CONF`, the un-planted `config/default`), the diff isolates exactly
-  the `danger_signs` `relevant` (rehearsed via `diffAgainstCanonical`):
+- **Canonical diff** pinpoints the drift when a matched reference baseline is
+  available (`CANONICAL_CONF`; demo: the un-planted `config/default`; a real site:
+  a known-good reference or a prior config version). With that baseline the diff
+  isolates exactly the `danger_signs` `relevant` (rehearsed via
+  `diffAgainstCanonical`) — it is a research aid; the reproduce→verify content
+  assertion (step 6) is the authoritative red→green proof:
   ```
   status: differs  —  forms/app/pregnancy_home_visit.xml
   - <bind nodeset="/data/danger_signs" relevant="selected(../pregnancy_summary/visit_option, 'yes')"/>
@@ -201,12 +249,17 @@ Route verified against cht-core: `POST /api/v1/report` (no trailing slash),
 contact UUID; `type` if present must be `data_record`; the server bypasses the
 XForm (no `relevant` evaluation).
 
-## 7. [AGENT] Report + teardown
+## 7. [AGENT] Report the required change back to the operator + teardown
 
-Pass checklist: routing ✓, canonical-diff ✓, **reproduced/red ✓**, generated
-fix ✓, upload exit 0 ✓, XML assertion (siblings unchanged) ✓, **harness
-red→green ✓** (operator/CI), tier-3 filing (optional). Then `[OPERATOR]` teardown
-(`docker compose down -v`).
+The deliverable is the **change to apply on the real project** — the agent reports
+the corrected config (the `danger_signs` `relevant` restored to the yes-only gate)
+with the red→green evidence, for the **operator to apply on the live project
+themselves** (the agent never writes to the live instance). Pass checklist:
+routing ✓, canonical-diff ✓, **reproduced/red ✓**, generated fix ✓, upload exit 0
+✓, XML assertion (siblings unchanged, so other users' hierarchy/behaviour is
+untouched) ✓, **harness red→green ✓** (operator/CI), tier-3 filing (optional).
+Then `[OPERATOR]` teardown (`docker compose down -v`) — the throwaway test env and
+its dummy data go away with the volumes.
 
 ---
 
