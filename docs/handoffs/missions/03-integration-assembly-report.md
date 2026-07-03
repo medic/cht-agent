@@ -64,7 +64,11 @@ Final gates on `ee74af2`: `npm run build` clean, `npm test` **1312 passing /
   domain-inference fully superseded. All 63-side deletions rejected
   (test-environment-agent = #66's, code-context-agent, deepwiki-client,
   pipeline scripts, llm/{json-extract,rate-limit,structured-cli}, etc. —
-  verified byte-identical after). Fixes: H1 registry (duplicate-name guard
+  verified byte-identical after) — with ONE disclosed exception: main's two
+  3-line placeholder READMEs at
+  src/layers/code-gen/modules/{claude-code-cli,opencode}/README.md were
+  deleted in C2, superseded by the real module implementations landing in
+  those directories (the only main-file deletion on the branch). Fixes: H1 registry (duplicate-name guard
   restored + `validateAliases()` at default-registry construction),
   H2 assertion-only `ASSERTION_PATTERNS` (+`sinon.assert`), H3
   `resolveWithin()` containment at every `relativePath` join (writes throw,
@@ -138,6 +142,9 @@ Recorded per step in `integration-state.md`. Highlights:
 - Mission-01 carry-overs remain by design: 107 alias-flagged drafts, 17+1
   collision groups (`docs/handoffs/135-dedup-worklist.md`), tasks-and-targets
   `9232` misattribution.
+- `processSinglePR` loses a PR's Langfuse trace if scrape/filter/distill
+  throws (no flush on the error path) — faithful to 126's original; port a
+  try/finally flush upstream.
 - `outputs/` research results are gitignored; the smoke's saved JSON lives
   only in the worktree.
 
