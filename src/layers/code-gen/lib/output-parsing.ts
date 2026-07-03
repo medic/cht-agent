@@ -10,7 +10,10 @@ export const CODE_START_PATTERNS = [
   /^\s*[{[<]/,
 ];
 
-export const PROSE_PATTERN = /^[A-Z][a-z].*\s+\w/;
+// `\s` (single), not `\s+`: `\s+` overlaps the `.*` before it and backtracks
+// quadratically on long whitespace runs (S8786). `.*\s\w` matches the same
+// strings because `.*` absorbs any leading whitespace.
+export const PROSE_PATTERN = /^[A-Z][a-z].*\s\w/;
 export const CODE_KEYWORD_PATTERN = /^(import|export|const|let|var|function|class|interface|type|async|return|module|require|describe|it|test|before|after|package|@)/;
 
 export interface SearchReplaceBlock {

@@ -186,7 +186,10 @@ export class MCPClient {
     // Parse lines like "- source_type: description"
     const lines = content.split('\n');
     for (const line of lines) {
-      const match = /^-\s*([^:]+):\s*(.+)$/.exec(line);
+      // No leading `\s*`: it overlaps the whitespace-matching `[^:]+` and
+      // backtracks quadratically on a colon-less line (S8786). `[^:]+` absorbs
+      // the leading whitespace and the key is `.trim()`'d below either way.
+      const match = /^-([^:]+):\s*(.+)$/.exec(line);
       if (match) {
         sources.push({
           type: match[1].trim(),

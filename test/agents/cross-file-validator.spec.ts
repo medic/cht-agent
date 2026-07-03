@@ -50,6 +50,19 @@ describe('crossFileValidate', () => {
       ];
       expect(crossFileValidate(files)).to.have.length(0);
     });
+
+    it('handles a whitespace-heavy interpolation in linear time (S8786)', () => {
+      // Cubic on the old `\{\{\s*([^}|]+?)\s*...`; the outer `\s*` overlapped
+      // the whitespace-matching `[^}|]+?`.
+      const files: GeneratedFile[] = [
+        mkFile('foo.component.ts', 'export class Foo {\n  realField = 1;\n}\n'),
+        mkFile('foo.component.html', '<div>{{' + ' '.repeat(20000) + '</div>\n'),
+      ];
+      const start = process.hrtime.bigint();
+      crossFileValidate(files);
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+      expect(elapsedMs).to.be.below(100);
+    });
   });
 
   describe('component-selector references', () => {

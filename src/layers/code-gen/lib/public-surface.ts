@@ -137,7 +137,10 @@ function collectTemplateReferencedIds(content: string): Set<string> {
   for (const re of ANGULAR_BINDING_REGEXES) {
     for (const m of content.matchAll(re)) collectIdentifiers(m[1], ids);
   }
-  const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
+  // No surrounding `\s*`: it overlaps the whitespace-matching `[^}|]+?` and makes
+  // the match cubic on long whitespace runs (S8786). collectIdentifiers extracts
+  // word tokens, so leading/trailing whitespace in the capture is irrelevant.
+  const interpRe = /\{\{([^}|]+?)(?:\|[^}]*)?\}\}/g;
   for (const m of content.matchAll(interpRe)) collectIdentifiers(m[1], ids);
   return ids;
 }

@@ -70,6 +70,16 @@ export class FooService {
       expect(referenced).to.include('value');
       expect(referenced).to.not.include('myTpl');
     });
+
+    it('handles a whitespace-heavy interpolation in linear time (S8786)', () => {
+      // An unterminated `{{` followed by a long whitespace run was cubic on the
+      // old `\{\{\s*([^}|]+?)\s*...` (the outer `\s*` overlapped `[^}|]+?`).
+      const pathological = '<div>{{' + ' '.repeat(20000) + '</div>';
+      const start = process.hrtime.bigint();
+      extractPublicSurface('foo.component.html', pathological);
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+      expect(elapsedMs).to.be.below(100);
+    });
   });
 
   describe('JSON', () => {

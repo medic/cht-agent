@@ -4,6 +4,7 @@ import sinon from 'sinon';
 import { __resetShutdownForTests } from '../../../../../src/utils/shutdown';
 import { CodeGenModuleInput } from '../../../../../src/layers/code-gen/interface';
 import { CrossFileIssue } from '../../../../../src/types';
+import { extractLlmDiscoveryIssues } from '../../../../../src/layers/code-gen/modules/claude-code-cli/index';
 
 // Helper: proxyquire the orchestrator with cli-driver + workspace stubbed.
 const proxyquire = require('proxyquire').noCallThru();
@@ -525,6 +526,30 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
 
       const issues: CrossFileIssue[] = result.crossFileIssues ?? [];
       expect(issues.filter(i => i.issueType === 'plan-discovered-missing')).to.have.length(0);
+    });
+
+    it('parses a whitespace-heavy ```json fence in linear time (S8786)', () => {
+      // Cubic on the old `\`\`\`json\s*([\s\S]+?)\s*\`\`\``; the surrounding `\s*`
+      // overlapped the whitespace-matching `[\s\S]+?`. Unterminated fence + a long
+      // whitespace run is the trigger.
+      const pathological = '```json' + ' '.repeat(20000); // no closing fence
+      const start = process.hrtime.bigint();
+      const issues = extractLlmDiscoveryIssues(pathological, [], []);
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+      expect(issues).to.deep.equal([]);
+      expect(elapsedMs).to.be.below(100);
+    });
+
+    it('still parses a bare {...} summary via the fallback after dropping the lookahead', () => {
+      // No ```json fence, so extraction uses the `{...}` fallback. Dropping the
+      // redundant `(?![\s\S]*\})` lookahead must not change what it extracts.
+      const resultText = [
+        'All done. Here is the summary:',
+        '{"files_modified": [], "files_created": [], "summary": "I discovered src/z.ts would also need updating."}',
+      ].join('\n');
+      const issues = extractLlmDiscoveryIssues(resultText, [], []);
+      const discovery = issues.find(i => /would also need/.test(i.description ?? ''));
+      expect(discovery, 'fallback should parse the bare {...} block and surface the hint').to.exist;
     });
   });
 

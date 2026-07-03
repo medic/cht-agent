@@ -203,7 +203,10 @@ const ANGULAR_BINDING_REGEXES: ReadonlyArray<RegExp> = [
 ];
 
 function collectIdsFromInterpolations(content: string, ids: Set<string>): void {
-  const interpRe = /\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g;
+  // No surrounding `\s*`: it overlaps the whitespace-matching `[^}|]+?` and makes
+  // the match cubic on long whitespace runs (S8786). collectIdsFromExpression
+  // extracts word tokens, so whitespace in the capture is irrelevant.
+  const interpRe = /\{\{([^}|]+?)(?:\|[^}]*)?\}\}/g;
   let m: RegExpExecArray | null;
   while ((m = interpRe.exec(content)) !== null) collectIdsFromExpression(m[1], ids);
 }

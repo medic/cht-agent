@@ -361,10 +361,13 @@ export class DocumentationSearchAgent {
   private extractKeySentences(text: string): string[] {
     const sentences: string[] = [];
     // Sentences containing action words or recommendations.
+    // `\s` (single), not `\s+`: `\s+` overlaps the whitespace-matching `[^.!?]+`
+    // and backtracks quadratically on long whitespace runs (S8786). A single `\s`
+    // matches the same strings because `[^.!?]+` absorbs any further whitespace.
     const actionPatterns = [
-      /you (?:can|could|should|need to|must|might|may)\s+[^.!?]+[.!?]/gi,
-      /(?:implement|configure|set up|create|add|modify|update|use|enable|disable)\s+[^.!?]+[.!?]/gi,
-      /the (?:recommended|suggested|best|proper)\s+[^.!?]+[.!?]/gi,
+      /you (?:can|could|should|need to|must|might|may)\s[^.!?]+[.!?]/gi,
+      /(?:implement|configure|set up|create|add|modify|update|use|enable|disable)\s[^.!?]+[.!?]/gi,
+      /the (?:recommended|suggested|best|proper)\s[^.!?]+[.!?]/gi,
     ];
     for (const pattern of actionPatterns) {
       this.appendKeySentencesForPattern(text, pattern, sentences);

@@ -391,4 +391,22 @@ describe('DocumentationSearchAgent', () => {
       expect(result.source).to.equal('error');
     });
   });
+
+  describe('extractKeySentences (S8786 linear-scaling)', () => {
+    it('runs in linear time on long whitespace runs after the action patterns', () => {
+      // Quadratic on the old `...\s+[^.!?]+[.!?]` (the `\s+` overlapped the
+      // whitespace-matching `[^.!?]+`). One whitespace run per action-pattern
+      // prefix, none terminated by .!?, is the worst case for all three.
+      const patho =
+        'You can ' + ' '.repeat(12000) +
+        'implement ' + ' '.repeat(12000) +
+        'the recommended ' + ' '.repeat(12000);
+      const start = process.hrtime.bigint();
+      const sentences = (agent as unknown as { extractKeySentences(t: string): string[] })
+        .extractKeySentences(patho);
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+      expect(sentences).to.deep.equal([]); // no terminator, so no sentences captured
+      expect(elapsedMs).to.be.below(100);
+    });
+  });
 });

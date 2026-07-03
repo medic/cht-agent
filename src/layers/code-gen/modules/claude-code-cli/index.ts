@@ -421,10 +421,15 @@ interface ExecuteSummaryBlock {
 function extractSummaryBlock(resultText: string): ExecuteSummaryBlock | null {
   if (!resultText) return null;
   // Prefer the fenced JSON code block (the format the execute prompt requires).
-  const fenced = tryParseJsonBlock(/```json\s*([\s\S]+?)\s*```/, resultText, 1);
+  // No surrounding `\s*`: it overlaps the whitespace-matching `[\s\S]+?` and makes
+  // the match cubic (S8786); JSON.parse ignores the leading/trailing whitespace
+  // that now falls inside the capture.
+  const fenced = tryParseJsonBlock(/```json([\s\S]+?)```/, resultText, 1);
   if (fenced) return fenced;
-  // Fall back to the last `{...}` block. Greedy-from-the-end via lookahead.
-  return tryParseJsonBlock(/\{[\s\S]*\}(?![\s\S]*\})/, resultText, 0);
+  // Fall back to the last `{...}` block. Greedy `[\s\S]*` already backtracks to
+  // the final `}`, so the `(?![\s\S]*\})` lookahead was redundant (and its
+  // overlap with `[\s\S]*` is what S8786 flags).
+  return tryParseJsonBlock(/\{[\s\S]*\}/, resultText, 0);
 }
 
 function tryParseJsonBlock(re: RegExp, text: string, group: number): ExecuteSummaryBlock | null {

@@ -214,9 +214,12 @@ function checkPermissionLiterals(
 
 /**
  * Match string literals matching the `can_X_Y(_Z...)` shape
- * (3+ underscore-separated segments).
+ * (3+ underscore-separated segments). The inner class is letters-only
+ * (`[a-z]`, not `[a-z_]`) so each `_`-separated segment is unambiguous; an
+ * `[a-z_]` inner class re-consumes the `_` delimiter, which makes an
+ * unterminated snake_case literal backtrack exponentially (ReDoS, S5852).
  */
-const PERMISSION_LITERAL_RE = /['"]([a-z]+(?:_[a-z_]+){2,})['"]/g;
+const PERMISSION_LITERAL_RE = /['"]([a-z]+(?:_[a-z]+){2,})['"]/g;
 
 function findUndefinedPermissionLiterals(
   file: GeneratedFile,

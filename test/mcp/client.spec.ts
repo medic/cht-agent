@@ -107,6 +107,33 @@ describe('MCPClient', () => {
     });
   });
 
+  describe('parseGetSourcesResponse()', () => {
+    let client: MCPClient;
+
+    beforeEach(() => {
+      client = new MCPClient();
+    });
+
+    it('parses a well-formed "- type: description" line', () => {
+      const result = client.parseGetSourcesResponse({ content: '-  docs :  the docs source  ' });
+      expect(result).to.have.length(1);
+      expect(result[0].type).to.equal('docs');
+      expect(result[0].description).to.equal('the docs source');
+    });
+
+    it('handles a colon-less line in linear time (S8786)', () => {
+      // Quadratic on the old `^-\s*([^:]+):...` (the leading `\s*` overlapped the
+      // whitespace-matching `[^:]+`); a dash + long whitespace run with no colon
+      // is the trigger.
+      const patho = '- ' + ' '.repeat(40000); // no colon
+      const start = process.hrtime.bigint();
+      const result = client.parseGetSourcesResponse({ content: patho });
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+      expect(result).to.deep.equal([]); // no colon, so no source parsed
+      expect(elapsedMs).to.be.below(100);
+    });
+  });
+
   describe('callTool (via searchDocs) — mocked fetch', () => {
     let client: MCPClient;
     let fetchStub: sinon.SinonStub;

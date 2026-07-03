@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { parseSingleFileContent, applySearchReplace } from '../../../../src/layers/code-gen/lib/output-parsing';
+import { parseSingleFileContent, applySearchReplace, PROSE_PATTERN } from '../../../../src/layers/code-gen/lib/output-parsing';
 
 describe('parseSingleFileContent', () => {
   describe('trailing newline preservation (C1)', () => {
@@ -60,5 +60,24 @@ describe('applySearchReplace (whitespace-tolerant fallback)', () => {
     const original = 'const x = 1; const y = 2;\t\nnext line\n';
     const result = applySearchReplace(original, [{ search: 'y = 2;\nnext line', replace: 'REPLACED' }]);
     expect(result).to.equal(null);
+  });
+});
+
+describe('PROSE_PATTERN', () => {
+  it('still classifies prose vs non-prose (behavior preserved after the S8786 fix)', () => {
+    expect(PROSE_PATTERN.test('The quick brown fox')).to.be.true;
+    expect(PROSE_PATTERN.test('Ab  c')).to.be.true; // multi-space still matches
+    expect(PROSE_PATTERN.test('Ab')).to.be.false; // no whitespace+word
+    expect(PROSE_PATTERN.test('a lowercase start')).to.be.false; // no leading [A-Z][a-z]
+  });
+
+  it('runs in linear time on a long whitespace run (S8786)', () => {
+    // Quadratic on the old `.*\s+\w` (the `.*` overlapped `\s+`); a capitalized
+    // start followed by a long whitespace run with no trailing word is the trigger.
+    const pathological = 'Ab' + ' '.repeat(40000);
+    const start = process.hrtime.bigint();
+    PROSE_PATTERN.test(pathological);
+    const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+    expect(elapsedMs).to.be.below(100);
   });
 });
