@@ -40,6 +40,7 @@ import {
   executeFullWorkflow,
   askDevelopmentOptions,
   displayFullWorkflowSummary,
+  QaOptions,
 } from '../workflows/orchestrator';
 import { getConfiguredModel } from '../llm/types';
 import { isUsingCLIProvider } from '../llm';
@@ -74,18 +75,36 @@ function ensureChtCorePath(): string {
 }
 
 function ensureTicketPath(): string {
-  if (!process.argv[2]) {
+  const arg = process.argv.slice(2).find((a) => !a.startsWith('-'));
+  if (!arg) {
     console.error('❌ Error: No ticket file specified\n');
     console.log('Usage:');
-    console.log('  npm run full <ticket-file>\n');
+    console.log('  npm run full <ticket-file> [--qa] [--qa-auto]\n');
     console.log('Examples:');
     console.log('  npm run full tickets/my-ticket.md');
-    console.log('  npm run full /path/to/ticket.md\n');
+    console.log('  npm run full tickets/demo-pnc-relevant.md --qa   # run the QA closed loop\n');
     console.log('💡 See tickets/README.md for ticket file format');
     console.log('💡 For research-only workflow, use: npm run research <ticket-file>\n');
     process.exit(1);
   }
-  return path.resolve(process.argv[2]);
+  return path.resolve(arg);
+}
+
+/**
+ * QA phase options from argv/env. --qa turns on the closed loop (default off,
+ * cht-conf tickets only); --qa-auto (or --qa-yes) auto-approves HC3 for
+ * unattended runs. CHT_TEST_DATA_PATH seeds test data; TEST_ENV_MOCK_DOCKER=true
+ * runs the agent in mock mode.
+ */
+function parseQaOptions(): QaOptions {
+  const args = process.argv.slice(2);
+  const testDataPath = process.env.CHT_TEST_DATA_PATH || undefined;
+  return {
+    enabled: args.includes('--qa'),
+    autoApprove: args.includes('--qa-auto') || args.includes('--qa-yes'),
+    useMockDocker: process.env.TEST_ENV_MOCK_DOCKER === 'true',
+    ...(testDataPath ? { testDataPath } : {}),
+  };
 }
 
 /**
@@ -132,11 +151,17 @@ const main = async (): Promise<void> => {
       ? { ...baseOptions, developmentTarget }
       : baseOptions;
 
+    const qaOptions = parseQaOptions();
+    if (qaOptions.enabled) {
+      console.log(`🧪 QA closed loop enabled (--qa)${qaOptions.autoApprove ? ', HC3 auto-approve' : ''}\n`);
+    }
+
     const workflowResult = await executeFullWorkflow(
       researchSupervisor,
       developmentSupervisor,
       ticket,
-      developmentOptions
+      developmentOptions,
+      qaOptions
     );
     displayFullWorkflowSummary(workflowResult);
   } catch (error) {

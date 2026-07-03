@@ -13,10 +13,13 @@
 
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
+import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import {
   IssueTemplate,
   DevelopmentOptions,
   DevelopmentWorkflowResult,
+  ProvisionOptions,
+  QaResult,
 } from '../types';
 import { askYesNo } from '../utils/prompt';
 import {
@@ -29,13 +32,30 @@ import {
   createDevelopmentInput,
   displayDevelopmentCompletion,
 } from './development-workflow';
+import { createQaInput, executeQaWorkflow, displayQaCompletion } from './qa-workflow';
 
 /**
- * Full workflow result combining research and development
+ * Full workflow result combining research, development and (optionally) QA.
  */
 export interface FullWorkflowResult {
   research: ResearchWorkflowResult;
   development?: DevelopmentWorkflowResult;
+  /** Present only when the QA phase ran (cht-conf ticket + --qa). */
+  qa?: QaResult;
+}
+
+/**
+ * QA phase options. Opt-in via the CLI `--qa` flag: default off so cht-core runs
+ * are unchanged and the phase only fires for cht-conf tickets when an instance
+ * is available. `agent` is injectable for tests.
+ */
+export interface QaOptions {
+  enabled: boolean;
+  agent?: TestEnvironmentAgent;
+  useMockDocker?: boolean;
+  testDataPath?: string;
+  autoApprove?: boolean;
+  provision?: ProvisionOptions;
 }
 
 /**
@@ -59,14 +79,16 @@ export const askDevelopmentOptions = async (
 };
 
 /**
- * Execute the full workflow: Research -> Development
- * Chains research to development automatically when research is approved
+ * Execute the full workflow: Research -> Development -> (optional) QA
+ * Chains research to development automatically when research is approved; runs
+ * the QA closed loop after development when QA is enabled for a cht-conf ticket.
  */
 export const executeFullWorkflow = async (
   researchSupervisor: ResearchSupervisor,
   developmentSupervisor: DevelopmentSupervisor,
   ticket: IssueTemplate,
-  developmentOptions: DevelopmentOptions
+  developmentOptions: DevelopmentOptions,
+  qaOptions?: QaOptions
 ): Promise<FullWorkflowResult> => {
   // Run research workflow with human validation checkpoint #1
   const researchResult = await executeResearchWorkflow(researchSupervisor, ticket);
@@ -102,10 +124,54 @@ export const executeFullWorkflow = async (
   // Display development completion
   displayDevelopmentCompletion(developmentResult, developmentOptions);
 
+  // QA phase (closed loop) — only when enabled, development approved, cht-conf.
+  const qa = developmentResult.approved
+    ? await runQaPhase(ticket, developmentOptions, qaOptions)
+    : undefined;
+
   return {
     research: researchResult,
     development: developmentResult,
+    ...(qa ? { qa } : {}),
   };
+};
+
+/**
+ * Run the QA closed loop after an approved Development phase. Returns undefined
+ * (skips) when QA is disabled or the ticket is not layer: cht-conf, so cht-core
+ * runs are unchanged. Extracted + exported so the wiring is unit-testable.
+ */
+export const runQaPhase = async (
+  ticket: IssueTemplate,
+  developmentOptions: DevelopmentOptions,
+  qaOptions?: QaOptions
+): Promise<QaResult | undefined> => {
+  if (!qaOptions?.enabled) {
+    return undefined;
+  }
+  if (ticket.issue.technical_context.layer !== 'cht-conf') {
+    console.log('ℹ️  QA phase skipped — the closed loop only runs for layer: cht-conf tickets\n');
+    return undefined;
+  }
+
+  console.log('\n🧪 Starting QA Phase (closed loop: reproduce → fix → verify)...\n');
+  const qaInput = createQaInput({
+    issue: ticket,
+    configPath: developmentOptions.developmentTarget?.repoPath,
+    provision: qaOptions.provision,
+    testDataPath: qaOptions.testDataPath,
+    autoApprove: qaOptions.autoApprove,
+  });
+  if (!qaInput) {
+    console.error('❌ QA phase could not start — see the reason above; skipping QA.\n');
+    return undefined;
+  }
+
+  const agent =
+    qaOptions.agent ?? new TestEnvironmentAgent({ useMockDocker: qaOptions.useMockDocker ?? false });
+  const result = await executeQaWorkflow(agent, qaInput);
+  displayQaCompletion(result);
+  return result;
 };
 
 /**
@@ -163,6 +229,18 @@ export const displayFullWorkflowSummary = (result: FullWorkflowResult): void => 
     displayDevelopmentSummary(result.development);
   } else {
     console.log('\n📊 Development Phase: Not executed');
+  }
+
+  if (result.qa) {
+    console.log('\n📊 QA Phase (closed loop):');
+    console.log(`   Reproduced (red): ${result.qa.reproduced ? '✅' : '❌'}`);
+    console.log(`   Verified (green): ${result.qa.verified ? '✅' : '❌'}`);
+    console.log(`   Succeeded: ${result.qa.succeeded ? '✅' : '❌'}`);
+    if (result.qa.abortReason) {
+      console.log(`   Aborted: ${result.qa.abortReason}`);
+    }
+  } else {
+    console.log('\n📊 QA Phase: Not executed');
   }
 
   console.log();

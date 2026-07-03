@@ -60,6 +60,35 @@ export const extractBindRelevant = (xml: string, nodeset: string): string | unde
   return relMatch ? decodeXmlAttr(relMatch[1]) : undefined;
 };
 
+// Matches a self-closing/opening <bind ...> tag and, within it, nodeset + relevant.
+const BIND_TAG_RE = /<bind\b[^>]*>/g;
+const NODESET_ATTR_RE = /\bnodeset="([^"]*)"/;
+const RELEVANT_ATTR_RE = /\brelevant="([^"]*)"/;
+// A top-level group nodeset: /data/<segment> with no further path segments.
+const TOP_LEVEL_GROUP_RE = /^\/data\/[^/]+$/;
+
+/**
+ * Snapshot every top-level group bind (`/data/<segment>`) that carries a
+ * `relevant` expression. The QA loop uses the CORRECTED local form's snapshot as
+ * the expectation set: the deployed pre-fix form differs from it (reproduce =
+ * red), and the deployed post-fix form matches it (verify = green). Restricting
+ * to single-segment group nodesets keeps the set to the page/group gates (the
+ * level the danger_signs fix lives at) and excludes noisy child-field binds.
+ */
+export const extractTopLevelGroupBinds = (xml: string): FormBindExpectation[] => {
+  const binds: FormBindExpectation[] = [];
+  const seen = new Set<string>();
+  for (const tag of xml.match(BIND_TAG_RE) ?? []) {
+    const nodeset = NODESET_ATTR_RE.exec(tag)?.[1];
+    const relevant = RELEVANT_ATTR_RE.exec(tag)?.[1];
+    if (nodeset && relevant !== undefined && TOP_LEVEL_GROUP_RE.test(nodeset) && !seen.has(nodeset)) {
+      seen.add(nodeset);
+      binds.push({ nodeset, relevant: decodeXmlAttr(relevant) });
+    }
+  }
+  return binds;
+};
+
 /**
  * Verify a deployed form's binds against their expected `relevant` expressions.
  * A missing bind or a mismatched expression fails the check; the roll-up passes

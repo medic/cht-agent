@@ -692,6 +692,64 @@ export interface VerifyArtifactResult {
   summary: string;
 }
 
+// ============================================================================
+// QA WORKFLOW TYPES (mission 04 A3 — the closed loop, G1)
+// ============================================================================
+
+/**
+ * Inputs to the QA (Test Environment) workflow: apply a Development fix to a
+ * live instance and prove it in red -> green order (reproduce the symptom, apply,
+ * re-verify). The `verify` set is snapshotted from the CORRECTED local form, so
+ * the deployed pre-fix form fails it (red) and the deployed post-fix form passes
+ * it (green).
+ */
+export interface QaInput {
+  issue: IssueTemplate;
+  /** The corrected deployment config to apply (CHT_CONF_PATH). */
+  configPath: string;
+  /** What to content-assert — before the fix (must fail) and after (must pass). */
+  verify: VerifyArtifactOptions;
+  /** cht-conf upload buckets for applyConfig (default derived from configArtifact). */
+  applyActions?: ConfigUploadAction[];
+  /** How to reach / bring up the instance. */
+  provision: ProvisionOptions;
+  /** cht-conf data project for prepareTestData; seeding is skipped when absent. */
+  testDataPath?: string;
+  /** Skip the interactive HC3 gate (automated / CI runs). */
+  autoApprove?: boolean;
+}
+
+/**
+ * Outcome of the QA workflow, carrying BOTH the red reproduction evidence and
+ * the green fix evidence so the report shows the transition, not just a final
+ * pass. `succeeded` requires reproduced (red) AND applied AND verified (green).
+ */
+export interface QaResult {
+  /** False when QA was skipped (cht-core ticket, --qa off, or not applicable). */
+  ran: boolean;
+  /** HC3 destructive-op approval (false = aborted before seed/apply). */
+  approved: boolean;
+  /** The symptom reproduced against the as-deployed config (red baseline). */
+  reproduced: boolean;
+  /** The deployed artifact carries the corrected logic after the fix (green). */
+  verified: boolean;
+  /** reproduced && the apply succeeded && verified. */
+  succeeded: boolean;
+  /** verifyArtifact against the as-deployed (pre-fix) form — expected to FAIL. */
+  redEvidence?: VerifyArtifactResult;
+  /** verifyArtifact against the deployed (post-fix) form — expected to PASS. */
+  greenEvidence?: VerifyArtifactResult;
+  applyResult?: ConfigApplyResult;
+  /** CouchDB rev of the form doc before/after the apply (corroboration). */
+  preFormRev?: string;
+  postFormRev?: string;
+  revChanged?: boolean;
+  /** Human-readable transition log (red -> apply -> green). */
+  messages: string[];
+  /** Why QA did not complete (guard failure, no reproduction, apply/verify fail). */
+  abortReason?: string;
+}
+
 /**
  * Inputs to a single cht-conf bucket invocation (see src/utils/cht-conf-runner.ts).
  * The runner builds the `cht` argv from these; the agent never embeds credentials
