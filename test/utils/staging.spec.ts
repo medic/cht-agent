@@ -172,12 +172,12 @@ describe('staging.ts (v9a.3)', () => {
     });
 
     it('returns null for a missing file rather than throwing', async () => {
-      expect(await readFromChtCore('ghost.ts', scratch)).to.equal(null);
+      expect(await readFromChtCore('ghost.ts', scratch)).to.be.null;
     });
 
     it('returns null when the path resolves to a directory (not a file)', async () => {
       await fs.mkdir(path.join(scratch, 'subdir'));
-      expect(await readFromChtCore('subdir', scratch)).to.equal(null);
+      expect(await readFromChtCore('subdir', scratch)).to.be.null;
     });
   });
 

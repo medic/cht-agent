@@ -633,7 +633,7 @@ describe('ResearchSupervisor generatePlanNode (v9b.2)', () => {
 
     expect(out.currentPhase).to.equal('complete');
     const plan = out.orchestrationPlan as { recommendedApproach: string; phases: unknown[]; riskFactors: string[]; keyFindings: string[] };
-    expect(plan).to.not.equal(undefined);
+    expect(plan).to.not.be.undefined;
     expect(plan.recommendedApproach).to.match(/Extend the contacts service/);
     expect(plan.riskFactors.some(r => /regress/.test(r))).to.equal(true);
     expect(plan.keyFindings.some(f => /Key files to modify/.test(f))).to.equal(true);
@@ -675,7 +675,7 @@ describe('ResearchSupervisor.research (v9b.2) — end-to-end orchestration', () 
     expect(result.errors).to.deep.equal([]);
     expect(result.researchFindings).to.equal(findings);
     expect(result.contextAnalysis).to.equal(analysis);
-    expect(result.orchestrationPlan).to.not.equal(undefined);
+    expect(result.orchestrationPlan).to.not.be.undefined;
     expect(search.calledOnce).to.equal(true);
     expect(analyze.calledOnce).to.equal(true);
     expect(search.firstCall.calledBefore(analyze.firstCall)).to.equal(true);

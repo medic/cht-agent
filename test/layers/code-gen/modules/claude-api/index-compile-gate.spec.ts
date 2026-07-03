@@ -121,13 +121,13 @@ describe('ClaudeApiCodeGenModule generate() — compile gate folding', () => {
     const out = await loadModule().generate(baseInput);
     expect(out.compileGateSkipped).to.equal(true);
     expect(out.compileGateSkipReason).to.equal('cht-core is not a git repo');
-    expect(out.crossFileIssues).to.equal(undefined);
+    expect(out.crossFileIssues).to.be.undefined;
   });
 
   it('leaves crossFileIssues undefined and skip falsy on a clean pass', async () => {
     gateStub.resolves({ passed: true, issues: [] });
     const out = await loadModule().generate(baseInput);
-    expect(out.crossFileIssues).to.equal(undefined);
+    expect(out.crossFileIssues).to.be.undefined;
     expect(out.compileGateSkipped).to.not.equal(true);
   });
 

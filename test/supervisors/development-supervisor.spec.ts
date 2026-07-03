@@ -290,7 +290,7 @@ describe('DevelopmentSupervisor validationNode (v9b.1)', () => {
     }));
 
     expect(out.currentPhase).to.equal('complete');
-    expect(out.validationResult).to.not.equal(undefined);
+    expect(out.validationResult).to.not.be.undefined;
   });
 });
 

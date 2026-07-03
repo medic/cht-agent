@@ -42,7 +42,7 @@ describe('workspace.ts (A.2b)', () => {
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.headSha).to.equal('abc1234deadbeef');
-      expect(snap.stashRef).to.equal(null);
+      expect(snap.stashRef).to.be.null;
     });
 
     it('stashes uncommitted work and captures the stash ref', async () => {
@@ -83,7 +83,7 @@ describe('workspace.ts (A.2b)', () => {
       const create = files.find((f: { path: string }) => f.path === 'src/new.ts');
       const modify = files.find((f: { path: string }) => f.path === 'src/changed.ts');
       expect(create).to.exist;
-      expect(create.originalContent).to.equal(undefined);
+      expect(create.originalContent).to.be.undefined;
       expect(modify).to.exist;
       expect(modify.originalContent).to.equal('old content');
     });
@@ -247,7 +247,7 @@ describe('workspace.ts (A.2b)', () => {
         warnSpy.restore();
       }
       const failureWarn = warnSpy.getCalls().find(c => /reset --hard during rollback failed/.test(String(c.args[0])));
-      expect(failureWarn).to.equal(undefined);
+      expect(failureWarn).to.be.undefined;
     });
 
     it('A.5: clean -fd exits non-zero but working tree is clean → no warning', async () => {
@@ -269,7 +269,7 @@ describe('workspace.ts (A.2b)', () => {
         warnSpy.restore();
       }
       const failureWarn = warnSpy.getCalls().find(c => /clean -fd during rollback failed/.test(String(c.args[0])));
-      expect(failureWarn).to.equal(undefined);
+      expect(failureWarn).to.be.undefined;
     });
 
     it('A.5: stash pop exits non-zero but stash was popped (by name) → no warning', async () => {
@@ -298,7 +298,7 @@ describe('workspace.ts (A.2b)', () => {
         warnSpy.restore();
       }
       const failureWarn = warnSpy.getCalls().find(c => /stash pop stash@\{0\} failed/.test(String(c.args[0])));
-      expect(failureWarn).to.equal(undefined);
+      expect(failureWarn).to.be.undefined;
     });
 
     it('A.14: returns typed RollbackResult with per-op outcomes', async () => {

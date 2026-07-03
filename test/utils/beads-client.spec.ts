@@ -147,7 +147,7 @@ describe('BeadsClient (v9a.4) — bd CLI wrapper', () => {
     const client = new BeadsClient();
     let caught: Error | null = null;
     try { await client.close('cht-x'); } catch (e) { caught = e as Error; }
-    expect(caught).to.not.equal(null);
+    expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/bd close failed/);
     expect(caught!.message).to.match(/not authenticated/);
   });

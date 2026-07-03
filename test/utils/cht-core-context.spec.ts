@@ -87,13 +87,13 @@ describe('cht-core-context (v9a.5)', () => {
       // shape guarantee is the focus here: it returns null when nothing resolves.
       const { gatherDomainContext, getCHTCorePath } = loadModule({ domains: {} });
       if (getCHTCorePath()) return; // host happens to have a real cht-core; can't verify the null branch here
-      expect(gatherDomainContext('contacts' as CHTDomain)).to.equal(null);
+      expect(gatherDomainContext('contacts' as CHTDomain)).to.be.null;
     });
 
     it('returns null when the domain is not present in the index', () => {
       process.env.CHT_CORE_PATH = scratch;
       const { gatherDomainContext } = loadModule({ domains: {} });
-      expect(gatherDomainContext('contacts' as CHTDomain)).to.equal(null);
+      expect(gatherDomainContext('contacts' as CHTDomain)).to.be.null;
     });
 
     it('reads files listed in the mapping and tags them with the right relevance', () => {
@@ -111,7 +111,7 @@ describe('cht-core-context (v9a.5)', () => {
       });
 
       const context = gatherDomainContext('contacts' as CHTDomain);
-      expect(context).to.not.equal(null);
+      expect(context).to.not.be.null;
       expect(context!.domain).to.equal('contacts');
       expect(context!.description).to.equal('Contacts domain');
       expect(context!.codeSnippets).to.have.length(1);

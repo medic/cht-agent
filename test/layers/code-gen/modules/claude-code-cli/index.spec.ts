@@ -323,7 +323,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       expect(result.files).to.have.length(1);
       expect(result.files[0].path).to.equal('src/a.ts');
       const issues: CrossFileIssue[] = result.crossFileIssues ?? [];
-      expect(issues.find(i => i.issueType === 'execute-no-op')).to.equal(undefined);
+      expect(issues.find(i => i.issueType === 'execute-no-op')).to.be.undefined;
     });
 
     it('produces execute-no-op when both STRICT and the relaxed retry capture zero files', async () => {
@@ -736,7 +736,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const result = await module.generate(baseInput());
 
       expect(result.partialGeneration).to.equal(false);
-      expect(result.partialGenerationReason).to.equal(undefined);
+      expect(result.partialGenerationReason).to.be.undefined;
     });
   });
 });

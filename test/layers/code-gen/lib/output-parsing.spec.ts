@@ -47,7 +47,7 @@ describe('applySearchReplace (whitespace-tolerant fallback)', () => {
     // the normalized fallback; the match is line-aligned, so it applies cleanly.
     const original = 'line one\nold code   \nline three\n';
     const result = applySearchReplace(original, [{ search: 'old code\nline three', replace: 'NEW BODY' }]);
-    expect(result).to.not.equal(null);
+    expect(result).to.not.be.null;
     expect(result).to.contain('line one');
     expect(result).to.contain('NEW BODY');
     expect(result).to.not.contain('old code');
@@ -59,7 +59,7 @@ describe('applySearchReplace (whitespace-tolerant fallback)', () => {
     // the 'const x = 1; const ' prefix; the fix rejects it (returns null).
     const original = 'const x = 1; const y = 2;\t\nnext line\n';
     const result = applySearchReplace(original, [{ search: 'y = 2;\nnext line', replace: 'REPLACED' }]);
-    expect(result).to.equal(null);
+    expect(result).to.be.null;
   });
 });
 
