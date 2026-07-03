@@ -5,10 +5,6 @@
  * Uses Node.js built-in readline/promises module (Node 17+)
  */
 
-// readline/promises is stable on the Node 22.17+ runtime this project runs on.
-// The repo-wide engines floor is still >=22.0.0 (bumping it touches package.json,
-// which is out of scope for this integration commit), so silence the version rule here.
-// eslint-disable-next-line n/no-unsupported-features/node-builtins
 import * as readline from 'node:readline/promises';
 
 /**
