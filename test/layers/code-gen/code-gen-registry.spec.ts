@@ -183,4 +183,78 @@ describe('CodeGenModuleRegistry', () => {
     expect(module.name).to.equal('claude-api');
     expect(module.version).to.equal('0.6.0');
   });
+
+  // ── H1 (#63): registry resolution guarantees ──────────────────────────────
+
+  it('should resolve the claude-cli alias to claude-code-cli via CODE_GEN_MODULE env (H1)', () => {
+    const originalEnv = process.env.CODE_GEN_MODULE;
+    try {
+      process.env.CODE_GEN_MODULE = 'claude-cli';
+      const registry = createDefaultCodeGenRegistry();
+
+      const active = registry.getActiveModule();
+
+      expect(active.name).to.equal('claude-code-cli');
+    } finally {
+      if (originalEnv === undefined) {
+        delete process.env.CODE_GEN_MODULE;
+      } else {
+        process.env.CODE_GEN_MODULE = originalEnv;
+      }
+    }
+  });
+
+  it('should resolve the claude-cli alias to claude-code-cli via providerFromConfig (H1)', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    const active = registry.getActiveModule('claude-cli');
+
+    expect(active.name).to.equal('claude-code-cli');
+  });
+
+  it('should name the requested provider, resolved name, and registered list on an unknown provider (H1)', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    // An unaliased unknown provider resolves to itself; the error names both.
+    expect(() => registry.getActiveModule('gpt-9')).to.throw(/provider "gpt-9"/);
+    expect(() => registry.getActiveModule('gpt-9')).to.throw(/resolved to "gpt-9"/);
+    expect(() => registry.getActiveModule('gpt-9')).to.throw(/claude-api/);
+    expect(() => registry.getActiveModule('gpt-9')).to.throw(/claude-code-cli/);
+  });
+
+  it('should report the resolved alias target when an aliased provider is unregistered (H1)', () => {
+    // A registry that registers claude-api but NOT claude-code-cli: requesting
+    // the claude-cli alias resolves to the unregistered target, and the error
+    // must surface both the requested alias and what it resolved to.
+    const registry = new CodeGenModuleRegistry();
+    registry.register(makeModule('claude-api'));
+
+    expect(() => registry.getActiveModule('claude-cli')).to.throw(
+      /provider "claude-cli" \(resolved to "claude-code-cli"\)/
+    );
+  });
+
+  it('validateAliases is a no-op on the default registry — every alias target is registered (H1)', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    expect(() => registry.validateAliases()).to.not.throw();
+  });
+
+  it('validateAliases reports a stranded alias when its target is not registered (H1)', () => {
+    // Historical failure shape: only claude-api registered, so the claude-cli
+    // alias -> claude-code-cli is stranded. The integrity path must flag it.
+    const registry = new CodeGenModuleRegistry();
+    registry.register(makeModule('claude-api'));
+
+    expect(() => registry.validateAliases()).to.throw(/stranded provider alias/);
+    expect(() => registry.validateAliases()).to.throw(/"claude-cli" -> "claude-code-cli"/);
+    // claude-api is registered, so its alias is NOT reported as stranded.
+    expect(() => registry.validateAliases()).to.not.throw(/"anthropic"/);
+  });
+
+  it('createDefaultCodeGenRegistry runs the integrity check without throwing (H1)', () => {
+    // The production path validates its aliases at construction; a future module
+    // rename that strands an alias would make this throw.
+    expect(() => createDefaultCodeGenRegistry()).to.not.throw();
+  });
 });

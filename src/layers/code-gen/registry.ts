@@ -33,6 +33,31 @@ export class CodeGenModuleRegistry {
     return PROVIDER_ALIAS_MAP[provider] || provider;
   }
 
+  /**
+   * Registry-integrity check (H1, #63): every PROVIDER_ALIAS_MAP target must be
+   * a registered module. A silent strand — an alias whose target was renamed or
+   * never registered — is the historical failure: on main only `claude-api` was
+   * registered, so the `claude-cli` alias pointed at an unregistered
+   * `claude-code-cli` and only blew up on the first request that happened to use
+   * it. Validating up front makes that class of bug impossible to hit silently:
+   * a future rename throws here (at registry construction) instead.
+   *
+   * Throws an Error naming each stranded alias, its target, and the registered
+   * modules. No-op when every alias target is registered.
+   */
+  validateAliases(): void {
+    const registered = this.list();
+    const stranded = Object.entries(PROVIDER_ALIAS_MAP)
+      .filter(([, target]) => !this.modules.has(target))
+      .map(([alias, target]) => `"${alias}" -> "${target}"`);
+    if (stranded.length > 0) {
+      throw new Error(
+        `Code generation registry has stranded provider alias(es): ${stranded.join(', ')}. ` +
+          `Each alias target must resolve to a registered module. Registered modules: ${registered.join(', ') || 'none'}`
+      );
+    }
+  }
+
   getActiveModule(providerFromConfig?: string): CodeGenModule {
     const requestedProvider = providerFromConfig || readEnv('CODE_GEN_MODULE') || 'claude-code-cli';
     const moduleName = this.resolveProvider(requestedProvider);
@@ -55,6 +80,11 @@ export function createDefaultCodeGenRegistry(): CodeGenModuleRegistry {
   registry.register(createClaudeApiCodeGenModule());
   registry.register(createClaudeCodeCLICodeGenModule());
   registry.register(createOpenCodeCodeGenModule());
+
+  // H1 (#63): fail loudly at construction if any alias target is unregistered,
+  // so a future module rename can't silently strand an alias until the first
+  // request that uses it.
+  registry.validateAliases();
 
   return registry;
 }
