@@ -1,8 +1,8 @@
 {
   "extension": ["ts"],
-  "spec": "test/**/*.spec.ts",
-  "ignore": ["test/harness/**/*.spec.ts"],
+  "spec": "test/harness/**/*.spec.ts",
   "require": ["ts-node/register"],
-  "timeout": 10000,
+  "timeout": 120000,
+  "slow": 5000,
   "node-option": ["no-experimental-strip-types"]
 }
