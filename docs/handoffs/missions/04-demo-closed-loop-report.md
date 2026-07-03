@@ -1,9 +1,11 @@
 # Mission 04 — Close the loop: wire QA into the pipeline, then rehearse
 
 **Completed 2026-07-03.** Single session on `integration/demo-closed-loop`
-(prerequisite: mission 03). Branch tip **`114d736`**. Gates: `npm run build`
-clean, **1352 passing / 0 failing** (`env -u ANTHROPIC_MODEL LANGFUSE_ENABLED=false
-npm test`), `eslint .` clean. Baseline was 1312 (mission 03) → +40 tests (the
+(prerequisite: mission 03). Last functional/demo commit **`114d736`**; this report
++ its provenance note commit on top of it, so the true branch tip is the current
+`HEAD` of `integration/demo-closed-loop` at read time. Gates (verified at
+`114d736`): `npm run build` clean, **1352 passing / 0 failing**
+(`env -u ANTHROPIC_MODEL LANGFUSE_ENABLED=false npm test`), `eslint .` clean. Baseline was 1312 (mission 03) → +40 tests (the
 tier-2 harness spec's 3 tests are excluded from the default suite; see A2).
 
 The three concrete gaps the audit found are closed and wired into the runnable
