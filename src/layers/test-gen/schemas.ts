@@ -35,13 +35,18 @@ export const RequirementsChecklistSchema = z.object({
 export type ValidatedTestPlanItem = z.infer<typeof TestPlanItemSchema>;
 export type ValidatedTestPlan = z.infer<typeof TestPlanSchema>;
 
-const TEST_STRUCTURE_PATTERNS = [
-  /describe\s*\(/,
-  /it\s*\(/,
-  /test\s*\(/,
+/**
+ * Patterns that indicate a real assertion (a semantic check), NOT merely test
+ * structure. hasAssertions() uses ONLY this list: previously it reused a mixed
+ * structure+assertion list, so a spec with describe/it/test blocks but zero
+ * assertions passed the gate. Structure is checked separately by
+ * hasTestStructure() (which owns its own describe/it/test regexes).
+ */
+const ASSERTION_PATTERNS = [
   /expect\s*\(/,
   /assert\s*[.(]/,
   /should\s*[.(]/,
+  /sinon\.assert/,
 ];
 
 
@@ -65,7 +70,7 @@ export const TestContentAssertions = {
   hasAssertions(content: string): string[] {
     const failures: string[] = [];
 
-    const hasAssertion = TEST_STRUCTURE_PATTERNS.some(p => p.test(content));
+    const hasAssertion = ASSERTION_PATTERNS.some(p => p.test(content));
     if (!hasAssertion) {
       failures.push('Test file contains no assertions (expect/assert/should)');
     }

@@ -45,6 +45,37 @@ describe('TestContentAssertions', () => {
       expect(failures).to.have.length(1);
       expect(failures[0]).to.include('no assertions');
     });
+
+    // H2 (#63): a describe/it/test-only spec has STRUCTURE but no assertion.
+    // Previously hasAssertions reused the structure+assertion pattern list, so
+    // the describe/it/test tokens satisfied it and this passed the gate.
+    it('should fail for a describe/it-only fixture with zero assertions (H2)', () => {
+      const content = [
+        `describe('MyService', () => {`,
+        `  it('does something', () => {`,
+        `    const result = doThing();`,
+        `  });`,
+        `});`,
+      ].join('\n');
+      const failures = TestContentAssertions.hasAssertions(content);
+      expect(failures).to.have.length(1);
+      expect(failures[0]).to.include('no assertions');
+    });
+
+    it('should pass for an expect() assertion (H2)', () => {
+      const content = `describe('x', () => { it('y', () => { expect(v).to.equal(1); }); });`;
+      expect(TestContentAssertions.hasAssertions(content)).to.deep.equal([]);
+    });
+
+    it('should pass for an assert.ok assertion (H2)', () => {
+      const content = `describe('x', () => { it('y', () => { assert.ok(v); }); });`;
+      expect(TestContentAssertions.hasAssertions(content)).to.deep.equal([]);
+    });
+
+    it('should pass for a sinon.assert.calledOnce assertion (H2)', () => {
+      const content = `describe('x', () => { it('y', () => { sinon.assert.calledOnce(spy); }); });`;
+      expect(TestContentAssertions.hasAssertions(content)).to.deep.equal([]);
+    });
   });
 
   describe('hasProperImports', () => {
