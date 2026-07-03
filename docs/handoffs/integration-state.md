@@ -123,6 +123,13 @@ commits on this branch. Base: `main` @ `ed07177`.
   anthropic.ts already carries the tool-use loop (kept unchanged, judge call
   resolved keep-main); 63 never touched ticket-parser/constants;
   domain-inference superseded by 02c+134 (nothing taken).
+- Disclosed never-delete deviation: the two 3-line module placeholder
+  READMEs main carried at `src/layers/code-gen/modules/{claude-code-cli,
+  opencode}/README.md` were deleted in C2 — the real module implementations
+  now occupy those directories, and a stale "placeholder for future module"
+  stub beside a real module would mislead. This is the ONLY main-file
+  deletion on the branch (review-supervisor audit of the full 535-file
+  diff).
 - Rejected 63-side deletions (all intact, verified byte-identical):
   test-environment-agent (#66 wins), code-context-agent, deepwiki-client,
   types/pipeline, llm/{json-extract,rate-limit,structured-cli},
@@ -151,7 +158,7 @@ commits on this branch. Base: `main` @ `ed07177`.
   to ratchet back up; `63-review-fixes` mirror branch being assembled in a
   separate worktree (tip recorded in the mission report).
 
-## S8 — `126-langfuse-refactor` (88a340f) @ 7ce85b7 (+ cd0cd05 lock, 96be5ec lint fix)
+## S8 — `126-langfuse-refactor` (88a340f) @ 7ce85b7 (+ cd0cd05 lock, f704be0 lint fix)
 - Tests: 1308 → 1312 (+4)   Lint: clean
 - Conflicts (resolved by hand, ~6 min — well inside the 1 h timebox):
   - `src/scripts/run-pipeline.ts`: kept main's #119 batch/concurrency
@@ -168,7 +175,7 @@ commits on this branch. Base: `main` @ `ed07177`.
     (cd0cd05) per conventions.
   - `.env.example`: union — LANGFUSE_* block appended after ours.
 - Notes / deviations: one post-merge lint fix (default-param-last on the new
-  `processSinglePR` signature, 96be5ec). Gate passed: full suite green with
+  `processSinglePR` signature, f704be0). Gate passed: full suite green with
   `LANGFUSE_ENABLED=false` (observability no-op specs included). New clean
   files: `src/observability/index.ts`, its spec, `docs/observability.md`,
   Langfuse handoff docs.
