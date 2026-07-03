@@ -22,6 +22,7 @@ import {
   OrchestrationPlan,
   ResearchFindings,
   ContextAnalysisResult,
+  CodeContextFindings,
   CodeGenerationResult,
   TestGenerationResult,
   ImplementationValidation,
@@ -160,6 +161,12 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
+  // Bridge (#63): DeepWiki / canonical-config findings forwarded from research,
+  // threaded into the CodeGenerationInput the codeGenerationNode builds.
+  codeContextFindings: Annotation<CodeContextFindings | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
   options: Annotation<DevelopmentOptions | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
@@ -285,6 +292,7 @@ export class DevelopmentSupervisor {
         orchestrationPlan: state.orchestrationPlan,
         researchFindings: state.researchFindings,
         contextAnalysis: state.contextAnalysis,
+        codeContextFindings: state.codeContextFindings,
         chtCorePath: state.options.chtCorePath,
         additionalContext: state.validationFeedback || undefined,
         passingFiles: selective.passingFiles,
@@ -844,6 +852,7 @@ Respond with a JSON object:
       orchestrationPlan: input.orchestrationPlan,
       researchFindings: input.researchFindings,
       contextAnalysis: input.contextAnalysis,
+      codeContextFindings: input.codeContextFindings,
       options: input.options,
       codeGeneration: undefined,
       testGeneration: undefined,

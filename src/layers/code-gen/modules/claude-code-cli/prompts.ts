@@ -1,6 +1,7 @@
 import { CodeGenModuleInput } from '../../interface';
 import { PlanItem } from '../../lib/plan';
 import { getArchPatternsSection } from '../../lib/arch-patterns';
+import { buildArchInsightsSection } from '../../lib/prompts';
 
 /**
  * Execute-phase prompt for the claude-code-cli module's tool-using agent.
@@ -32,7 +33,7 @@ ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 ${plan.map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`).join('\n')}
 
 ${archPatterns}
-
+${buildArchInsightsSection(input.codeContextFindings)}
 ## Plan Adherence (STRICT)
 You MUST implement EXACTLY the files listed in the Approved Plan above:
 - For each MODIFY plan item, you MUST use \`Edit\` on that file.
@@ -94,7 +95,7 @@ ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 ${plan.map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`).join('\n')}
 
 ${archPatterns}
-
+${buildArchInsightsSection(input.codeContextFindings)}
 ## Plan Adherence (GUIDANCE)
 Your earlier attempt at this ticket read the relevant files but did not write any edits.
 You are getting a second chance with relaxed rules:

@@ -1,9 +1,29 @@
 import { CodeGenModuleInput, ContextFile, GeneratedFile } from '../interface';
+import type { CodeContextFindings } from '../../../types';
 import { PlanItem } from './plan';
 import { FileManifest, buildManifestSection } from './file-manifest';
 import { isLargeFile } from './large-file';
 import { extractPublicSurface } from './public-surface';
 import { getArchPatternsSection } from './arch-patterns';
+
+/**
+ * Render the architecture-insights section from the research phase's DeepWiki /
+ * canonical-config findings (bridge, #63). Lists each architecture insight
+ * (component, description, and its patterns) and, when the findings carry one,
+ * the canonical config comparison summary. Returns '' when findings are absent
+ * or carry nothing to show, so callers can interpolate it unconditionally.
+ */
+export function buildArchInsightsSection(findings?: CodeContextFindings): string {
+  if (!findings) return '';
+  const insightLines = (findings.architectureInsights ?? []).map(insight => {
+    const patterns = insight.patterns.length > 0 ? ` Patterns: ${insight.patterns.join(', ')}.` : '';
+    return `- ${insight.component}: ${insight.description}${patterns}`;
+  });
+  const canonicalSummary = findings.canonicalDiff?.summary;
+  const canonicalLine = canonicalSummary ? `\nCanonical config comparison: ${canonicalSummary}` : '';
+  if (insightLines.length === 0 && !canonicalLine) return '';
+  return `\n## Architecture insights (from cht-core wiki)\n${insightLines.join('\n')}${canonicalLine}\n`;
+}
 
 /** Extract validation feedback from external context files (used by plan and per-file prompts). */
 export function extractValidationFeedback(contextFiles: ReadonlyArray<ContextFile>): string {
@@ -149,6 +169,7 @@ ${orchestrationPlan.phases.map((p, i) => `${i + 1}. ${p.name}: ${p.description}`
 ${researchFindings.suggestedApproaches.map((a) => `- ${a}`).join('\n')}
 
 ${getArchPatternsSection(ticket.issue.technical_context.domain)}
+${buildArchInsightsSection(input.codeContextFindings)}
 ${manifestSection}
 
 ${repoMapSection}

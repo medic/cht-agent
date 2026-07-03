@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { buildExecutePrompt, buildRelaxedExecutePrompt } from '../../../../../src/layers/code-gen/modules/claude-code-cli/prompts';
 import { CodeGenModuleInput } from '../../../../../src/layers/code-gen/interface';
 import { PlanItem } from '../../../../../src/layers/code-gen/lib/plan';
+import { CodeContextFindings } from '../../../../../src/types';
 
 const baseInput: CodeGenModuleInput = {
   ticket: {
@@ -77,5 +78,50 @@ describe('buildRelaxedExecutePrompt (R17.1)', () => {
     // Both share the task heading
     expect(strict).to.include('## Task');
     expect(relaxed).to.include('## Task');
+  });
+});
+
+describe('claude-code-cli prompts architecture insights (bridge #63)', () => {
+  const findings: CodeContextFindings = {
+    architectureInsights: [
+      {
+        component: 'ContactsService',
+        description: 'CRUD for contacts',
+        patterns: ['repository', 'service'],
+        dependencies: [],
+      },
+    ],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
+    confidence: 0.9,
+    source: 'opendeepwiki',
+    canonicalDiff: {
+      artifact: 'app-settings',
+      status: 'differs',
+      summary: 'app_settings drifted from the canonical baseline',
+    },
+  };
+
+  const withFindings: CodeGenModuleInput = { ...baseInput, codeContextFindings: findings };
+
+  it('buildExecutePrompt renders the section when findings are present', () => {
+    const prompt = buildExecutePrompt(withFindings, plan);
+    expect(prompt).to.include('## Architecture insights (from cht-core wiki)');
+    expect(prompt).to.include('ContactsService: CRUD for contacts');
+    expect(prompt).to.include('Patterns: repository, service.');
+    expect(prompt).to.include('Canonical config comparison: app_settings drifted from the canonical baseline');
+  });
+
+  it('buildRelaxedExecutePrompt renders the section when findings are present', () => {
+    const prompt = buildRelaxedExecutePrompt(withFindings, plan);
+    expect(prompt).to.include('## Architecture insights (from cht-core wiki)');
+    expect(prompt).to.include('ContactsService: CRUD for contacts');
+  });
+
+  it('omits the section when codeContextFindings is undefined', () => {
+    expect(buildExecutePrompt(baseInput, plan)).to.not.include('## Architecture insights (from cht-core wiki)');
+    expect(buildRelaxedExecutePrompt(baseInput, plan)).to.not.include('## Architecture insights (from cht-core wiki)');
   });
 });

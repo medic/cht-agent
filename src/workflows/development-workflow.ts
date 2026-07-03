@@ -241,6 +241,10 @@ export const createDevelopmentInput = (
     orchestrationPlan: researchResult.orchestrationPlan!,
     researchFindings: researchResult.researchFindings!,
     contextAnalysis: researchResult.contextAnalysis!,
+    // Bridge (#63): carry the research phase's DeepWiki / canonical-config
+    // findings into development. Optional on ResearchState, so undefined passes
+    // through cleanly when the research phase produced none.
+    codeContextFindings: researchResult.codeContextFindings,
     options,
   };
 };

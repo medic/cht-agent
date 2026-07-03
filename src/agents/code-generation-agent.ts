@@ -748,6 +748,7 @@ export class CodeGenerationAgent {
       researchFindings: input.researchFindings,
       contextFiles,
       orchestrationPlan: input.orchestrationPlan,
+      codeContextFindings: input.codeContextFindings,
       targetDirectory: input.chtCorePath,
       readFile: (filePath: string) => readFromChtCore(filePath, input.chtCorePath),
       listDirectory: (dirPath: string) => listChtCoreDirectory(dirPath, input.chtCorePath),

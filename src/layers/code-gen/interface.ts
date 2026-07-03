@@ -1,4 +1,5 @@
 import { IssueTemplate, OrchestrationPlan, ResearchFindings, FailingFileRef, CrossFileIssue } from '../../types';
+import type { CodeContextFindings } from '../../types';
 
 export interface ContextFile {
   path: string;
@@ -29,6 +30,12 @@ export interface CodeGenModuleInput {
   researchFindings: ResearchFindings;
   contextFiles: ReadonlyArray<ContextFile>;
   orchestrationPlan: OrchestrationPlan;
+  /**
+   * DeepWiki / canonical-config findings forwarded from the research phase
+   * (bridge, #63). Rendered into the plan and execute prompts as architecture
+   * insights. Absent when the research phase produced none.
+   */
+  codeContextFindings?: CodeContextFindings;
   targetDirectory: string;
   readFile?: (path: string) => Promise<string | null>;
   listDirectory?: (dirPath: string) => Promise<string[]>;

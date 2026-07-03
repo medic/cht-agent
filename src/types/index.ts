@@ -959,6 +959,8 @@ export interface CodeGenerationInput {
   researchFindings: ResearchFindings;
   contextAnalysis: ContextAnalysisResult;
   chtCorePath: string;
+  /** DeepWiki / canonical-config findings forwarded from the research phase. */
+  codeContextFindings?: CodeContextFindings;
   additionalContext?: string; // Feedback from previous iteration
   /** Files from previous iteration that passed validation — carry forward unchanged */
   passingFiles?: GeneratedFile[];
@@ -1102,6 +1104,8 @@ export interface DevelopmentState {
   orchestrationPlan: OrchestrationPlan;
   researchFindings: ResearchFindings;
   contextAnalysis: ContextAnalysisResult;
+  /** DeepWiki / canonical-config findings forwarded from the research phase. */
+  codeContextFindings?: CodeContextFindings;
   options: DevelopmentOptions;
   codeGeneration?: CodeGenerationResult;
   testGeneration?: TestGenerationResult;
@@ -1121,6 +1125,8 @@ export interface DevelopmentInput {
   orchestrationPlan: OrchestrationPlan;
   researchFindings: ResearchFindings;
   contextAnalysis: ContextAnalysisResult;
+  /** DeepWiki / canonical-config findings forwarded from the research phase. */
+  codeContextFindings?: CodeContextFindings;
   options: DevelopmentOptions;
   additionalContext?: string;
 }

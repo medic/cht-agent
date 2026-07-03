@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import { buildPlanPrompt } from '../../../../src/layers/code-gen/lib/prompts';
 import { CodeGenModuleInput } from '../../../../src/layers/code-gen/interface';
 import { FileManifest } from '../../../../src/layers/code-gen/lib/file-manifest';
+import { CodeContextFindings } from '../../../../src/types';
 
 const baseInput = (overrides: Partial<CodeGenModuleInput> = {}): CodeGenModuleInput => ({
   ticket: {
@@ -78,5 +79,42 @@ describe('buildPlanPrompt R4(b) context-size cap', () => {
     const input = baseInput({ contextFiles });
     const prompt = buildPlanPrompt(input, emptyManifest);
     expect(prompt).to.not.include('[NOTE:');
+  });
+});
+
+describe('buildPlanPrompt architecture insights (bridge #63)', () => {
+  const findings: CodeContextFindings = {
+    architectureInsights: [
+      {
+        component: 'ContactsService',
+        description: 'CRUD for contacts',
+        patterns: ['repository', 'service'],
+        dependencies: [],
+      },
+    ],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
+    confidence: 0.9,
+    source: 'opendeepwiki',
+    canonicalDiff: {
+      artifact: 'app-settings',
+      status: 'differs',
+      summary: 'app_settings drifted from the canonical baseline',
+    },
+  };
+
+  it('renders the architecture-insights section when findings are present', () => {
+    const prompt = buildPlanPrompt(baseInput({ codeContextFindings: findings }), emptyManifest);
+    expect(prompt).to.include('## Architecture insights (from cht-core wiki)');
+    expect(prompt).to.include('ContactsService: CRUD for contacts');
+    expect(prompt).to.include('Patterns: repository, service.');
+    expect(prompt).to.include('Canonical config comparison: app_settings drifted from the canonical baseline');
+  });
+
+  it('omits the section when codeContextFindings is undefined', () => {
+    const prompt = buildPlanPrompt(baseInput(), emptyManifest);
+    expect(prompt).to.not.include('## Architecture insights (from cht-core wiki)');
   });
 });
