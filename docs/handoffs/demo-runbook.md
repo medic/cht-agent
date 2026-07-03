@@ -121,8 +121,11 @@ docker exec … npm run research tickets/demo-pnc-relevant.md
 ## 5. [AGENT] Development → **HC2**
 
 ```bash
-docker exec … npm run full tickets/demo-pnc-relevant.md --preview --qa
+docker exec … npm run full tickets/demo-pnc-relevant.md --qa
 ```
+
+(Preview mode is prompted interactively at the start — answer yes to review the
+diff at HC2; `--qa` is the only workflow flag, plus `--qa-auto` to auto-approve HC3.)
 
 - Code-gen consumes `codeContextFindings` and produces the corrected `relevant`.
 - **A1 routing:** because `layer: cht-conf`, the fix is generated in and written
