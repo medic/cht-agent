@@ -15,6 +15,7 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   let mkdirStub: sinon.SinonStub;
   let writeStub: sinon.SinonStub;
   let realpathSyncStub: sinon.SinonStub;
+  let lstatSyncStub: sinon.SinonStub;
 
   // (Re)build the stubs and load the module fresh; workspace, compile-validator,
   // and node:fs are all stubbed so no real git/tsc/disk is touched. realpathSync
@@ -27,12 +28,15 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     mkdirStub = sinon.stub();
     writeStub = sinon.stub();
     realpathSyncStub = sinon.stub().callsFake((p: string) => p); // identity: no symlinks
+    // Default: leaf does not exist yet (normal create case). Tests override per path.
+    lstatSyncStub = sinon.stub().throws(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     const mod = proxyquire('../../../../../src/layers/code-gen/modules/claude-api/compile-gate', {
       'node:fs': {
         existsSync: existsSyncStub,
         mkdirSync: mkdirStub,
         writeFileSync: writeStub,
         realpathSync: realpathSyncStub,
+        lstatSync: lstatSyncStub,
       },
       '../claude-code-cli/workspace': { snapshotChtCore: snapshotStub, rollbackChtCore: rollbackStub },
       '../../../../agents/compile-validator': { compileCheck: compileStub },
@@ -145,6 +149,36 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(writeStub.calledOnce).to.equal(true);
     expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'ok.ts'));
     expect(warnSpy.called).to.equal(true);
+  });
+
+  it('rejects any path inside a .git directory (those writes survive rollback)', async () => {
+    const run = load();
+    const warnSpy = sinon.stub(console, 'warn');
+    await run(CHT, [file('.git/hooks/pre-commit'), file('.git/config'), file('ok.ts')]);
+    expect(writeStub.calledOnce).to.equal(true);
+    expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'ok.ts'));
+    expect(warnSpy.called).to.equal(true);
+  });
+
+  it('rejects a pre-existing symlink at the write leaf', async () => {
+    const run = load();
+    const warnSpy = sinon.stub(console, 'warn');
+    // The leaf 'link.ts' is a pre-existing symlink; lstat detects it before write.
+    lstatSyncStub.withArgs(path.resolve(CHT, 'link.ts')).returns({ isSymbolicLink: () => true });
+    await run(CHT, [file('link.ts'), file('ok.ts')]);
+    expect(writeStub.calledOnce).to.equal(true);
+    expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'ok.ts'));
+    expect(warnSpy.called).to.equal(true);
+  });
+
+  it('walks up to the nearest existing ancestor when the immediate parent does not exist', async () => {
+    const run = load();
+    existsSyncStub.withArgs(path.resolve(CHT, 'a/b')).returns(false);
+    existsSyncStub.withArgs(path.resolve(CHT, 'a')).returns(false);
+    const result = await run(CHT, [file('a/b/c.ts')]);
+    expect(result.passed).to.equal(true);
+    expect(writeStub.calledOnce).to.equal(true);
+    expect(writeStub.firstCall.args[0]).to.equal(path.resolve(CHT, 'a/b/c.ts'));
   });
 
   it('skips when the compile validator itself throws', async () => {

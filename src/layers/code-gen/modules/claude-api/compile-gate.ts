@@ -31,13 +31,6 @@ function skipped(reason: string): CompileValidationResult {
   return { passed: true, issues: [], skipped: true, skipReason: reason };
 }
 
-/**
- * Write the generated files into chtCorePath, rejecting any path that would
- * escape the workspace. `file.path` comes straight from LLM plan output and is
- * written to disk WITHOUT HC2 approval, so an unsanitized `../..` would escape
- * cht-core; the only upstream scope check (validateAgainstManifest) is log-only.
- * Returns the absolute paths actually written.
- */
 /** Real path of the nearest existing ancestor of `target` (target itself if it exists). */
 function nearestExistingRealPath(target: string): string {
   let current = target;
@@ -49,6 +42,58 @@ function nearestExistingRealPath(target: string): string {
   return fs.realpathSync(current);
 }
 
+/**
+ * Reason a file.path is unsafe to materialize, or null if it is safe to write.
+ * `file.path` comes straight from LLM plan output and is written to disk WITHOUT
+ * HC2 approval (the only upstream scope check, validateAgainstManifest, is
+ * log-only), and is prompt-injection-reachable via untrusted doc context, so it
+ * is fully untrusted. Kept as a self-contained function so it can later be lifted
+ * to the shared write boundary.
+ */
+function pathSafetyReason(
+  root: string,
+  rootPrefix: string,
+  realRoot: string,
+  realRootPrefix: string,
+  filePath: string,
+): string | null {
+  if (path.isAbsolute(filePath)) {
+    return `absolute file path (outside cht-core): ${filePath}`;
+  }
+  const full = path.resolve(root, filePath);
+  if (full === root || !full.startsWith(rootPrefix)) {
+    return `out-of-bounds file path (path traversal): ${filePath}`;
+  }
+  // A path inside .git survives `git reset --hard` + `git clean -fd`, so it would
+  // outlive the gate's rollback and can corrupt cht-core (e.g. overwrite .git/config).
+  if (path.relative(root, full).split(path.sep).includes('.git')) {
+    return `path inside a .git directory (would survive rollback): ${filePath}`;
+  }
+  // A symlinked ancestor directory pointing outside cht-core defeats the lexical
+  // check, because writeFileSync follows symlinks.
+  const realAncestor = nearestExistingRealPath(path.dirname(full));
+  if (realAncestor !== realRoot && !realAncestor.startsWith(realRootPrefix)) {
+    return `path escapes cht-core via a symlinked directory: ${filePath}`;
+  }
+  // A pre-existing symlink AT the leaf is also followed by writeFileSync, even a
+  // dangling one (which existsSync/realpathSync miss). lstat detects it either way.
+  try {
+    if (fs.lstatSync(full).isSymbolicLink()) {
+      return `path is a pre-existing symlink (would write outside cht-core): ${filePath}`;
+    }
+  } catch (err) {
+    // ENOENT: the leaf does not exist yet, which is the normal create case.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      return `path could not be lstat-checked: ${filePath} (${msg(err)})`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Write the generated files into chtCorePath, skipping any path that fails the
+ * safety guard (pathSafetyReason). Returns the absolute paths actually written.
+ */
 function materializeGuarded(chtCorePath: string, files: ReadonlyArray<GeneratedFile>): string[] {
   const root = path.resolve(chtCorePath);
   const rootPrefix = root + path.sep;
@@ -56,23 +101,12 @@ function materializeGuarded(chtCorePath: string, files: ReadonlyArray<GeneratedF
   const realRootPrefix = realRoot + path.sep;
   const written: string[] = [];
   for (const file of files) {
-    if (path.isAbsolute(file.path)) {
-      console.warn(`${LOG} Skipping absolute file path (outside cht-core): ${file.path}`);
+    const reason = pathSafetyReason(root, rootPrefix, realRoot, realRootPrefix, file.path);
+    if (reason) {
+      console.warn(`${LOG} Skipping unsafe file path: ${reason}`);
       continue;
     }
     const full = path.resolve(root, file.path);
-    if (full === root || !full.startsWith(rootPrefix)) {
-      console.warn(`${LOG} Skipping out-of-bounds file path (path traversal): ${file.path}`);
-      continue;
-    }
-    // The lexical check above is defeated if an existing ancestor directory is a
-    // symlink pointing outside cht-core (writeFileSync follows symlinks). Re-check
-    // that the real path of the nearest existing ancestor stays inside cht-core.
-    const realAncestor = nearestExistingRealPath(path.dirname(full));
-    if (realAncestor !== realRoot && !realAncestor.startsWith(realRootPrefix)) {
-      console.warn(`${LOG} Skipping file that escapes cht-core via a symlinked directory: ${file.path}`);
-      continue;
-    }
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, file.content, 'utf8');
     written.push(full);
