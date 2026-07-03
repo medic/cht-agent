@@ -1,3 +1,11 @@
+// TEMPORARY INTEGRATION SHIM (remove in C5): the reference below pulls the ambient
+// `declare module 'diff'` in ./diff.d.ts into the ts-node program (which runs with
+// files:false and otherwise ignores stray .d.ts files) so that
+// src/supervisors/development-supervisor.ts can type the `diff` package until C5
+// adds `@types/diff` to package.json. Delete this reference and ./diff.d.ts
+// together with that package.json change.
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
+/// <reference path="./diff.d.ts" />
 /**
  * Core types and interfaces for the CHT Multi-Agent System
  * Based on the domain-first context structure

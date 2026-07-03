@@ -26,6 +26,7 @@ import {
   GeneratedFile,
 } from '../../interface';
 import { CrossFileIssue } from '../../../../types';
+import { compileCheck, CompileValidationResult } from '../../../../agents/compile-validator';
 import { PlanItem, parsePlan } from '../../lib/plan';
 import { buildPlanPrompt } from '../../lib/prompts';
 import { buildFileManifest } from '../../lib/file-manifest';
@@ -362,38 +363,24 @@ function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): 
 }
 
 /**
- * Result shape of the compile gate. Mirrors the compile-validator agent's
- * {@link CompileValidationResult}; declared locally because that agent
- * (src/agents/compile-validator) lands with the agents layer in a later
- * integration commit. Until then this module DEFERS the gate rather than
- * importing agent code out of phase.
+ * H.1/H.2 compile-gate wrapper. Runs {@link compileCheck} with structured
+ * logging for the skip and pass/fail cases. Always returns a result; the
+ * helper never throws (compile gate failures should not block the run).
  */
-interface CompileValidationResult {
-  passed: boolean;
-  issues: CrossFileIssue[];
-  skipped?: boolean;
-  skipReason?: string;
-  /** Relative paths of every tsconfig*.json the validator ran against. */
-  tsconfigsRun?: string[];
-}
-
-/**
- * H.1/H.2 compile-gate wrapper. Deferred in this integration commit: the real
- * gate (src/agents/compile-validator) arrives with the agents layer, so this
- * always returns `skipped`. Always returns a result; never throws (compile
- * gate failures must not block the run). Re-wire {@link compileCheck} here when
- * the agents layer lands.
- */
-async function runCompileGate(_chtCorePath: string): Promise<CompileValidationResult> {
-  const result: CompileValidationResult = {
-    passed: true,
-    issues: [],
-    skipped: true,
-    skipReason:
-      'Compile gate deferred: src/agents/compile-validator arrives with the agents layer in a later integration commit.',
-  };
-  logCompileGateResult(result);
-  return result;
+async function runCompileGate(chtCorePath: string): Promise<CompileValidationResult> {
+  try {
+    const result = await compileCheck(chtCorePath);
+    logCompileGateResult(result);
+    return result;
+  } catch (err) {
+    console.warn(`[claude-code-cli] Compile gate raised an unexpected error: ${err}; treating as skipped.`);
+    return {
+      passed: true,
+      issues: [],
+      skipped: true,
+      skipReason: `Compile gate raised an unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 }
 
 function logCompileGateResult(result: CompileValidationResult): void {
