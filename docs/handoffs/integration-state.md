@@ -98,3 +98,55 @@ commits on this branch. Base: `main` @ `ed07177`.
   `plannerModel` → `planner` (02c's field rename), resolving a plan string.
   Gate: default-path no-regression (routing spec) + CLI-path tests
   (llm-routing, display-helpers specs) green inside the 845.
+
+## S7 — dev-layer hand-integration from origin/63 (a9eaac6, contains #86) @ 9 commits
+- Tests: 845 → 1308 (+463)   Lint: clean
+- Commits: C1 17d874b (types union), C2 77ec915 (code-gen/test-gen layers +
+  dev utils), C3 e24727f (dev agents + supervisor), C4 fb8b94c (research-side
+  hand-merges), C5 abd2bb0 (workflows, dev/full CLIs, package union),
+  F1 761c7c6 (H1 registry guarantees), F2 bd39d10 (H2 assertion-only gate),
+  F3 39508e6 (H3 staging containment), F4 83777c9 (codeContextFindings
+  bridge).
+- Conflicts: none in the git sense (hand-integration, not a merge). Global
+  adaptations: `historicalSuccessRate` dropped everywhere (134's removal
+  wins); `recommendedApproach` → `proposedApproach` at every 63-origin site.
+  Hand-merged files (integration base + 63's additive hunks):
+  research-supervisor (only addition: optional `additionalContext` param),
+  context-analysis-agent (todos/gatherCodeContext/recommendations refactor),
+  documentation-search-agent (askQuestion flow; `infrastructure` domain and
+  mcpServerUrl/modelName options preserved), mcp/client (askQuestion/
+  getSources added), display-helpers (banners/grouping added),
+  code-gen registry/interface/claude-api (63's modules + main's duplicate
+  guard + CODE_GEN_MODULE selector).
+- Key plan discoveries: src/llm/{types,factory,index}.ts are byte-identical
+  between integration and 63 — zero provider ports needed; integration's
+  anthropic.ts already carries the tool-use loop (kept unchanged, judge call
+  resolved keep-main); 63 never touched ticket-parser/constants;
+  domain-inference superseded by 02c+134 (nothing taken).
+- Rejected 63-side deletions (all intact, verified byte-identical):
+  test-environment-agent (#66 wins), code-context-agent, deepwiki-client,
+  types/pipeline, llm/{json-extract,rate-limit,structured-cli},
+  utils/research-results, all pipeline scripts, promoted corpus.
+- package.json: scripts union (all 15 kept + full/dev:run/example:full/
+  validate-cli); @langchain kept at integration's 0.x pins (63's 1.x bumps
+  rejected); +diff/@types/diff; typescript moved to dependencies
+  (compile-validator runtime import); engines ≥22.17.0; lock regenerated
+  additively (added 3, changed 1).
+- Gates: build/test/lint green after EVERY commit; grep gates
+  (recommendedApproach = 0, historicalSuccessRate = 4 known spec hits) after
+  every commit; `npm run research tickets/10944.md` smoke via claude-cli
+  provider (ANTHROPIC_MODEL=claude-opus-4-8): full graph, doc-search 4/4,
+  context-analysis 6/6, code-context node semantics intact (architecture
+  patterns + dependency edges rendered), plan generated, phase `complete`,
+  0 errors. Adversarial verification fan-out: 4/4 pass (ground rules,
+  wholesale fidelity on 19 files, hand-merge preservation with md5/count
+  evidence, behavioral probes of all four fixes incl. traversal attempts and
+  stranded-alias detection).
+- Notes / deviations & follow-ups: H2's ASSERTION_PATTERNS adds
+  /sinon\.assert/ (broadening, deliberate); regex gate accepts `expect(` in
+  comments/strings (accepted limitation, on record); claude-api module
+  renders arch-insights in the plan prompt but not per-file execute prompts
+  (claude-code-cli renders in all three) — follow-up for full cross-module
+  bridge coverage; .nycrc thresholds lowered to 63's (60/78/72/78) — follow-up
+  to ratchet back up; `63-review-fixes` mirror branch being assembled in a
+  separate worktree (tip recorded in the mission report).
