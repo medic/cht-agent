@@ -11,7 +11,7 @@ was committed) — two in-flight background analyses were relaunched/resumed.
 
 | Branch | Tip | Content |
 |---|---|---|
-| `integration/demo-closed-loop` | `ee74af2` | main (ed07177) + S0–S9 below; 99 commits ahead of main |
+| `integration/demo-closed-loop` | `ee74af2` + docs commits | main (ed07177) + S0–S9 below (~100 commits ahead); all gates verified at `ee74af2`, followed only by this report and two review-supervisor doc fixes |
 | `63-review-fixes` | `a9671f8` | off `origin/63-implement-test-generation-layer` (a9eaac6) + 4 mirrored review fixes (H1 `7308ea5`, H2 `811795c`, H3 `3a69511`, bridge `a9671f8`); branch green at 745 passing (baseline 718) |
 
 Input branches were consumed read-only and remain intact:
