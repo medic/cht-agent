@@ -11,6 +11,32 @@ import * as os from 'node:os';
 import { GeneratedFile, FileDiff } from '../types';
 
 /**
+ * Resolve an externally-sourced relative path against a base directory and
+ * guarantee the result stays inside that base (H3, #63).
+ *
+ * `file.relativePath` originates from generated/plan data, so a `../..`-style
+ * or absolute value would otherwise escape the staging root or the cht-core
+ * root and let a write clobber files outside the intended tree. This rejects
+ * absolute `rel` outright and any `rel` whose resolved path is neither the base
+ * itself nor a descendant of it. Returns the absolute, contained path.
+ *
+ * Throws on violation. Write/copy callers let that surface as a rejected
+ * promise (matching how they already propagate fs errors); the read helpers
+ * catch it and fall back to their usual "not available" sentinel.
+ */
+const resolveWithin = (base: string, rel: string): string => {
+  if (path.isAbsolute(rel)) {
+    throw new Error(`Path "${rel}" is absolute and escapes the target directory (${base})`);
+  }
+  const resolvedBase = path.resolve(base);
+  const resolved = path.resolve(resolvedBase, rel);
+  if (resolved !== resolvedBase && !resolved.startsWith(resolvedBase + path.sep)) {
+    throw new Error(`Path "${rel}" resolves outside the target directory (${resolvedBase})`);
+  }
+  return resolved;
+};
+
+/**
  * Read file content safely, returning null if file doesn't exist or is a directory
  */
 const readFileSafe = async (filePath: string): Promise<string | null> => {
@@ -129,7 +155,7 @@ export const writeToStaging = async (
   const writtenFiles: string[] = [];
 
   for (const file of files) {
-    const fullPath = path.join(stagingPath, file.relativePath);
+    const fullPath = resolveWithin(stagingPath, file.relativePath);
     const dirPath = path.dirname(fullPath);
 
     // Ensure directory exists
@@ -153,7 +179,7 @@ export const writeToChtCore = async (
   const writtenFiles: string[] = [];
 
   for (const file of files) {
-    const fullPath = path.join(chtCorePath, file.relativePath);
+    const fullPath = resolveWithin(chtCorePath, file.relativePath);
     const dirPath = path.dirname(fullPath);
 
     // Ensure directory exists
@@ -229,8 +255,8 @@ export const generateDiffs = async (
   const diffs: FileDiff[] = [];
 
   for (const file of files) {
-    const stagingFilePath = path.join(stagingPath, file.relativePath);
-    const chtCoreFilePath = path.join(chtCorePath, file.relativePath);
+    const stagingFilePath = resolveWithin(stagingPath, file.relativePath);
+    const chtCoreFilePath = resolveWithin(chtCorePath, file.relativePath);
 
     const newContent = await readFileSafe(stagingFilePath);
     const originalContent = await readFileSafe(chtCoreFilePath);
@@ -350,7 +376,14 @@ export const readFromChtCore = async (
   relativePath: string,
   chtCorePath: string
 ): Promise<string | null> => {
-  const fullPath = path.join(chtCorePath, relativePath);
+  let fullPath: string;
+  try {
+    fullPath = resolveWithin(chtCorePath, relativePath);
+  } catch {
+    // A path that escapes cht-core is "not readable" — honor this helper's
+    // null-on-any-problem contract rather than throwing at read sites.
+    return null;
+  }
   return readFileSafe(fullPath);
 };
 
@@ -361,9 +394,8 @@ export const listChtCoreDirectory = async (
   relativePath: string,
   chtCorePath: string
 ): Promise<string[]> => {
-  const fullPath = path.join(chtCorePath, relativePath);
-
   try {
+    const fullPath = resolveWithin(chtCorePath, relativePath);
     const entries = await fs.promises.readdir(fullPath, { withFileTypes: true });
     return entries.map((entry) => {
       const entryPath = path.join(relativePath, entry.name);
@@ -381,8 +413,8 @@ export const fileExistsInChtCore = async (
   relativePath: string,
   chtCorePath: string
 ): Promise<boolean> => {
-  const fullPath = path.join(chtCorePath, relativePath);
   try {
+    const fullPath = resolveWithin(chtCorePath, relativePath);
     await fs.promises.access(fullPath, fs.constants.F_OK);
     return true;
   } catch {

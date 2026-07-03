@@ -272,4 +272,68 @@ describe('staging.ts (v9a.3)', () => {
       expect(diffs).to.deep.equal([]);
     });
   });
+
+  describe('path containment (H3)', () => {
+    // Relative paths that escape the base directory via `..` segments.
+    const traversals = ['../outside.txt', '../../etc/passwd', 'a/../../b'];
+    // An absolute relativePath: rejected outright regardless of where it points.
+    const absolute = path.join(os.tmpdir(), 'cht-agent-h3-escape-target.txt');
+
+    const expectRejected = async (fn: () => Promise<unknown>): Promise<Error> => {
+      try {
+        await fn();
+      } catch (err) {
+        return err as Error;
+      }
+      throw new Error('expected the operation to be rejected, but it resolved');
+    };
+
+    it('rejects traversal relativePaths in writeToStaging', async () => {
+      for (const rel of traversals) {
+        const err = await expectRejected(() => writeToStaging([mkFile(rel, 'x')], scratch));
+        expect(err.message).to.match(/outside the target directory/);
+      }
+    });
+
+    it('rejects an absolute relativePath in writeToStaging (and writes nothing outside)', async () => {
+      const err = await expectRejected(() => writeToStaging([mkFile(absolute, 'x')], scratch));
+      expect(err.message).to.match(/absolute/);
+      let existed = true;
+      try {
+        await fs.stat(absolute);
+      } catch {
+        existed = false;
+      }
+      expect(existed).to.equal(false);
+    });
+
+    it('rejects traversal relativePaths in writeToChtCore (copy-to-target)', async () => {
+      for (const rel of traversals) {
+        const err = await expectRejected(() => writeToChtCore([mkFile(rel, 'x')], scratch));
+        expect(err.message).to.match(/outside the target directory/);
+      }
+    });
+
+    it('rejects an absolute relativePath in writeToChtCore (copy-to-target)', async () => {
+      const err = await expectRejected(() => writeToChtCore([mkFile(absolute, 'x')], scratch));
+      expect(err.message).to.match(/absolute/);
+    });
+
+    it('still writes a normal nested relativePath (src/foo/bar.ts) to staging', async () => {
+      const written = await writeToStaging([mkFile('src/foo/bar.ts', 'ok\n')], scratch);
+      expect(written).to.deep.equal(['src/foo/bar.ts']);
+      expect(await fs.readFile(path.join(scratch, 'src/foo/bar.ts'), 'utf-8')).to.equal('ok\n');
+    });
+
+    it('still writes a normal nested relativePath (src/foo/bar.ts) to cht-core', async () => {
+      const written = await writeToChtCore([mkFile('src/foo/bar.ts', 'ok\n')], scratch);
+      expect(written).to.deep.equal(['src/foo/bar.ts']);
+      expect(await fs.readFile(path.join(scratch, 'src/foo/bar.ts'), 'utf-8')).to.equal('ok\n');
+    });
+
+    it('denies an escaping read via readFromChtCore by returning null (sentinel, not throw)', async () => {
+      expect(await readFromChtCore('../../etc/passwd', scratch)).to.equal(null);
+      expect(await readFromChtCore(absolute, scratch)).to.equal(null);
+    });
+  });
 });
