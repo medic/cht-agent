@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { EventEmitter } from 'node:events';
-import { buildChtConfArgs, classifyChtConfOutput, CONFIG_ACTION_COMMANDS } from '../../src/utils/cht-conf-runner';
+import { buildChtConfArgs, classifyChtConfOutput, CONFIG_ACTION_COMMANDS, resolveChtConfBin } from '../../src/utils/cht-conf-runner';
 import { ChtConfExecOptions, ChtConfExecResult, ChtConfRunOptions, ConfigActionResult } from '../../src/types';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -84,6 +84,24 @@ describe('cht-conf-runner', () => {
       const args = buildChtConfArgs(baseOpts({ action: 'app-settings-only' }));
       expect(args).to.include('upload-app-settings');
       expect(args).to.not.include('compile-app-settings');
+    });
+  });
+
+  describe('resolveChtConfBin', () => {
+    let saved: string | undefined;
+    beforeEach(() => { saved = process.env.CHT_CONF_BIN; });
+    afterEach(() => {
+      if (saved === undefined) { delete process.env.CHT_CONF_BIN; } else { process.env.CHT_CONF_BIN = saved; }
+    });
+
+    it('defaults to the global cht binary', () => {
+      delete process.env.CHT_CONF_BIN;
+      expect(resolveChtConfBin()).to.equal('cht');
+    });
+
+    it('honours CHT_CONF_BIN so the agent can run a deployment-pinned cht-conf from a full path', () => {
+      process.env.CHT_CONF_BIN = '/workspace/site-config-test/node_modules/.bin/cht';
+      expect(resolveChtConfBin()).to.equal('/workspace/site-config-test/node_modules/.bin/cht');
     });
   });
 

@@ -59,8 +59,16 @@ const AUTONOMOUS_FLAGS = [
   '--verbose',
 ];
 
-const DEFAULT_BIN = 'cht';
 const DEFAULT_TIMEOUT_MS = 180_000;
+
+/**
+ * The cht-conf binary to spawn. Overridable via CHT_CONF_BIN so the agent can run
+ * a deployment's OWN pinned cht-conf — e.g. a throwaway
+ * `<config>/node_modules/.bin/cht` that `npm ci` installed into the mounted
+ * config repo — instead of the image's global `cht`, matching the version the
+ * config was authored/compiled with. A per-call `options.bin` still wins.
+ */
+export const resolveChtConfBin = (): string => process.env.CHT_CONF_BIN || 'cht';
 
 /** Buckets whose verbs accept a positional single-form filter. */
 const FORM_BUCKETS: ConfigUploadAction[] = ['app-forms', 'contact-forms'];
@@ -152,7 +160,7 @@ export const classifyChtConfOutput = (output: string, exitCode: number | null): 
  * result so callers can aggregate without try/catch per invocation).
  */
 export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResult> => {
-  const bin = options.bin ?? DEFAULT_BIN;
+  const bin = options.bin ?? resolveChtConfBin();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const args = buildExecArgs(options);
 
