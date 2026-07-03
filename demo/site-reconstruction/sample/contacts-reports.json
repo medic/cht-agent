@@ -1,0 +1,102 @@
+{
+  "docs": [
+    {
+      "_id": "dh-1",
+      "type": "contact",
+      "contact_type": "district_hospital",
+      "name": "Northern District Hospital",
+      "place_id": "1000",
+      "reported_date": "2026-01-01T00:00:00.000Z"
+    },
+    {
+      "_id": "hc-1",
+      "type": "contact",
+      "contact_type": "health_center",
+      "name": "Riverside Health Center",
+      "place_id": "2000",
+      "parent": { "_id": "dh-1" }
+    },
+    {
+      "_id": "clinic-a",
+      "type": "contact",
+      "contact_type": "clinic",
+      "name": "Clinic A",
+      "external_id": "CA-01",
+      "parent": { "_id": "hc-1", "parent": { "_id": "dh-1" } }
+    },
+    {
+      "_id": "clinic-b",
+      "type": "clinic",
+      "name": "Clinic B",
+      "parent": { "_id": "hc-1", "parent": { "_id": "dh-1" } }
+    },
+    {
+      "_id": "person-amina",
+      "type": "contact",
+      "contact_type": "person",
+      "name": "Amina Banda",
+      "phone": "+260900000001",
+      "sex": "female",
+      "role": "chw",
+      "parent": { "_id": "clinic-a", "parent": { "_id": "hc-1" } }
+    },
+    {
+      "_id": "person-bao",
+      "type": "person",
+      "name": "Bao Nkosi",
+      "sex": "female",
+      "date_of_birth": "1998-04-12",
+      "parent": { "_id": "clinic-a", "parent": { "_id": "hc-1" } }
+    },
+    {
+      "_id": "person-chipo",
+      "type": "contact",
+      "contact_type": "person",
+      "name": "Chipo Phiri",
+      "phone": "+260900000009",
+      "sex": "female",
+      "date_of_birth": "2001-11-30",
+      "parent": { "_id": "clinic-b", "parent": { "_id": "hc-1" } }
+    },
+    {
+      "_id": "report-preg-1",
+      "type": "data_record",
+      "form": "pregnancy",
+      "reported_date": "2026-03-01T09:00:00.000Z",
+      "contact": { "_id": "person-amina" },
+      "fields": {
+        "patient_id": "bao-0001",
+        "lmp_date": "2026-01-05",
+        "weeks_pregnant": "8"
+      }
+    },
+    {
+      "_id": "report-preg-2",
+      "type": "data_record",
+      "form": "pregnancy",
+      "reported_date": "2026-03-15T10:30:00.000Z",
+      "contact": { "_id": "person-amina" },
+      "fields": {
+        "patient_id": "chipo-0002",
+        "lmp_date": "2026-02-01",
+        "weeks_pregnant": "6"
+      }
+    },
+    {
+      "_id": "report-asmt-1",
+      "type": "data_record",
+      "form": "assessment",
+      "reported_date": "2026-03-20T08:00:00.000Z",
+      "patient_id": "bao-0001",
+      "contact": { "_id": "person-amina" },
+      "fields": {
+        "danger_signs": "fever,cough",
+        "temperature": "38.5"
+      }
+    },
+    {
+      "_id": "_design/medic-client",
+      "views": {}
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+[
+  {
+    "username": "chw_amina",
+    "roles": ["chw"],
+    "contact": "person-amina",
+    "place": "clinic-a",
+    "fullname": "Amina Banda",
+    "phone": "+260900000001",
+    "email": "",
+    "devices": [
+      { "deviceId": "device-aaaa", "last_sync": "2026-06-30T12:00:00.000Z" }
+    ]
+  },
+  {
+    "username": "sup_daniel",
+    "roles": ["chw_supervisor", "chw"],
+    "contact": { "_id": "person-amina", "name": "Daniel Mensah" },
+    "place": { "_id": "hc-1" },
+    "email": "daniel@example.org",
+    "devices": [
+      { "deviceId": "device-bbbb", "last_sync": "2026-06-29T08:30:00.000Z" }
+    ]
+  }
+]

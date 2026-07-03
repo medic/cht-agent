@@ -1,0 +1,44 @@
+{
+  "contact_types": [
+    {
+      "id": "district_hospital",
+      "name_key": "contact.type.district_hospital",
+      "group_key": "contact.type.district_hospital.plural",
+      "create_key": "contact.type.district_hospital.new",
+      "parents": [],
+      "person": false,
+      "icon": "medic-district-hospital"
+    },
+    {
+      "id": "health_center",
+      "name_key": "contact.type.health_center",
+      "group_key": "contact.type.health_center.plural",
+      "create_key": "contact.type.health_center.new",
+      "parents": ["district_hospital"],
+      "person": false,
+      "icon": "medic-health-center"
+    },
+    {
+      "id": "clinic",
+      "name_key": "contact.type.clinic",
+      "group_key": "contact.type.clinic.plural",
+      "create_key": "contact.type.clinic.new",
+      "parents": ["health_center"],
+      "person": false,
+      "icon": "medic-clinic"
+    },
+    {
+      "id": "person",
+      "name_key": "contact.type.person",
+      "group_key": "contact.type.person.plural",
+      "create_key": "contact.type.person.new",
+      "parents": ["clinic", "health_center", "district_hospital"],
+      "person": true,
+      "icon": "medic-person"
+    }
+  ],
+  "roles": {
+    "chw": { "name": "usertype.chw", "offline": true },
+    "chw_supervisor": { "name": "usertype.chw-supervisor", "offline": true }
+  }
+}
