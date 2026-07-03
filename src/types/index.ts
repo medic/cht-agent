@@ -909,12 +909,33 @@ export interface CodeContext {
 // ============================================================================
 
 /**
+ * Where the development phase writes its generated fix, and which toolchain
+ * validates it. Resolved from the ticket's layer by resolveDevelopmentTarget
+ * (src/utils/dev-target.ts): cht-conf tickets target the mounted deployment
+ * config repo (CHT_CONF_PATH) with the cht-conf toolchain; everything else
+ * stays on the cht-core working copy.
+ */
+export interface DevelopmentTarget {
+  /** Working copy the development phase edits and writes to. */
+  repoPath: string;
+  toolchain: 'cht-conf' | 'cht-core';
+}
+
+/**
  * Development workflow options
  */
 export interface DevelopmentOptions {
   chtCorePath: string;
   previewMode: boolean; // true = staging + diff, false = direct write
   stagingPath?: string; // OS temp directory when previewMode=true
+  /**
+   * Layer-routed write/workspace target (#134). When set (cht-conf tickets),
+   * the development phase edits and writes the fix under
+   * developmentTarget.repoPath (the CHT_CONF_PATH deployment config) rather than
+   * chtCorePath. Absent for cht-core tickets, which keep chtCorePath unchanged
+   * — so cht-core behaviour is byte-identical to before layer routing existed.
+   */
+  developmentTarget?: DevelopmentTarget;
 }
 
 /**

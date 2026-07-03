@@ -43,6 +43,8 @@ import {
 } from '../workflows/orchestrator';
 import { getConfiguredModel } from '../llm/types';
 import { isUsingCLIProvider } from '../llm';
+import { resolveDevelopmentTarget } from '../utils/dev-target';
+import { DevelopmentOptions, DevelopmentTarget, IssueTemplate } from '../types';
 
 // Load environment variables
 dotenv.config();
@@ -86,6 +88,19 @@ function ensureTicketPath(): string {
   return path.resolve(process.argv[2]);
 }
 
+/**
+ * Layer-routed development write target (#134). A cht-conf ticket's fix must
+ * land in the mounted deployment config (CHT_CONF_PATH), not the cht-core
+ * working copy — resolve it up front so a missing/placeholder mount fails
+ * loudly before the research phase runs. Everything else keeps the cht-core
+ * default (target left undefined; the workflow uses chtCorePath unchanged).
+ */
+function resolveCliDevelopmentTarget(ticket: IssueTemplate): DevelopmentTarget | undefined {
+  return ticket.issue.technical_context.layer === 'cht-conf'
+    ? resolveDevelopmentTarget('cht-conf')
+    : undefined;
+}
+
 const main = async (): Promise<void> => {
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║        CHT Multi-Agent System - Full Workflow CLI              ║');
@@ -108,7 +123,14 @@ const main = async (): Promise<void> => {
     const developmentSupervisor = new DevelopmentSupervisor();
 
     displayIssueDetails(ticket);
-    const developmentOptions = await askDevelopmentOptions(chtCorePath);
+    const developmentTarget = resolveCliDevelopmentTarget(ticket);
+    if (developmentTarget) {
+      console.log(`🎯 layer: cht-conf → development target: ${developmentTarget.repoPath} (${developmentTarget.toolchain})\n`);
+    }
+    const baseOptions = await askDevelopmentOptions(chtCorePath);
+    const developmentOptions: DevelopmentOptions = developmentTarget
+      ? { ...baseOptions, developmentTarget }
+      : baseOptions;
 
     const workflowResult = await executeFullWorkflow(
       researchSupervisor,

@@ -9,16 +9,15 @@
  * ambiguous 'investigate' ticket, refuses to resolve rather than guessing.
  */
 
-import { CHTLayer } from '../types';
+import { CHTLayer, DevelopmentTarget } from '../types';
 import { resolveDeploymentConfigRoot } from './canonical-diff';
 
 const DEFAULT_CHT_CORE_PATH = '/workspace/cht-core';
 
-export interface DevelopmentTarget {
-  /** Working copy the development phase may write to. */
-  repoPath: string;
-  toolchain: 'cht-conf' | 'cht-core';
-}
+// Re-exported from types so existing `import { DevelopmentTarget } from './dev-target'`
+// call sites keep resolving; the interface itself now lives in src/types/index.ts
+// (DevelopmentOptions references it, and types must not import from utils).
+export type { DevelopmentTarget };
 
 export const resolveDevelopmentTarget = (layer?: CHTLayer): DevelopmentTarget => {
   if (layer === 'investigate') {

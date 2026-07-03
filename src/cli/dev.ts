@@ -37,11 +37,13 @@ import {
 import {
   IssueTemplate,
   DevelopmentInput,
+  DevelopmentTarget,
   ResearchFindings,
   ContextAnalysisResult,
   OrchestrationPlan,
 } from '../types';
 import { isUsingCLIProvider } from '../llm';
+import { resolveDevelopmentTarget } from '../utils/dev-target';
 import { loadIndex } from '../utils/context-loader';
 
 // Load environment variables
@@ -195,6 +197,17 @@ const main = async (): Promise<void> => {
     // Create development supervisor
     const developmentSupervisor = new DevelopmentSupervisor();
 
+    // Layer-routed write target (#134): a cht-conf ticket's fix is written to
+    // the mounted deployment config (CHT_CONF_PATH), not the cht-core working
+    // copy. Resolve up front so a missing/placeholder mount fails loudly.
+    const developmentTarget: DevelopmentTarget | undefined =
+      ticket.issue.technical_context.layer === 'cht-conf'
+        ? resolveDevelopmentTarget('cht-conf')
+        : undefined;
+    if (developmentTarget) {
+      console.log(`🎯 layer: cht-conf → development target: ${developmentTarget.repoPath} (${developmentTarget.toolchain})\n`);
+    }
+
     // Build development input
     const developmentInput: DevelopmentInput = {
       issue: ticket,
@@ -204,6 +217,7 @@ const main = async (): Promise<void> => {
       options: {
         chtCorePath,
         previewMode: true, // Always preview in dev-only mode
+        ...(developmentTarget ? { developmentTarget } : {}),
       },
     };
 

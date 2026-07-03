@@ -15,11 +15,13 @@ import {
   DevelopmentState,
   DevelopmentInput,
   DevelopmentOptions,
+  DevelopmentTarget,
   ResearchState,
   GeneratedFile,
   DevelopmentWorkflowResult,
   HumanFeedback,
 } from '../types';
+import { resolveDevelopmentTarget } from '../utils/dev-target';
 import { askYesNo, askForFeedback } from '../utils/prompt';
 import {
   generateDiffs,
@@ -250,6 +252,28 @@ export const createDevelopmentInput = (
 };
 
 /**
+ * Resolve where the development phase writes its fix, layer-routed (#134).
+ *
+ * Precedence:
+ *  1. A target already resolved upstream (the CLI resolves it so a missing /
+ *     placeholder config mount fails loudly before any work starts) — honour it.
+ *  2. Otherwise resolve from the ticket's layer: a cht-conf ticket targets the
+ *     mounted deployment config (CHT_CONF_PATH) via resolveDevelopmentTarget,
+ *     which throws when no real config is mounted (fail closed).
+ *  3. Everything else (cht-core / unset / investigate) stays on the chtCorePath
+ *     working copy — byte-identical to the pre-routing behaviour.
+ */
+export const resolveWriteTarget = (input: DevelopmentInput): DevelopmentTarget => {
+  if (input.options.developmentTarget) {
+    return input.options.developmentTarget;
+  }
+  if (input.issue.issue.technical_context.layer === 'cht-conf') {
+    return resolveDevelopmentTarget('cht-conf');
+  }
+  return { repoPath: input.options.chtCorePath, toolchain: 'cht-core' };
+};
+
+/**
  * Run the complete development workflow with optional human validation
  */
 export const executeDevelopmentWorkflow = async (
@@ -262,25 +286,37 @@ export const executeDevelopmentWorkflow = async (
   let finalState: DevelopmentState | undefined;
   let filesWritten: string[] = [];
 
-  const { previewMode, chtCorePath } = input.options;
+  const { previewMode } = input.options;
+  const writeTarget = resolveWriteTarget(input);
+  const targetPath = writeTarget.repoPath;
+  // A cht-conf fix must be generated INSIDE the deployment config repo (so the
+  // code-gen agent can read/edit the form) and written there — never the
+  // cht-core working copy. Rewrite the workspace so code generation and the
+  // write agree on the target. For cht-core (targetPath === chtCorePath) this
+  // is a no-op, keeping that path byte-identical.
+  const runInput: DevelopmentInput =
+    targetPath === input.options.chtCorePath
+      ? input
+      : { ...input, options: { ...input.options, chtCorePath: targetPath, developmentTarget: writeTarget } };
+  const targetLabel = writeTarget.toolchain === 'cht-conf' ? 'the deployment config' : 'cht-core';
 
   while (!developmentApproved && iterationCount < MAX_DEVELOPMENT_ITERATIONS) {
     iterationCount++;
-    const { state, duration } = await runDevelopment(supervisor, input, additionalContext);
+    const { state, duration } = await runDevelopment(supervisor, runInput, additionalContext);
     finalState = state;
     displayDevelopmentResults(state, duration);
     if (previewMode) {
       const outcome = await runPreviewModeIteration({
-        supervisor, state, chtCorePath, iterationCount,
+        supervisor, state, chtCorePath: targetPath, iterationCount,
       });
       developmentApproved = outcome.approved;
       additionalContext = outcome.additionalContext;
       filesWritten = outcome.filesWritten;
     } else {
       developmentApproved = true;
-      console.log('\n📝 Writing generated files directly to cht-core...');
-      filesWritten = await supervisor.writeToChtCore(state, chtCorePath);
-      console.log(`✅ Written ${filesWritten.length} files to ${chtCorePath}`);
+      console.log(`\n📝 Writing generated files directly to ${targetLabel}...`);
+      filesWritten = await supervisor.writeToChtCore(state, targetPath);
+      console.log(`✅ Written ${filesWritten.length} files to ${targetPath}`);
     }
   }
 
