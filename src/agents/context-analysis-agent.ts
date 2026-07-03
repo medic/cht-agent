@@ -16,6 +16,7 @@ import {
   CHTLayer,
   ConfigMechanism,
   DomainComponents,
+  CodeContext,
 } from '../types';
 import {
   loadDomainOverview,
@@ -24,14 +25,20 @@ import {
   getRelatedDomains,
   ensureAgentMemoryExists,
 } from '../utils/context-loader';
+import { gatherDomainContext } from '../utils/cht-core-context';
+import { TodoTracker, createAgentTodoTracker } from '../utils/todo-tracker';
 
 export class ContextAnalysisAgent {
+  private readonly todos: TodoTracker;
+
   constructor(_options: { modelName?: string } = {}) {
     // Model will be used for advanced pattern analysis in future iterations
     // For now, we use rule-based analysis
 
     // Ensure agent-memory directory exists
     ensureAgentMemoryExists();
+
+    this.todos = createAgentTodoTracker('Context Analysis');
   }
 
   /**
@@ -40,6 +47,9 @@ export class ContextAnalysisAgent {
   async analyze(issue: IssueTemplate): Promise<ContextAnalysisResult> {
     console.log('\n[Context Analysis Agent] Starting context analysis...');
     console.log(`[Context Analysis Agent] Domain: ${issue.issue.technical_context.domain}`);
+
+    // Clear any previous todos
+    this.todos.clear();
 
     const domain = issue.issue.technical_context.domain;
 
@@ -54,38 +64,68 @@ export class ContextAnalysisAgent {
         relevantDesignDecisions: [],
         recommendations: ['Domain not specified - unable to analyze context'],
         relatedDomains: [],
+        codeContext: null,
       };
     }
 
     // Load domain context
+    const loadContextId = this.todos.add('Load domain context', 'Loading domain context');
+    this.todos.start(loadContextId);
     const domainOverview = loadDomainOverview(domain);
     const domainComponents = loadDomainComponents(domain);
+    this.todos.complete(loadContextId);
 
     // Find similar past issues
-    const similarContexts = this.findSimilarIssues(issue, domain);
+    const similarContexts = await this.todos.run(
+      'Find similar past issues',
+      'Finding similar past issues',
+      async () => this.findSimilarIssues(issue, domain)
+    );
     console.log(`[Context Analysis Agent] Found ${similarContexts.length} similar past issues`);
 
     // Extract patterns from similar contexts
-    const patterns = this.extractPatterns(similarContexts, domainComponents);
+    const patterns = await this.todos.run(
+      'Extract reusable patterns',
+      'Extracting reusable patterns',
+      async () => this.extractPatterns(similarContexts, domainComponents)
+    );
     console.log(`[Context Analysis Agent] Extracted ${patterns.length} reusable patterns`);
 
     // Extract design decisions
-    const designDecisions = this.extractDesignDecisions(similarContexts, domain);
+    const designDecisions = await this.todos.run(
+      'Extract design decisions',
+      'Extracting design decisions',
+      async () => this.extractDesignDecisions(similarContexts, domain)
+    );
     console.log(
       `[Context Analysis Agent] Found ${designDecisions.length} relevant design decisions`
     );
 
-    // Generate recommendations
-    const recommendations = this.generateRecommendations(
-      issue,
-      similarContexts,
-      patterns,
-      domainOverview?.content
+    // Gather code context from cht-core codebase
+    const codeContext = await this.todos.run(
+      'Gather code context from cht-core',
+      'Gathering code context from cht-core',
+      async () => this.gatherCodeContext(domain)
+    );
+
+    // Generate recommendations (now including code context info)
+    const recommendations = await this.todos.run(
+      'Generate recommendations',
+      'Generating recommendations',
+      async () => this.generateRecommendations({
+        issue,
+        similarContexts,
+        patterns,
+        domainOverview: domainOverview?.content,
+        codeContext,
+      })
     );
     console.log(`[Context Analysis Agent] Generated ${recommendations.length} recommendations`);
 
     // Get related domains
     const relatedDomains = domainOverview ? getRelatedDomains(domain) : [];
+
+    this.todos.printSummary();
 
     return {
       similarContexts,
@@ -93,7 +133,33 @@ export class ContextAnalysisAgent {
       relevantDesignDecisions: designDecisions,
       recommendations,
       relatedDomains,
+      codeContext,
     };
+  }
+
+  /**
+   * Gather code context from cht-core codebase
+   */
+  private gatherCodeContext(domain: CHTDomain): CodeContext | null {
+    console.log(`[Context Analysis Agent] Gathering code context for domain: ${domain}`);
+
+    const context = gatherDomainContext(domain, { maxSnippets: 8 });
+
+    if (context) {
+      console.log(
+        `[Context Analysis Agent] Found ${context.codeSnippets.length} code snippets from cht-core`
+      );
+      return {
+        domain: context.domain,
+        description: context.description,
+        codeSnippets: context.codeSnippets,
+        availableFiles: context.availableFiles,
+        missingFiles: context.missingFiles,
+      };
+    }
+
+    console.log('[Context Analysis Agent] No code context available (CHT_CORE_PATH not set?)');
+    return null;
   }
 
   /**
@@ -384,47 +450,50 @@ export class ContextAnalysisAgent {
   }
 
   /**
-   * Generate recommendations based on analysis
+   * Generate recommendations based on analysis.
    */
-  private generateRecommendations(
-    issue: IssueTemplate,
-    similarContexts: ResolvedIssueContext[],
-    patterns: CodePattern[],
-    domainOverview?: string
-  ): string[] {
-    const recommendations: string[] = [];
+  private generateRecommendations(opts: {
+    issue: IssueTemplate;
+    similarContexts: ResolvedIssueContext[];
+    patterns: CodePattern[];
+    domainOverview?: string;
+    codeContext?: CodeContext | null;
+  }): string[] {
+    const { issue, similarContexts, patterns, domainOverview, codeContext } = opts;
+    return [
+      ...this.recommendationsFromSimilarContexts(similarContexts),
+      ...this.recommendationsFromPatterns(patterns),
+      ...this.recommendationsFromCodeContext(codeContext),
+      ...(domainOverview ? ['Review domain overview for key concepts and technologies'] : []),
+      ...this.getIssueTypeRecommendations(issue),
+    ];
+  }
 
-    // Recommendations from similar contexts
-    if (similarContexts.length > 0) {
-      recommendations.push(
-        `Review ${similarContexts.length} similar past implementation(s) for guidance`
-      );
-
-      // Component-specific recommendations
-      const commonComponents = this.findCommonComponents(similarContexts);
-      if (commonComponents.length > 0) {
-        recommendations.push(
-          `Focus on these frequently modified components: ${commonComponents.join(', ')}`
-        );
-      }
+  private recommendationsFromSimilarContexts(similarContexts: ResolvedIssueContext[]): string[] {
+    if (similarContexts.length === 0) return [];
+    const recs: string[] = [
+      `Review ${similarContexts.length} similar past implementation(s) for guidance`,
+    ];
+    const commonComponents = this.findCommonComponents(similarContexts);
+    if (commonComponents.length > 0) {
+      recs.push(`Focus on these frequently modified components: ${commonComponents.join(', ')}`);
     }
+    return recs;
+  }
 
-    // Pattern-based recommendations
-    if (patterns.length > 0) {
-      const topPattern = patterns.toSorted((a, b) => b.frequency - a.frequency)[0];
-      recommendations.push(
-        `Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`
-      );
-    }
+  private recommendationsFromPatterns(patterns: CodePattern[]): string[] {
+    if (patterns.length === 0) return [];
+    const topPattern = patterns.toSorted((a, b) => b.frequency - a.frequency)[0];
+    return [`Reuse established pattern: "${topPattern.pattern}" (used ${topPattern.frequency} times)`];
+  }
 
-    // Domain-specific recommendations
-    if (domainOverview) {
-      recommendations.push(`Review domain overview for key concepts and technologies`);
-    }
-
-    recommendations.push(...this.getIssueTypeRecommendations(issue));
-
-    return recommendations;
+  private recommendationsFromCodeContext(codeContext: CodeContext | null | undefined): string[] {
+    if (!codeContext?.codeSnippets.length) return [];
+    const highRelevanceFiles = codeContext.codeSnippets
+      .filter(s => s.relevance === 'high')
+      .map(s => s.filePath);
+    if (highRelevanceFiles.length === 0) return [];
+    return [`Key files to review/modify: ${highRelevanceFiles.slice(0, 3).join(', ')}`];
   }
 
   private getIssueTypeRecommendations(issue: IssueTemplate): string[] {

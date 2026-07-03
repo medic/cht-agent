@@ -1,4 +1,6 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 import { expect } from 'chai';
+import sinon from 'sinon';
 import {
   IssueTemplate,
   ResearchFindings,
@@ -6,6 +8,8 @@ import {
   ContextAnalysisResult,
   ResolvedIssueContext,
 } from '../../src/types';
+
+const proxyquire = require('proxyquire').noCallThru();
 
 // Since ResearchSupervisor has LLM dependencies, we test the pure functions
 // by extracting the logic. These functions are private methods but we can
@@ -421,5 +425,84 @@ describe('ResearchSupervisor - Pure Functions', () => {
       expect(corePhaseComponents).to.include('api/contacts');
       expect(corePhaseComponents).to.include('webapp/contacts');
     });
+  });
+});
+
+// Exercises the public research() entry with the LLM boundary stubbed so the
+// graph runs offline (CLI mode: no ChatAnthropic, deterministic planner). This
+// covers the #63 dev-handoff additionalContext threading grafted from S.
+describe('ResearchSupervisor.research — additionalContext seeding (#63 dev handoff)', () => {
+  let savedProvider: string | undefined;
+  let savedKey: string | undefined;
+
+  beforeEach(() => {
+    savedProvider = process.env.LLM_PROVIDER;
+    savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.LLM_PROVIDER;
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    if (savedProvider !== undefined) process.env.LLM_PROVIDER = savedProvider;
+    else delete process.env.LLM_PROVIDER;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+    else delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  const mkIssue = (): IssueTemplate => ({
+    issue: {
+      title: 'Add contact filters',
+      type: 'feature',
+      priority: 'medium',
+      description: 'Allow filtering by status.',
+      technical_context: { domain: 'contacts', components: [] },
+      requirements: ['r1'],
+      acceptance_criteria: ['a1'],
+      constraints: [],
+    },
+  });
+
+  // Load ResearchSupervisor in CLI mode with the LLM boundary stubbed, then
+  // build one over the offline mock agents (useMockMCP).
+  const buildSupervisor = () => {
+    const createChain = sinon.stub().returns({
+      invoke: sinon.stub().resolves({ plan: 'CLI PLAN TEXT' }),
+    });
+    const { ResearchSupervisor } = proxyquire('../../src/supervisors/research-supervisor', {
+      '@langchain/anthropic': {
+        ChatAnthropic: function ChatAnthropic() {
+          throw new Error('ChatAnthropic must not be constructed in CLI mode');
+        },
+      },
+      '../llm/structured-cli': {
+        isUsingCLIProvider: () => true,
+        createStructuredCliChain: createChain,
+      },
+    });
+    return new ResearchSupervisor({ useMockMCP: true }) as {
+      research: (
+        issue: IssueTemplate,
+        additionalContext?: string
+      ) => Promise<{ messages: Array<{ role: string; content: string }> }>;
+    };
+  };
+
+  it('passes additionalContext through as a system message in the initial state', async () => {
+    const supervisor = buildSupervisor();
+
+    const result = await supervisor.research(mkIssue(), 'human said: prefer pattern X');
+
+    expect(
+      result.messages.some((m) => m.role === 'system' && /prefer pattern X/.test(m.content))
+    ).to.equal(true);
+  });
+
+  it('does not seed a system message when no additionalContext is given', async () => {
+    const supervisor = buildSupervisor();
+
+    const result = await supervisor.research(mkIssue());
+
+    expect(result.messages.some((m) => m.role === 'system')).to.equal(false);
   });
 });

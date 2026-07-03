@@ -680,23 +680,37 @@ Format your response as a structured plan that will guide the development team.`
   /**
    * Main entry point to run the research workflow
    */
-  async research(issue: IssueTemplate): Promise<ResearchState> {
+  async research(issue: IssueTemplate, additionalContext?: string): Promise<ResearchState> {
     console.log('\n========================================');
     console.log('RESEARCH SUPERVISOR - Starting Research Phase');
     console.log('========================================');
     console.log(`Issue: ${issue.issue.title}`);
     console.log(`Domain: ${issue.issue.technical_context.domain}`);
     console.log(`Components: ${issue.issue.technical_context.components.join(', ') || 'None specified'}`);
+    if (additionalContext) {
+      console.log(`Additional Context: ${additionalContext}`);
+    }
     console.log('========================================\n');
 
+    // Human-feedback iterations pass additionalContext; seed it as a system
+    // message so downstream nodes see it alongside the issue.
+    const messages: ResearchState['messages'] = [
+      {
+        role: 'user',
+        content: `Research issue: ${issue.issue.title}`,
+        timestamp: new Date().toISOString(),
+      },
+    ];
+    if (additionalContext) {
+      messages.push({
+        role: 'system',
+        content: `Additional context from human feedback: ${additionalContext}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     const initialState: typeof ResearchStateAnnotation.State = {
-      messages: [
-        {
-          role: 'user',
-          content: `Research issue: ${issue.issue.title}`,
-          timestamp: new Date().toISOString(),
-        },
-      ],
+      messages,
       issue: issue,
       layer: issue.issue.technical_context.layer,
       configArtifact: issue.issue.technical_context.configArtifact,

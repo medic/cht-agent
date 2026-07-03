@@ -185,12 +185,11 @@ describe('ContextAnalysisAgent', () => {
       const issue = createTestIssue();
       const similarContexts = [createResolvedContext(), createResolvedContext()];
 
-      const recommendations = (agent as any).generateRecommendations(
+      const recommendations = (agent as any).generateRecommendations({
         issue,
         similarContexts,
-        [],
-        undefined
-      );
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('similar past implementation'))).to.be
         .true;
@@ -199,7 +198,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add test coverage recommendation for features', () => {
       const issue = createTestIssue({ type: 'feature' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('test coverage'))).to.be.true;
     });
@@ -207,7 +210,11 @@ describe('ContextAnalysisAgent', () => {
     it('should add regression test recommendation for bugs', () => {
       const issue = createTestIssue({ type: 'bug' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('regression'))).to.be.true;
     });
@@ -215,9 +222,38 @@ describe('ContextAnalysisAgent', () => {
     it('should add validation recommendation for high priority issues', () => {
       const issue = createTestIssue({ priority: 'high' });
 
-      const recommendations = (agent as any).generateRecommendations(issue, [], [], undefined);
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+      });
 
       expect(recommendations.some((r: string) => r.includes('integration tests'))).to.be.true;
+    });
+
+    it('should surface high-relevance code files when code context is present', () => {
+      const issue = createTestIssue();
+      const codeContext = {
+        domain: 'contacts' as const,
+        description: 'contacts domain',
+        codeSnippets: [
+          { filePath: 'webapp/src/contact.ts', content: 'x', language: 'typescript', relevance: 'high' as const },
+          { filePath: 'api/src/other.ts', content: 'y', language: 'typescript', relevance: 'low' as const },
+        ],
+        availableFiles: ['webapp/src/contact.ts'],
+        missingFiles: [],
+      };
+
+      const recommendations = (agent as any).generateRecommendations({
+        issue,
+        similarContexts: [],
+        patterns: [],
+        codeContext,
+      });
+
+      expect(
+        recommendations.some((r: string) => r.includes('Key files to review/modify') && r.includes('contact.ts'))
+      ).to.be.true;
     });
   });
 
@@ -291,6 +327,21 @@ describe('ContextAnalysisAgent', () => {
       const result = await agent.analyze(issue);
 
       expect(result.reusablePatterns.length).to.be.greaterThan(0);
+    });
+
+    it('should include a codeContext field on the result (#63 dev handoff)', async () => {
+      const issue = createTestIssue();
+
+      sinon.stub(contextLoader, 'loadDomainOverview').returns(null);
+      sinon.stub(contextLoader, 'loadDomainComponents').returns(null);
+      sinon.stub(contextLoader, 'findResolvedIssuesByDomain').returns([]);
+      sinon.stub(contextLoader, 'getRelatedDomains').returns([]);
+
+      const result = await agent.analyze(issue);
+
+      // codeContext is populated from cht-core when CHT_CORE_PATH is available,
+      // otherwise null; either way the field is part of the result shape.
+      expect(result).to.have.property('codeContext');
     });
   });
 

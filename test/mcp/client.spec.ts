@@ -217,4 +217,106 @@ describe('MCPClient', () => {
       expect(body.params.arguments.maxResults).to.equal(3);
     });
   });
+
+  describe('parseAskQuestionResponse() (#63 ask_question)', () => {
+    let client: MCPClient;
+
+    beforeEach(() => {
+      client = new MCPClient();
+    });
+
+    it('should parse answer, sources, thread id, and question-answer id', () => {
+      const content = [
+        'This is the answer to your question.',
+        '',
+        '**Sources:**',
+        '[CHT Docs](https://docs.cht.org/a)',
+        '[More Docs](https://docs.cht.org/b)',
+        '',
+        '**Thread ID:** thread-123',
+        '**Question Answer ID:** qa-456',
+      ].join('\n');
+
+      const result = client.parseAskQuestionResponse({ content });
+
+      expect(result.answer).to.equal('This is the answer to your question.');
+      expect(result.sources).to.deep.equal([
+        { title: 'CHT Docs', url: 'https://docs.cht.org/a' },
+        { title: 'More Docs', url: 'https://docs.cht.org/b' },
+      ]);
+      expect(result.threadId).to.equal('thread-123');
+      expect(result.questionAnswerId).to.equal('qa-456');
+    });
+
+    it('should return empty sources when none are present', () => {
+      const result = client.parseAskQuestionResponse({ content: 'Just an answer, no sources.' });
+
+      expect(result.answer).to.equal('Just an answer, no sources.');
+      expect(result.sources).to.deep.equal([]);
+    });
+  });
+
+  describe('parseGetSourcesResponse() (#63 get_sources)', () => {
+    let client: MCPClient;
+
+    beforeEach(() => {
+      client = new MCPClient();
+    });
+
+    it('should parse "- type: description" lines', () => {
+      const content = [
+        '- documentation: CHT product documentation',
+        '- forum: Community forum threads',
+      ].join('\n');
+
+      const result = client.parseGetSourcesResponse({ content });
+
+      expect(result).to.deep.equal([
+        { type: 'documentation', description: 'CHT product documentation' },
+        { type: 'forum', description: 'Community forum threads' },
+      ]);
+    });
+  });
+
+  describe('askQuestion() / getSources() — mocked fetch (#63)', () => {
+    let client: MCPClient;
+    let fetchStub: sinon.SinonStub;
+
+    const makeJsonRpcSuccess = (text: string) => ({
+      ok: true,
+      json: async () => ({
+        jsonrpc: '2.0',
+        id: 1,
+        result: { content: [{ type: 'text', text }], isError: false },
+      }),
+    });
+
+    beforeEach(() => {
+      client = new MCPClient({ serverUrl: 'https://mcp-test.example.com/mcp', timeout: 5000 });
+      fetchStub = sinon.stub(globalThis, 'fetch' as any);
+    });
+
+    it('should call the ask_question tool with question and threadId', async () => {
+      fetchStub.resolves(makeJsonRpcSuccess('answer text'));
+
+      const response = await client.askQuestion({ question: 'How do I add a contact?', threadId: 't-1' });
+
+      expect(response.content).to.equal('answer text');
+      const body = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(body.params.name).to.equal('ask_question');
+      expect(body.params.arguments.question).to.equal('How do I add a contact?');
+      expect(body.params.arguments.threadId).to.equal('t-1');
+    });
+
+    it('should call the get_sources tool with no arguments', async () => {
+      fetchStub.resolves(makeJsonRpcSuccess('- documentation: docs'));
+
+      const response = await client.getSources();
+
+      expect(response.content).to.equal('- documentation: docs');
+      const body = JSON.parse(fetchStub.firstCall.args[1].body);
+      expect(body.params.name).to.equal('get_sources');
+      expect(body.params.arguments).to.deep.equal({});
+    });
+  });
 });
