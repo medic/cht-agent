@@ -42,37 +42,23 @@ function nearestExistingRealPath(target: string): string {
   return fs.realpathSync(current);
 }
 
+/** The cht-core root, precomputed in both lexical and realpath forms. */
+interface ChtCoreRoots {
+  root: string;
+  rootPrefix: string;
+  realRoot: string;
+  realRootPrefix: string;
+}
+
 /**
- * Reason a file.path is unsafe to materialize, or null if it is safe to write.
- * `file.path` comes straight from LLM plan output and is written to disk WITHOUT
- * HC2 approval (the only upstream scope check, validateAgainstManifest, is
- * log-only), and is prompt-injection-reachable via untrusted doc context, so it
- * is fully untrusted. Kept as a self-contained function so it can later be lifted
- * to the shared write boundary.
+ * The symlink-escape half of the guard, split out to keep pathSafetyReason's
+ * cognitive complexity low. `full` is the already-resolved absolute target.
  */
-function pathSafetyReason(
-  root: string,
-  rootPrefix: string,
-  realRoot: string,
-  realRootPrefix: string,
-  filePath: string,
-): string | null {
-  if (path.isAbsolute(filePath)) {
-    return `absolute file path (outside cht-core): ${filePath}`;
-  }
-  const full = path.resolve(root, filePath);
-  if (full === root || !full.startsWith(rootPrefix)) {
-    return `out-of-bounds file path (path traversal): ${filePath}`;
-  }
-  // A path inside .git survives `git reset --hard` + `git clean -fd`, so it would
-  // outlive the gate's rollback and can corrupt cht-core (e.g. overwrite .git/config).
-  if (path.relative(root, full).split(path.sep).includes('.git')) {
-    return `path inside a .git directory (would survive rollback): ${filePath}`;
-  }
+function symlinkEscapeReason(full: string, filePath: string, roots: ChtCoreRoots): string | null {
   // A symlinked ancestor directory pointing outside cht-core defeats the lexical
   // check, because writeFileSync follows symlinks.
   const realAncestor = nearestExistingRealPath(path.dirname(full));
-  if (realAncestor !== realRoot && !realAncestor.startsWith(realRootPrefix)) {
+  if (realAncestor !== roots.realRoot && !realAncestor.startsWith(roots.realRootPrefix)) {
     return `path escapes cht-core via a symlinked directory: ${filePath}`;
   }
   // A pre-existing symlink AT the leaf is also followed by writeFileSync, even a
@@ -91,17 +77,45 @@ function pathSafetyReason(
 }
 
 /**
+ * Reason a file.path is unsafe to materialize, or null if it is safe to write.
+ * `file.path` comes straight from LLM plan output and is written to disk WITHOUT
+ * HC2 approval (the only upstream scope check, validateAgainstManifest, is
+ * log-only), and is prompt-injection-reachable via untrusted doc context, so it
+ * is fully untrusted. Kept as a self-contained function so it can later be lifted
+ * to the shared write boundary.
+ */
+function pathSafetyReason(roots: ChtCoreRoots, filePath: string): string | null {
+  if (path.isAbsolute(filePath)) {
+    return `absolute file path (outside cht-core): ${filePath}`;
+  }
+  const full = path.resolve(roots.root, filePath);
+  if (full === roots.root || !full.startsWith(roots.rootPrefix)) {
+    return `out-of-bounds file path (path traversal): ${filePath}`;
+  }
+  // A path inside .git survives `git reset --hard` + `git clean -fd`, so it would
+  // outlive the gate's rollback and can corrupt cht-core (e.g. overwrite .git/config).
+  if (path.relative(roots.root, full).split(path.sep).includes('.git')) {
+    return `path inside a .git directory (would survive rollback): ${filePath}`;
+  }
+  return symlinkEscapeReason(full, filePath, roots);
+}
+
+/**
  * Write the generated files into chtCorePath, skipping any path that fails the
  * safety guard (pathSafetyReason). Returns the absolute paths actually written.
  */
 function materializeGuarded(chtCorePath: string, files: ReadonlyArray<GeneratedFile>): string[] {
   const root = path.resolve(chtCorePath);
-  const rootPrefix = root + path.sep;
   const realRoot = fs.realpathSync(root);
-  const realRootPrefix = realRoot + path.sep;
+  const roots: ChtCoreRoots = {
+    root,
+    rootPrefix: root + path.sep,
+    realRoot,
+    realRootPrefix: realRoot + path.sep,
+  };
   const written: string[] = [];
   for (const file of files) {
-    const reason = pathSafetyReason(root, rootPrefix, realRoot, realRootPrefix, file.path);
+    const reason = pathSafetyReason(roots, file.path);
     if (reason) {
       console.warn(`${LOG} Skipping unsafe file path: ${reason}`);
       continue;

@@ -152,6 +152,15 @@ function collectBulletText(section: string): string[] {
     .filter(line => line.length > 0);
 }
 
+/** The inputs the plan-generation methods share, bundled into one object. */
+interface PlanContext {
+  issue: IssueTemplate;
+  findings: ResearchFindings;
+  analysis: ContextAnalysisResult;
+  codeContext?: CodeContext | null;
+  codeContextFindings?: CodeContextFindings;
+}
+
 export class ResearchSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly docSearchAgent: DocumentationSearchAgent;
@@ -350,13 +359,13 @@ export class ResearchSupervisor {
     try {
       const codeContext = state.contextAnalysis.codeContext;
       logCodeContextUsage(codeContext);
-      const plan = await this.generateOrchestrationPlan(
-        state.issue,
-        state.researchFindings,
-        state.contextAnalysis,
+      const plan = await this.generateOrchestrationPlan({
+        issue: state.issue,
+        findings: state.researchFindings,
+        analysis: state.contextAnalysis,
         codeContext,
-        state.codeContextFindings
-      );
+        codeContextFindings: state.codeContextFindings,
+      });
       this.todos.complete(todoId);
       this.todos.printSummary();
       return {
@@ -385,22 +394,16 @@ export class ResearchSupervisor {
   /**
    * Generate orchestration plan using Claude
    */
-  private async generateOrchestrationPlan(
-    issue: IssueTemplate,
-    findings: ResearchFindings,
-    analysis: ContextAnalysisResult,
-    codeContext?: CodeContext | null,
-    codeContextFindings?: CodeContextFindings
-  ): Promise<OrchestrationPlan> {
+  private async generateOrchestrationPlan(ctx: PlanContext): Promise<OrchestrationPlan> {
     console.log('[Research Supervisor] Generating orchestration plan...');
 
-    const prompt = this.buildPlanPrompt(issue, findings, analysis, codeContext, codeContextFindings);
+    const prompt = this.buildPlanPrompt(ctx);
 
     const response = await this.llm.invoke(prompt, { temperature: 0.3 });
     const content = response.content;
 
     // Parse the response into structured plan
-    const plan = this.parsePlanResponse(content, issue, findings, analysis, codeContextFindings);
+    const plan = this.parsePlanResponse(content, ctx);
 
     console.log('[Research Supervisor] Plan generated successfully');
     return plan;
@@ -409,13 +412,8 @@ export class ResearchSupervisor {
   /**
    * Build prompt for plan generation
    */
-  private buildPlanPrompt(
-    issue: IssueTemplate,
-    findings: ResearchFindings,
-    analysis: ContextAnalysisResult,
-    codeContext?: CodeContext | null,
-    codeContextFindings?: CodeContextFindings
-  ): string {
+  private buildPlanPrompt(ctx: PlanContext): string {
+    const { issue, findings, analysis, codeContext, codeContextFindings } = ctx;
     const { issue: issueDetails } = issue;
 
     // Build code context section if available
@@ -512,13 +510,8 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
   /**
    * Parse Claude's response into structured plan
    */
-  private parsePlanResponse(
-    content: string,
-    issue: IssueTemplate,
-    findings: ResearchFindings,
-    analysis: ContextAnalysisResult,
-    codeContextFindings?: CodeContextFindings
-  ): OrchestrationPlan {
+  private parsePlanResponse(content: string, ctx: PlanContext): OrchestrationPlan {
+    const { issue, findings, analysis, codeContextFindings } = ctx;
     // Extract implementation approach from Claude's response
     const recommendedApproach = this.extractImplementationApproach(content);
 
