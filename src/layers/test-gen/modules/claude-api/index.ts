@@ -560,16 +560,23 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     | { overBudget: false; file: GeneratedFile; tokensUsed: number }
   > {
     console.log(`[Test Gen Module]   Output truncated for ${planItem.filePath}, continuing...`);
-    const contResult = await this.continueTruncatedGeneration(file.content, planItem, input);
-    if (contResult.stillTruncated) {
+    // A truncated first response can carry an unclosed opening ```lang fence that
+    // parseSingleFileContent could not strip (no balanced close in one chunk).
+    // Drop it before continuing so the fence line does not land mid-file (M3c).
+    const base = this.stripDanglingFences(file.content);
+    const contResult = await this.continueTruncatedGeneration(base, planItem, input);
+    if (contResult.stillTruncated || contResult.failed) {
+      const cause = contResult.failed ? 'a continuation call failed' : 'the continuation budget';
       console.warn(
-        `[Test Gen Module]   File "${planItem.filePath}" exceeds the continuation budget; not retrying.`
+        `[Test Gen Module]   File "${planItem.filePath}" not completed (${cause}); not retrying.`
       );
       return { overBudget: true, tokensUsed: contResult.tokensUsed };
     }
     return {
       overBudget: false,
-      file: { ...file, content: file.content + contResult.continuation },
+      // Sanitize the ASSEMBLED content for a trailing lone ``` the continuation
+      // emitted to close the fence we stripped above (M3c).
+      file: { ...file, content: this.stripDanglingFences(base + contResult.continuation) },
       tokensUsed: contResult.tokensUsed,
     };
   }
@@ -683,12 +690,12 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     planItem: TestPlanItem,
     input: TestGenModuleInput,
     maxContinuations: number = this.getMaxContinuations(),
-  ): Promise<{ continuation: string; tokensUsed: number; stillTruncated: boolean }> {
-    const acc = { content: '', tokens: 0, stopReason: undefined as string | undefined };
+  ): Promise<{ continuation: string; tokensUsed: number; stillTruncated: boolean; failed: boolean }> {
+    const acc = { content: '', tokens: 0, stopReason: undefined as string | undefined, failed: false };
     await this.runContinuationLoop({ partialContent, planItem, input, maxContinuations, acc });
     const stillTruncated = acc.stopReason === 'max_tokens';
     if (stillTruncated) logContinuationOverBudget(planItem.filePath, maxContinuations);
-    return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated };
+    return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated, failed: acc.failed };
   }
 
   private async runContinuationLoop(args: {
@@ -696,7 +703,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     planItem: TestPlanItem;
     input: TestGenModuleInput;
     maxContinuations: number;
-    acc: { content: string; tokens: number; stopReason: string | undefined };
+    acc: { content: string; tokens: number; stopReason: string | undefined; failed: boolean };
   }): Promise<void> {
     const { partialContent, planItem, input, maxContinuations, acc } = args;
     for (let i = 0; i < maxContinuations; i++) {
@@ -714,7 +721,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     partialContent: string;
     planItem: TestPlanItem;
     input: TestGenModuleInput;
-    acc: { content: string; tokens: number; stopReason: string | undefined };
+    acc: { content: string; tokens: number; stopReason: string | undefined; failed: boolean };
     iteration: number;
   }): Promise<boolean> {
     const { partialContent, planItem, input, acc, iteration } = args;
@@ -728,11 +735,16 @@ export class ClaudeApiTestGenModule implements TestGenModule {
         disableTools: true,
       });
     } catch (error) {
+      // A failed continuation is NOT a completed file: flag it so the caller
+      // terminates over-budget (file dropped) instead of accepting the original
+      // truncated content as a success (M3b). No content is appended here.
       console.error(`[Test Gen Module]   Continuation call ${iteration + 1} failed:`, error);
+      acc.failed = true;
       return false;
     }
     acc.tokens += (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
-    const continuation = this.parseSingleFileContent(response.content).replace(/\n$/, '');
+    // Continuation-only parse: no preamble strip (would eat a real resumed line, M3a).
+    const continuation = this.parseContinuationChunk(response.content);
     acc.content += '\n' + continuation;
     acc.stopReason = response.stopReason;
     return true;
@@ -1020,6 +1032,36 @@ Output ONLY the JSON. No explanations.`;
 
   parseSingleFileContent(rawOutput: string): string {
     return libParseSingleFileContent(rawOutput);
+  }
+
+  /**
+   * Parse a CONTINUATION chunk. Like parseSingleFileContent it strips a balanced
+   * code fence and the `=== FILE: ===` delimiter, but it does NOT run
+   * stripReasoningPreamble: a continuation legitimately resumes mid-string or
+   * mid-comment, and the preamble heuristic would eat that real first line (M3a).
+   */
+  private parseContinuationChunk(rawOutput: string): string {
+    let content = rawOutput.trim();
+    const codeBlockMatch = /^```(?:\w+)?\n([\s\S]*?)\n```$/.exec(content);
+    if (codeBlockMatch) content = codeBlockMatch[1];
+    const fileMatch = /^=== FILE:.*===\n(?:PURPOSE:.*\n)?--- CONTENT START ---\n([\s\S]*?)\n--- CONTENT END ---/
+      .exec(content);
+    if (fileMatch) content = fileMatch[1];
+    return content.trim();
+  }
+
+  /**
+   * Strip a dangling markdown fence left by a truncated/continued response: a
+   * leading opening-fence line (```lang) that never got a balanced close in one
+   * chunk, and a trailing lone ``` a continuation emitted to close it. Anchored
+   * to the first/last line only — never global-strips backticks, which would
+   * corrupt a template literal in the test body (M3c).
+   */
+  private stripDanglingFences(content: string): string {
+    const lines = content.split('\n');
+    if (lines.length > 0 && /^```[\w-]*\s*$/.test(lines[0])) lines.shift();
+    if (lines.length > 0 && /^```\s*$/.test(lines[lines.length - 1])) lines.pop();
+    return lines.join('\n');
   }
 
   /**
