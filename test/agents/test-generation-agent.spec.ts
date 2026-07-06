@@ -77,6 +77,10 @@ describe('buildTestGenModuleInput', () => {
     expect(out.researchFindings).to.equal(input.researchFindings);
     expect(out.orchestrationPlan).to.equal(input.orchestrationPlan);
     expect(out.targetDirectory).to.equal('/tmp/cht-core');
+    // additionalContext / existingTestExamples forward through on the fields the
+    // module actually reads (M6), not into the dead contextFiles surface.
+    expect(out.additionalContext).to.equal(input.additionalContext);
+    expect(out.existingTestExamples).to.equal(input.existingTestExamples);
   });
 
   it('passes generatedCode through unchanged (no conversion on the way in)', () => {
@@ -95,16 +99,21 @@ describe('buildTestGenModuleInput', () => {
     expect(out.testTypes).to.deep.equal(['integration', 'e2e']);
   });
 
-  it('builds an external feedback contextFile only when additionalContext is set', () => {
+  it('forwards additionalContext on the field the module reads, not into contextFiles (M6)', () => {
+    // No test-gen module reads contextFiles, so additionalContext is threaded onto
+    // `additionalContext` (the plan-prompt feedback branch) and contextFiles stays [].
     expect(buildTestGenModuleInput(baseInput()).contextFiles).to.deep.equal([]);
+    expect(buildTestGenModuleInput(baseInput()).additionalContext).to.equal(undefined);
 
     const out = buildTestGenModuleInput(baseInput({ additionalContext: 'fix the off-by-one' }));
-    expect(out.contextFiles).to.have.length(1);
-    expect(out.contextFiles[0]).to.deep.equal({
-      path: 'feedback/additional-context.md',
-      content: 'fix the off-by-one',
-      source: 'external',
-    });
+    expect(out.contextFiles).to.deep.equal([]);
+    expect(out.additionalContext).to.equal('fix the off-by-one');
+  });
+
+  it('forwards existingTestExamples when pre-seeded on the input (M6)', () => {
+    const examples = [{ path: 'src/a.spec.ts', content: 'describe("a", () => {});' }];
+    const out = buildTestGenModuleInput(baseInput({ existingTestExamples: examples }));
+    expect(out.existingTestExamples).to.equal(examples);
   });
 
   it('binds readFile/listDirectory as closures over chtCorePath', async () => {
@@ -225,6 +234,28 @@ describe('TestGenerationAgent', () => {
     expect(moduleInput.generatedCode).to.equal(input.codeGeneration.files);
     expect(moduleInput.testTypes).to.deep.equal(['unit']);
     expect(moduleInput.targetDirectory).to.equal('/tmp/cht-core');
+  });
+
+  it('populates existingTestExamples by globbing nearby *.spec.* from cht-core (M6)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-examples-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'src', 'foo.ts'), 'export const foo = () => 1;');
+      fs.writeFileSync(
+        path.join(dir, 'src', 'foo.spec.ts'),
+        "describe('foo', () => { it('works', () => {}); });",
+      );
+
+      const input = baseInput({ chtCorePath: dir, codeGeneration: mkCodeGen([mkFile('src/foo.ts')]) });
+      await agent.generate(input);
+
+      const moduleInput = generateStub.firstCall.args[0];
+      expect(moduleInput.existingTestExamples).to.have.length(1);
+      expect(moduleInput.existingTestExamples[0].path).to.equal('src/foo.spec.ts');
+      expect(moduleInput.existingTestExamples[0].content).to.include("describe('foo'");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

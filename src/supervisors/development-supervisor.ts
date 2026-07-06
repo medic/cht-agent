@@ -478,6 +478,9 @@ export class DevelopmentSupervisor {
       orchestrationPlan: state.orchestrationPlan,
       codeGeneration: state.codeGeneration,
       chtCorePath: state.options.chtCorePath,
+      // Thread refinement feedback into test-gen (mirrors codeGenerationNode), so
+      // the "Feedback from Previous Iteration" prompt branch is actually fed (M6).
+      additionalContext: state.validationFeedback || undefined,
     };
     return this.runTestGenWithFallback(input, todoId, emptyResult);
   }

@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import {
   IssueTemplate,
   OrchestrationPlan,
@@ -35,8 +36,13 @@ export interface TestGenerationInput {
   chtCorePath: string;
   /** Test types to request. Defaults to `['unit']` when omitted. */
   testTypes?: TestType[];
-  /** Feedback from a previous iteration, surfaced as an external context file. */
+  /** Feedback from a previous iteration, threaded into the plan prompt. */
   additionalContext?: string;
+  /**
+   * Nearby existing `*.spec.*`/`*.test.*` files used as a style anchor. Populated
+   * by {@link TestGenerationAgent.generate} when absent; a caller may pre-seed it.
+   */
+  existingTestExamples?: Array<{ path: string; content: string }>;
 }
 
 /**
@@ -49,14 +55,10 @@ export interface TestGenerationInput {
  * unchanged. The `TestGenerationAgent` below calls this to build the module input.
  */
 export function buildTestGenModuleInput(input: TestGenerationInput): TestGenModuleInput {
+  // No test-gen module reads contextFiles, so routing additionalContext there was
+  // dead (M6). Forward it (and the style-anchor examples) on the fields the module
+  // actually reads: `additionalContext` (plan prompt) and `existingTestExamples`.
   const contextFiles: ContextFile[] = [];
-  if (input.additionalContext) {
-    contextFiles.push({
-      path: 'feedback/additional-context.md',
-      content: input.additionalContext,
-      source: 'external',
-    });
-  }
 
   return {
     ticket: input.issue,
@@ -66,6 +68,8 @@ export function buildTestGenModuleInput(input: TestGenerationInput): TestGenModu
     contextFiles,
     testTypes: input.testTypes ?? ['unit'],
     targetDirectory: input.chtCorePath,
+    additionalContext: input.additionalContext,
+    existingTestExamples: input.existingTestExamples,
     readFile: (filePath: string) => readFromChtCore(filePath, input.chtCorePath),
     listDirectory: (dirPath: string) => listChtCoreDirectory(dirPath, input.chtCorePath),
   };
@@ -160,15 +164,45 @@ export class TestGenerationAgent {
   }
 
   async generate(input: TestGenerationInput): Promise<TestGenerationResult> {
+    // Populate the style-anchor examples (M6) unless the caller pre-seeded them.
+    // Reads only (no tree mutation), so it is safe before the containment snapshot.
+    const enriched: TestGenerationInput = {
+      ...input,
+      existingTestExamples: input.existingTestExamples ?? await this.gatherExistingTestExamples(input),
+    };
+
     // Containment (iter8 Fix 2a): a provider that does not honor custom tools
     // (the claude-cli provider) runs its own agentic loop and can write into the
     // cht-core tree outside staging/HC2. Snapshot before generation and roll back
     // any out-of-band write afterward. A provider that honors custom tools runs
     // in-process and never writes to the tree, so it is not wrapped.
     if (this.llm.honorsCustomTools) {
-      return this.runGeneration(input);
+      return this.runGeneration(enriched);
     }
-    return this.runContainedGeneration(input);
+    return this.runContainedGeneration(enriched);
+  }
+
+  /**
+   * Glob up to 3 nearby existing `*.spec.*`/`*.test.*` files (in the directories
+   * of the generated source) to anchor the generated tests' style (M6). Reads via
+   * the staging helpers, which return [] / null on any miss, so this never throws.
+   */
+  private async gatherExistingTestExamples(
+    input: TestGenerationInput,
+  ): Promise<Array<{ path: string; content: string }>> {
+    const dirs = new Set(input.codeGeneration.files.map(f => path.dirname(f.relativePath)));
+    const examples: Array<{ path: string; content: string }> = [];
+    for (const dir of dirs) {
+      if (examples.length >= 3) break;
+      const entries = await listChtCoreDirectory(dir, input.chtCorePath);
+      const specs = entries.filter(e => /\.(spec|test)\.\w+$/.test(e));
+      for (const spec of specs) {
+        if (examples.length >= 3) break;
+        const content = await readFromChtCore(spec, input.chtCorePath);
+        if (content) examples.push({ path: spec, content });
+      }
+    }
+    return examples;
   }
 
   private async runGeneration(input: TestGenerationInput): Promise<TestGenerationResult> {
