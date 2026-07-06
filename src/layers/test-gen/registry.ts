@@ -5,7 +5,6 @@ import { readEnv } from '../../utils/env';
 
 const PROVIDER_ALIAS_MAP: Record<string, string> = {
   anthropic: 'claude-api',
-  'claude-cli': 'claude-code-cli',
 };
 
 export class TestGenModuleRegistry {
