@@ -16,7 +16,7 @@ import {
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
 import {
-  TestPlanSchema,
+  TestPlanItemSchema,
   TestContentAssertions,
   RequirementsChecklistSchema,
 } from '../../schemas';
@@ -134,6 +134,38 @@ function decideRetryNext(
   return { kind: 'retry', failures: attempt.failures };
 }
 
+/**
+ * Return the first brace-balanced `{...}` object in `text`, or null. A linear
+ * O(n) scan (no backtracking, Sonar S8786-safe) from the first `{` to its
+ * matching `}`, skipping braces inside JSON strings (with escape handling) so a
+ * `}` in a string value or trailing prose after the object does not confuse it.
+ * Replaces a greedy `/\{[\s\S]*\}/` that anchored to the LAST `}` and
+ * over-captured trailing prose (making JSON.parse throw -> silent []).
+ */
+function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 export class ClaudeApiTestGenModule implements TestGenModule {
   name = 'claude-api';
 
@@ -161,7 +193,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
 
     const planResult = await this.resolvePlan(input, llm.modelName);
     if (planResult.bailout) return planResult.bailout;
-    const { plan, planTokens } = planResult;
+    const { plan, planTokens, planWarnings } = planResult;
 
     this.surfacePlan(plan);
 
@@ -174,7 +206,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     this.logPostCallValidation(warnings);
     this.logGeneratedFiles(genResult.files);
 
-    const combinedWarnings = [...warnings, ...genResult.warnings];
+    const combinedWarnings = [...planWarnings, ...warnings, ...genResult.warnings];
 
     return {
       files: genResult.files,
@@ -236,14 +268,14 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   private async resolvePlan(
     input: TestGenModuleInput,
     modelName: string,
-  ): Promise<{ plan: TestPlanItem[]; planTokens: number; bailout?: never }
-    | { bailout: TestGenModuleOutput; plan: TestPlanItem[]; planTokens: number }> {
+  ): Promise<{ plan: TestPlanItem[]; planTokens: number; planWarnings: string[]; bailout?: never }
+    | { bailout: TestGenModuleOutput; plan: TestPlanItem[]; planTokens: number; planWarnings: string[] }> {
     const failingTestFiles = readFailingTestFiles(input);
     if (failingTestFiles && failingTestFiles.length > 0) {
       console.log(
         `[Test Gen Module] Selective regeneration: reusing plan for ${failingTestFiles.length} failing file(s)`
       );
-      return { plan: [...failingTestFiles], planTokens: 0 };
+      return { plan: [...failingTestFiles], planTokens: 0, planWarnings: [] };
     }
 
     try {
@@ -253,21 +285,27 @@ export class ClaudeApiTestGenModule implements TestGenModule {
         return {
           plan: [],
           planTokens: planResult.tokensUsed,
+          planWarnings: planResult.warnings,
           bailout: {
             files: [],
             explanation: `No test plan generated for "${input.ticket.issue.title}".`,
             tokensUsed: planResult.tokensUsed,
             modelUsed: modelName,
             requirementsChecklist: [],
+            // Warnings only when items were dropped as invalid; a genuinely empty
+            // plan (no items at all) stays a warning-free intentional no-op so the
+            // supervisor does not mark the todo failed.
+            warnings: planResult.warnings.length > 0 ? planResult.warnings : undefined,
           },
         };
       }
-      return { plan: planResult.plan, planTokens: planResult.tokensUsed };
+      return { plan: planResult.plan, planTokens: planResult.tokensUsed, planWarnings: planResult.warnings };
     } catch (error) {
       console.error('[Test Gen Module] Plan generation failed:', error);
       return {
         plan: [],
         planTokens: 0,
+        planWarnings: [],
         bailout: {
           files: [],
           explanation: `Test generation failed for "${input.ticket.issue.title}".`,
@@ -307,23 +345,39 @@ export class ClaudeApiTestGenModule implements TestGenModule {
 
   private async generateTestPlan(
     input: TestGenModuleInput,
-  ): Promise<{ plan: TestPlanItem[]; tokensUsed: number }> {
+  ): Promise<{ plan: TestPlanItem[]; tokensUsed: number; warnings: string[] }> {
     const llm = this.getProvider();
     const prompt = this.buildTestPlanPrompt(input);
 
     const response = await llm.invoke(prompt, { temperature: 0.3, maxTokens: 8192, disableTools: true });
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
 
-    const plan = this.parseTestPlan(response.content);
-
-    const validation = TestPlanSchema.safeParse({ items: plan });
-    if (!validation.success) {
-      console.log(
-        `[Test Gen Module] Plan validation warnings: ${validation.error.issues.map(i => i.message).join(', ')}`
-      );
+    const parsed = this.parseTestPlan(response.content);
+    const { plan, warnings } = this.filterValidPlanItems(parsed);
+    for (const warning of warnings) {
+      console.log(`[Test Gen Module] Plan validation: ${warning}`);
     }
 
-    return { plan, tokensUsed };
+    return { plan, tokensUsed, warnings };
+  }
+
+  /**
+   * Keep only plan items that pass TestPlanItemSchema; drop the rest and return a
+   * warning per drop, so the schema is authoritative (not validate-and-ignore).
+   */
+  private filterValidPlanItems(items: TestPlanItem[]): { plan: TestPlanItem[]; warnings: string[] } {
+    const plan: TestPlanItem[] = [];
+    const warnings: string[] = [];
+    for (const item of items) {
+      const validation = TestPlanItemSchema.safeParse(item);
+      if (validation.success) {
+        plan.push(item);
+      } else {
+        const reasons = validation.error.issues.map(i => i.message).join('; ');
+        warnings.push(`Dropped invalid test-plan item "${item.filePath || '(no path)'}": ${reasons}`);
+      }
+    }
+    return { plan, warnings };
   }
 
   parseTestPlan(rawContent: string): TestPlanItem[] {
@@ -704,22 +758,21 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   }
 
   parseRequirementsChecklist(rawContent: string): TestScenario[] {
-    const jsonMatch = /\{[\s\S]*\}/.exec(rawContent);
-    if (!jsonMatch) return [];
+    const json = extractFirstJsonObject(rawContent);
+    if (!json) return [];
 
     try {
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(json);
       const validation = RequirementsChecklistSchema.safeParse(parsed);
       if (validation.success) {
         return validation.data.checklist;
       }
-      if (parsed.checklist && Array.isArray(parsed.checklist)) {
-        return parsed.checklist;
-      }
     } catch {
-      // Fall through
+      // Fall through to [].
     }
 
+    // Schema is authoritative: only validated data is returned; a parse/validation
+    // failure yields [] rather than the raw (previously unvalidated) checklist.
     return [];
   }
 
