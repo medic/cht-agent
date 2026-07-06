@@ -2,5 +2,6 @@
   "extension": ["ts"],
   "spec": "test/**/*.spec.ts",
   "require": ["ts-node/register"],
-  "timeout": 10000
+  "timeout": 10000,
+  "node-option": ["no-experimental-strip-types"]
 }

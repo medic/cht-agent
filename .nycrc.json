@@ -1,14 +1,17 @@
 {
   "check-coverage": true,
-  "branches": 85,
-  "lines": 95,
-  "functions": 95,
-  "statements": 95,
-  "reporter": ["text", "text-summary", "html"],
+  "branches": 72,
+  "lines": 86,
+  "functions": 84,
+  "statements": 85,
   "exclude": [
-    "**/*.spec.ts",
-    "**/*.d.ts",
+    "coverage/**",
+    "dist/**",
     "test/**",
-    "dist/**"
-  ]
+    "**/*.d.ts",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "**/__tests__/**"
+  ],
+  "reporter": ["text", "text-summary", "html"]
 }

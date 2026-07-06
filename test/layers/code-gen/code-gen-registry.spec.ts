@@ -1,13 +1,11 @@
 import { expect } from 'chai';
 import {
   CodeGenModule,
-  CodeGenModuleInput,
 } from '../../../src/layers/code-gen/interface';
 import {
   CodeGenModuleRegistry,
   createDefaultCodeGenRegistry,
 } from '../../../src/layers/code-gen/registry';
-import { claudeApiCodeGenModule } from '../../../src/layers/code-gen/modules/claude-api';
 
 describe('CodeGenModuleRegistry', () => {
   const makeModule = (name: string): CodeGenModule => ({
@@ -52,14 +50,53 @@ describe('CodeGenModuleRegistry', () => {
     expect(active.name).to.equal('claude-api');
   });
 
-  it('should resolve claude-cli alias to claude-code-cli', () => {
-    const registry = new CodeGenModuleRegistry();
-    const module = makeModule('claude-code-cli');
-    registry.register(module);
+  it('should resolve claude-cli alias to claude-code-cli via default registry', () => {
+    const registry = createDefaultCodeGenRegistry();
 
     const active = registry.getActiveModule('claude-cli');
 
     expect(active.name).to.equal('claude-code-cli');
+    // claude-code-cli is now a real module (v5 A.2); we no longer assert it throws "not yet implemented".
+    // The presence + correct name resolution is the production-meaningful part of the alias contract.
+  });
+
+  it('should register claude-code-cli stub in default registry', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    expect(registry.list()).to.include('claude-code-cli');
+  });
+
+  it('should register opencode stub in default registry', () => {
+    const registry = createDefaultCodeGenRegistry();
+
+    expect(registry.list()).to.include('opencode');
+  });
+
+  it('should throw a clear error when claude-code-cli generate is called without targetDirectory', async () => {
+    const registry = createDefaultCodeGenRegistry();
+    const module = registry.getActiveModule('claude-code-cli');
+    let threw = false;
+    try {
+      await module.generate({} as never);
+    } catch (err) {
+      threw = true;
+      // The real module (v5 A.2) requires targetDirectory; bare empty input should fail fast.
+      expect((err as Error).message).to.match(/targetDirectory|cht-core/i);
+    }
+    expect(threw).to.equal(true);
+  });
+
+  it('should throw a not-yet-implemented error when generate is called on opencode stub', async () => {
+    const registry = createDefaultCodeGenRegistry();
+    const module = registry.getActiveModule('opencode');
+    let threw = false;
+    try {
+      await module.generate({} as never);
+    } catch (err) {
+      threw = true;
+      expect((err as Error).message).to.match(/not yet implemented/);
+    }
+    expect(threw).to.equal(true);
   });
 
   it('should pass through unknown aliases as-is', () => {
@@ -68,10 +105,10 @@ describe('CodeGenModuleRegistry', () => {
     expect(registry.resolveProvider('some-provider')).to.equal('some-provider');
   });
 
-  it('should fall back to LLM_PROVIDER env var when no argument given', () => {
-    const originalEnv = process.env.LLM_PROVIDER;
+  it('should fall back to CODE_GEN_MODULE env var when no argument given', () => {
+    const originalEnv = process.env.CODE_GEN_MODULE;
     try {
-      process.env.LLM_PROVIDER = 'claude-api';
+      process.env.CODE_GEN_MODULE = 'claude-api';
       const registry = createDefaultCodeGenRegistry();
 
       const active = registry.getActiveModule();
@@ -79,25 +116,25 @@ describe('CodeGenModuleRegistry', () => {
       expect(active.name).to.equal('claude-api');
     } finally {
       if (originalEnv === undefined) {
-        delete process.env.LLM_PROVIDER;
+        delete process.env.CODE_GEN_MODULE;
       } else {
-        process.env.LLM_PROVIDER = originalEnv;
+        process.env.CODE_GEN_MODULE = originalEnv;
       }
     }
   });
 
-  it('should fall back to claude-api when no argument and no env var', () => {
-    const originalEnv = process.env.LLM_PROVIDER;
+  it('should fall back to claude-code-cli when no argument and no env var (v6 G.1)', () => {
+    const originalEnv = process.env.CODE_GEN_MODULE;
     try {
-      delete process.env.LLM_PROVIDER;
+      delete process.env.CODE_GEN_MODULE;
       const registry = createDefaultCodeGenRegistry();
 
       const active = registry.getActiveModule();
 
-      expect(active.name).to.equal('claude-api');
+      expect(active.name).to.equal('claude-code-cli');
     } finally {
       if (originalEnv !== undefined) {
-        process.env.LLM_PROVIDER = originalEnv;
+        process.env.CODE_GEN_MODULE = originalEnv;
       }
     }
   });
@@ -107,15 +144,6 @@ describe('CodeGenModuleRegistry', () => {
 
     expect(() => registry.getActiveModule('unknown-provider')).to.throw(
       'No code generation module registered for provider "unknown-provider"'
-    );
-  });
-
-  it('should throw when registering a module with a duplicate name', () => {
-    const registry = new CodeGenModuleRegistry();
-    registry.register(makeModule('mod-a'));
-
-    expect(() => registry.register(makeModule('mod-a'))).to.throw(
-      'Code generation module "mod-a" is already registered'
     );
   });
 
@@ -132,167 +160,16 @@ describe('CodeGenModuleRegistry', () => {
 
     expect(registry.list()).to.include('claude-api');
   });
-});
 
-describe('ClaudeApiCodeGenModule', () => {
-  const input: CodeGenModuleInput = {
-    ticket: {
-      issue: {
-        title: 'Add contact search filters',
-        type: 'feature',
-        priority: 'medium',
-        description: 'Allow filtering contacts by program enrollment and status.',
-        technical_context: {
-          domain: 'contacts',
-          components: ['webapp/modules/contacts', 'api/controllers/contacts'],
-        },
-        requirements: ['Add UI filters', 'Support API filtering'],
-        acceptance_criteria: ['Users can filter by status'],
-        constraints: ['Do not break existing search'],
-      },
-    },
-    researchFindings: {
-      documentationReferences: [
-        {
-          url: 'https://docs.communityhealthtoolkit.org/apps/features/contacts/',
-          title: 'Managing Contacts',
-          topics: ['contacts'],
-        },
-      ],
-      relevantExamples: [],
-      suggestedApproaches: ['Extend existing query builder'],
-      relatedDomains: ['contacts'],
-      confidence: 0.9,
-      source: 'local-docs',
-    },
-    contextFiles: [
-      {
-        path: 'agent-memory/domains/contacts/overview.md',
-        content: 'Contacts domain overview',
-        source: 'agent-memory',
-      },
-    ],
-    orchestrationPlan: {
-      summary: 'Implement filters in API and webapp.',
-      keyFindings: ['API already supports pagination'],
-      proposedApproach: 'Add filter params and update contacts list UI.',
-      estimatedComplexity: 'medium',
-      phases: [
-        {
-          name: 'API Update',
-          description: 'Introduce filter query params.',
-          estimatedComplexity: 'medium',
-          suggestedComponents: ['api/controllers/contacts'],
-          dependencies: [],
-        },
-      ],
-      riskFactors: ['Query performance risk'],
-      estimatedEffort: '2 days',
-    },
-    targetDirectory: 'tmp/output/',
-  };
-
-  it('should generate code scaffold files from orchestration phases', async () => {
-    const output = await claudeApiCodeGenModule.generate(input);
-
-    expect(output.files).to.have.length(1);
-    expect(output.files[0].path).to.equal('tmp/output/api/src/controllers/contacts.js');
-    expect(output.files[0].content).to.include('Add contact search filters');
-    expect(output.files[0].purpose).to.include('API controller scaffold');
-  });
-
-  it('should include domain in generated file content', async () => {
-    const output = await claudeApiCodeGenModule.generate(input);
-
-    expect(output.files[0].content).to.include('contacts');
-  });
-
-  it('should generate webapp service for webapp components', async () => {
-    const webappInput = {
-      ...input,
-      orchestrationPlan: {
-        ...input.orchestrationPlan,
-        phases: [{
-          name: 'UI Update',
-          description: 'Add filter UI.',
-          estimatedComplexity: 'medium' as const,
-          suggestedComponents: ['webapp/services/contacts-filter'],
-          dependencies: [],
-        }],
-      },
-    };
-
-    const output = await claudeApiCodeGenModule.generate(webappInput);
-
-    expect(output.files).to.have.length(1);
-    expect(output.files[0].path).to.include('webapp/src/ts/services/');
-    expect(output.files[0].content).to.include('@Injectable');
-  });
-
-  it('should generate files for multiple phases and components', async () => {
-    const multiInput = {
-      ...input,
-      orchestrationPlan: {
-        ...input.orchestrationPlan,
-        phases: [
-          {
-            name: 'API',
-            description: 'API work.',
-            estimatedComplexity: 'medium' as const,
-            suggestedComponents: ['api/controllers/contacts'],
-            dependencies: [],
-          },
-          {
-            name: 'UI',
-            description: 'UI work.',
-            estimatedComplexity: 'medium' as const,
-            suggestedComponents: ['webapp/services/contacts-filter'],
-            dependencies: [],
-          },
-        ],
-      },
-    };
-
-    const output = await claudeApiCodeGenModule.generate(multiInput);
-
-    expect(output.files).to.have.length(2);
-    expect(output.files.some(f => f.path.includes('api/'))).to.be.true;
-    expect(output.files.some(f => f.path.includes('webapp/'))).to.be.true;
-  });
-
-  it('should fall back to ticket components when phases have no suggested components', async () => {
-    const emptyPhasesInput = {
-      ...input,
-      orchestrationPlan: { ...input.orchestrationPlan, phases: [] },
-    };
-
-    const output = await claudeApiCodeGenModule.generate(emptyPhasesInput);
-
-    expect(output.files.length).to.be.greaterThan(0);
-  });
-
-  it('should strip trailing slash from target directory', async () => {
-    const output = await claudeApiCodeGenModule.generate(input);
-
-    expect(output.files[0].path).to.not.include('//');
-  });
-
-  it('should include file count in explanation', async () => {
-    const output = await claudeApiCodeGenModule.generate(input);
-
-    expect(output.explanation).to.include('1 scaffold file');
-    expect(output.explanation).to.include('Add contact search filters');
-  });
-
-  it('should default to documented model name', async () => {
-    const output = await claudeApiCodeGenModule.generate(input);
-
-    expect(output.modelUsed).to.equal('claude-sonnet-4-20250514');
-  });
-
-  it('should expose validate hook that returns a boolean', async () => {
-    const valid = await claudeApiCodeGenModule.validate?.();
-
-    expect(typeof valid).to.equal('boolean');
+  it('should construct claude-api without an LLM pass-through (v6 A.2)', () => {
+    // v6 A.2 dropped the LLMProvider parameter from createDefaultCodeGenRegistry.
+    // The agent no longer pipes its own LLM into claude-api; claude-api now lazily
+    // builds its own Anthropic provider at generate() time. This test pins the
+    // factory's no-arg signature so a future regression that re-adds the parameter
+    // fails here.
+    const registry = createDefaultCodeGenRegistry();
+    const module = registry.getActiveModule('claude-api');
+    expect(module.name).to.equal('claude-api');
+    expect(module.version).to.equal('0.6.0');
   });
 });

@@ -10,10 +10,9 @@ dist/
 # Test coverage
 .nyc_output/
 coverage/
+log
 .beads/
 .claude
 
-
 # Research output files
 outputs/
-

@@ -1,5 +1,414 @@
 {
-  "last_updated": null,
-  "description": "Maps functional domains to all files/components involved across all services",
-  "domains": {}
+  "last_updated": "2026-05-14T09:30:21Z",
+  "domains": {
+    "contacts": {
+      "description": "Contact management - people, places, hierarchies, muting",
+      "api": {
+        "controllers": [
+          "api/src/controllers/contact.js",
+          "api/src/controllers/contacts-by-phone.js",
+          "api/src/controllers/person.js",
+          "api/src/controllers/place.js"
+        ],
+        "services": []
+      },
+      "webapp": {
+        "modules": [
+          "webapp/src/ts/modules/contacts/contacts.component.ts",
+          "webapp/src/ts/modules/contacts/contacts-content.component.ts",
+          "webapp/src/ts/modules/contacts/contacts-edit.component.ts",
+          "webapp/src/ts/modules/contacts/contacts-more-menu.component.ts"
+        ],
+        "services": [
+          "webapp/src/ts/services/contacts.service.ts",
+          "webapp/src/ts/services/contact-muted.service.ts",
+          "webapp/src/ts/services/contact-save.service.ts",
+          "webapp/src/ts/services/contact-types.service.ts",
+          "webapp/src/ts/services/contact-summary.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": [
+          "shared-libs/transitions/src/transitions/muting.js",
+          "shared-libs/transitions/src/lib/muting_utils.js"
+        ]
+      },
+      "shared_libs": [
+        {
+          "name": "contacts",
+          "path": "shared-libs/contacts",
+          "critical": true
+        },
+        {
+          "name": "contact-types-utils",
+          "path": "shared-libs/contact-types-utils",
+          "critical": true
+        },
+        {
+          "name": "lineage",
+          "path": "shared-libs/lineage",
+          "critical": true
+        }
+      ],
+      "tests": {
+        "unit": [
+          "webapp/tests/karma/ts/services/contact-muted.service.spec.ts",
+          "webapp/tests/karma/ts/modules/contacts/"
+        ],
+        "integration": [],
+        "e2e": [
+          "tests/e2e/default/contacts/"
+        ]
+      },
+      "ngrx": {
+        "actions": [
+          "webapp/src/ts/actions/contacts.ts"
+        ],
+        "reducers": [
+          "webapp/src/ts/reducers/contacts.ts"
+        ],
+        "effects": [
+          "webapp/src/ts/effects/contacts.effects.ts"
+        ],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "forms-and-reports": {
+      "description": "Form definitions, Enketo rendering, report submission and display",
+      "api": {
+        "controllers": [
+          "api/src/controllers/forms.js",
+          "api/src/controllers/records.js",
+          "api/src/controllers/report.js"
+        ],
+        "services": []
+      },
+      "webapp": {
+        "modules": [
+          "webapp/src/ts/modules/reports/"
+        ],
+        "services": [
+          "webapp/src/ts/services/enketo.service.ts",
+          "webapp/src/ts/services/enketo-translation.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": []
+      },
+      "shared_libs": [
+        {
+          "name": "validation",
+          "path": "shared-libs/validation",
+          "critical": true
+        },
+        {
+          "name": "registration-utils",
+          "path": "shared-libs/registration-utils",
+          "critical": false
+        }
+      ],
+      "tests": {
+        "unit": [
+          "webapp/tests/karma/ts/services/enketo.service.spec.ts"
+        ],
+        "integration": [],
+        "e2e": [
+          "tests/e2e/default/enketo/"
+        ]
+      },
+      "ngrx": {
+        "actions": [
+          "webapp/src/ts/actions/reports.ts"
+        ],
+        "reducers": [
+          "webapp/src/ts/reducers/reports.ts"
+        ],
+        "effects": [
+          "webapp/src/ts/effects/reports.effects.ts"
+        ],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "tasks-and-targets": {
+      "description": "Task generation, rules engine, target calculations",
+      "api": {
+        "controllers": [],
+        "services": []
+      },
+      "webapp": {
+        "modules": [
+          "webapp/src/ts/modules/tasks/"
+        ],
+        "services": [
+          "webapp/src/ts/services/rules-engine.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": []
+      },
+      "shared_libs": [
+        {
+          "name": "rules-engine",
+          "path": "shared-libs/rules-engine",
+          "critical": true
+        },
+        {
+          "name": "task-utils",
+          "path": "shared-libs/task-utils",
+          "critical": true
+        }
+      ],
+      "tests": {
+        "unit": [
+          "webapp/tests/karma/ts/modules/tasks/"
+        ],
+        "integration": [],
+        "e2e": [
+          "tests/e2e/default/tasks/"
+        ]
+      },
+      "ngrx": {
+        "actions": [
+          "webapp/src/ts/actions/tasks.ts",
+          "webapp/src/ts/actions/target-aggregates.ts"
+        ],
+        "reducers": [
+          "webapp/src/ts/reducers/tasks.ts",
+          "webapp/src/ts/reducers/target-aggregates.ts"
+        ],
+        "effects": [],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "messaging": {
+      "description": "SMS messaging, notifications, outbound messages",
+      "api": {
+        "controllers": [
+          "api/src/controllers/sms-gateway.js",
+          "api/src/controllers/rapidpro.js",
+          "api/src/controllers/africas-talking.js"
+        ],
+        "services": []
+      },
+      "webapp": {
+        "modules": [
+          "webapp/src/ts/modules/messages/"
+        ],
+        "services": [
+          "webapp/src/ts/services/send-message.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": [
+          "shared-libs/transitions/src/schedule/outbound.js"
+        ]
+      },
+      "shared_libs": [
+        {
+          "name": "message-utils",
+          "path": "shared-libs/message-utils",
+          "critical": true
+        },
+        {
+          "name": "outbound",
+          "path": "shared-libs/outbound",
+          "critical": false
+        }
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [],
+        "e2e": [
+          "tests/e2e/default/sms/"
+        ]
+      },
+      "ngrx": {
+        "actions": [
+          "webapp/src/ts/actions/messages.ts"
+        ],
+        "reducers": [
+          "webapp/src/ts/reducers/messages.ts"
+        ],
+        "effects": [],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "authentication": {
+      "description": "User authentication, permissions, roles, session management",
+      "api": {
+        "controllers": [
+          "api/src/controllers/login.js",
+          "api/src/controllers/users.js",
+          "api/src/controllers/credentials.js"
+        ],
+        "services": [
+          "api/src/auth.js"
+        ]
+      },
+      "webapp": {
+        "modules": [],
+        "services": [
+          "webapp/src/ts/services/auth.service.ts",
+          "webapp/src/ts/services/session.service.ts",
+          "webapp/src/ts/services/user-settings.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": []
+      },
+      "shared_libs": [
+        {
+          "name": "user-management",
+          "path": "shared-libs/user-management",
+          "critical": true
+        }
+      ],
+      "tests": {
+        "unit": [
+          "webapp/tests/karma/ts/services/auth.service.spec.ts"
+        ],
+        "integration": [],
+        "e2e": [
+          "tests/e2e/default/login/"
+        ]
+      },
+      "ngrx": {
+        "actions": [],
+        "reducers": [],
+        "effects": [],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "data-sync": {
+      "description": "CouchDB replication, offline sync, purging",
+      "api": {
+        "controllers": [
+          "api/src/controllers/replication.js",
+          "api/src/controllers/changes.js",
+          "api/src/controllers/bulk-docs.js",
+          "api/src/controllers/bulk-get.js"
+        ],
+        "services": [
+          "api/src/db.js"
+        ]
+      },
+      "webapp": {
+        "modules": [],
+        "services": [
+          "webapp/src/ts/services/db-sync.service.ts",
+          "webapp/src/ts/services/db.service.ts",
+          "webapp/src/ts/services/changes.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": [
+          "sentinel/src/lib/purging.js"
+        ]
+      },
+      "shared_libs": [
+        {
+          "name": "purging-utils",
+          "path": "shared-libs/purging-utils",
+          "critical": true
+        },
+        {
+          "name": "couch-request",
+          "path": "shared-libs/couch-request",
+          "critical": true
+        }
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [],
+        "e2e": [
+          "tests/e2e/default/purge/"
+        ]
+      },
+      "ngrx": {
+        "actions": [
+          "webapp/src/ts/actions/services.ts"
+        ],
+        "reducers": [
+          "webapp/src/ts/reducers/services.ts"
+        ],
+        "effects": [],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "configuration": {
+      "description": "App settings, translations, branding, deployment config",
+      "api": {
+        "controllers": [
+          "api/src/controllers/settings.js"
+        ],
+        "services": [
+          "api/src/config.js"
+        ]
+      },
+      "webapp": {
+        "modules": [
+          "webapp/src/ts/modules/configuration-user/"
+        ],
+        "services": [
+          "webapp/src/ts/services/settings.service.ts",
+          "webapp/src/ts/services/translate.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": []
+      },
+      "shared_libs": [
+        {
+          "name": "settings",
+          "path": "shared-libs/settings",
+          "critical": true
+        },
+        {
+          "name": "translation-utils",
+          "path": "shared-libs/translation-utils",
+          "critical": false
+        }
+      ],
+      "tests": {
+        "unit": [],
+        "integration": [],
+        "e2e": []
+      },
+      "ngrx": {
+        "actions": [
+          "webapp/src/ts/actions/global.ts"
+        ],
+        "reducers": [
+          "webapp/src/ts/reducers/global.ts"
+        ],
+        "effects": [
+          "webapp/src/ts/effects/global.effects.ts"
+        ],
+        "selectors": [
+          "webapp/src/ts/selectors/index.ts"
+        ]
+      }
+    },
+    "interoperability": {
+      "description": "FHIR / OpenHIM / external integration",
+      "api": { "controllers": [], "services": [] },
+      "webapp": { "modules": [], "services": [] },
+      "sentinel": { "transitions": [] },
+      "shared_libs": [],
+      "tests": { "unit": [], "integration": [], "e2e": [] },
+      "ngrx": { "actions": [], "reducers": [], "effects": [], "selectors": [] }
+    }
+  }
 }

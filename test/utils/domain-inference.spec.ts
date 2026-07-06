@@ -134,18 +134,17 @@ describe('domain-inference (mocked LLM)', () => {
     },
   });
 
-  // Replace the ESM-only ChatAnthropic with a stub whose invoke returns canned
-  // content, so the inference logic is gated without a live API call.
+  // Stub the LLM provider factory (createLLMProviderFromEnv) with a fake whose
+  // invoke returns canned content, so the inference logic is gated without a
+  // live API call. domain-inference resolves its model via '../llm', not the
+  // ESM-only ChatAnthropic directly.
   const loadInference = (
     invokeImpl: () => Promise<{ content: unknown }>,
     fsStub?: Record<string, unknown>,
   ) => {
     const invokeStub = sinon.stub().callsFake(invokeImpl);
-    const FakeChatAnthropic = function FakeChatAnthropic(this: object) {
-      return Object.assign(this, { invoke: invokeStub });
-    } as unknown as { new (args: Record<string, unknown>): { invoke: typeof invokeStub } };
     const stubs: Record<string, unknown> = {
-      '@langchain/anthropic': { ChatAnthropic: FakeChatAnthropic },
+      '../llm': { createLLMProviderFromEnv: () => ({ invoke: invokeStub }) },
     };
     if (fsStub) stubs['node:fs'] = fsStub;
     return { mod: proxyquire('../../src/utils/domain-inference', stubs), invokeStub };
