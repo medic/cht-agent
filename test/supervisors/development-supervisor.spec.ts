@@ -468,6 +468,22 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     expect(failSpy.called, 'a no-file result carrying warnings must fail the todo').to.equal(true);
   });
 
+  it('forwards state.validationFeedback to the agent as additionalContext (M6)', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile('src/a.ts')]),
+      validationFeedback: 'address the failing assertion',
+    });
+
+    await supervisor.testGenerationNode(state);
+
+    expect(testGen.calledOnce).to.equal(true);
+    const agentInput = testGen.firstCall.args[0] as { additionalContext?: string };
+    expect(agentInput.additionalContext).to.equal('address the failing assertion');
+  });
+
   it('stays complete (no fail) when the agent returns no files with NO warnings (intentional no-op) (M2)', async () => {
     const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
     const testGen = sinon.stub().resolves(emptyResult);
