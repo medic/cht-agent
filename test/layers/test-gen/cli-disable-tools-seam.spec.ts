@@ -201,3 +201,60 @@ describe('test-gen skips Phase-3 checklist when 0 files generated (iter7 C2/C3)'
     expect(out.requirementsChecklist).to.deep.equal([]);
   });
 });
+
+describe('test-gen tool handler rejects unsafe paths (H3, C1)', () => {
+  afterEach(() => sinon.restore());
+
+  // Drive generate() on a honors-tools provider and capture the toolHandler wired
+  // onto the Phase-2 invoke, with readFile/listDirectory as spies.
+  const captureToolHandler = async (
+    readFile: sinon.SinonStub,
+    listDirectory: sinon.SinonStub,
+  ): Promise<NonNullable<InvokeOptions['toolHandler']>> => {
+    const invokeStub = sinon.stub();
+    invokeStub.onCall(0).resolves(PLAN_RESPONSE);
+    invokeStub.onCall(1).resolves(PHASE2_RESPONSE);
+    invokeStub.onCall(2).resolves(CHECKLIST_RESPONSE);
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, true));
+    const input: TestGenModuleInput = { ...makeToolBoundInput(), readFile, listDirectory };
+    await module.generate(input);
+    const phase2 = invokeStub.getCall(1).args[1] as InvokeOptions;
+    return phase2.toolHandler!;
+  };
+
+  it('rejects a non-string path without calling readFile', async () => {
+    const readFile = sinon.stub().resolves('secret');
+    const listDirectory = sinon.stub().resolves([]);
+    const handler = await captureToolHandler(readFile, listDirectory);
+    const out = await handler('read_file', { path: 42 });
+    expect(out).to.match(/must be a string/);
+    expect(readFile.called).to.be.false;
+  });
+
+  it('rejects an absolute path (arbitrary read) without calling readFile', async () => {
+    const readFile = sinon.stub().resolves('root:x:0:0:...');
+    const listDirectory = sinon.stub().resolves([]);
+    const handler = await captureToolHandler(readFile, listDirectory);
+    const out = await handler('read_file', { path: '/etc/passwd' });
+    expect(out).to.match(/absolute paths are not allowed/);
+    expect(readFile.called).to.be.false;
+  });
+
+  it('rejects a traversal path without calling listDirectory', async () => {
+    const readFile = sinon.stub().resolves(null);
+    const listDirectory = sinon.stub().resolves(['secret-entry']);
+    const handler = await captureToolHandler(readFile, listDirectory);
+    const out = await handler('list_directory', { path: '../../etc' });
+    expect(out).to.match(/escapes the workspace/);
+    expect(listDirectory.called).to.be.false;
+  });
+
+  it('allows a valid relative path through to readFile', async () => {
+    const readFile = sinon.stub().resolves('file contents');
+    const listDirectory = sinon.stub().resolves([]);
+    const handler = await captureToolHandler(readFile, listDirectory);
+    const out = await handler('read_file', { path: 'api/src/controllers/contacts.js' });
+    expect(readFile.calledOnceWithExactly('api/src/controllers/contacts.js')).to.be.true;
+    expect(out).to.equal('file contents');
+  });
+});
