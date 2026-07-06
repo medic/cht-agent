@@ -496,11 +496,23 @@ export class DevelopmentSupervisor {
     try {
       const result = await this.testGenAgent.generate(input);
       console.log(`[Development Supervisor] Generated ${result.files.length} test file(s)`);
+      // A no-file result that carries warnings means work was attempted and lost
+      // (all plan items dropped, or every file failed the content gate) — report
+      // it as a failed todo, not a green no-op. A warning-free empty result is an
+      // intentional no-op (e.g. genuinely empty plan) and stays complete.
+      if (result.files.length === 0 && (result.warnings?.length ?? 0) > 0) {
+        return this.failTestGeneration(
+          todoId,
+          result,
+          `Test generation produced no files: ${result.warnings!.join('; ')}`,
+        );
+      }
       return this.finishTestGeneration(todoId, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       console.warn(`[Development Supervisor] Test generation failed (non-fatal): ${message}`);
-      return this.finishTestGeneration(todoId, emptyResult);
+      const reason = `Test generation failed: ${message}`;
+      return this.failTestGeneration(todoId, { ...emptyResult, warnings: [reason] }, reason);
     }
   }
 
@@ -514,6 +526,23 @@ export class DevelopmentSupervisor {
     result: TestGenerationResult,
   ): { testGeneration: TestGenerationResult; currentPhase: 'complete' } {
     this.todos.complete(todoId);
+    this.todos.printSummary();
+    return { testGeneration: result, currentPhase: 'complete' as const };
+  }
+
+  /**
+   * Mark the test-generation tracker entry FAILED (with a reason) and print the
+   * terminal summary. Test generation stays non-fatal: currentPhase remains
+   * 'complete' and no errors/validationFeedback/perFileFeedback are written, so
+   * it can never feed the validation score or trip the refinement loop — only the
+   * todo/summary reflects the failure.
+   */
+  private failTestGeneration(
+    todoId: string,
+    result: TestGenerationResult,
+    reason: string,
+  ): { testGeneration: TestGenerationResult; currentPhase: 'complete' } {
+    this.todos.fail(todoId, reason);
     this.todos.printSummary();
     return { testGeneration: result, currentPhase: 'complete' as const };
   }

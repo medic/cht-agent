@@ -17,6 +17,7 @@ import {
   GeneratedFile,
 } from '../../src/types';
 import { LLMProvider } from '../../src/llm';
+import { TodoTracker } from '../../src/utils/todo-tracker';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -375,6 +376,8 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
 });
 
 describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
+  afterEach(() => sinon.restore());
+
   const emptyResult = { files: [], explanation: '', requirementsChecklist: [] };
   const cannedTestGen = {
     files: [mkFile('tests/unit/a.spec.ts', '// spec\n', 'test')],
@@ -425,18 +428,57 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     expect(out.testGeneration).to.deep.equal(emptyResult);
   });
 
-  it('is non-fatal when the agent throws: empty result, complete, no errors written', async () => {
+  it('is non-fatal when the agent throws, but marks the todo failed with a warning (M2)', async () => {
+    const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
     const testGen = sinon.stub().rejects(new Error('boom'));
     const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
 
     const out = await supervisor.testGenerationNode(stateWithCode());
 
     expect(testGen.calledOnce).to.equal(true);
+    // Non-fatal contract preserved: terminal phase + no error/feedback channels.
+    const tg = out.testGeneration as { files: unknown[]; warnings?: string[] };
     expect(out.currentPhase).to.equal('complete');
-    expect(out.testGeneration).to.deep.equal(emptyResult);
+    expect(tg.files).to.deep.equal([]);
     expect(out.errors).to.equal(undefined);
     expect(out.validationFeedback).to.equal(undefined);
     expect(out.perFileFeedback).to.equal(undefined);
+    // But the failure is now reported honestly (warning + failed todo), not green.
+    expect(tg.warnings ?? []).to.satisfy(
+      (w: string[]) => w.some(s => /boom/.test(s)),
+    );
+    expect(failSpy.called, 'the test-gen todo must be marked failed').to.equal(true);
+  });
+
+  it('marks the todo failed when the agent returns no files WITH warnings (all dropped) (M2)', async () => {
+    const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
+    const droppedResult = {
+      files: [],
+      explanation: '',
+      requirementsChecklist: [],
+      warnings: ['Dropped invalid test-plan item "b.ts": ...'],
+    };
+    const testGen = sinon.stub().resolves(droppedResult);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(droppedResult);
+    expect(failSpy.called, 'a no-file result carrying warnings must fail the todo').to.equal(true);
+  });
+
+  it('stays complete (no fail) when the agent returns no files with NO warnings (intentional no-op) (M2)', async () => {
+    const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
+    const testGen = sinon.stub().resolves(emptyResult);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+    expect(failSpy.called, 'a warning-free empty result is an intentional no-op, not a failure')
+      .to.equal(false);
   });
 
   it('is reached once after the refinement loop exhausts and populates testGeneration', async () => {
