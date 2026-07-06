@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import {
   TestGenModule,
   TestGenModuleInput,
@@ -72,11 +73,31 @@ const LIST_DIRECTORY_TOOL: LLMToolDefinition = {
   },
 };
 
+/**
+ * Reason a tool path is unsafe to read/list, or null if safe. `toolInput.path`
+ * is untrusted LLM tool-use input that reaches readFile/listDirectory pre-HC2,
+ * so reject a non-string, an absolute path, or any path that escapes the
+ * workspace via a `..` segment (checked after normalization, not a substring).
+ * The handler must resolve to a string, so the caller returns this as an error.
+ */
+function rejectUnsafePath(p: unknown): string | null {
+  if (typeof p !== 'string') return 'Error: tool "path" must be a string';
+  if (path.isAbsolute(p)) return `Error: absolute paths are not allowed: ${p}`;
+  const segments = path.normalize(p).split(/[/\\]/);
+  if (segments.includes('..')) return `Error: path escapes the workspace: ${p}`;
+  return null;
+}
+
 function buildToolHandler(input: TestGenModuleInput): ToolHandler {
   return async (toolName, toolInput) => {
-    const filePath = toolInput.path as string;
-    if (toolName === 'read_file') return handleReadFileTool(input, filePath);
-    if (toolName === 'list_directory') return handleListDirectoryTool(input, filePath);
+    if (toolName === 'read_file' || toolName === 'list_directory') {
+      const reason = rejectUnsafePath(toolInput.path);
+      if (reason) return reason;
+      const filePath = toolInput.path as string;
+      return toolName === 'read_file'
+        ? handleReadFileTool(input, filePath)
+        : handleListDirectoryTool(input, filePath);
+    }
     return `Error: Unknown tool: ${toolName}`;
   };
 }
