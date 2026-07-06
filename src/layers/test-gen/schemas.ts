@@ -124,6 +124,10 @@ export const TestContentAssertions = {
    * ahead of otherwise-valid code passes them while failing `node --check`. A
    * syntactic parse (language-correct for .ts/.tsx/.js/.jsx via the script kind)
    * catches that class, and the failure feeds the regenerate loop.
+   *
+   * LIMIT (M7): this reads parse diagnostics only — it catches SYNTAX errors, not
+   * type errors or unresolved imports, so "passes" does not mean "compiles". The
+   * real type/compile check is the deferred compile/coverage gate (see the #115 doc).
    */
   parsesAsCode(content: string, filePath: string): string[] {
     const sourceFile = ts.createSourceFile(
