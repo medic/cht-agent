@@ -45,6 +45,25 @@ describe('TestContentAssertions', () => {
       expect(failures).to.have.length(1);
       expect(failures[0]).to.include('no assertions');
     });
+
+    it('should fail on a hollow describe/it shell with no real assertion (H2)', () => {
+      // describe/it are structure, not assertions: this empty shell must fail the
+      // assertion gate even though it "looks" like a test.
+      const content = `describe('x', () => { it('works', () => {}); });`;
+      const failures = TestContentAssertions.hasAssertions(content);
+      expect(failures).to.have.length(1);
+      expect(failures[0]).to.include('no assertions');
+    });
+
+    it('should fail when only an `expect` import is present (no assertion call) (H2)', () => {
+      const content = `import { expect } from 'chai';\ndescribe('x', () => { it('works', () => {}); });`;
+      expect(TestContentAssertions.hasAssertions(content)).to.have.length(1);
+    });
+
+    it('should pass with a property-style .should assertion', () => {
+      const content = `result.should.equal(42);`;
+      expect(TestContentAssertions.hasAssertions(content)).to.deep.equal([]);
+    });
   });
 
   describe('hasProperImports', () => {

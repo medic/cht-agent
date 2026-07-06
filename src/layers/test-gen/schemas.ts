@@ -35,13 +35,15 @@ export const RequirementsChecklistSchema = z.object({
 export type ValidatedTestPlanItem = z.infer<typeof TestPlanItemSchema>;
 export type ValidatedTestPlan = z.infer<typeof TestPlanSchema>;
 
-const TEST_STRUCTURE_PATTERNS = [
-  /describe\s*\(/,
-  /it\s*\(/,
-  /test\s*\(/,
-  /expect\s*\(/,
-  /assert\s*[.(]/,
-  /should\s*[.(]/,
+// Assertion-only, anchored: a real assertion CALL, not test structure or an
+// import. Excludes describe/it/test (structure, checked separately) and a bare
+// `chai`/`should` (so `import { expect } from 'chai'` alone does not satisfy the
+// gate). `.should` needs the property form (`x.should.equal`), not the import.
+const ASSERTION_PATTERNS = [
+  /\bexpect\s*\(/,
+  /\bassert\s*[.(]/,
+  /\.should\b/,
+  /sinon\.assert/,
 ];
 
 
@@ -65,7 +67,7 @@ export const TestContentAssertions = {
   hasAssertions(content: string): string[] {
     const failures: string[] = [];
 
-    const hasAssertion = TEST_STRUCTURE_PATTERNS.some(p => p.test(content));
+    const hasAssertion = ASSERTION_PATTERNS.some(p => p.test(content));
     if (!hasAssertion) {
       failures.push('Test file contains no assertions (expect/assert/should)');
     }
