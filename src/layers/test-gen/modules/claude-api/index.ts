@@ -1064,41 +1064,6 @@ Output ONLY the JSON. No explanations.`;
     return lines.join('\n');
   }
 
-  /**
-   * Public back-compat extractor for raw LLM output.
-   * Preserves the existing test-gen behavior (markdown-fence strip + first
-   * code-line search) so external callers and the spec at
-   * test/layers/test-gen/claude-api-module.spec.ts continue to pass.
-   * Internally the per-file generation path uses {@link parseSingleFileContent}
-   * (lib helper) for reasoning-preamble protection.
-   */
-  extractCodeContent(rawContent: string): string {
-    let content = rawContent.trim();
-
-    const codeBlockMatch = /^```(?:\w+)?\n([\s\S]*?)\n```$/.exec(content);
-    if (codeBlockMatch) {
-      content = codeBlockMatch[1];
-    }
-
-    const lines = content.split('\n');
-    let codeStartIdx = 0;
-    for (let i = 0; i < Math.min(lines.length, 10); i++) {
-      const line = lines[i].trim();
-      if (
-        line.startsWith('import ') || line.startsWith('const ') ||
-        line.startsWith('require(') || line.startsWith("'use strict'") ||
-        line.startsWith('"use strict"') || line.startsWith('/**') ||
-        line.startsWith('//') || line.startsWith('describe(') ||
-        line.startsWith('module.')
-      ) {
-        codeStartIdx = i;
-        break;
-      }
-    }
-
-    return lines.slice(codeStartIdx).join('\n').trim();
-  }
-
   // ============================================================================
   // Validation
   // ============================================================================

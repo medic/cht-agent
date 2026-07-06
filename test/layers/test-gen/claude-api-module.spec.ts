@@ -153,60 +153,6 @@ describe('ClaudeApiTestGenModule', () => {
     });
   });
 
-  describe('extractCodeContent()', () => {
-    it('should strip markdown code fences', () => {
-      const raw = '```javascript\nconst x = 1;\n```';
-
-      const content = module.extractCodeContent(raw);
-
-      expect(content).to.equal('const x = 1;');
-    });
-
-    it('should strip leading prose before code', () => {
-      const raw = `Here is the test file:\nimport { expect } from 'chai';\n\ndescribe('test', () => {});`;
-
-      const content = module.extractCodeContent(raw);
-
-      expect(content).to.include("import { expect } from 'chai';");
-      expect(content.indexOf("import { expect }")).to.equal(0);
-    });
-
-    it('should preserve content starting with describe()', () => {
-      const raw = `describe('MyService', () => {\n  it('works', () => {});\n});`;
-
-      const content = module.extractCodeContent(raw);
-
-      expect(content).to.equal(raw);
-    });
-
-    it('should preserve content starting with require()', () => {
-      const raw = `require('chai');\nconst x = 1;`;
-
-      // extractCodeContent starts from the first code-like line
-      const content = module.extractCodeContent(raw);
-
-      expect(content).to.include("require('chai')");
-      expect(content.indexOf("require('chai')")).to.equal(0);
-    });
-
-    it('should handle content starting with comments', () => {
-      const raw = `// Test file for contacts\nimport sinon from 'sinon';`;
-
-      const content = module.extractCodeContent(raw);
-
-      expect(content).to.include('// Test file');
-      expect(content.indexOf('// Test file')).to.equal(0);
-    });
-
-    it('should return trimmed content', () => {
-      const raw = `  \n  const x = 1;\n  `;
-
-      const content = module.extractCodeContent(raw);
-
-      expect(content).to.equal('const x = 1;');
-    });
-  });
-
   describe('buildTestPlanPrompt()', () => {
     const baseInput = {
       ticket: {
