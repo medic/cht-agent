@@ -123,6 +123,34 @@ describe('ClaudeApiTestGenModule', () => {
 
       expect(checklist).to.deep.equal([]);
     });
+
+    it('parses valid JSON even when trailing prose contains a brace (M8)', () => {
+      // The old greedy /\{[\s\S]*\}/ anchored to the LAST `}` (the one in "{}"),
+      // over-captured, and JSON.parse threw -> silent []. The balanced scan stops
+      // at the object's own close.
+      const raw = `{"checklist": [{"requirement": "R", "scenarios": [{"name": "n", "type": "happy-path", "description": "d"}]}]}\nNote: use {} for an empty object.`;
+
+      const checklist = module.parseRequirementsChecklist(raw);
+
+      expect(checklist).to.have.length(1);
+      expect(checklist[0].requirement).to.equal('R');
+    });
+
+    it('captures a deeply nested checklist fully, not truncated at the first } (M8)', () => {
+      const raw = `prefix {"checklist": [{"requirement": "R", "scenarios": [{"name": "n", "type": "edge-case", "description": "d"}]}]} suffix`;
+
+      const checklist = module.parseRequirementsChecklist(raw);
+
+      expect(checklist).to.have.length(1);
+      expect(checklist[0].scenarios[0].type).to.equal('edge-case');
+    });
+
+    it('returns [] for a checklist with an invalid scenario type (schema is authoritative, M1)', () => {
+      // Old code fell through to returning the raw (unvalidated) checklist here.
+      const raw = `{"checklist": [{"requirement": "R", "scenarios": [{"name": "n", "type": "not-a-type", "description": "d"}]}]}`;
+
+      expect(module.parseRequirementsChecklist(raw)).to.deep.equal([]);
+    });
   });
 
   describe('extractCodeContent()', () => {

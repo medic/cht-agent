@@ -258,3 +258,32 @@ describe('test-gen tool handler rejects unsafe paths (H3, C1)', () => {
     expect(out).to.equal('file contents');
   });
 });
+
+describe('test-gen plan schema is authoritative (M1, C4)', () => {
+  afterEach(() => sinon.restore());
+
+  const makePlan = (items: string) =>
+    makeResponse(`=== TEST PLAN ===\n${items}\n=== END TEST PLAN ===`, 'end_turn');
+
+  it('drops an invalid plan item and surfaces a warning, keeping valid items', async () => {
+    const invokeStub = sinon.stub();
+    // Item 1 is valid (.spec path, 10+ char description); item 2 has a non-.spec
+    // path so TestPlanItemSchema rejects it — it must be dropped with a warning,
+    // not silently kept (the old validate-and-ignore behavior).
+    invokeStub.onCall(0).resolves(makePlan(
+      '1. unit tests/a.spec.ts -> src/a.ts - Cover the happy path thoroughly\n' +
+      '2. unit tests/b.ts -> src/b.ts - Cover the error path thoroughly'
+    ));
+    invokeStub.onCall(1).resolves(PHASE2_RESPONSE);
+    invokeStub.onCall(2).resolves(CHECKLIST_RESPONSE);
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, false));
+
+    const out = await module.generate(makeToolBoundInput());
+
+    expect(out.files).to.have.length(1);
+    expect(out.warnings ?? []).to.satisfy(
+      (w: string[]) => w.some(s => /Dropped invalid test-plan item.*b\.ts/.test(s)),
+      'a dropped plan item must surface a warning',
+    );
+  });
+});
