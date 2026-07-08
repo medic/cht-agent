@@ -5,6 +5,11 @@ import { readEnv } from '../../utils/env';
 
 const PROVIDER_ALIAS_MAP: Record<string, string> = {
   anthropic: 'claude-api',
+  // The single test-gen module is provider-agnostic: it runs via `claude -p` when
+  // LLM_PROVIDER=claude-cli (text-only, disableTools). So claude-cli selects it,
+  // keeping TEST_GEN_MODULE symmetric with CODE_GEN_MODULE. A genuinely-unknown
+  // value still passes through to get() and throws (honest failure preserved).
+  'claude-cli': 'claude-api',
 };
 
 export class TestGenModuleRegistry {

@@ -59,14 +59,14 @@ describe('TestGenModuleRegistry', () => {
     expect(active.name).to.equal('claude-api');
   });
 
-  it('throws a clear error for claude-cli instead of silently resolving to an unregistered module (H1)', () => {
-    // No phantom `claude-cli -> claude-code-cli` alias: there is no CLI test-gen
-    // module yet, so the default registry (claude-api only) must throw a clear
-    // error rather than resolve to an unregistered module (which the non-fatal
-    // wrapper would have turned into a silent 0-file run).
+  it('resolves the claude-cli alias to the claude-api module (H1 completed)', () => {
+    // The single test-gen module is provider-agnostic and runs via `claude -p`
+    // under LLM_PROVIDER=claude-cli, so claude-cli selects it — symmetric with
+    // CODE_GEN_MODULE. (A genuinely-unknown provider still throws; see below.)
     const registry = createDefaultTestGenRegistry();
 
-    expect(() => registry.getActiveModule('claude-cli')).to.throw(/provider "claude-cli".+claude-api/);
+    expect(registry.resolveProvider('claude-cli')).to.equal('claude-api');
+    expect(registry.getActiveModule('claude-cli').name).to.equal('claude-api');
   });
 
   it('should pass through unknown aliases as-is', () => {
