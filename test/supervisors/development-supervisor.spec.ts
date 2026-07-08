@@ -355,6 +355,25 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     expect(await fs.readFile(path.join(scratch, 'src/a.ts'), 'utf-8')).to.equal('A\n');
   });
 
+  it('dedupes files by relativePath, keeping the last (test-gen) writer (F-D)', async () => {
+    const generate = sinon.stub();
+    const supervisor = buildSupervisorWithStubAgents(generate);
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile('src/shared.ts', 'CODE-GEN\n')]),
+      testGeneration: {
+        files: [mkFile('src/shared.ts', 'TEST-GEN\n')],
+        explanation: '',
+        requirementsChecklist: [],
+      },
+    });
+
+    const written = await supervisor.writeToChtCore(state, scratch);
+
+    expect(written).to.deep.equal(['src/shared.ts']); // one entry, not double-listed
+    expect(await fs.readFile(path.join(scratch, 'src/shared.ts'), 'utf-8')).to.equal('TEST-GEN\n');
+  });
+
   it('clearStaging removes the staging directory and tolerates missing dirs', async () => {
     const generate = sinon.stub();
     const supervisor = buildSupervisorWithStubAgents(generate);

@@ -915,6 +915,19 @@ Respond with a JSON object:
   /**
    * Write generated files to staging directory
    */
+  /**
+   * F-D: collapse duplicate relativePaths, keeping the LAST writer. Test-gen files
+   * are appended after code-gen, so test-gen wins — preserving the existing
+   * last-writer-wins semantics while ensuring one write per path and a
+   * non-double-counted writtenFiles. After F-A + F-D the paths are disjoint, so
+   * this is a defensive guard.
+   */
+  private dedupeByRelativePath(files: GeneratedFile[]): GeneratedFile[] {
+    const byPath = new Map<string, GeneratedFile>();
+    for (const file of files) byPath.set(file.relativePath, file);
+    return [...byPath.values()];
+  }
+
   async writeToStaging(state: DevelopmentState): Promise<{
     stagingPath: string;
     writtenFiles: string[];
@@ -931,7 +944,7 @@ Respond with a JSON object:
       allFiles.push(...state.testGeneration.files);
     }
 
-    const writtenFiles = await writeToStaging(allFiles, stagingPath);
+    const writtenFiles = await writeToStaging(this.dedupeByRelativePath(allFiles), stagingPath);
 
     console.log(`[Development Supervisor] Written ${writtenFiles.length} files to staging: ${stagingPath}`);
 
@@ -952,7 +965,7 @@ Respond with a JSON object:
       allFiles.push(...state.testGeneration.files);
     }
 
-    const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
+    const writtenFiles = await writeToChtCore(this.dedupeByRelativePath(allFiles), chtCorePath);
 
     console.log(`[Development Supervisor] Written ${writtenFiles.length} files to ${chtCorePath}`);
 
