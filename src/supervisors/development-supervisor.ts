@@ -63,8 +63,16 @@ function renderBulletSection<T>(heading: string, items: T[], format: (item: T) =
 export interface ValidateImplEdgeState {
   validationResult?: { overallScore?: number };
   iterationCount?: number;
-  codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
+  codeGeneration?: { crossFileIssues?: { issueType?: string }[]; files?: unknown[] };
 }
+
+/**
+ * Cross-file issue types that are advisory, not blocking (F-C): the CLI code-gen
+ * module's reconcilePlanAdherence emits these for a valid file touched outside the
+ * narrow HC1 plan. They must NOT re-trigger the refinement loop (they stay visible
+ * in the HC2 banner, which reads crossFileIssues directly).
+ */
+const WARN_ONLY_ISSUE_TYPES = new Set(['plan-adherence-extra', 'plan-adherence-missing']);
 
 /**
  * Decide what edge the validateImpl node should take next. Pure function so
@@ -90,9 +98,19 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
     console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
     return '__end__';
   }
-  const belowBar = score < REFINEMENT_THRESHOLD || issues.length > 0;
+  // F-C: 0 files cannot be improved by looping, and on a 0-file re-iteration
+  // reconcilePlanAdherence flips every plan path to plan-adherence-missing, which
+  // would otherwise keep belowBar true forever. End cleanly (the guard lives here,
+  // not validationNode, because the resolver ignores currentPhase).
+  if ((state.codeGeneration?.files?.length ?? 0) === 0) {
+    console.log('[Development Supervisor] 0 files generated; ending workflow (refinement loop cannot help)');
+    return '__end__';
+  }
+  // Only BLOCKING issues re-trigger refinement; plan-adherence-* are warn-only.
+  const blockingIssues = issues.filter(i => !WARN_ONLY_ISSUE_TYPES.has(i.issueType ?? ''));
+  const belowBar = score < REFINEMENT_THRESHOLD || blockingIssues.length > 0;
   if (belowBar && iterations < MAX_ITERATIONS) {
-    logRefinementLoop(score, issues, iterations);
+    logRefinementLoop(score, blockingIssues, iterations);
     return 'generateCode';
   }
   if (belowBar) {
@@ -126,10 +144,10 @@ function checkAcceptanceCriteria(issue: IssueTemplate, codeGen: CodeGenerationRe
   });
 }
 
-function logRefinementLoop(score: number, issues: { issueType?: string }[], iterations: number): void {
+function logRefinementLoop(score: number, blockingIssues: { issueType?: string }[], iterations: number): void {
   const reason = score < REFINEMENT_THRESHOLD
     ? `Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold`
-    : `${issues.length} cross-file issue(s)`;
+    : `${blockingIssues.length} blocking cross-file issue(s)`;
   console.log(`[Development Supervisor] ${reason}, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
 }
 

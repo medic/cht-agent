@@ -57,7 +57,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
   const baseState: ValidateImplEdgeState = {
     validationResult: { overallScore: 90 },
     iterationCount: 0,
-    codeGeneration: { crossFileIssues: [] },
+    codeGeneration: { crossFileIssues: [], files: [{}] },
   };
 
   it('returns __end__ when execute-no-op is present, even with iterations available', () => {
@@ -80,7 +80,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
       ...baseState,
       validationResult: { overallScore: 50 },
       iterationCount: 0,
-      codeGeneration: { crossFileIssues: [] },
+      codeGeneration: { crossFileIssues: [], files: [{}] },
     };
     expect(resolveValidateImplEdge(state)).to.equal('generateCode');
   });
@@ -92,6 +92,46 @@ describe('resolveValidateImplEdge (R17.4)', () => {
       iterationCount: 0,
       codeGeneration: {
         crossFileIssues: [{ issueType: 'compile-error' }],
+        files: [{}],
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('generateCode');
+  });
+
+  it('does NOT loop on a plan-adherence-extra note alone (warn-only) when score is high (F-C)', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 95 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-extra' }],
+        files: [{}],
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('__end__');
+  });
+
+  it('ends the loop on a 0-file regeneration even below threshold (F-C 0-file guard)', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 10 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-missing' }],
+        files: [], // 0 files: looping cannot help
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('__end__');
+  });
+
+  it('still loops on a real compile-error even alongside a warn-only note (F-C)', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 95 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-extra' }, { issueType: 'compile-error' }],
+        files: [{}],
       },
     };
     expect(resolveValidateImplEdge(state)).to.equal('generateCode');
@@ -106,7 +146,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
       ...baseState,
       validationResult: { overallScore: 50 },
       iterationCount: 3, // MAX_ITERATIONS
-      codeGeneration: { crossFileIssues: [] },
+      codeGeneration: { crossFileIssues: [], files: [{}] },
     };
     expect(resolveValidateImplEdge(state)).to.equal('__end__');
   });
