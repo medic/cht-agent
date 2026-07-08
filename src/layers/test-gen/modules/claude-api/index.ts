@@ -166,6 +166,25 @@ function extractFirstJsonObject(text: string): string | null {
   return null;
 }
 
+/**
+ * Insert `.additional[.N]` before the `.spec.`/`.test.` segment (same directory,
+ * basename change only), so an existing spec is never overwritten (F-A):
+ *   api/tests/messaging.spec.js -> api/tests/messaging.additional.spec.js
+ *   (counter 2)                 -> api/tests/messaging.additional.2.spec.js
+ * Falls back to inserting before the final extension for a path without a
+ * recognizable `.spec.`/`.test.` segment.
+ */
+/** Upper bound on `.additional.N` sibling probing (defensive; unreachable in practice). */
+const SIBLING_PATH_CAP = 100;
+
+export function siblingSpecPath(filePath: string, counter?: number): string {
+  const suffix = counter ? `.additional.${counter}` : '.additional';
+  const m = /^(.*)(\.(?:spec|test))(\.[^.]+)$/.exec(filePath);
+  if (m) return `${m[1]}${suffix}${m[2]}${m[3]}`;
+  const ext = path.extname(filePath);
+  return `${filePath.slice(0, filePath.length - ext.length)}${suffix}${ext}`;
+}
+
 export class ClaudeApiTestGenModule implements TestGenModule {
   name = 'claude-api';
 
@@ -194,6 +213,11 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     const planResult = await this.resolvePlan(input, llm.modelName);
     if (planResult.bailout) return planResult.bailout;
     const { plan, planTokens, planWarnings } = planResult;
+
+    // F-A: never overwrite an existing spec. Redirect any plan item whose target
+    // already exists on disk to a new sibling path BEFORE generation/emit, so the
+    // action-blind writer can only ever create. Covers both plan sources.
+    await this.resolveTargetPaths(plan, input);
 
     this.surfacePlan(plan);
 
@@ -322,6 +346,43 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     for (const item of plan) {
       console.log(`[Test Gen Module]   ${item.testType} ${item.filePath} -> ${item.targetSourceFile}`);
     }
+  }
+
+  /**
+   * F-A: redirect any plan item whose canonical spec path already exists on disk
+   * to a NEW `*.additional.spec.*` sibling (same directory), so test-gen can never
+   * overwrite pre-existing coverage. Mutates plan items in place — one filePath
+   * change propagates to the emit site, the previously-generated prompt context,
+   * and validateAgainstManifest (single source of truth). The existence check uses
+   * input.readFile (bound to readFromChtCore over the same chtCorePath the writer
+   * uses), so it agrees with the eventual write.
+   */
+  private async resolveTargetPaths(plan: TestPlanItem[], input: TestGenModuleInput): Promise<void> {
+    if (!input.readFile) return; // no existence check available: keep canonical paths
+    for (const item of plan) {
+      if (!(await this.pathExists(item.filePath, input))) continue;
+      const sibling = await this.nextFreeSiblingPath(item.filePath, input);
+      console.log(`[Test Gen Module] Target spec exists; writing sibling instead: ${item.filePath} -> ${sibling}`);
+      item.filePath = sibling;
+    }
+  }
+
+  private async pathExists(relPath: string, input: TestGenModuleInput): Promise<boolean> {
+    if (!input.readFile) return false;
+    return (await input.readFile(relPath)) !== null;
+  }
+
+  /**
+   * First `.additional[.N]` sibling of filePath that does not already exist.
+   * Bounded (SIBLING_PATH_CAP) so a misbehaving readFile can never spin forever;
+   * hitting the cap is not reachable with a real cht-core tree.
+   */
+  private async nextFreeSiblingPath(filePath: string, input: TestGenModuleInput): Promise<string> {
+    let candidate = siblingSpecPath(filePath);
+    for (let n = 2; n <= SIBLING_PATH_CAP && (await this.pathExists(candidate, input)); n++) {
+      candidate = siblingSpecPath(filePath, n);
+    }
+    return candidate;
   }
 
   private logPostCallValidation(warnings: string[]): void {

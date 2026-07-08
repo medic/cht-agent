@@ -219,6 +219,11 @@ describe('test-gen tool handler rejects unsafe paths (H3, C1)', () => {
     const input: TestGenModuleInput = { ...makeToolBoundInput(), readFile, listDirectory };
     await module.generate(input);
     const phase2 = invokeStub.getCall(1).args[1] as InvokeOptions;
+    // resolveTargetPaths (F-A) legitimately calls readFile during generate() for
+    // its existence check; reset the spies so the assertions below isolate what
+    // the TOOL HANDLER does, not that earlier phase.
+    readFile.resetHistory();
+    listDirectory.resetHistory();
     return phase2.toolHandler!;
   };
 
@@ -285,5 +290,37 @@ describe('test-gen plan schema is authoritative (M1, C4)', () => {
       (w: string[]) => w.some(s => /Dropped invalid test-plan item.*b\.ts/.test(s)),
       'a dropped plan item must surface a warning',
     );
+  });
+});
+
+describe('test-gen never overwrites an existing spec (F-A, C1)', () => {
+  afterEach(() => sinon.restore());
+
+  // PLAN_RESPONSE plans exactly one file: gen.spec.ts.
+  const wire = (readFile: (p: string) => Promise<string | null>) => {
+    const invokeStub = sinon.stub();
+    invokeStub.onCall(0).resolves(PLAN_RESPONSE);
+    invokeStub.onCall(1).resolves(PHASE2_RESPONSE);
+    invokeStub.onCall(2).resolves(CHECKLIST_RESPONSE);
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, false));
+    const input: TestGenModuleInput = { ...makeToolBoundInput(), readFile };
+    return module.generate(input);
+  };
+
+  it('redirects to an .additional sibling when the canonical spec already exists', async () => {
+    const out = await wire(async (p) => (p === 'gen.spec.ts' ? 'existing 744-line spec' : null));
+    expect(out.files).to.have.length(1);
+    expect(out.files[0].path).to.equal('gen.additional.spec.ts');
+  });
+
+  it('bumps a counter when the .additional sibling also already exists', async () => {
+    const existing = new Set(['gen.spec.ts', 'gen.additional.spec.ts']);
+    const out = await wire(async (p) => (existing.has(p) ? 'exists' : null));
+    expect(out.files[0].path).to.equal('gen.additional.2.spec.ts');
+  });
+
+  it('keeps the canonical path when no spec exists at the target', async () => {
+    const out = await wire(async () => null);
+    expect(out.files[0].path).to.equal('gen.spec.ts');
   });
 });
