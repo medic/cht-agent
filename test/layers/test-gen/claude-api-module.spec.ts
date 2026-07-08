@@ -1,5 +1,27 @@
 import { expect } from 'chai';
-import { ClaudeApiTestGenModule } from '../../../src/layers/test-gen/modules/claude-api';
+import { ClaudeApiTestGenModule, siblingSpecPath } from '../../../src/layers/test-gen/modules/claude-api';
+
+describe('siblingSpecPath (F-A)', () => {
+  it('inserts .additional before the .spec segment, same directory', () => {
+    expect(siblingSpecPath('api/tests/messaging.spec.js')).to.equal('api/tests/messaging.additional.spec.js');
+  });
+
+  it('handles .test.<ext> too', () => {
+    expect(siblingSpecPath('webapp/src/foo.test.ts')).to.equal('webapp/src/foo.additional.test.ts');
+  });
+
+  it('bumps a counter when a numbered sibling is requested', () => {
+    expect(siblingSpecPath('a/b/c.spec.js', 2)).to.equal('a/b/c.additional.2.spec.js');
+  });
+
+  it('takes the LAST .spec segment and keeps the directory', () => {
+    expect(siblingSpecPath('a.spec.dir/x.spec.js')).to.equal('a.spec.dir/x.additional.spec.js');
+  });
+
+  it('falls back to inserting before the final extension when no .spec/.test segment', () => {
+    expect(siblingSpecPath('weird/name.js')).to.equal('weird/name.additional.js');
+  });
+});
 
 describe('ClaudeApiTestGenModule', () => {
   const module = new ClaudeApiTestGenModule();
