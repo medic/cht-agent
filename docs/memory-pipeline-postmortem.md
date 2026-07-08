@@ -38,7 +38,8 @@ One defect dominates everything else:
 > `fixes|closes|resolves #N`, but CHT encodes the issue in the **PR title** `type(#N):`, which is
 > never parsed. So for the common case `linkedIssues` is empty, the `?? pr.prNumber` fallback
 > fires, and the memory's primary key names the **merge PR** instead of the resolved issue.
-> **~60 of 107 drafts corpus-wide** are affected. The `/issues/N -> /pull/N` GitHub redirect makes
+> **~60 of 107 drafts across the four fully-reviewed domains** (contacts/auth/config/data-sync) are
+> affected. The `/issues/N -> /pull/N` GitHub redirect makes
 > the bad reference resolve to a valid page, so `validate-schema` passed with 0 failures while
 > shipping wrong data.
 
@@ -46,11 +47,12 @@ Everything downstream inherits this: the id scheme is internally inconsistent (i
 the body used a keyword, PR-keyed otherwise), which **defeats the planned #135 de-dup-by-issue-id
 consumer** because the key is neither reliably the issue nor the PR.
 
-PR #129 (data-sync) already shipped a **partial fix** (`gh-classify.ts` using the `pull_request`
-API key to tell issues from PRs, plus `issue-linkage.ts` and a one-off `relink-issues.ts`), but
-its "affected" predicate (`issueNumber === source_pr`) was narrower than the bug (missed the
-nested `10399 -> 10182(PR) -> 10183` case) and it does not yet cover title-only PRs, the forward
-write path for all seeders, or deduplication.
+PR #129 (data-sync) already shipped most of the fix (`gh-classify.ts` using the `pull_request`
+API key to tell issues from PRs, `issue-linkage.ts` collecting refs from title + closing-refs, and
+a one-off `relink-issues.ts`): title parsing is wired into the forward path (`scraper.ts`), the
+`?? pr.prNumber` alias is gone from `buildFrontmatter` (`distiller.ts:268` flags PRs with no
+issue), and the nested `10399 -> 10182(PR) -> 10183` case is handled and regression-tested
+(`relink-issues.spec.ts:96`). **Deduplication is the one gap still open.**
 
 ---
 
@@ -59,8 +61,9 @@ write path for all seeders, or deduplication.
 ## 1. Overall patterns
 
 1. **PR-number-as-issue-number is the single dominant defect** across all 8 seeders
-   (`distiller.ts:267`). Reviewer-confirmed prevalence: 31/44 contacts, 19/39 auth, 4/10 config,
-   6/14 data-sync, 15/35 tasks, plus messaging/forms/infra clusters - **~60/107 corpus-wide**.
+   (`distiller.ts:267`). Reviewer-confirmed prevalence in the four fully-reviewed domains: 31/44
+   contacts, 19/39 auth, 4/10 config, 6/14 data-sync - **~60/107**; tasks (15/35) and the
+   messaging/forms/infra clusters add more on top.
 2. **The mislink's root is upstream in the scraper, not the LLM.** `fetchLinkedIssues`
    (`scraper.ts:82-112`) parses only body `fixes/closes/resolves #N` and explicitly omits GitHub's
    `closingIssuesReferences` sidebar (documented limitation, header). The CHT `type(#N):` title
@@ -112,7 +115,7 @@ recurring prose defects at low effort:
    > `relatedFiles` and `entities` MUST be chosen only from the Files changed list above. Do not
    > infer, guess, or invent paths. If a file is not in that list, do not include it.
 
-   *Fixes:* hallucinated paths (#123/10623 - `message.pipe.ts`, `reducers/tasks.ts` not in the PR).
+   *Fixes:* hallucinated paths (#123/10623 - draft lists `services/user-contact.service.ts`, absent from the PR).
 2. **Ban ungrounded channels/reviewers/process trivia.**
    > Do NOT mention communication channels (Slack, forum, etc.), reviewer usernames, approval
    > status (LGTM/approved), number of review rounds, or one-off CI/environment/dependency issues
@@ -144,16 +147,16 @@ recurring prose defects at low effort:
 ## 4. Pipeline improvements that address multiple issues
 
 1. **Resolve the canonical issue with a priority chain; stop aliasing the PR number.**
-   `(1)` body `Fixes/Closes/Resolves` -> `(2)` CHT title `type(#N):` -> `(3)` GraphQL
-   `closingIssuesReferences`, following one PR->PR hop via `gh-classify.ts`'s `pull_request` key;
+   `(1)` GraphQL `closingIssuesReferences` (GitHub's authoritative link) -> `(2)` CHT title
+   `type(#N):` -> `(3)` body `Fixes/Closes/Resolves`, following one PR->PR hop via `gh-classify.ts`'s `pull_request` key;
    only if all fail, `issueNumber = null` + flag for human. Always keep the PR in `source_pr`.
    *Where:* `scraper.ts fetchLinkedIssues` + a shared resolver in `distiller.buildFrontmatter`
    (drop `?? pr.prNumber` at line 267); reuse #129's `issue-linkage.ts`/`gh-classify.ts`.
    *Solves:* the ~60/107 mislink and the id-scheme inconsistency that blocks #135.
-2. **Make `issueUrl` honest and the schema issue-optional.** When only a PR is known, emit
-   `/pull/<n>` (or a `source_url` field) and derive `id` as `cht-core-pr-<n>`; allow `issueNumber`
-   null. Never build `/issues/<prNumber>`.
-   *Where:* `distiller.buildFrontmatter` (lines 270/274/275) and `agent-memory/schema.json`.
+2. **Require a resolved issue, or skip the PR - never fabricate `/issues/<prNumber>`.** #138 shipped
+   this: `buildFrontmatter` keeps `issueNumber` required and `flagForHuman`s any PR that closes no
+   tracked issue, rather than emitting a PR-derived `/issues/` URL.
+   *Where:* `distiller.buildFrontmatter` (throws/flags when `linkedIssues[0]` is absent).
    *Solves:* the silent redirect that masks mislinks; fabricated issue metadata for `feat(na)`
    PRs (#131/8843, #121/8693/10689).
 3. **Add a de-dup pass keyed on resolved issue id, across ALL seeders, before promotion.** Collapse
@@ -185,12 +188,18 @@ recurring prose defects at low effort:
 
 ## 5. Prioritized implementation roadmap
 
+> **Status:** most of this is now in-flight in the open **#138** (same author). Ranks 1-3 and 5-8
+> map to `dedup.ts` (`ciGuardReason`, `dedupeByIssueId` + `source_prs[]`), `reconcile.ts`
+> (`hallucinationRate`), the `buildPrompt` CONSTRAINTS block, `stripBoilerplate` +
+> `ISSUE_BODY_LIMIT_EXPANDED`, and `computeConfidence`. Read the ranks below as tracking #138, not
+> net-new work.
+
 | Rank | Item | Impact | Effort | Rationale |
 |:---:|---|:---:|:---:|---|
 | **1** | Complete the issue-resolution chain (title `type(#N)` + `closingIssuesReferences`) and remove the `?? pr.prNumber` alias; set `issueNumber` null + flag when unresolved | high | med | Repairs the ~60/107 mislink that corrupts the corpus key and blocks #135. Extends #129's existing `gh-classify.ts`/`issue-linkage.ts`. |
 | **2** | CI guard: fail promotion when `issueNumber == source_pr`, contradicts the filename slug, or duplicates an id | high | low | Cheap regression net that would have blocked every mislinked/duplicate draft; the `/issues->/pull` redirect makes this the only reliable detector |
 | **3** | Cross-PR + cross-domain de-dup keyed on resolved issue id, collapsing to one memory with `source_prs[]` | high | med | Eliminates every duplication cluster; a #135 acceptance item. **Must run after rank 1.** |
-| **4** | Make `issueUrl` honest (`/pull` for PR-only) and schema issue-optional | med | low | Stops the corpus misrepresenting PRs as issues; removes the masking redirect |
+| **4** | Require a resolved issue or skip: flag/skip PRs that close no tracked issue rather than fabricating `/issues/<prNumber>` | med | low | The approach #138 shipped - keeps `issueNumber` required and the schema issue-keyed, so the corpus never misrepresents a PR as an issue |
 | **5** | Harden `buildPrompt` (the CONSTRAINTS block in section 3) | med | low | One edit fixes five prose defects; lower priority since prose is mostly sound |
 | **6** | Strip HTML-comment/template boilerplate before truncation; consider adaptive `ISSUE_BODY_LIMIT` | med | low | Reclaims wasted budget on every PR; fixes the one confirmed content-degradation (10914) |
 | **7** | Confidence gradient + run/remove `related_issues` cross-link pass | med | med | Gives reviewers triage signal; lets ranking down-weight backports. Depends on rank 1. |
@@ -209,7 +218,7 @@ sample.
 **Layers**
 
 - **Unit** (pure functions, synthetic `ScrapedPR` fixtures, no network): `resolveIssueNumber`
-  priority chain (body keyword > title `type(#N)` > `closingIssuesReferences` > null);
+  priority chain (`closingIssuesReferences` > title `type(#N)` > body keyword > null);
   `buildFrontmatter` never emits `/issues/<prNumber>` and sets null when unresolved; `slugify` edge
   cases; `relatedFiles subset of fileList` validator; PR-vs-issue classification via the `pull_request` key.
 - **Integration** (dedup/promotion across multiple drafts): backport pairs and epics collapse to one
@@ -249,13 +258,13 @@ Each row is a reviewer-caught defect turned into a permanent regression test.
 ### Unit
 | Name | Scenario | Success criteria |
 |---|---|---|
-| title-only issue resolution | `{prNumber:8675, title:'feat(#6530): add rate limiting', body without Fixes/Closes, linkedIssues:[]}` | `issueNumber=6530`, `id=cht-core-6530`, `issueUrl=.../issues/6530`, `source_pr=medic/cht-core#8675` |
+| title-only issue resolution | `{prNumber:8675, title:'feat(#6530): add rate limiting for authentication requests', body without Fixes/Closes, linkedIssues:[]}` | `issueNumber=6530`, `id=cht-core-6530`, `issueUrl=.../issues/6530`, `source_pr=medic/cht-core#8675` |
 | body-keyword regression guard | `{prNumber:10555, title:'feat: add pt-BR translations' (no #N), body:'Closes #10556'}` | `issueNumber=10556` - a title fix must not regress body-linked PRs |
-| title vs body precedence | `title:'fix(#8026)...', body:'Closes #9999'` (differ) | one deterministic documented winner; same input -> same id |
-| no-issue PR fabricates nothing | `{prNumber:8843, title:'feat(na): bulk password reset script', linkedIssues:[]}` | `issueNumber` null/omitted, `id=cht-core-pr-8843`, no `/issues/<prNumber>` |
+| title outranks body | `title:'fix(#8026)...', body:'Closes #9999'` (differ, no closing-ref) | `issueNumber=8026` - title beats body in descending authority; same input -> same id |
+| no-issue PR fabricates nothing | `{prNumber:8843, title:'feat(na): script to bulk change list of users passwords', linkedIssues:[]}` | `issueNumber` null/omitted, `id=cht-core-pr-8843`, no `/issues/<prNumber>` |
 | nested PR chain | draft `10399-fix10182` where 10182 is a PR (`fix(#10183)`), 10183 the real issue | `issueNumber=10183` after the PR->issue hop; others untouched (idempotent) |
 | multi-issue body prefers title | `{prNumber:9311, title:'feat(#9193)...', body links #9241/#9237/#9238}` | `issueNumber=9193`; body Related Issues lists the rest |
-| relatedFiles grounded | `{prNumber:10623, fileList has reducers/global.ts, no message.pipe.ts}` | `relatedFiles subset of fileList`; `reducers/tasks.ts`/`message.pipe.ts` rejected |
+| relatedFiles grounded | `{prNumber:10623, fileList has message.pipe.ts + reducers/tasks.ts, no services/user-contact.service.ts}` | `relatedFiles subset of fileList`; `services/user-contact.service.ts` rejected |
 | confidence reflects quality | backport draft 9555 + a fallback-to-PR draft | `confidence 'low'` for backport/fallback vs `'high'` for a verified rich draft |
 | host-anchored closing-ref URL | body link `https://github.com/attacker/medic/cht-core/issues/1` | rejected - only `startsWith https://github.com/medic/cht-core/issues/` passes (guards #129's relink fix) |
 
@@ -290,9 +299,10 @@ To accompany the next iteration (add to `docs/memory-seeding-runbook.md` or a ne
   `buildFrontmatter` fell back to the PR number. Note the `/issues/N -> /pull/N` redirect that masks
   the error from inspection and validation, and the ~60/107 wrong-reference prevalence.
 - **pipeline-behavior:** document the issue-centric-schema vs PR-driven-pipeline mismatch and the
-  canonical resolution precedence (body keyword > title `type(#N)` > `closingIssuesReferences` >
+  canonical resolution precedence (`closingIssuesReferences` > title `type(#N)` > body keyword >
   null/flag). State the invariant: `source_pr` always holds the PR; `issueNumber/issueUrl/id` hold
-  the resolved issue or are PR-derived/null when none exists. Explain the PR->issue hop via
+  the resolved issue, and a PR that closes no tracked issue is flagged/skipped rather than
+  PR-derived. Explain the PR->issue hop via
   `gh-classify.ts`'s `pull_request` key (`gh issue view` never 404s on a PR number).
 - **design-decisions:** `confidence` is currently hardcoded `'medium'` (not a signal - do not treat
   as ranking) and `related_issues` is `[]` pending a cross-link post-pass that does not yet run;
@@ -336,13 +346,13 @@ data-correctness defect, not any per-file content error. **Linked:** base #119; 
 #121; #135 (de-dup consumer); cross-domain dupes with #131 (#9835/#9065/#6543).
 - **[incorrect | sugat009]** 31/44 drafts: `issueNumber`/`issueUrl`/`id` name the merge PR. e.g.
   10043 stores `issueNumber:10043` (PR `feat(#10036):...`) but the real issue is #10036.
-- **[duplication | sugat009]** #10038 x5, #10036 x3, #8985 x2 (9027 + its 4.7.x backport 9098), etc.
+- **[duplication | sugat009]** #10038 x5, #10036 x4 (10070/10061/10056/10043), #8985 x2 (9027 + its 4.7.x backport 9098), etc.
 - **[duplication | sugat009]** #9835/#9065/#6543 also promoted in auth #131 (cross-domain).
 - **[hallucination | self]** 9311 `designChoices` cites "Reviewer discussion (jkuester, **Slack**)";
   the scraper has no Slack access - fabricated channel.
 - **[omitted-context | self]** the body `## Related Issues` often holds the correct issue the
   frontmatter is missing (9311 lists #9193; 10043 lists #10036) - extracted to prose, not the field.
-- **[schema | self]** all 44: `confidence: medium`, `related_issues: []`.
+- **[schema | self]** the distilled drafts carry `confidence: medium`, `related_issues: []` (4 legacy `subDomain`-schema drafts carry neither field).
 - **[missing-info | self]** 10897 has no `#N` in its title slug - a title-parse-only fix won't
   recover it (its `issueNumber:10878` came from the body).
 
@@ -396,8 +406,8 @@ data-correctness defect, not any per-file content error. **Linked:** base #119; 
   feat9431 -> 2 files. 9555's own Testing admits "Backported to 4.13.x via cherry-pick of dc47c51".
 - **[duplication | self]** epic siblings correctly kept separate but **not** cross-linked
   (9232/9282/9317 all fix #9231; `related_issues: []`). *Collapse backports, cross-link epics.*
-- **[hallucination | self]** 10623 lists `message.pipe.ts`, `user-contact.service.ts`,
-  `reducers/tasks.ts` - real PR has `reducers/global.ts` and none of the others.
+- **[hallucination | self]** 10623 lists `services/user-contact.service.ts`, which is absent from
+  the PR (its `message.pipe.ts`/`reducers/tasks.ts`/`reducers/global.ts` are all real).
 - **[pipeline | self]** body-only, keyword-only resolution can also grab a wrong issue
   (9232 resolved a stray #137).
 - **[missing-info | self]** uniform `confidence: medium` - backports and hallucination-risk entries
@@ -418,8 +428,9 @@ data-correctness defect, not any per-file content error. **Linked:** base #119; 
 ## PR #121 - infrastructure (49 memories)
 **Purpose:** promote 49 strong-fit (new domain from #119). **Linked:** #119, #126/#127; Hareet +
 sugat009 (rebase).
-- **[duplication | self]** nouveau-sidecar from #10482 **and** #10488 (both issue #10481); CouchDB
-  3.5.0 upgrade from #9960 **and** #10014 - revert-redo/parallel PRs -> near-identical memories.
+- **[duplication | self]** nouveau-sidecar from #10482 **and** #10488 (both issue #10481). (CouchDB
+  3.5.0 #9960/#10014 close *different* issues - #9882 vs #10027 - so they are duplicated effort, not
+  a single-issue backport pair.)
 - **[pipeline | self]** no cross-PR dedup anywhere.
 - **[schema | self]** ~12/49 close no issue (8693, 10689, 10488) -> PR number labeled as an issue.
 - **[omitted-context | self]** memories lean on review content but `MAX_REVIEWS=3` x 300 chars drops
