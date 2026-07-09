@@ -590,7 +590,13 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     let tokensUsed = result.tokensUsed;
 
     if (!result.file) {
-      return { outcome: 'retry', failures: ['LLM call returned no usable content'], tokensUsed };
+      // Route the concrete parse reason (F-B) into the retry feedback via
+      // buildFailureContext, instead of the old generic message.
+      return {
+        outcome: 'retry',
+        failures: [result.reason ?? 'LLM call returned no usable content'],
+        tokensUsed,
+      };
     }
 
     let file = result.file;
@@ -668,7 +674,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     previouslyGenerated: GeneratedFile[];
     testGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
     previousFailures?: string[];
-  }): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
+  }): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean; reason?: string }> {
     const { planItem, fullPlan, input, previouslyGenerated, testGenTools, previousFailures } = opts;
     const prompt = this.buildSingleTestFilePrompt({
       planItem,
@@ -678,15 +684,16 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       previousFailures,
     });
     const response = await this.invokeLLM(prompt, testGenTools, planItem.filePath);
-    if (!response) return { file: null, tokensUsed: 0, truncated: false };
+    if (!response) return { file: null, tokensUsed: 0, truncated: false, reason: 'The LLM returned no response.' };
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
     const truncated = response.stopReason === 'max_tokens';
     // First-gen parse: hardened for CLI preamble/fence/prose (F-B). Continuation
     // chunks keep parseContinuationChunk (no preamble strip, M3a).
     const rawContent = libParseFirstGenFileContent(response.content);
 
-    if (!this.isUsableContent(rawContent, planItem.filePath, response.content.length)) {
-      return { file: null, tokensUsed, truncated: false };
+    const reason = this.unusableReason(rawContent, planItem.filePath, response.content.length);
+    if (reason) {
+      return { file: null, tokensUsed, truncated: false, reason };
     }
     return {
       file: { path: planItem.filePath, content: rawContent, purpose: planItem.description },
@@ -719,16 +726,19 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     }
   }
 
-  private isUsableContent(rawContent: string, filePath: string, rawCharCount: number): boolean {
+  /** Concrete reason the parsed content is unusable, or null if it is usable. */
+  private unusableReason(rawContent: string, filePath: string, rawCharCount: number): string | null {
     if (!rawContent || rawContent.length < 20) {
       console.log(`[Test Gen Module]   No usable content for ${filePath} (${rawCharCount} raw chars)`);
-      return false;
+      return `The response contained no usable code (only ${rawContent?.length ?? 0} chars after parsing). ` +
+        'Output ONLY the complete test file source, with no prose or explanation.';
     }
     if (!this.looksLikeCodeContent(rawContent, filePath)) {
       console.log(`[Test Gen Module]   Output for ${filePath} appears to be LLM reasoning, not code — skipping`);
-      return false;
+      return 'The response did not parse as code (likely leaked reasoning/prose or a stray markdown fence). ' +
+        'Output ONLY valid test code for the file — no preamble, headings, explanation, or ``` fences.';
     }
-    return true;
+    return null;
   }
 
   // ============================================================================
