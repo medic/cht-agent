@@ -324,3 +324,36 @@ describe('test-gen never overwrites an existing spec (F-A, C1)', () => {
     expect(out.files[0].path).to.equal('gen.spec.ts');
   });
 });
+
+describe('test-gen first-gen parse hardening (F-B, C1)', () => {
+  afterEach(() => sinon.restore());
+
+  it('parses a CLI-style preamble+fence+trailing-prose response cleanly on the FIRST attempt', async () => {
+    const messy = makeResponse(
+      "Here's the test file you asked for:\n" +
+      "```typescript\n" +
+      "import { expect } from 'chai';\n" +
+      "describe('seam', () => {\n  it('works', () => {\n    expect(1).to.equal(1);\n  });\n});\n" +
+      "```\n" +
+      "Hope this helps! Let me know if you need changes.",
+      'end_turn',
+    );
+    const invokeStub = sinon.stub();
+    invokeStub.onCall(0).resolves(PLAN_RESPONSE);
+    invokeStub.onCall(1).resolves(messy);
+    invokeStub.onCall(2).resolves(CHECKLIST_RESPONSE);
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, false));
+
+    const out = await module.generate(makeToolBoundInput());
+
+    // plan + per-file + checklist = 3: the messy response parsed on the first
+    // attempt (no retry burned), which is the F-B win.
+    expect(invokeStub.callCount).to.equal(3);
+    expect(out.files).to.have.length(1);
+    const content = out.files[0].content;
+    expect(content).to.include("import { expect } from 'chai'");
+    expect(content).to.not.include('```');           // wrapping fence stripped
+    expect(content).to.not.include('Hope this helps'); // trailing prose stripped
+    expect(content.startsWith("Here's")).to.be.false;  // leading preamble stripped
+  });
+});

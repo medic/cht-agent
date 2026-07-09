@@ -225,3 +225,105 @@ export function parseSingleFileContent(rawOutput: string): string {
   // resulting file passes eol-last lint and behaves correctly under `git diff`.
   return trimmed.length > 0 ? trimmed + '\n' : trimmed;
 }
+
+/**
+ * Strip a leading opening-fence line (```lang) and a trailing lone ``` line,
+ * anchored to the FIRST/LAST line only — never global-strips backticks, which
+ * would corrupt an interior template literal. Line-anchored (promoted from the
+ * test-gen continuation assembler); safe for the first-gen parser.
+ */
+export function stripDanglingFences(content: string): string {
+  const lines = content.split('\n');
+  if (lines.length > 0 && /^```[\w-]*\s*$/.test(lines[0])) lines.shift();
+  if (lines.length > 0 && /^```\s*$/.test(lines[lines.length - 1])) lines.pop();
+  return lines.join('\n');
+}
+
+/**
+ * Extract the first fenced code block even when wrapped in preamble/prose, via a
+ * LINEAR line scan (NOT a lazy `[\s\S]*?` regex — that is the Sonar S8786
+ * quadratic hazard on a never-closing/truncated fence). Returns the inner content,
+ * or null when there is no wrapping fence. A missing closing fence (truncated CLI
+ * output) yields everything after the opening fence. Interior fences (real code
+ * before the fence) are left alone.
+ */
+function extractFencedBlock(content: string): string | null {
+  const lines = content.split('\n');
+  const openIdx = lines.findIndex(l => /^```[\w-]*$/.test(l.trim()));
+  // No fence, or only a trailing dangling fence (let stripDanglingFences handle it).
+  if (openIdx < 0 || openIdx === lines.length - 1) return null;
+  // A fence preceded by real code is an interior fence (e.g. a markdown string in
+  // the test body), not a wrapper — do not slice it out.
+  const codeBeforeFence = lines.slice(0, openIdx).some(l => {
+    const t = l.trimStart();
+    return t.length > 0 && CODE_START_PATTERNS.some(p => p.test(t));
+  });
+  if (codeBeforeFence) return null;
+  let closeIdx = -1;
+  for (let i = lines.length - 1; i > openIdx; i--) {
+    if (/^```$/.test(lines[i].trim())) { closeIdx = i; break; }
+  }
+  const inner = closeIdx > openIdx ? lines.slice(openIdx + 1, closeIdx) : lines.slice(openIdx + 1);
+  return inner.join('\n');
+}
+
+// Leading-preamble shapes the CLI adds that the narrow PROSE_PATTERN misses.
+const FIRST_GEN_PREAMBLE_PATTERNS: RegExp[] = [
+  PROSE_PATTERN,                                            // "Here is...", "The following..."
+  /^#{1,6}\s/,                                              // markdown heading
+  /^[-*+]\s/,                                               // bullet list
+  /^\d+[.)]\s/,                                             // numbered list
+  /^I\b/,                                                   // "I'll"/"I've"/"I will" (apostrophe defeats PROSE_PATTERN)
+  /^(here|let|sure|okay|ok|now|below|following|looking|based)\b/i, // lowercase conversational openers
+];
+
+/**
+ * First-gen preamble strip: like stripReasoningPreamble but with broader leading-
+ * prose detection. Still guarded by CODE_KEYWORD_PATTERN (a real code line is never
+ * treated as prose) and still requires a subsequent code-start line to strip, so it
+ * only ever removes leading natural-language lines.
+ */
+function stripFirstGenPreamble(content: string): string {
+  const lines = content.split('\n');
+  const firstNonEmpty = lines.findIndex(l => l.trim().length > 0);
+  if (firstNonEmpty < 0) return content;
+  const firstLine = lines[firstNonEmpty].trimStart();
+  const looksLikePreamble =
+    FIRST_GEN_PREAMBLE_PATTERNS.some(p => p.test(firstLine)) && !CODE_KEYWORD_PATTERN.test(firstLine);
+  if (!looksLikePreamble) return content;
+  const codeStartIdx = lines.findIndex((line, idx) => {
+    if (idx <= firstNonEmpty) return false;
+    const trimmedLine = line.trimStart();
+    if (trimmedLine.length === 0) return false;
+    return CODE_START_PATTERNS.some(p => p.test(trimmedLine));
+  });
+  if (codeStartIdx > 0) {
+    console.log(`[Code Gen Lib]   Stripped ${codeStartIdx} line(s) of LLM preamble (first-gen)`);
+    return lines.slice(codeStartIdx).join('\n');
+  }
+  return content;
+}
+
+/**
+ * Hardened FIRST-GENERATION single-file parser for CLI output that can carry a
+ * leading preamble, a markdown fence, and/or trailing prose (which the anchored
+ * parseSingleFileContent misses). MUST NOT be used on continuation chunks: the
+ * broadened preamble strip would eat a mid-construct resumed line (M3a). Those keep
+ * parseSingleFileContent (code-gen continuation) / parseContinuationChunk (test-gen).
+ */
+export function parseFirstGenFileContent(rawOutput: string): string {
+  let content = rawOutput.trim();
+
+  const fenced = extractFencedBlock(content);
+  if (fenced !== null) content = fenced;
+
+  const fileMatch = /^=== FILE:.*===\n(?:PURPOSE:.*\n)?--- CONTENT START ---\n([\s\S]*?)\n--- CONTENT END ---/
+    .exec(content);
+  if (fileMatch) content = fileMatch[1];
+
+  content = stripFirstGenPreamble(content);
+  content = stripDanglingFences(content);
+
+  const trimmed = content.trim();
+  return trimmed.length > 0 ? trimmed + '\n' : trimmed;
+}
