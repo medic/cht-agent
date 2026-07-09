@@ -359,12 +359,29 @@ export class ClaudeApiTestGenModule implements TestGenModule {
    */
   private async resolveTargetPaths(plan: TestPlanItem[], input: TestGenModuleInput): Promise<void> {
     if (!input.readFile) return; // no existence check available: keep canonical paths
+    const kept: TestPlanItem[] = [];
     for (const item of plan) {
-      if (!(await this.pathExists(item.filePath, input))) continue;
+      if (!(await this.pathExists(item.filePath, input))) {
+        kept.push(item);
+        continue;
+      }
       const sibling = await this.nextFreeSiblingPath(item.filePath, input);
+      if (sibling === null) {
+        // Every sibling up to the cap exists (practically unreachable). Drop the
+        // item into the non-fatal 0-file path rather than return a possibly-
+        // existing path — preserves F-A's "never destroy by construction".
+        console.warn(
+          `[Test Gen Module] Skipping ${item.filePath}: all sibling paths up to the cap exist; refusing to overwrite.`
+        );
+        continue;
+      }
       console.log(`[Test Gen Module] Target spec exists; writing sibling instead: ${item.filePath} -> ${sibling}`);
       item.filePath = sibling;
+      kept.push(item);
     }
+    // Rebuild the plan in place so surfacePlan / generateTestFilesSequentially /
+    // validateAgainstManifest all see the resolved (and possibly reduced) set.
+    plan.splice(0, plan.length, ...kept);
   }
 
   private async pathExists(relPath: string, input: TestGenModuleInput): Promise<boolean> {
@@ -373,16 +390,17 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   }
 
   /**
-   * First `.additional[.N]` sibling of filePath that does not already exist.
-   * Bounded (SIBLING_PATH_CAP) so a misbehaving readFile can never spin forever;
-   * hitting the cap is not reachable with a real cht-core tree.
+   * First `.additional[.N]` sibling of filePath that does NOT already exist, or
+   * null when every candidate up to SIBLING_PATH_CAP exists. Every returned path
+   * has passed a final existence check, so it is never a path that would clobber
+   * (the cap returns null instead of a possibly-existing path).
    */
-  private async nextFreeSiblingPath(filePath: string, input: TestGenModuleInput): Promise<string> {
-    let candidate = siblingSpecPath(filePath);
-    for (let n = 2; n <= SIBLING_PATH_CAP && (await this.pathExists(candidate, input)); n++) {
-      candidate = siblingSpecPath(filePath, n);
+  private async nextFreeSiblingPath(filePath: string, input: TestGenModuleInput): Promise<string | null> {
+    for (let n = 1; n <= SIBLING_PATH_CAP; n++) {
+      const candidate = siblingSpecPath(filePath, n === 1 ? undefined : n);
+      if (!(await this.pathExists(candidate, input))) return candidate;
     }
-    return candidate;
+    return null;
   }
 
   private logPostCallValidation(warnings: string[]): void {
