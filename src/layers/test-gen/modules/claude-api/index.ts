@@ -21,7 +21,7 @@ import {
   RequirementsChecklistSchema,
 } from '../../schemas';
 import {
-  parseSingleFileContent as libParseSingleFileContent,
+  parseFirstGenFileContent as libParseFirstGenFileContent,
   looksLikeCodeContent as libLooksLikeCodeContent,
 } from '../../../code-gen/lib/output-parsing';
 import { sanitizePath } from '../../../code-gen/lib/plan';
@@ -681,7 +681,9 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     if (!response) return { file: null, tokensUsed: 0, truncated: false };
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
     const truncated = response.stopReason === 'max_tokens';
-    const rawContent = this.parseSingleFileContent(response.content);
+    // First-gen parse: hardened for CLI preamble/fence/prose (F-B). Continuation
+    // chunks keep parseContinuationChunk (no preamble strip, M3a).
+    const rawContent = libParseFirstGenFileContent(response.content);
 
     if (!this.isUsableContent(rawContent, planItem.filePath, response.content.length)) {
       return { file: null, tokensUsed, truncated: false };
@@ -1089,10 +1091,6 @@ Output ONLY the JSON. No explanations.`;
 
   looksLikeCodeContent(content: string, filePath: string): boolean {
     return libLooksLikeCodeContent(content, filePath);
-  }
-
-  parseSingleFileContent(rawOutput: string): string {
-    return libParseSingleFileContent(rawOutput);
   }
 
   /**

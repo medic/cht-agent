@@ -1,5 +1,10 @@
 import { expect } from 'chai';
-import { parseSingleFileContent, applySearchReplace, PROSE_PATTERN } from '../../../../src/layers/code-gen/lib/output-parsing';
+import {
+  parseSingleFileContent,
+  parseFirstGenFileContent,
+  applySearchReplace,
+  PROSE_PATTERN,
+} from '../../../../src/layers/code-gen/lib/output-parsing';
 
 describe('parseSingleFileContent', () => {
   describe('trailing newline preservation (C1)', () => {
@@ -77,6 +82,54 @@ describe('PROSE_PATTERN', () => {
     const pathological = 'Ab' + ' '.repeat(40000);
     const start = process.hrtime.bigint();
     PROSE_PATTERN.test(pathological);
+    const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
+    expect(elapsedMs).to.be.below(100);
+  });
+});
+
+describe('parseFirstGenFileContent (F-B first-gen hardening)', () => {
+  it('strips a leading preamble, a wrapping fence, and trailing prose (the CLI leak shape)', () => {
+    const raw =
+      "Here is the test file you asked for:\n" +
+      "```typescript\n" +
+      "import { expect } from 'chai';\n" +
+      "describe('x', () => {});\n" +
+      "```\n" +
+      "Let me know if you need changes.";
+    expect(parseFirstGenFileContent(raw)).to.equal(
+      "import { expect } from 'chai';\ndescribe('x', () => {});\n",
+    );
+  });
+
+  it('strips a broadened lowercase preamble but leaves real code that starts lowercase', () => {
+    expect(parseFirstGenFileContent("here's the spec:\nimport x from 'y';\ndescribe('a', () => {});"))
+      .to.equal("import x from 'y';\ndescribe('a', () => {});\n");
+    // A real code first line (not a keyword, lowercase) must NOT be treated as preamble:
+    expect(parseFirstGenFileContent('foo.bar();\nconst x = 1;')).to.equal('foo.bar();\nconst x = 1;\n');
+  });
+
+  it('does NOT slice out an interior fence inside real code (template literal)', () => {
+    const raw =
+      "import { expect } from 'chai';\n" +
+      "const md = `\n```js\ncode\n```\n`;\n" +
+      "describe('z', () => {});";
+    const out = parseFirstGenFileContent(raw);
+    expect(out).to.include('```js'); // interior fence preserved (code precedes it)
+    expect(out).to.include("import { expect } from 'chai'");
+  });
+
+  it('is confined to first-gen: parseSingleFileContent (continuation) leaves what the first-gen parser strips', () => {
+    const chunk = 'following the pattern above\nconst x = 1;';
+    // first-gen: broadened preamble strip removes the prose opener
+    expect(parseFirstGenFileContent(chunk)).to.equal('const x = 1;\n');
+    // continuation parser (narrow) is byte-identical to before — the resumed line survives
+    expect(parseSingleFileContent(chunk)).to.equal('following the pattern above\nconst x = 1;\n');
+  });
+
+  it('runs in linear time on a large never-closing fence (S8786)', () => {
+    const pathological = '```typescript\n' + 'x'.repeat(200000);
+    const start = process.hrtime.bigint();
+    parseFirstGenFileContent(pathological);
     const elapsedMs = Number(process.hrtime.bigint() - start) / 1e6;
     expect(elapsedMs).to.be.below(100);
   });
