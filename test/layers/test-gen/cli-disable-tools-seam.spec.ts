@@ -357,3 +357,27 @@ describe('test-gen first-gen parse hardening (F-B, C1)', () => {
     expect(content.startsWith("Here's")).to.be.false;  // leading preamble stripped
   });
 });
+
+describe('test-gen routes the real parse-failure reason into the retry prompt (F-B, C2)', () => {
+  afterEach(() => sinon.restore());
+
+  it('feeds the specific parse reason (not a generic message) to the retry', async () => {
+    const prose = makeResponse(
+      'This is a description of what the test should verify, but it is only prose with no actual code at all.',
+      'end_turn',
+    );
+    const invokeStub = sinon.stub();
+    invokeStub.onCall(0).resolves(PLAN_RESPONSE);
+    invokeStub.onCall(1).resolves(prose);            // fails looksLikeCodeContent -> unusable
+    invokeStub.onCall(2).resolves(PHASE2_RESPONSE);  // retry recovers
+    invokeStub.onCall(3).resolves(CHECKLIST_RESPONSE);
+    const module = new ClaudeApiTestGenModule(makeMockProvider(invokeStub, false));
+
+    const out = await module.generate(makeToolBoundInput());
+
+    expect(out.files).to.have.length(1); // recovered on the retry
+    const retryPrompt = invokeStub.getCall(2).args[0] as string;
+    expect(retryPrompt).to.match(/did not parse as code/i); // the specific reason reached the prompt
+    expect(retryPrompt).to.not.include('LLM call returned no usable content'); // not the old generic message
+  });
+});
