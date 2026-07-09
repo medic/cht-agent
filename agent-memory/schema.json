@@ -59,7 +59,7 @@
         "id": {
           "type": "string",
           "pattern": "^cht-(core|interoperability)-[1-9][0-9]*$",
-          "description": "Unique identifier, format: cht-(core|interoperability)-<issue-number>"
+          "description": "Identifier, format: cht-(core|interoperability)-<issue-number>. Not globally unique — several PRs can resolve one issue, so consumers dedup on issueNumber (see #135)."
         },
         "category": {
           "$ref": "#/definitions/CHTCategory"

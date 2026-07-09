@@ -21,6 +21,7 @@
     "validate-ticket": "node dist/cli/validate-ticket.js",
     "validate-schema": "ts-node src/scripts/validate-schema.ts",
     "open-review-pr": "ts-node src/scripts/open-review-pr.ts",
+    "relink-issues": "ts-node src/scripts/relink-issues.ts",
     "run-pipeline": "ts-node src/scripts/run-pipeline.ts",
     "smoke-test": "ts-node src/scripts/smoke-test.ts"
   },
