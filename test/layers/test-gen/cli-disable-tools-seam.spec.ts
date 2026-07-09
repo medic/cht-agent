@@ -228,7 +228,9 @@ describe('test-gen tool handler rejects unsafe paths (H3, C1)', () => {
   };
 
   it('rejects a non-string path without calling readFile', async () => {
-    const readFile = sinon.stub().resolves('secret');
+    // readFile returns null (nothing exists) so resolveTargetPaths keeps the
+    // canonical plan path; the handler still rejects the unsafe path before readFile.
+    const readFile = sinon.stub().resolves(null);
     const listDirectory = sinon.stub().resolves([]);
     const handler = await captureToolHandler(readFile, listDirectory);
     const out = await handler('read_file', { path: 42 });
@@ -237,7 +239,7 @@ describe('test-gen tool handler rejects unsafe paths (H3, C1)', () => {
   });
 
   it('rejects an absolute path (arbitrary read) without calling readFile', async () => {
-    const readFile = sinon.stub().resolves('root:x:0:0:...');
+    const readFile = sinon.stub().resolves(null);
     const listDirectory = sinon.stub().resolves([]);
     const handler = await captureToolHandler(readFile, listDirectory);
     const out = await handler('read_file', { path: '/etc/passwd' });
@@ -255,7 +257,10 @@ describe('test-gen tool handler rejects unsafe paths (H3, C1)', () => {
   });
 
   it('allows a valid relative path through to readFile', async () => {
-    const readFile = sinon.stub().resolves('file contents');
+    // Default null (so resolveTargetPaths keeps the canonical plan path); the
+    // valid tool-read path returns content.
+    const readFile = sinon.stub().resolves(null);
+    readFile.withArgs('api/src/controllers/contacts.js').resolves('file contents');
     const listDirectory = sinon.stub().resolves([]);
     const handler = await captureToolHandler(readFile, listDirectory);
     const out = await handler('read_file', { path: 'api/src/controllers/contacts.js' });
@@ -322,6 +327,13 @@ describe('test-gen never overwrites an existing spec (F-A, C1)', () => {
   it('keeps the canonical path when no spec exists at the target', async () => {
     const out = await wire(async () => null);
     expect(out.files[0].path).to.equal('gen.spec.ts');
+  });
+
+  it('fails closed (0 files) when every sibling up to the cap exists, never returning an existing path (F-A cap)', async () => {
+    // readFile returns non-null for EVERYTHING: the canonical path and every
+    // .additional[.N] sibling "exist", so no free sibling is found.
+    const out = await wire(async () => 'exists');
+    expect(out.files).to.have.length(0);
   });
 });
 
