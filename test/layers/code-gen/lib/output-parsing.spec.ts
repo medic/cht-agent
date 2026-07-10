@@ -170,3 +170,46 @@ describe('parseFirstGenFileContent fence close selection (MG-2, NEW-1)', () => {
     expect(parseFirstGenFileContent(raw)).to.equal("describe('t', () => {\n  it('w', () => {\n");
   });
 });
+
+describe('parseFirstGenFileContent trailing-prose strip (MG-1)', () => {
+  // Each fixture is already trimmed, so a byte-unchanged parse returns it + one '\n'.
+  const unchanged = (src: string) => expect(parseFirstGenFileContent(src)).to.equal(src + '\n');
+
+  it('strips unfenced trailing prose (the MG-1 repro) — fails at v14, passes now', () => {
+    const raw =
+      'Here is the test file:\n' +
+      "const { expect } = require('chai');\n" +
+      "describe('t', () => { it('w', () => { expect(1).to.equal(1); }); });\n" +
+      'Let me know if you need any changes.';
+    expect(parseFirstGenFileContent(raw)).to.equal(
+      "const { expect } = require('chai');\n" +
+        "describe('t', () => { it('w', () => { expect(1).to.equal(1); }); });\n",
+    );
+  });
+
+  it('strips a trailing multi-line prose paragraph clean', () => {
+    const raw =
+      "describe('t', () => {\n  it('w', () => {});\n});\n" +
+      'This test verifies the behavior.\n' +
+      'It should be reviewed before merging.';
+    expect(parseFirstGenFileContent(raw)).to.equal("describe('t', () => {\n  it('w', () => {});\n});\n");
+  });
+
+  it('leaves code ending in });', () => unchanged("describe('t', () => {\n  it('w', () => {});\n});"));
+  it('leaves code ending in );', () => unchanged('foo(\n  bar,\n);'));
+  it('leaves code ending in }', () => unchanged('function f() {\n  return 1;\n}'));
+  it('leaves a trailing block-comment close */', () => unchanged('const x = 1;\n/*\n * note\n */'));
+  it('leaves a trailing expect(...) statement', () =>
+    unchanged('const result = 1;\nexpect(result).to.equal(true);'));
+  it('leaves a template literal closing on a prose line', () =>
+    unchanged('const note = `\nPlease review the report.`;'));
+  it('does not strip prose INSIDE an open template literal', () =>
+    unchanged('const banner = `\nWelcome to the app'));
+  it('leaves a capitalized member call that looks like prose', () =>
+    unchanged('Contact.save({ patient_id: id });'));
+  it('leaves module.exports', () => unchanged('module.exports = { foo: 1 };'));
+  it('leaves a trailing line comment', () => unchanged('const x = 1;\n// done'));
+  it('leaves a trailing one-line block comment', () => unchanged('const x = 1;\n/* note */'));
+  it('leaves a whole normal spec with no trailing prose', () =>
+    unchanged("import { expect } from 'chai';\ndescribe('t', () => {\n  it('w', () => { expect(1).to.equal(1); });\n});"));
+});
