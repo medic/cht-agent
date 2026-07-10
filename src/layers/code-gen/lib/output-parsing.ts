@@ -235,7 +235,8 @@ export function parseSingleFileContent(rawOutput: string): string {
 export function stripDanglingFences(content: string): string {
   const lines = content.split('\n');
   if (lines.length > 0 && /^```[\w-]*\s*$/.test(lines[0])) lines.shift();
-  if (lines.length > 0 && /^```\s*$/.test(lines[lines.length - 1])) lines.pop();
+  const last = lines.at(-1);
+  if (last !== undefined && /^```\s*$/.test(last)) lines.pop();
   return lines.join('\n');
 }
 
@@ -349,7 +350,7 @@ function insideOpenTemplate(lines: string[]): boolean[] {
   let backticks = 0;
   for (let i = 0; i < lines.length; i++) {
     inside[i] = backticks % 2 === 1;
-    for (const ch of lines[i]) if (ch === '`') backticks++;
+    backticks += (lines[i].match(/`/g) ?? []).length;
   }
   return inside;
 }
@@ -364,16 +365,28 @@ function insideOpenTemplate(lines: string[]): boolean[] {
  * multi-line template-literal content. Trailing-only by design (interior prose is
  * NEW-3, deferred). Linear line scan (no S8786 hazard).
  */
-function stripTrailingProse(content: string): string {
-  const lines = content.split('\n');
-  const inside = insideOpenTemplate(lines);
+/**
+ * A trailing line is strippable when it is blank, or a capitalized prose sentence
+ * carrying no code signal that is not inside an open template literal.
+ */
+function shouldStripTrailingLine(trimmed: string, insideTpl: boolean): boolean {
+  if (trimmed.length === 0) return true;
+  return PROSE_PATTERN.test(trimmed) && !hasCodeSignal(trimmed) && !insideTpl;
+}
+
+/** Index of the first line to drop scanning from the end, or lines.length if none. */
+function trailingProseCutIndex(lines: string[], inside: boolean[]): number {
   let cut = lines.length;
   for (let i = lines.length - 1; i >= 0; i--) {
-    const trimmed = lines[i].trim();
-    if (trimmed.length === 0) { cut = i; continue; }
-    if (PROSE_PATTERN.test(trimmed) && !hasCodeSignal(trimmed) && !inside[i]) { cut = i; continue; }
-    break;
+    if (!shouldStripTrailingLine(lines[i].trim(), inside[i])) break;
+    cut = i;
   }
+  return cut;
+}
+
+function stripTrailingProse(content: string): string {
+  const lines = content.split('\n');
+  const cut = trailingProseCutIndex(lines, insideOpenTemplate(lines));
   // cut === 0 means every line looked like prose: this is trailing-prose stripping,
   // not whole-file deletion, so leave an all-prose response untouched (it fails the
   // looksLikeCode gate as before rather than becoming empty).
