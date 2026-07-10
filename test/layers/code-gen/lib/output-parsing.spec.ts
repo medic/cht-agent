@@ -239,17 +239,6 @@ describe('parseFirstGenFileContent member-expression guard (MG-3)', () => {
   });
 });
 
-describe('parseFirstGenFileContent deferred leak shapes (NEW-2, NEW-3)', () => {
-  // Deferred to a future boundary-hardening iteration (see v15 plan "Residuals").
-  // Both fail SAFE (leak -> node --check fails -> the parse gate retries). Kept as
-  // discriminating placeholders so the follow-up fix has a target.
-  it.skip('NEW-2: strips a lowercase-keyword-prefix preamble ("import the chai helpers referenced below:")', () => {
-    const raw = "import the chai helpers referenced below:\nimport { expect } from 'chai';\ndescribe('t', () => {});";
-    expect(parseFirstGenFileContent(raw)).to.equal("import { expect } from 'chai';\ndescribe('t', () => {});\n");
-  });
-
-  it.skip('NEW-3: removes interior/sandwiched prose between two code sections', () => {
-    const raw = 'const a = 1;\nThis explains the next part.\nconst b = 2;';
-    expect(parseFirstGenFileContent(raw)).to.equal('const a = 1;\nconst b = 2;\n');
-  });
-});
+// The deferred first-gen leak shapes NEW-2 (lowercase code-keyword-prefix preamble)
+// and NEW-3 (interior/sandwiched prose) are tracked in the parser boundary-hardening
+// follow-up (medic/cht-agent#139) rather than as skipped tests here.
