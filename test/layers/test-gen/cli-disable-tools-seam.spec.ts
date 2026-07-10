@@ -146,8 +146,8 @@ describe('test-gen tool-use gate keys on honorsCustomTools (iter8 A2/A4)', () =>
     for (let i = 0; i < invokeStub.callCount; i++) {
       const opts = invokeStub.getCall(i).args[1] as InvokeOptions;
       expect(opts.disableTools, `invoke #${i} must set disableTools`).to.equal(true);
-      expect(opts.tools, `invoke #${i} must not carry tools`).to.equal(undefined);
-      expect(opts.toolHandler, `invoke #${i} must not carry a toolHandler`).to.equal(undefined);
+      expect(opts.tools, `invoke #${i} must not carry tools`).to.be.undefined;
+      expect(opts.toolHandler, `invoke #${i} must not carry a toolHandler`).to.be.undefined;
     }
   });
 

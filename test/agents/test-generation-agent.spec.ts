@@ -103,7 +103,7 @@ describe('buildTestGenModuleInput', () => {
     // No test-gen module reads contextFiles, so additionalContext is threaded onto
     // `additionalContext` (the plan-prompt feedback branch) and contextFiles stays [].
     expect(buildTestGenModuleInput(baseInput()).contextFiles).to.deep.equal([]);
-    expect(buildTestGenModuleInput(baseInput()).additionalContext).to.equal(undefined);
+    expect(buildTestGenModuleInput(baseInput()).additionalContext).to.be.undefined;
 
     const out = buildTestGenModuleInput(baseInput({ additionalContext: 'fix the off-by-one' }));
     expect(out.contextFiles).to.deep.equal([]);
@@ -125,7 +125,7 @@ describe('buildTestGenModuleInput', () => {
       expect(out.readFile).to.be.a('function');
       expect(out.listDirectory).to.be.a('function');
       expect(await out.readFile?.('hello.ts')).to.equal('export const x = 1;\n');
-      expect(await out.readFile?.('nope.ts')).to.equal(null);
+      expect(await out.readFile?.('nope.ts')).to.be.null;
       expect(await out.listDirectory?.('.')).to.include('hello.ts');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
