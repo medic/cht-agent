@@ -336,7 +336,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
             requirementsChecklist: [],
             // Warnings only when items were dropped as invalid; a genuinely empty
             // plan (no items at all) stays a warning-free intentional no-op so the
-            // supervisor does not mark the todo failed.
+            // supervisor does not mark the TodoTracker entry failed.
             warnings: undefinedIfEmpty(planResult.warnings),
           },
         };

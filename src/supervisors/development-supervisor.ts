@@ -531,8 +531,8 @@ export class DevelopmentSupervisor {
       console.log(`[Development Supervisor] Generated ${result.files.length} test file(s)`);
       // A no-file result that carries warnings means work was attempted and lost
       // (all plan items dropped, or every file failed the content gate) — report
-      // it as a failed todo, not a green no-op. A warning-free empty result is an
-      // intentional no-op (e.g. genuinely empty plan) and stays complete.
+      // it as a failed TodoTracker entry, not a green no-op. A warning-free empty
+      // result is an intentional no-op (e.g. genuinely empty plan) and stays complete.
       if (result.files.length === 0 && (result.warnings?.length ?? 0) > 0) {
         return this.failTestGeneration(
           todoId,
@@ -568,7 +568,7 @@ export class DevelopmentSupervisor {
    * terminal summary. Test generation stays non-fatal: currentPhase remains
    * 'complete' and no errors/validationFeedback/perFileFeedback are written, so
    * it can never feed the validation score or trip the refinement loop — only the
-   * todo/summary reflects the failure.
+   * TodoTracker entry/summary reflects the failure.
    */
   private failTestGeneration(
     todoId: string,
