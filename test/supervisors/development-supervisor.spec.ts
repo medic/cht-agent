@@ -499,9 +499,9 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     const tg = out.testGeneration as { files: unknown[]; warnings?: string[] };
     expect(out.currentPhase).to.equal('complete');
     expect(tg.files).to.deep.equal([]);
-    expect(out.errors).to.equal(undefined);
-    expect(out.validationFeedback).to.equal(undefined);
-    expect(out.perFileFeedback).to.equal(undefined);
+    expect(out.errors).to.be.undefined;
+    expect(out.validationFeedback).to.be.undefined;
+    expect(out.perFileFeedback).to.be.undefined;
     // But the failure is now reported honestly (warning + failed todo), not green.
     expect(tg.warnings ?? []).to.satisfy(
       (w: string[]) => w.some(s => /boom/.test(s)),
