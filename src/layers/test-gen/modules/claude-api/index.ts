@@ -142,26 +142,39 @@ function decideRetryNext(
  * Replaces a greedy `/\{[\s\S]*\}/` that anchored to the LAST `}` and
  * over-captured trailing prose (making JSON.parse throw -> silent []).
  */
+interface JsonScanState { depth: number; inString: boolean; escaped: boolean; }
+
+/** Advance the in-string escape/quote state for one character (called while inString). */
+function updateStringState(state: JsonScanState, ch: string): void {
+  if (state.escaped) state.escaped = false;
+  else if (ch === '\\') state.escaped = true;
+  else if (ch === '"') state.inString = false;
+}
+
+/**
+ * Feed one character to the brace scanner. Returns true exactly when the outermost
+ * object just closed (depth returned to 0 on a `}`).
+ */
+function consumeJsonChar(state: JsonScanState, ch: string): boolean {
+  if (state.inString) {
+    updateStringState(state, ch);
+    return false;
+  }
+  if (ch === '"') state.inString = true;
+  else if (ch === '{') state.depth++;
+  else if (ch === '}') {
+    state.depth--;
+    return state.depth === 0;
+  }
+  return false;
+}
+
 function extractFirstJsonObject(text: string): string | null {
   const start = text.indexOf('{');
   if (start === -1) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
+  const state: JsonScanState = { depth: 0, inString: false, escaped: false };
   for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === '\\') escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) return text.slice(start, i + 1);
-    }
+    if (consumeJsonChar(state, text[i])) return text.slice(start, i + 1);
   }
   return null;
 }
@@ -183,6 +196,11 @@ export function siblingSpecPath(filePath: string, counter?: number): string {
   if (m) return `${m[1]}${suffix}${m[2]}${m[3]}`;
   const ext = path.extname(filePath);
   return `${filePath.slice(0, filePath.length - ext.length)}${suffix}${ext}`;
+}
+
+/** The array when it has entries, else undefined (the intentional-no-op warnings signal). */
+function undefinedIfEmpty<T>(arr: T[]): T[] | undefined {
+  return arr.length > 0 ? arr : undefined;
 }
 
 export class ClaudeApiTestGenModule implements TestGenModule {
@@ -240,7 +258,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       tokensUsed: totalTokens,
       modelUsed: llm.modelName,
       requirementsChecklist: checklist,
-      warnings: combinedWarnings.length > 0 ? combinedWarnings : undefined,
+      warnings: undefinedIfEmpty(combinedWarnings),
     };
   }
 
@@ -319,7 +337,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
             // Warnings only when items were dropped as invalid; a genuinely empty
             // plan (no items at all) stays a warning-free intentional no-op so the
             // supervisor does not mark the todo failed.
-            warnings: planResult.warnings.length > 0 ? planResult.warnings : undefined,
+            warnings: undefinedIfEmpty(planResult.warnings),
           },
         };
       }
@@ -361,27 +379,38 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     if (!input.readFile) return; // no existence check available: keep canonical paths
     const kept: TestPlanItem[] = [];
     for (const item of plan) {
-      if (!(await this.pathExists(item.filePath, input))) {
-        kept.push(item);
-        continue;
-      }
-      const sibling = await this.nextFreeSiblingPath(item.filePath, input);
-      if (sibling === null) {
-        // Every sibling up to the cap exists (practically unreachable). Drop the
-        // item into the non-fatal 0-file path rather than return a possibly-
-        // existing path — preserves F-A's "never destroy by construction".
-        console.warn(
-          `[Test Gen Module] Skipping ${item.filePath}: all sibling paths up to the cap exist; refusing to overwrite.`
-        );
-        continue;
-      }
-      console.log(`[Test Gen Module] Target spec exists; writing sibling instead: ${item.filePath} -> ${sibling}`);
-      item.filePath = sibling;
-      kept.push(item);
+      const resolved = await this.resolveItemPath(item, input);
+      if (resolved !== null) kept.push(resolved);
     }
     // Rebuild the plan in place so surfacePlan / generateTestFilesSequentially /
     // validateAgainstManifest all see the resolved (and possibly reduced) set.
     plan.splice(0, plan.length, ...kept);
+  }
+
+  /**
+   * Resolve one plan item's target path (F-A): keep it as-is when its canonical
+   * spec does not exist, redirect it in place to a free `*.additional.spec.*`
+   * sibling when it does, or return null to DROP it when every sibling up to the
+   * cap exists (never returns a path that would clobber existing coverage).
+   */
+  private async resolveItemPath(
+    item: TestPlanItem,
+    input: TestGenModuleInput,
+  ): Promise<TestPlanItem | null> {
+    if (!(await this.pathExists(item.filePath, input))) return item;
+    const sibling = await this.nextFreeSiblingPath(item.filePath, input);
+    if (sibling === null) {
+      // Every sibling up to the cap exists (practically unreachable). Drop the
+      // item into the non-fatal 0-file path rather than return a possibly-
+      // existing path — preserves F-A's "never destroy by construction".
+      console.warn(
+        `[Test Gen Module] Skipping ${item.filePath}: all sibling paths up to the cap exist; refusing to overwrite.`
+      );
+      return null;
+    }
+    console.log(`[Test Gen Module] Target spec exists; writing sibling instead: ${item.filePath} -> ${sibling}`);
+    item.filePath = sibling;
+    return item;
   }
 
   private async pathExists(relPath: string, input: TestGenModuleInput): Promise<boolean> {
@@ -1147,7 +1176,8 @@ Output ONLY the JSON. No explanations.`;
   private stripDanglingFences(content: string): string {
     const lines = content.split('\n');
     if (lines.length > 0 && /^```[\w-]*\s*$/.test(lines[0])) lines.shift();
-    if (lines.length > 0 && /^```\s*$/.test(lines[lines.length - 1])) lines.pop();
+    const last = lines.at(-1);
+    if (last !== undefined && /^```\s*$/.test(last)) lines.pop();
     return lines.join('\n');
   }
 
