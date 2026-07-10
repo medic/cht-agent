@@ -134,3 +134,39 @@ describe('parseFirstGenFileContent (F-B first-gen hardening)', () => {
     expect(elapsedMs).to.be.below(100);
   });
 });
+
+describe('parseFirstGenFileContent fence close selection (MG-2, NEW-1)', () => {
+  it('selects the FIRST fence close so a trailing fenced note is not swallowed (MG-2)', () => {
+    const raw =
+      "```typescript\n" +
+      "describe('t', () => {});\n" +
+      "```\n" +
+      "Note, run it with:\n" +
+      "```bash\n" +
+      "npm test\n" +
+      "```";
+    expect(parseFirstGenFileContent(raw)).to.equal("describe('t', () => {});\n");
+  });
+
+  it('extracts only the first fenced block when two blocks are present', () => {
+    const raw = "```js\nconst a = 1;\n```\n```js\nconst b = 2;\n```";
+    expect(parseFirstGenFileContent(raw)).to.equal('const a = 1;\n');
+  });
+
+  it('accepts a language-tagged close as a fallback when there is no bare close (NEW-1)', () => {
+    const raw = "```typescript\ndescribe('t', () => {});\n```js";
+    expect(parseFirstGenFileContent(raw)).to.equal("describe('t', () => {});\n");
+  });
+
+  it('keeps a nested tagged fence in the body when a real bare close exists (no mis-slice)', () => {
+    // A `` ```js `` appears inside a string in the body; the tagged fallback stays
+    // dormant because a real bare close (the wrapper) exists, so the full body is kept.
+    const raw = "```typescript\nconst snippet = '```js';\ndescribe('t', () => {});\n```";
+    expect(parseFirstGenFileContent(raw)).to.equal("const snippet = '```js';\ndescribe('t', () => {});\n");
+  });
+
+  it('takes everything after the open when the fence is never closed (truncation)', () => {
+    const raw = "```typescript\ndescribe('t', () => {\n  it('w', () => {";
+    expect(parseFirstGenFileContent(raw)).to.equal("describe('t', () => {\n  it('w', () => {\n");
+  });
+});
