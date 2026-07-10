@@ -83,29 +83,41 @@ const WARN_ONLY_ISSUE_TYPES = new Set(['plan-adherence-extra', 'plan-adherence-m
  *  - Score below threshold OR any cross-file issue → 'generateCode' (refine) if iterations left
  *  - Otherwise → '__end__'
  */
-export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generateCode' | '__end__' {
+/**
+ * Log message for an unconditional early-END (shutdown, execute-no-op, or 0 files),
+ * or null when none applies. Reads crossFileIssues but never mutates state, so the
+ * HC2 banner still sees the full issue set.
+ */
+function earlyEndReason(state: ValidateImplEdgeState): string | null {
   if (isShutdownRequested()) {
-    console.log('[Development Supervisor] Shutdown requested; ending workflow');
-    return '__end__';
+    return 'Shutdown requested; ending workflow';
   }
-  const score = state.validationResult?.overallScore ?? 0;
-  const iterations = state.iterationCount ?? 0;
   const issues = state.codeGeneration?.crossFileIssues ?? [];
   // R17 (v7): when the CLI abstained even after the relaxed retry, looping
   // cannot help — it would just repeat the same abstain pattern with the
   // same plan. End cleanly so the user sees the HC2 banner.
   if (issues.some(i => i.issueType === 'execute-no-op')) {
-    console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
-    return '__end__';
+    return 'execute-no-op detected; ending workflow (refinement loop cannot help)';
   }
   // F-C: 0 files cannot be improved by looping, and on a 0-file re-iteration
   // reconcilePlanAdherence flips every plan path to plan-adherence-missing, which
   // would otherwise keep belowBar true forever. End cleanly (the guard lives here,
   // not validationNode, because the resolver ignores currentPhase).
   if ((state.codeGeneration?.files?.length ?? 0) === 0) {
-    console.log('[Development Supervisor] 0 files generated; ending workflow (refinement loop cannot help)');
+    return '0 files generated; ending workflow (refinement loop cannot help)';
+  }
+  return null;
+}
+
+export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generateCode' | '__end__' {
+  const end = earlyEndReason(state);
+  if (end !== null) {
+    console.log(`[Development Supervisor] ${end}`);
     return '__end__';
   }
+  const score = state.validationResult?.overallScore ?? 0;
+  const iterations = state.iterationCount ?? 0;
+  const issues = state.codeGeneration?.crossFileIssues ?? [];
   // Only BLOCKING issues re-trigger refinement; plan-adherence-* are warn-only.
   const blockingIssues = issues.filter(i => !WARN_ONLY_ISSUE_TYPES.has(i.issueType ?? ''));
   const belowBar = score < REFINEMENT_THRESHOLD || blockingIssues.length > 0;

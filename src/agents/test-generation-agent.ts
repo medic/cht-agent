@@ -194,15 +194,26 @@ export class TestGenerationAgent {
     const examples: Array<{ path: string; content: string }> = [];
     for (const dir of dirs) {
       if (examples.length >= 3) break;
-      const entries = await listChtCoreDirectory(dir, input.chtCorePath);
-      const specs = entries.filter(e => /\.(spec|test)\.\w+$/.test(e));
-      for (const spec of specs) {
-        if (examples.length >= 3) break;
-        const content = await readFromChtCore(spec, input.chtCorePath);
-        if (content) examples.push({ path: spec, content });
-      }
+      examples.push(...await this.collectSpecsFromDir(dir, input.chtCorePath, 3 - examples.length));
     }
-    return examples;
+    return examples.slice(0, 3);
+  }
+
+  /** Up to `limit` readable `*.spec.*`/`*.test.*` files in `dir`; [] on any miss (never throws). */
+  private async collectSpecsFromDir(
+    dir: string,
+    chtCorePath: string,
+    limit: number,
+  ): Promise<Array<{ path: string; content: string }>> {
+    const entries = await listChtCoreDirectory(dir, chtCorePath);
+    const specs = entries.filter(e => /\.(spec|test)\.\w+$/.test(e));
+    const found: Array<{ path: string; content: string }> = [];
+    for (const spec of specs) {
+      if (found.length >= limit) break;
+      const content = await readFromChtCore(spec, chtCorePath);
+      if (content) found.push({ path: spec, content });
+    }
+    return found;
   }
 
   private async runGeneration(input: TestGenerationInput): Promise<TestGenerationResult> {
