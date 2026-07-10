@@ -239,6 +239,14 @@ export function stripDanglingFences(content: string): string {
   return lines.join('\n');
 }
 
+/** Index of the first line after `from` whose trimmed form matches `re`, or -1. Linear. */
+function firstMatchAfter(lines: string[], from: number, re: RegExp): number {
+  for (let i = from + 1; i < lines.length; i++) {
+    if (re.test(lines[i].trim())) return i;
+  }
+  return -1;
+}
+
 /**
  * Extract the first fenced code block even when wrapped in preamble/prose, via a
  * LINEAR line scan (NOT a lazy `[\s\S]*?` regex — that is the Sonar S8786
@@ -259,10 +267,14 @@ function extractFencedBlock(content: string): string | null {
     return t.length > 0 && CODE_START_PATTERNS.some(p => p.test(t));
   });
   if (codeBeforeFence) return null;
-  let closeIdx = -1;
-  for (let i = lines.length - 1; i > openIdx; i--) {
-    if (/^```$/.test(lines[i].trim())) { closeIdx = i; break; }
-  }
+  // The wrapper close is the FIRST bare ``` after the open (MG-2) — not the last,
+  // so a trailing fenced note or a second block is not swallowed. If there is no
+  // bare close, fall back to the first LANGUAGE-TAGGED close (NEW-1: ```js); this
+  // stays dormant whenever a bare close exists, so it never mis-slices a nested
+  // tagged opener in the body. If neither exists (truncated output), take
+  // everything after the open (unchanged).
+  let closeIdx = firstMatchAfter(lines, openIdx, /^```\s*$/);
+  if (closeIdx < 0) closeIdx = firstMatchAfter(lines, openIdx, /^```[\w-]+\s*$/);
   const inner = closeIdx > openIdx ? lines.slice(openIdx + 1, closeIdx) : lines.slice(openIdx + 1);
   return inner.join('\n');
 }
