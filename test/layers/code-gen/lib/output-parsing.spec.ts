@@ -213,3 +213,28 @@ describe('parseFirstGenFileContent trailing-prose strip (MG-1)', () => {
   it('leaves a whole normal spec with no trailing prose', () =>
     unchanged("import { expect } from 'chai';\ndescribe('t', () => {\n  it('w', () => { expect(1).to.equal(1); });\n});"));
 });
+
+describe('parseFirstGenFileContent member-expression guard (MG-3)', () => {
+  it('does NOT slice an interior fence when the first line is a member-expression assignment', () => {
+    // v14 mistook the interior ```bash for a wrapper and discarded the body — and
+    // its truncated output passed node --check (silent loss). The guard preserves it.
+    const raw =
+      'messages.intro = `\n' +
+      '```bash\n' +
+      'echo hi\n' +
+      '```\n' +
+      '`;\n' +
+      "describe('t', () => {});";
+    const out = parseFirstGenFileContent(raw);
+    expect(out).to.include('messages.intro'); // body NOT discarded
+    expect(out).to.include("describe('t', () => {})");
+    expect(out).to.include('```bash'); // interior fence preserved
+  });
+
+  it('also guards a plain (non-member) assignment of a fence-containing template', () => {
+    const raw = 'banner = `\n```js\ncode\n```\n`;\nconst x = 1;';
+    const out = parseFirstGenFileContent(raw);
+    expect(out).to.include('banner =');
+    expect(out).to.include('const x = 1');
+  });
+});

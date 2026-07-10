@@ -239,6 +239,12 @@ export function stripDanglingFences(content: string): string {
   return lines.join('\n');
 }
 
+// A top-level member-expression (or plain) assignment, e.g. `messages.intro = ...`.
+// CODE_START_PATTERNS does not model this shape, so without it a first line that
+// assigns a fence-containing template literal is mistaken for a wrapper (MG-3, a
+// SILENT content-loss class: the truncated output still passes `node --check`).
+const MEMBER_ASSIGN_RE = /^\w+(?:\.\w+)*\s*=/;
+
 /** Index of the first line after `from` whose trimmed form matches `re`, or -1. Linear. */
 function firstMatchAfter(lines: string[], from: number, re: RegExp): number {
   for (let i = from + 1; i < lines.length; i++) {
@@ -264,7 +270,7 @@ function extractFencedBlock(content: string): string | null {
   // the test body), not a wrapper — do not slice it out.
   const codeBeforeFence = lines.slice(0, openIdx).some(l => {
     const t = l.trimStart();
-    return t.length > 0 && CODE_START_PATTERNS.some(p => p.test(t));
+    return t.length > 0 && (CODE_START_PATTERNS.some(p => p.test(t)) || MEMBER_ASSIGN_RE.test(t));
   });
   if (codeBeforeFence) return null;
   // The wrapper close is the FIRST bare ``` after the open (MG-2) — not the last,
