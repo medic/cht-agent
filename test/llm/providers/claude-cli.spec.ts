@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import { EventEmitter } from 'events';
 import { LLMProvider } from '../../../src/llm/types';
-import { DISALLOWED_TOOLS } from '../../../src/llm/providers/claude-cli';
+import { DISALLOWED_TOOLS, isRetryableCLIError } from '../../../src/llm/providers/claude-cli';
 import { isBatchFatalError } from '../../../src/llm/rate-limit';
 
 const proxyquire = require('proxyquire').noCallThru();
@@ -392,5 +392,123 @@ describe('createClaudeCLIProvider — limit/auth classification & error paths', 
     const { provider } = loadProvider([{ stdout: 'noise {"type":"result", not valid}', closeCode: 0 }]);
     const res = await provider.invoke('x');
     expect(res.content).to.include('type');
+  });
+});
+
+describe('createClaudeCLIProvider — retry logic (#47)', () => {
+  type ProcEvents = Array<{
+    stdout?: string;
+    stderr?: string;
+    closeCode?: number | null;
+    errorCode?: string;
+    delay?: number;
+  }>;
+
+  /**
+   * Build a provider whose Nth spawn yields `perAttempt[N]` (the last entry is
+   * reused once exhausted). An empty events array means the fake process never
+   * closes, so `executeCLI`'s (small) timeout fires — the retryable failure the
+   * retry loop is built to handle.
+   */
+  const loadProviderSeq = (
+    perAttempt: ProcEvents[],
+    config: Record<string, unknown>
+  ): { provider: LLMProvider; spawnCount: () => number } => {
+    let call = 0;
+    const spawnStub = sinon.stub().callsFake(() => {
+      const events = perAttempt[Math.min(call, perAttempt.length - 1)];
+      call += 1;
+      return buildFakeProc(events).proc;
+    });
+    const mod = proxyquire('../../../src/llm/providers/claude-cli', {
+      'node:child_process': { spawn: spawnStub },
+    });
+    return {
+      provider: mod.createClaudeCLIProvider(config) as LLMProvider,
+      spawnCount: () => call,
+    };
+  };
+
+  const rejection = async (p: Promise<unknown>): Promise<Error> => {
+    try {
+      await p;
+    } catch (e) {
+      return e as Error;
+    }
+    throw new Error('expected promise to reject');
+  };
+
+  describe('isRetryableCLIError classification', () => {
+    it('retries timeout errors', () => {
+      expect(isRetryableCLIError(new Error('Claude CLI timed out after 600000ms'))).to.equal(true);
+    });
+
+    it('does not retry rate-limit / usage-limit errors (batch-fatal by design)', () => {
+      expect(isRetryableCLIError(new Error("Claude CLI error: You've hit your usage limit"))).to.equal(false);
+    });
+
+    it('does not retry auth errors', () => {
+      expect(isRetryableCLIError(new Error('Claude CLI error: Invalid authentication'))).to.equal(false);
+    });
+
+    it('does not retry missing-binary (ENOENT) errors', () => {
+      expect(isRetryableCLIError(new Error('Claude Code CLI not found at "claude"'))).to.equal(false);
+    });
+
+    it('does not retry a generic non-zero exit', () => {
+      expect(isRetryableCLIError(new Error('Claude CLI exited with code 1: boom'))).to.equal(false);
+    });
+
+    it('handles non-Error values without throwing', () => {
+      expect(isRetryableCLIError('some string')).to.equal(false);
+      expect(isRetryableCLIError(undefined)).to.equal(false);
+    });
+  });
+
+  it('retries a timed-out attempt and succeeds on the next one', async () => {
+    const { provider, spawnCount } = loadProviderSeq(
+      [[], [{ stdout: cliResultJson({ result: 'recovered' }), closeCode: 0 }]],
+      { timeout: 20, maxRetries: 3, retryBaseDelayMs: 1 }
+    );
+    const result = await provider.invoke('p');
+    expect(result.content).to.equal('recovered');
+    expect(spawnCount()).to.equal(2); // one failure + one retry
+  });
+
+  it('gives up after maxRetries and throws the last timeout error', async () => {
+    const { provider, spawnCount } = loadProviderSeq(
+      [[]], // every attempt times out
+      { timeout: 15, maxRetries: 2, retryBaseDelayMs: 1 }
+    );
+    const err = await rejection(provider.invoke('p'));
+    expect(err.message).to.match(/timed out after/);
+    expect(spawnCount()).to.equal(3); // initial attempt + 2 retries
+  });
+
+  it('does not retry a non-retryable batch-fatal error (single attempt)', async () => {
+    const { provider, spawnCount } = loadProviderSeq(
+      [[{ stdout: "You've hit your usage limit · resets at 5pm", closeCode: 0 }]],
+      { maxRetries: 3, retryBaseDelayMs: 1 }
+    );
+    const err = await rejection(provider.invoke('p'));
+    expect(isBatchFatalError(err.message)).to.equal(true);
+    expect(spawnCount()).to.equal(1); // classified fatal downstream, never retried
+  });
+
+  it('honors CLAUDE_CLI_MAX_RETRIES=0 (retries disabled) from the environment', async () => {
+    const prev = process.env.CLAUDE_CLI_MAX_RETRIES;
+    process.env.CLAUDE_CLI_MAX_RETRIES = '0';
+    try {
+      const { provider, spawnCount } = loadProviderSeq(
+        [[]], // times out
+        { timeout: 15, retryBaseDelayMs: 1 } // no maxRetries in config -> env wins
+      );
+      const err = await rejection(provider.invoke('p'));
+      expect(err.message).to.match(/timed out after/);
+      expect(spawnCount()).to.equal(1); // env disabled retries
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CLI_MAX_RETRIES;
+      else process.env.CLAUDE_CLI_MAX_RETRIES = prev;
+    }
   });
 });

@@ -40,7 +40,68 @@ export interface ClaudeCLIConfig {
   maxTokens?: number;
   /** Pass --dangerously-skip-permissions to the CLI. Default: true (preserves prior behavior). */
   skipPermissions?: boolean;
+  /**
+   * Maximum number of automatic retries for transient failures (default: 3, or
+   * the `CLAUDE_CLI_MAX_RETRIES` env var). 0 disables retries. Only transient
+   * errors are retried — see {@link isRetryableCLIError}.
+   */
+  maxRetries?: number;
+  /**
+   * Base delay (ms) for exponential backoff between retries (default: 1000, so
+   * 1s / 2s / 4s). Mainly a testing/tuning seam; production should leave the
+   * default.
+   */
+  retryBaseDelayMs?: number;
 }
+
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_BASE_DELAY_MS = 1000;
+
+/** Resolve to a non-negative integer, falling back to `fallback` on garbage. */
+const toRetryCount = (value: number, fallback: number): number => {
+  if (!Number.isFinite(value) || value < 0) return fallback;
+  return Math.floor(value);
+};
+
+/**
+ * Resolve the retry budget from explicit config, then the
+ * `CLAUDE_CLI_MAX_RETRIES` env var, then the default.
+ */
+const resolveMaxRetries = (config: ClaudeCLIConfig): number => {
+  if (typeof config.maxRetries === 'number') {
+    return toRetryCount(config.maxRetries, DEFAULT_MAX_RETRIES);
+  }
+  const fromEnv = process.env.CLAUDE_CLI_MAX_RETRIES;
+  if (fromEnv !== undefined && fromEnv !== '') {
+    return toRetryCount(Number.parseInt(fromEnv, 10), DEFAULT_MAX_RETRIES);
+  }
+  return DEFAULT_MAX_RETRIES;
+};
+
+/** Promise-based sleep used between retry attempts. */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Decide whether a failed CLI invocation is worth retrying.
+ *
+ * Only *timeouts* are retried: they are the transient/network failure this
+ * provider surfaces, and a fresh spawn often succeeds. Deliberately NOT retried:
+ * - Rate-limit / usage-limit and auth notices — the provider classifies these
+ *   as batch-fatal (see {@link parseResponse} / `isBatchFatalError`) so the
+ *   pipeline stops fast instead of burning backoff against an exhausted quota
+ *   or a login that won't fix itself in seconds.
+ * - Config errors (`ENOENT`/`EACCES`) — retrying a missing/unexecutable binary
+ *   is pointless.
+ * - Deterministic non-zero exits / empty results — retrying would mask, not
+ *   fix, a real failure.
+ */
+export function isRetryableCLIError(error: unknown): boolean {
+  return /timed out after/i.test(describeError(error));
+}
+
+/** Render any thrown value as a log-safe string. */
+const describeError = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 /**
  * Tools to deny when running the CLI in text-only mode.
@@ -106,6 +167,8 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   const maxTurns = config.maxTurns ?? 20; // Multiple turns needed - test files can need 15+
   const modelName = config.model ?? 'claude-cli';
   const skipPermissions = config.skipPermissions ?? true;
+  const maxRetries = resolveMaxRetries(config);
+  const retryBaseDelayMs = config.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
   // Note: CLI doesn't support temperature/maxTokens directly via flags
   // These would be handled by account settings or model defaults
 
@@ -248,6 +311,54 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   };
 
   /**
+   * Execute the CLI with automatic retries + exponential backoff for transient
+   * failures (see {@link isRetryableCLIError}). Wraps only the spawn/transport
+   * step: response parsing (and its batch-fatal rate-limit/auth classification)
+   * runs downstream in `invoke`, deliberately outside the retry loop.
+   */
+  const canRetry = (error: unknown, attempt: number): boolean =>
+    attempt < maxRetries && isRetryableCLIError(error);
+
+  // Log the transient failure and wait out the exponential backoff (1s/2s/4s
+  // at the default base) before the next attempt.
+  const backoffAfterFailure = async (error: unknown, attempt: number): Promise<void> => {
+    const delay = retryBaseDelayMs * 2 ** attempt;
+    console.log(
+      `[Claude CLI] Attempt ${attempt + 1}/${maxRetries + 1} failed (${describeError(error)}); retrying in ${delay}ms...`
+    );
+    await sleep(delay);
+  };
+
+  // One attempt. Resolves the CLI stdout on success. On a retryable failure with
+  // attempts remaining, backs off and resolves `null` to signal "try again";
+  // otherwise rethrows. (executeCLI only ever resolves a string, so `null` is an
+  // unambiguous retry sentinel.)
+  const attemptExecute = async (
+    prompt: string,
+    options: InvokeOptions | undefined,
+    attempt: number,
+  ): Promise<string | null> => {
+    try {
+      return await executeCLI(prompt, options);
+    } catch (error) {
+      if (!canRetry(error, attempt)) throw error;
+      await backoffAfterFailure(error, attempt);
+      return null;
+    }
+  };
+
+  const executeCLIWithRetry = async (prompt: string, options?: InvokeOptions): Promise<string> => {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const stdout = await attemptExecute(prompt, options, attempt);
+      if (stdout !== null) return stdout;
+    }
+    // Unreachable: the final attempt either returns stdout or rethrows (canRetry
+    // is false once attempt === maxRetries), so the loop never falls through.
+    /* istanbul ignore next -- defensive, loop always returns or throws above */
+    throw new Error('Claude CLI retry loop exhausted without a result');
+  };
+
+  /**
    * Parse CLI JSON response
    */
   const parseResponse = (stdout: string): CLIResponse => {
@@ -310,7 +421,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
    * Invoke with a simple prompt
    */
   const invoke = async (prompt: string, options?: InvokeOptions): Promise<LLMResponse> => {
-    const stdout = await executeCLI(prompt, options);
+    const stdout = await executeCLIWithRetry(prompt, options);
     const parsed = parseResponse(stdout);
 
     if (parsed.is_error) {
