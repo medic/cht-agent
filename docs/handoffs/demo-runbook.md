@@ -149,8 +149,9 @@ forms, preferred first:
 
 - **Full cht-conf source project** (this engagement): the partner's config repo
   working copy — `/workspace/site-config-test` — with its own `package.json`
-  pinning `cht-conf 3.21.4`. Nothing to download; that directory IS
-  `CHT_CONF_PATH`.
+  pinning `cht-conf 3.21.4`. Nothing to download; that directory is the
+  host-side `CHT_CONF_PATH` (step 3 mounts it at `/workspace/cht-conf-project`
+  inside the agent container).
 - **Read-only backups** (only instance access, no source repo). Run against the
   LIVE project — no writes — and hand over the resulting directory:
 
@@ -218,20 +219,28 @@ Rebuild the runtime image from this integration branch and start it with the
 CLI provider + OAuth mount + instance env:
 
 ```bash
-# docker-compose.cht-agent.yml with:
+# HOST side — mount sources consumed by docker-compose.cht-agent.yml. The
+# config repo mounts rw at /workspace/cht-conf-project inside the container;
+# run its `npm ci` (step 0) BEFORE `up` so the pinned cht-conf rides the mount:
+CHT_CORE_PATH=/path/to/cht-core-4.21-checkout  # → /workspace/cht-core (the checkout step 1 built images from)
+CHT_CONF_PATH=/workspace/site-config-test      # → /workspace/cht-conf-project (the live buggy config repo from step 2a)
+# CANONICAL_CONF=<container-visible path>      # optional; compose defaults it to
+#   /workspace/cht-core/config/standard. For a real (un-planted) bug there is no
+#   known-good baseline — reproduce→verify (step 6) is the authoritative proof.
+
+# CONTAINER side — the agent process env. Compose hard-sets the paths (the agent
+# always sees the config at /workspace/cht-conf-project regardless of the host
+# dir); add the rest to the compose `environment:` block or an env override:
 LLM_PROVIDER=claude-cli
 ANTHROPIC_MODEL=claude-opus-4-8      # override so the run does not burn the Fable session budget
-CHT_URL=https://nginx
+CHT_URL=https://nginx                # compose default
 NODE_EXTRA_CA_CERTS=/path/to/local-ca.crt   # local-IP service-signed cert; OR NODE_TLS_REJECT_UNAUTHORIZED=0 for self-signed
-CHT_CONF_PATH=/workspace/site-config-test    # the live (buggy) config repo from step 2a; Development writes the fix here (A1)
-CHT_CONF_BIN=/workspace/site-config-test/node_modules/.bin/cht  # ← version parity: every agent cht-conf
-#   invocation (QA applyConfig, step 6) runs the deployment-pinned 3.21.4 that step 0's
-#   `npm ci` installed into the config repo — NOT the workbench-global cht-conf.
-CHT_CORE_PATH=/path/to/cht-core-4.21-checkout # required by full.ts; the checkout step 1 built the image from
-CANONICAL_CONF=/path/to/reference-config      # matched reference baseline for canonical-diff (see step 4);
-#   leave UNSET for a real (un-planted) bug — no known-good baseline exists, and
-#   reproduce→verify (step 6) is the authoritative proof
-# for the QA phase (step 6): CHT_TEST_DATA_PATH=/path/to/seed-project (optional)
+CHT_CONF_PATH=/workspace/cht-conf-project    # set by compose — Development writes the fix here (A1)
+CHT_CONF_BIN=/workspace/cht-conf-project/node_modules/.bin/cht  # ← version parity: every agent
+#   cht-conf invocation (QA applyConfig, step 6) runs the deployment-pinned 3.21.4 that
+#   `npm ci` installed into the MOUNTED config repo — not the image's global cht-conf.
+#   (Not yet in the compose environment block — add it there or via an override.)
+# for the QA phase (step 6): CHT_TEST_DATA_PATH=<container-visible path> (optional; needs its own mount)
 ```
 
 ## 4. [AGENT] Research → **HC1**
@@ -249,7 +258,9 @@ docker exec … npm run research tickets/demo-pnc-relevant.md
   corpus; frontmatter wins over inference (no LLM call needed to route). On the
   live path the engagement ticket reads
   `artifactName: postnatal_care_service | chtConfVersion: 3.21.4 |
-  deploymentRef: /workspace/site-config-test` — same routing, real bug.
+  deploymentRef: /workspace/cht-conf-project` — same routing, real bug
+  (`deploymentRef` is informational metadata; it names the config's path as
+  the agent sees it, i.e. the container mount).
 - **Canonical diff** pinpoints the drift when a matched reference baseline is
   available (`CANONICAL_CONF`; demo: the un-planted `config/default`; a real site:
   a known-good reference or a prior config version). With that baseline the diff
