@@ -1,10 +1,18 @@
 # Demo runbook — the closed loop (research → fix → QA)
 
 The exact operator sequence for demo day, with the expected output captured per
-step. The demo drives `tickets/demo-pnc-relevant.md` against `demo/config-pnc-demo`
-(cht-core 5.2.0 `config/default` with **one** planted `relevant` bug in
-`pregnancy_home_visit`: the `danger_signs` group is shown for a *miscarriage*
-outcome; see `demo/config-pnc-demo/PLANTED-BUG.md`).
+step. **Version policy: the demo runs at live-site parity** — cht-conf **3.21.4**
+(the config repo's own `package.json` pin; never the workbench-global cht-conf)
+and cht-core **4.21.1** (the site's custom build, image built locally in step 1).
+The primary drive is the live project's config repo (working copy at
+`/workspace/site-config-test`, ticket `demo-echis-pnc-ticket.md` therein; its
+`DEMO-STEPS.md` is the engagement-specific walkthrough this runbook generalises).
+`tickets/demo-pnc-relevant.md` + `demo/config-pnc-demo` (a cht-core 5.2.0
+`config/default` with **one** planted `relevant` bug in `pregnancy_home_visit`:
+the `danger_signs` group is shown for a *miscarriage* outcome; see
+`demo/config-pnc-demo/PLANTED-BUG.md`) remain the self-contained stand-in when no
+live config directory is available — note the stand-in predates the version
+policy and was rehearsed with the workbench cht-conf.
 
 ### The goal — reconstruct a live project, don't break production
 
@@ -37,6 +45,10 @@ content check before and after the fix and reports the transition.
 ```bash
 npm ci            # Node 22; installs deps (see the harness/Chromium note in step 6b)
 npm run build && npm test && npm run lint
+
+# once, in the live config repo (installs its OWN pinned toolchain —
+# cht-conf 3.21.4 + cht-conf-test-harness 3.0.15):
+cd /workspace/site-config-test && npm ci
 ```
 
 Expected (rehearsed this mission): **1351 passing / 0 failing**, build clean,
@@ -45,22 +57,78 @@ this suite — it needs Chromium; see step 6b.)
 
 ---
 
-## 1. [OPERATOR] Bring up a version-matched CHT instance
+## 1. [OPERATOR] Bring up a version-matched CHT instance (build cht-core 4.21.1 locally)
 
-Stand up CHT on the shared `cht-agent-net` Docker network so the agent reaches
-it at `https://nginx` (self-signed cert). Layer the override onto cht-core's
-compose (`docker/cht-agent-net.override.yml`). Match the site's cht-core minor
-where feasible (the demo config is 5.2.0).
+Stand up CHT **at the live site's cht-core version (4.21.1)** on the shared
+`cht-agent-net` Docker network so the agent reaches it at `https://nginx`. The
+live site runs a **custom 4.21.1 build** (`4.21.1-…-sync-interval-30…`), so the
+test image is built locally from that cht-core checkout — pulling stock images
+alone won't reproduce a fork's behaviour. (All commands verified against the
+cht-core `4.21.1` tag, commit `f022853`.)
+
+**1a — build the local images.** In the site's cht-core checkout (the 4.21.x
+fork, or the `4.21.1` tag if the site's changes don't affect the demo path).
+Needs Node ≥ 22.15.0, npm ≥ 10.9.0, and docker compose **v2**:
+
+```bash
+# HUMAN, in the cht-core 4.21.x checkout:
+npm ci
+npm run build                # compiles webapp/admin/ddocs — REQUIRED first:
+                             # local-images only copies prebuilt static artifacts
+export VERSION=4.21.1        # ⚠️ see version gotcha below
+npm run local-images         # builds 6 images (api, sentinel, couchdb, haproxy,
+                             # haproxy-healthcheck, nginx) tagged
+                             # medicmobile/cht-*:4.21.1 AND renders compose files
+                             # into local-build/ (cht-core.yml, cht-couchdb.yml)
+```
+
+**Version gotcha (`scripts/build/versions.js`):** the tag is resolved from
+`TAG` → `BRANCH` → `VERSION` → current git branch. A tag checkout is detached
+HEAD, so with nothing set the images get an **empty tag**; with `TAG=4.21.1`
+the images get `4.21.1.undefined` while the compose files say `4.21.1`
+(mismatch — compose won't find the images). **`export VERSION=4.21.1` is the
+correct pin** — images and compose then agree. A named branch checkout works
+too (branch name becomes the tag). Local builds are single-platform (host
+arch); on ARM hosts the images are arm64-only.
+
+**1b — compose up with the cht-agent-net override.** Layer
+`docker/cht-agent-net.override.yml` (it joins the `nginx` service to the
+external `cht-agent-net` network; the stack's internal network default
+`cht-net` matches the override):
 
 ```bash
 # HUMAN, in the cht-core checkout:
-docker compose -f cht-couchdb.yml -f cht-core.yml \
-  -f <this-repo>/docker/cht-agent-net.override.yml up -d
-curl -k https://localhost/api/v2/monitoring          # readiness (no auth required)
+cd local-build
+cat > .env <<EOF
+COUCHDB_USER=medic
+COUCHDB_PASSWORD=password
+COUCHDB_SECRET=$(openssl rand -hex 16)
+COUCHDB_UUID=$(openssl rand -hex 16)
+NGINX_HTTP_PORT=10080
+NGINX_HTTPS_PORT=10443
+EOF
+# COUCHDB_PASSWORD is mandatory (compose fails fast without it); the non-default
+# NGINX ports avoid host 80/443 collisions.
+docker compose --env-file ./.env -f cht-core.yml -f cht-couchdb.yml \
+  -f <cht-agent>/docker/cht-agent-net.override.yml up -d
+curl -k https://localhost:10443/api/v2/monitoring   # readiness (no auth required)
+#   expect: version.app ≈ 4.21.1 (the custom build's version string)
 ```
 
-Verify nginx is on `cht-agent-net`. `/api/v2/monitoring` needs **no auth** and is
-the readiness probe the agent polls (`version`, `date.uptime`).
+Verify nginx is on `cht-agent-net` (`docker network inspect cht-agent-net`).
+`/api/v2/monitoring` needs **no auth** and is the readiness probe the agent
+polls (`version`, `date.uptime`) — from the agent's side the instance is
+`https://nginx` (internal port 443; the host-port remap doesn't apply on the
+docker network).
+
+**Fallback — stock 4.21.1, no custom changes:** official images exist on
+`public.ecr.aws/medic/cht-*:4.21.1`; fetch the published compose files and
+bring up the same way (same `.env`, same override layering):
+
+```bash
+curl -s -o cht-core.yml    "https://staging.dev.medicmobile.org/_couch/builds_4/medic:medic:4.21.1/docker-compose/cht-core.yml"
+curl -s -o cht-couchdb.yml "https://staging.dev.medicmobile.org/_couch/builds_4/medic:medic:4.21.1/docker-compose/cht-couchdb.yml"
+```
 
 **TLS.** nginx presents either a **self-signed** cert or a **local-IP
 service-signed** cert (a local CA). cht-conf trusts it with
@@ -76,9 +144,15 @@ by design, so set one of these on the agent process (step 3):
 Reconstruct the live project's *current* (buggy) state on the throwaway test
 instance, with dummy data — never the live instance or its data. Two sub-steps.
 
-**2a — download the live config (read-only) into a local dir.** The operator runs
-these against the LIVE project and hands over the resulting directory as
-`CHT_CONF_PATH` (for the demo, that dir is `demo/config-pnc-demo`):
+**2a — obtain the live config into a local dir (`CHT_CONF_PATH`).** Two handover
+forms, preferred first:
+
+- **Full cht-conf source project** (this engagement): the partner's config repo
+  working copy — `/workspace/site-config-test` — with its own `package.json`
+  pinning `cht-conf 3.21.4`. Nothing to download; that directory IS
+  `CHT_CONF_PATH`.
+- **Read-only backups** (only instance access, no source repo). Run against the
+  LIVE project — no writes — and hand over the resulting directory:
 
 ```bash
 # [OPERATOR] on the LIVE project — read-only backups, no writes:
@@ -86,25 +160,47 @@ cht --url=<live-admin-url> --accept-self-signed-certs backup-app-settings   # �
 cht --url=<live-admin-url> --accept-self-signed-certs backup-all-forms      # → forms/app/*.xml (deployed XForms)
 ```
 
-**2b — reconstruct on the TEST env + seed dummy data.** Upload the downloaded
-config to the test instance, then fill it with dummy data that conforms to the
-live `app_settings` contact hierarchy (so behaviour matches production but no real
-contacts/hierarchy/roles/users are involved). The downloaded `app_settings.json`
-is **already compiled** — upload it verbatim, do **not** recompile (recompiling
-needs a source tree you do not have and would clobber the minified
-contact-summary/tasks/targets; see `demo/site-reconstruction/README.md` §2a and
-the `app-settings-only` bucket):
+(For the stand-in demo, `CHT_CONF_PATH=demo/config-pnc-demo`.)
+
+**2b — upload from the cht-conf project directory to the TEST env + seed dummy
+data.** Always drive the upload with the **project's own pinned cht-conf**
+(`./node_modules/.bin/cht` after step 0's `npm ci` — 3.21.4 here), never the
+workbench-global cht-conf: the config was authored and compiled against that
+version, and the upload then exercises exactly what production ran.
+
+*Source-project path (preferred — full compile + convert from source):*
 
 ```bash
+cd $CHT_CONF_PATH                      # e.g. /workspace/site-config-test
+CHT=./node_modules/.bin/cht            # the repo-pinned cht-conf 3.21.4
 URL='https://medic:password@nginx'
 FLAGS='--force --skip-git-check --skip-version-check --skip-dependency-check --skip-translation-check --accept-self-signed-certs'
-# downloaded forms are .xml already (backup-all-forms), so no convert needed:
-cht --url=$URL --source=$CHT_CONF_PATH $FLAGS upload-app-settings upload-app-forms
-#   (demo stand-in has the .xlsx too → use: upload-app-settings convert-app-forms upload-app-forms)
+$CHT --url=$URL --source=. $FLAGS compile-app-settings upload-app-settings
+$CHT --url=$URL --source=. $FLAGS convert-app-forms upload-app-forms
+$CHT --url=$URL --source=. $FLAGS convert-contact-forms upload-contact-forms
+$CHT --url=$URL --source=. $FLAGS upload-resources upload-custom-translations
+# NOTE: deliberately NOT running upload-branding (keeps CHT-default branding on
+# the throwaway env; the working copy is neutralized — no OIDC/outbound/env.*).
+```
 
-# dummy data conforming to the live app_settings hierarchy:
+*Backup-only path (no source tree): the downloaded `app_settings.json` is
+**already compiled** — upload it verbatim, do **not** recompile (recompiling
+would clobber the minified contact-summary/tasks/targets; see
+`demo/site-reconstruction/README.md` §2a and the `app-settings-only` bucket).
+Backed-up forms are `.xml` already, so no convert:*
+
+```bash
+$CHT --url=$URL --source=$CHT_CONF_PATH $FLAGS upload-app-settings upload-app-forms
+#   (demo stand-in has the .xlsx too → use: upload-app-settings convert-app-forms upload-app-forms)
+```
+
+*Then seed dummy data conforming to the live `app_settings` contact hierarchy
+(behaviour matches production; no real contacts/hierarchy/roles/users). Create
+at least one **password** user with a role that can submit the affected form:*
+
+```bash
 npm run demo:build-seed -- --export <scrubbed-export.json> --app-settings $CHT_CONF_PATH/app_settings.json --users <users.json> --out $CHT_TEST_DATA_PATH
-cht --url=$URL --source=$CHT_TEST_DATA_PATH $FLAGS csv-to-docs upload-docs create-users
+$CHT --url=$URL --source=$CHT_TEST_DATA_PATH $FLAGS csv-to-docs upload-docs create-users
 ```
 
 The test env now mirrors the live project's behaviour — the symptom reproduces
@@ -127,9 +223,14 @@ LLM_PROVIDER=claude-cli
 ANTHROPIC_MODEL=claude-opus-4-8      # override so the run does not burn the Fable session budget
 CHT_URL=https://nginx
 NODE_EXTRA_CA_CERTS=/path/to/local-ca.crt   # local-IP service-signed cert; OR NODE_TLS_REJECT_UNAUTHORIZED=0 for self-signed
-CHT_CONF_PATH=/path/to/live-config-download  # the downloaded live (buggy) config from step 2; Development writes the fix here (A1)
-CHT_CORE_PATH=/path/to/cht-core               # required by full.ts; provisioning source
-CANONICAL_CONF=/path/to/reference-config      # matched reference baseline for canonical-diff (see step 4)
+CHT_CONF_PATH=/workspace/site-config-test    # the live (buggy) config repo from step 2a; Development writes the fix here (A1)
+CHT_CONF_BIN=/workspace/site-config-test/node_modules/.bin/cht  # ← version parity: every agent cht-conf
+#   invocation (QA applyConfig, step 6) runs the deployment-pinned 3.21.4 that step 0's
+#   `npm ci` installed into the config repo — NOT the workbench-global cht-conf.
+CHT_CORE_PATH=/path/to/cht-core-4.21-checkout # required by full.ts; the checkout step 1 built the image from
+CANONICAL_CONF=/path/to/reference-config      # matched reference baseline for canonical-diff (see step 4);
+#   leave UNSET for a real (un-planted) bug — no known-good baseline exists, and
+#   reproduce→verify (step 6) is the authoritative proof
 # for the QA phase (step 6): CHT_TEST_DATA_PATH=/path/to/seed-project (optional)
 ```
 
@@ -145,7 +246,10 @@ docker exec … npm run research tickets/demo-pnc-relevant.md
   artifactName: pregnancy_home_visit | chtConfVersion: 6.5.0 | deploymentRef: demo/config-pnc-demo
   ```
   `layer: cht-conf` routes to the config layer and targets the `cht-conf-wiki`
-  corpus; frontmatter wins over inference (no LLM call needed to route).
+  corpus; frontmatter wins over inference (no LLM call needed to route). On the
+  live path the engagement ticket reads
+  `artifactName: postnatal_care_service | chtConfVersion: 3.21.4 |
+  deploymentRef: /workspace/site-config-test` — same routing, real bug.
 - **Canonical diff** pinpoints the drift when a matched reference baseline is
   available (`CANONICAL_CONF`; demo: the un-planted `config/default`; a real site:
   a known-good reference or a prior config version). With that baseline the diff
@@ -207,7 +311,9 @@ config — and by red-before-approve):
    tier-1 verify is content-only).
 6. **applyConfig** — upload the corrected form: `app-forms` bucket, artifact
    `pregnancy_home_visit` (expected cht-conf `convert-app-forms`/`upload-app-forms`
-   lines, exit 0).
+   lines, exit 0). With `CHT_CONF_BIN` set (step 3) this runs the
+   deployment-pinned cht-conf 3.21.4 — the same version that authored the
+   config — not the workbench-global cht-conf.
 7. **discoverConfig (post)** — the form's rev changes (corroboration).
 8. **verify (GREEN)** — `verifyArtifact` against the deployed form MUST pass.
    Rehearsed (tier-1) against the corrected form:
@@ -228,10 +334,12 @@ shows it on both (no regression). **Not run in the mission-04 container** — th
 harness pulls `puppeteer-chromium-resolver`, which downloads **Chromium 93** on
 `npm ci`; the workbench has no Chromium. To enable: add Chromium + the puppeteer
 Debian libs to the runtime/CI image (no `Dockerfile.workbench` exists to edit —
-this stays an operator/CI step), then `npm run test:harness`. Also note: harness
-5.0.4 bundles **only cht-core 4.11** (`coreVersion` must be `'4.11.0'`; 5.x
-throws) — the `relevant` skip-logic reproduces under 4.11 emulation, but that
-version gap is a known caveat.
+this stays an operator/CI step), then `npm run test:harness`. Also note: the
+workbench harness 5.0.4 bundles **only cht-core 4.11** (`coreVersion` must be
+`'4.11.0'`; higher versions throw) — the `relevant` skip-logic reproduces under
+4.11 emulation, but it is not the target 4.21.1. For closer parity, the live
+config repo pins its own `cht-conf-test-harness` **3.0.15** (installed by step
+0's `npm ci` there) — run its Enketo-level checks from inside that repo instead.
 
 ### 6c. Tier-3 (live end-to-end submission) — headline, **operator-verified, optional**
 
