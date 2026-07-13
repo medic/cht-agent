@@ -29,6 +29,8 @@ import {
   GeneratedFile,
   FileValidationFeedback,
   FailingFileRef,
+  CrossFileIssue,
+  XlsformApplyResult,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { TestGenerationAgent, TestGenerationInput } from '../agents/test-generation-agent';
@@ -39,9 +41,12 @@ import {
   writeToStaging,
   writeToChtCore,
   clearStaging,
+  stageArtifact,
 } from '../utils/staging';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
 import { isShutdownRequested } from '../utils/shutdown';
+import { applyXlsformFixToProject } from '../utils/xlsform-apply';
+import { parseXlsformFixDescriptor, XLSFORM_FIX_DESCRIPTOR_PATH } from '../utils/xlsform-fix';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 
 const MAX_ITERATIONS = 3;
@@ -101,6 +106,44 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
   }
 
   return '__end__';
+}
+
+/**
+ * Shape the applyXlsformFix resolver reads. Narrow so the decision is unit-
+ * testable without a full langgraph state.
+ */
+export interface ApplyXlsformFixEdgeState {
+  xlsformApply?: unknown;
+  iterationCount?: number;
+  codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
+}
+
+/**
+ * Route out of the applyXlsformFix node (mission 05):
+ *  - applied & verified (xlsformApply set) OR nothing to do (passthrough) →
+ *    'generateTests' (proceed)
+ *  - an xlsform-apply-failed issue with iterations remaining → 'generateCode'
+ *    (regenerate the descriptor via the existing refinement loop)
+ *  - failed but out of iterations, or shutdown → 'generateTests' (give up; the
+ *    failure surfaces at HC2)
+ * Pure + exported for unit tests.
+ */
+export function resolveApplyXlsformFixEdge(state: ApplyXlsformFixEdgeState): 'generateCode' | 'generateTests' {
+  if (isShutdownRequested()) {
+    return 'generateTests';
+  }
+  if (state.xlsformApply) {
+    return 'generateTests';
+  }
+  const failed = (state.codeGeneration?.crossFileIssues ?? []).some(
+    (i) => i.issueType === 'xlsform-apply-failed'
+  );
+  const iterations = state.iterationCount ?? 0;
+  if (failed && iterations < MAX_ITERATIONS) {
+    console.log('[Development Supervisor] xlsform apply failed; looping to regenerate the descriptor');
+    return 'generateCode';
+  }
+  return 'generateTests';
 }
 
 function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
@@ -205,6 +248,11 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
+  /** Mission 05: the applied+verified XLSForm fix artifacts (undefined until PASS). */
+  xlsformApply: Annotation<XlsformApplyResult | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
 });
 
 export class DevelopmentSupervisor {
@@ -237,6 +285,9 @@ export class DevelopmentSupervisor {
       // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
+      // Mission 05: deterministic XLSForm-fix node between a passing validateImpl
+      // and generateTests. Passthrough (no descriptor) for cht-core tickets.
+      .addNode('applyXlsformFix', this.applyXlsformFixNode.bind(this))
       // Node name is 'generateTests' (not 'testGeneration'): LangGraph forbids a
       // node name that collides with a state channel, and 'testGeneration' is the
       // channel this node writes.
@@ -244,8 +295,8 @@ export class DevelopmentSupervisor {
 
       // Define edges with conditional routing from validation. The resolver
       // stays pure (returns 'generateCode' | END); the path map remaps its
-      // terminal branch through the (currently inert) test-generation node before
-      // END, while the refinement self-loop back to generateCode is unchanged.
+      // terminal branch through applyXlsformFix (then generateTests) before END,
+      // while the refinement self-loop back to generateCode is unchanged.
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'validateImpl')
       .addConditionalEdges(
@@ -253,7 +304,17 @@ export class DevelopmentSupervisor {
         (state) => resolveValidateImplEdge(state),
         {
           generateCode: 'generateCode',
-          [END]: 'generateTests',
+          [END]: 'applyXlsformFix',
+        },
+      )
+      // Mission 05: applyXlsformFix either proceeds or loops back to regenerate
+      // the descriptor (bounded by the shared iterationCount budget).
+      .addConditionalEdges(
+        'applyXlsformFix',
+        (state) => resolveApplyXlsformFixEdge(state),
+        {
+          generateCode: 'generateCode',
+          generateTests: 'generateTests',
         },
       )
       .addEdge('generateTests', END);
@@ -441,6 +502,81 @@ export class DevelopmentSupervisor {
     }
 
     return feedbackUpdate;
+  }
+
+  /**
+   * Node: apply XLSForm fix (mission 05).
+   *
+   * Deterministic, sandbox-side. For a cht-conf form ticket the code-gen CLI
+   * wrote only `.cht-agent/xlsform-fix.json`; this node applies it to a temp
+   * copy of the config project, converts offline, and asserts the compiled bind
+   * against the descriptor's `expect` block. On PASS it stashes the corrected
+   * .xlsx/.xml via the xlsformApply channel; on FAIL it emits a CrossFileIssue +
+   * perFileFeedback keyed to the descriptor so the refinement loop regenerates
+   * it. Passthrough (returns {}) when no descriptor is present — cht-core
+   * tickets and non-form runs are unaffected.
+   */
+  private async applyXlsformFixNode(state: typeof DevelopmentStateAnnotation.State) {
+    if (isShutdownRequested()) {
+      return {};
+    }
+    const descriptorFile = (state.codeGeneration?.files ?? []).find(
+      (f) => f.relativePath === XLSFORM_FIX_DESCRIPTOR_PATH
+    );
+    if (!descriptorFile) {
+      return {}; // passthrough: cht-core tickets and non-form config runs
+    }
+
+    const parsed = parseXlsformFixDescriptor(descriptorFile.content);
+    if (!parsed.valid || !parsed.descriptor) {
+      return this.xlsformFail(state, `descriptor is invalid: ${parsed.errors.join('; ')}`);
+    }
+
+    const configPath = state.options?.chtCorePath;
+    if (!configPath) {
+      return this.xlsformFail(state, 'no config-project path (options.chtCorePath) to convert against');
+    }
+
+    const outcome = await applyXlsformFixToProject(parsed.descriptor, configPath);
+    if (!outcome.ok) {
+      return this.xlsformFail(state, outcome.error);
+    }
+
+    const { bindDiff } = outcome.result;
+    console.log(
+      `[Development Supervisor] XLSForm fix verified: ${bindDiff.nodeset} relevant ` +
+        `${JSON.stringify(bindDiff.before)} -> ${JSON.stringify(bindDiff.after)} ` +
+        `(${bindDiff.siblingsUnchanged} sibling bind(s) unchanged)`
+    );
+    return { xlsformApply: outcome.result };
+  }
+
+  /**
+   * Build the FAIL state update for applyXlsformFix: append a CrossFileIssue and
+   * set perFileFeedback keyed to the descriptor path (an LLM-generated file, so
+   * selective regeneration targets it). Does not set xlsformApply.
+   */
+  private xlsformFail(state: typeof DevelopmentStateAnnotation.State, message: string) {
+    console.log(`[Development Supervisor] XLSForm fix FAILED: ${message}`);
+    const issue: CrossFileIssue = {
+      filePath: XLSFORM_FIX_DESCRIPTOR_PATH,
+      issueType: 'xlsform-apply-failed',
+      description: message,
+    };
+    const perFileFeedback: FileValidationFeedback[] = [
+      { filePath: XLSFORM_FIX_DESCRIPTOR_PATH, passed: false, issues: [message] },
+    ];
+    const update: Record<string, unknown> = {
+      perFileFeedback,
+      validationFeedback: `The XLSForm fix descriptor could not be applied/verified: ${message}`,
+    };
+    if (state.codeGeneration) {
+      update.codeGeneration = {
+        ...state.codeGeneration,
+        crossFileIssues: [...(state.codeGeneration.crossFileIssues ?? []), issue],
+      };
+    }
+    return update;
   }
 
   /**
@@ -862,6 +998,7 @@ Respond with a JSON object:
       iterationCount: 0,
       validationFeedback: input.additionalContext,
       perFileFeedback: undefined,
+      xlsformApply: undefined,
     };
 
     const result = await this.graph.invoke(initialState);
@@ -906,9 +1043,27 @@ Respond with a JSON object:
 
     const writtenFiles = await writeToStaging(allFiles, stagingPath);
 
+    // Mission 05: byte-copy the corrected workbook + regenerated XForm into
+    // staging (the descriptor stays too, for the HC2 diff; it is cleaned from
+    // staging before copyToTarget so .cht-agent never lands in the mount).
+    if (state.xlsformApply) {
+      writtenFiles.push(...(await this.stageXlsformArtifacts(state.xlsformApply, stagingPath)));
+    }
+
     console.log(`[Development Supervisor] Written ${writtenFiles.length} files to staging: ${stagingPath}`);
 
     return { stagingPath, writtenFiles };
+  }
+
+  /**
+   * Byte-copy the mission-05 corrected .xlsx + regenerated .xml into a staging
+   * or target tree (binary-safe, bypassing the utf-8 GeneratedFile path).
+   * Returns the repo-relative paths written.
+   */
+  private async stageXlsformArtifacts(apply: XlsformApplyResult, destDir: string): Promise<string[]> {
+    await stageArtifact(apply.xlsxPath, apply.xlsxRelPath, destDir);
+    await stageArtifact(apply.xmlPath, apply.xmlRelPath, destDir);
+    return [apply.xlsxRelPath, apply.xmlRelPath];
   }
 
   /**
@@ -924,7 +1079,18 @@ Respond with a JSON object:
       allFiles.push(...state.testGeneration.files);
     }
 
-    const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
+    // Mission 05: the descriptor is orchestration-internal — it must never land
+    // in the partner repo. On the direct-write path (no staging/HC2), drop it
+    // and write the byte-safe corrected artifacts instead.
+    const targetFiles = state.xlsformApply
+      ? allFiles.filter((f) => f.relativePath !== XLSFORM_FIX_DESCRIPTOR_PATH)
+      : allFiles;
+
+    const writtenFiles = await writeToChtCore(targetFiles, chtCorePath);
+
+    if (state.xlsformApply) {
+      writtenFiles.push(...(await this.stageXlsformArtifacts(state.xlsformApply, chtCorePath)));
+    }
 
     console.log(`[Development Supervisor] Written ${writtenFiles.length} files to ${chtCorePath}`);
 

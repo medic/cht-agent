@@ -1263,6 +1263,46 @@ export interface DevelopmentState {
   iterationCount?: number;
   validationFeedback?: string;
   perFileFeedback?: FileValidationFeedback[];
+  /**
+   * Result of the deterministic XLSForm-fix node (mission 05). Present only for
+   * a cht-conf form ticket whose descriptor applied + converted + asserted
+   * clean; undefined otherwise (cht-core tickets, non-form runs, or a failure
+   * routed back to refinement).
+   */
+  xlsformApply?: XlsformApplyResult;
+}
+
+/**
+ * The one-bind delta an XLSForm fix produced, verified against the OFFLINE
+ * conversion (mission 05). Drives the HC2 bind-level diff and the report.
+ */
+export interface XlsformBindDiff {
+  /** Target bind nodeset (e.g. /data/danger_signs). */
+  nodeset: string;
+  /** The relevant expression before the fix (from the pre-edit conversion). */
+  before?: string;
+  /** The relevant expression after the fix (matches descriptor.expect.relevant). */
+  after: string;
+  /** How many sibling top-level group binds were verified byte-unchanged. */
+  siblingsUnchanged: number;
+}
+
+/**
+ * Artifacts + diff the applyXlsformFix node stashes for staging/HC2/report
+ * (mission 05). xlsxPath/xmlPath point into a temp convert sandbox (never the
+ * mount); writeToStaging byte-copies them to their repo-relative destinations.
+ */
+export interface XlsformApplyResult {
+  form: string;
+  xlsxPath: string;
+  xmlPath: string;
+  /** Repo-relative destination for the corrected workbook (forms/app/<form>.xlsx). */
+  xlsxRelPath: string;
+  /** Repo-relative destination for the regenerated XForm (forms/app/<form>.xml). */
+  xmlRelPath: string;
+  bindDiff: XlsformBindDiff;
+  /** The temp sandbox root the artifacts live in (kept alive until staging copies them). */
+  sandboxDir: string;
 }
 
 /**

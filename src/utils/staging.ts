@@ -170,6 +170,23 @@ export const writeToStaging = async (
 };
 
 /**
+ * Byte-copy one already-materialized file (e.g. a corrected .xlsx / regenerated
+ * .xml from the mission-05 convert sandbox) INTO a staging or target tree at
+ * `relativePath`. Uses fs.copyFile (binary-safe) instead of the utf-8
+ * writeFile path, so binary artifacts survive — the GeneratedFile pipeline's
+ * utf-8 assumption never touches them. Path-traversal guarded by resolveWithin.
+ */
+export const stageArtifact = async (
+  srcPath: string,
+  relativePath: string,
+  destDir: string
+): Promise<void> => {
+  const fullPath = resolveWithin(destDir, relativePath);
+  await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+  await fs.promises.copyFile(srcPath, fullPath);
+};
+
+/**
  * Write generated files directly to cht-core
  */
 export const writeToChtCore = async (

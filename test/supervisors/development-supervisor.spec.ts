@@ -7,7 +7,10 @@ import * as os from 'node:os';
 import {
   resolveValidateImplEdge,
   ValidateImplEdgeState,
+  resolveApplyXlsformFixEdge,
+  ApplyXlsformFixEdgeState,
 } from '../../src/supervisors/development-supervisor';
+import { canOfflineConvert } from '../helpers/offline-convert';
 import {
   CodeGenerationResult,
   DevelopmentInput,
@@ -111,6 +114,34 @@ describe('resolveValidateImplEdge (R17.4)', () => {
   });
 });
 
+describe('resolveApplyXlsformFixEdge (mission 05)', () => {
+  it('proceeds to generateTests once the fix is applied (xlsformApply set)', () => {
+    const state: ApplyXlsformFixEdgeState = { xlsformApply: { form: 'x' }, iterationCount: 1 };
+    expect(resolveApplyXlsformFixEdge(state)).to.equal('generateTests');
+  });
+
+  it('proceeds to generateTests on passthrough (no apply, no failure issue)', () => {
+    const state: ApplyXlsformFixEdgeState = { iterationCount: 0, codeGeneration: { crossFileIssues: [] } };
+    expect(resolveApplyXlsformFixEdge(state)).to.equal('generateTests');
+  });
+
+  it('loops back to generateCode on a failed apply with iterations remaining', () => {
+    const state: ApplyXlsformFixEdgeState = {
+      iterationCount: 1,
+      codeGeneration: { crossFileIssues: [{ issueType: 'xlsform-apply-failed' }] },
+    };
+    expect(resolveApplyXlsformFixEdge(state)).to.equal('generateCode');
+  });
+
+  it('gives up (generateTests) on a failed apply once iterations are exhausted', () => {
+    const state: ApplyXlsformFixEdgeState = {
+      iterationCount: 3,
+      codeGeneration: { crossFileIssues: [{ issueType: 'xlsform-apply-failed' }] },
+    };
+    expect(resolveApplyXlsformFixEdge(state)).to.equal('generateTests');
+  });
+});
+
 /**
  * Bracket-access type for invoking private node handlers from tests.
  * Mirrors the LangGraph node return shape but uses unknown to stay decoupled
@@ -121,6 +152,7 @@ type SupervisorPrivateAccess = {
   codeGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
   validationNode: (state: unknown) => Promise<Record<string, unknown>>;
   testGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
+  applyXlsformFixNode: (state: unknown) => Promise<Record<string, unknown>>;
 };
 
 /**
@@ -472,5 +504,121 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     expect(finalState.currentPhase).to.equal('complete'); // generateTests owns the terminal phase
     expect(testGen.calledOnce).to.equal(true);
     expect(finalState.testGeneration).to.deep.equal(cannedTestGen);
+  });
+});
+
+const YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";
+const DESCRIPTOR_PATH = '.cht-agent/xlsform-fix.json';
+const validDescriptorJson = JSON.stringify({
+  version: 1,
+  form: 'pregnancy_home_visit',
+  edits: [
+    { sheet: 'survey', match: { column: 'name', value: 'danger_signs' }, set: { column: 'relevant', value: YES_GATE } },
+  ],
+  expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: true },
+  rationale: 'restore the yes-only gate',
+});
+
+describe('DevelopmentSupervisor applyXlsformFixNode (mission 05)', () => {
+  it('passes through (empty update) when no descriptor was generated', async () => {
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const out = await supervisor.applyXlsformFixNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile('src/other.ts')]),
+    }));
+    expect(Object.keys(out)).to.have.length(0);
+  });
+
+  it('fails with a descriptor-keyed CrossFileIssue + perFileFeedback on an invalid descriptor', async () => {
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const out = await supervisor.applyXlsformFixNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, '{ not valid json', 'config')]),
+    }));
+    const feedback = out.perFileFeedback as Array<{ filePath: string; passed: boolean }>;
+    expect(feedback[0].filePath).to.equal(DESCRIPTOR_PATH);
+    expect(feedback[0].passed).to.equal(false);
+    const codeGen = out.codeGeneration as CodeGenerationResult;
+    expect(codeGen.crossFileIssues?.some((i) => i.issueType === 'xlsform-apply-failed')).to.equal(true);
+    expect(codeGen.crossFileIssues?.[codeGen.crossFileIssues.length - 1].filePath).to.equal(DESCRIPTOR_PATH);
+    expect(out.xlsformApply).to.equal(undefined);
+  });
+
+  const maybe = canOfflineConvert() ? it : it.skip;
+  maybe('applies + verifies against the real fixture and sets xlsformApply (self-skips without cht)', async function () {
+    this.timeout(180000);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const out = await supervisor.applyXlsformFixNode(mkDevState({
+      ...baseValidInputFragment,
+      options: { chtCorePath: path.resolve('demo/config-pnc-demo'), previewMode: true },
+      codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, validDescriptorJson, 'config')]),
+    }));
+    const apply = out.xlsformApply as { bindDiff: { after: string; siblingsUnchanged: number }; sandboxDir: string } | undefined;
+    expect(apply, JSON.stringify(out)).to.not.equal(undefined);
+    if (apply) {
+      expect(apply.bindDiff.after).to.equal(YES_GATE);
+      expect(apply.bindDiff.siblingsUnchanged).to.be.greaterThan(0);
+      await fs.rm(apply.sandboxDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('DevelopmentSupervisor xlsform staging (mission 05)', () => {
+  let srcDir: string;
+
+  beforeEach(async () => {
+    srcDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-artifacts-'));
+    await fs.writeFile(path.join(srcDir, 'corrected.xlsx'), 'BINARY-XLSX', 'utf-8');
+    await fs.writeFile(path.join(srcDir, 'regenerated.xml'), '<xml/>', 'utf-8');
+  });
+
+  afterEach(async () => {
+    await fs.rm(srcDir, { recursive: true, force: true });
+  });
+
+  const stateWithApply = (): DevelopmentState => mkDevState({
+    ...baseValidInputFragment,
+    codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, validDescriptorJson, 'config')]),
+    xlsformApply: {
+      form: 'pregnancy_home_visit',
+      xlsxPath: path.join(srcDir, 'corrected.xlsx'),
+      xmlPath: path.join(srcDir, 'regenerated.xml'),
+      xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
+      xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
+      bindDiff: { nodeset: '/data/danger_signs', after: YES_GATE, siblingsUnchanged: 2 },
+      sandboxDir: srcDir,
+    },
+  });
+
+  it('writeToStaging byte-copies the corrected .xlsx + .xml (and keeps the descriptor for HC2)', async () => {
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const result = await supervisor.writeToStaging(stateWithApply());
+    try {
+      expect(result.writtenFiles).to.include('forms/app/pregnancy_home_visit.xlsx');
+      expect(result.writtenFiles).to.include('forms/app/pregnancy_home_visit.xml');
+      expect(result.writtenFiles).to.include(DESCRIPTOR_PATH);
+      const xlsx = await fs.readFile(path.join(result.stagingPath, 'forms/app/pregnancy_home_visit.xlsx'), 'utf-8');
+      expect(xlsx).to.equal('BINARY-XLSX');
+    } finally {
+      await fs.rm(result.stagingPath, { recursive: true, force: true });
+    }
+  });
+
+  it('writeToChtCore drops the descriptor but writes the corrected artifacts', async () => {
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const target = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-target-'));
+    try {
+      const written = await supervisor.writeToChtCore(stateWithApply(), target);
+      expect(written).to.include('forms/app/pregnancy_home_visit.xlsx');
+      expect(written).to.include('forms/app/pregnancy_home_visit.xml');
+      expect(written).to.not.include(DESCRIPTOR_PATH);
+      const descriptorLanded = await fs
+        .access(path.join(target, DESCRIPTOR_PATH))
+        .then(() => true)
+        .catch(() => false);
+      expect(descriptorLanded, 'descriptor must NOT land in the target').to.equal(false);
+    } finally {
+      await fs.rm(target, { recursive: true, force: true });
+    }
   });
 });

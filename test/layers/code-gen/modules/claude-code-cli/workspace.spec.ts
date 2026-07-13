@@ -97,6 +97,20 @@ describe('workspace.ts (A.2b)', () => {
       expect(files.find((f: { path: string }) => f.path === 'src/untracked.ts')).to.exist;
     });
 
+    // Mission 05 (R3): the xlsform-fix descriptor is a real untracked file, so it
+    // rides the diff capture and a descriptor-only run never trips execute-no-op
+    // (which only fires when the capture is EMPTY). .cht-agent is not gitignored
+    // in the demo config, so --exclude-standard keeps it.
+    it('captures the .cht-agent/xlsform-fix.json descriptor as a create (no zero-edit abstain)', async () => {
+      const ws = loadWorkspace({
+        'git diff --name-status abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: '.cht-agent/xlsform-fix.json\n' },
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      expect(files).to.have.length(1);
+      expect(files[0].path).to.equal('.cht-agent/xlsform-fix.json');
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
         'git diff --name-status abc1234': { stdout: 'D\tsrc/deleted.ts\nA\tsrc/new.ts\n' },
