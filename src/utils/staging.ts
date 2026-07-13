@@ -247,6 +247,16 @@ export const copyToTarget = async (
 };
 
 /**
+ * Remove a path (file or directory) from a staging tree before copyToTarget —
+ * e.g. the mission-05 `.cht-agent` descriptor dir, which must never land in the
+ * partner repo. Path-traversal guarded; a no-op when the path is absent.
+ */
+export const removeFromStaging = async (stagingPath: string, relativePath: string): Promise<void> => {
+  const fullPath = resolveWithin(stagingPath, relativePath);
+  await fs.promises.rm(fullPath, { recursive: true, force: true });
+};
+
+/**
  * Clear staging directory (rollback)
  */
 export const clearStaging = async (stagingPath: string): Promise<void> => {

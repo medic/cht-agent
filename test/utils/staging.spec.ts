@@ -10,6 +10,8 @@ import {
   generateDiffs,
   listChtCoreDirectory,
   readFromChtCore,
+  removeFromStaging,
+  stageArtifact,
   verifyChtCorePath,
   writeToChtCore,
   writeToStaging,
@@ -335,5 +337,42 @@ describe('staging.ts (v9a.3)', () => {
       expect(await readFromChtCore('../../etc/passwd', scratch)).to.equal(null);
       expect(await readFromChtCore(absolute, scratch)).to.equal(null);
     });
+  });
+});
+
+describe('staging.ts mission-05 artifact helpers', () => {
+  let scratch: string;
+  beforeEach(async () => {
+    scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-staging-m05-'));
+  });
+  afterEach(async () => {
+    await fs.rm(scratch, { recursive: true, force: true });
+  });
+
+  it('stageArtifact byte-copies a source file to a relative path', async () => {
+    const src = path.join(scratch, 'src.bin');
+    await fs.writeFile(src, 'RAW-BYTES', 'utf-8');
+    const dest = path.join(scratch, 'dest');
+    await fs.mkdir(dest);
+    await stageArtifact(src, 'forms/app/x.xlsx', dest);
+    expect(await fs.readFile(path.join(dest, 'forms/app/x.xlsx'), 'utf-8')).to.equal('RAW-BYTES');
+  });
+
+  it('removeFromStaging deletes .cht-agent and leaves siblings intact', async () => {
+    await fs.mkdir(path.join(scratch, '.cht-agent'), { recursive: true });
+    await fs.writeFile(path.join(scratch, '.cht-agent', 'xlsform-fix.json'), '{}', 'utf-8');
+    await fs.mkdir(path.join(scratch, 'forms', 'app'), { recursive: true });
+    await fs.writeFile(path.join(scratch, 'forms', 'app', 'x.xml'), '<x/>', 'utf-8');
+
+    await removeFromStaging(scratch, '.cht-agent');
+
+    const descriptorGone = await fs.access(path.join(scratch, '.cht-agent')).then(() => false).catch(() => true);
+    expect(descriptorGone).to.equal(true);
+    expect(await fs.readFile(path.join(scratch, 'forms', 'app', 'x.xml'), 'utf-8')).to.equal('<x/>');
+  });
+
+  it('removeFromStaging is a no-op when the path is absent', async () => {
+    await removeFromStaging(scratch, '.cht-agent'); // does not throw
+    expect(await fs.readdir(scratch)).to.deep.equal([]);
   });
 });

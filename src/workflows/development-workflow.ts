@@ -29,10 +29,12 @@ import {
   displayFileSummary,
   copyToTarget,
   clearStaging,
+  removeFromStaging,
 } from '../utils/staging';
 import {
   renderCrossFileIssueBanner,
   renderCompileGateSkipBanner,
+  renderXlsformBindDiffBanner,
 } from '../cli/display-helpers';
 
 const MAX_DEVELOPMENT_ITERATIONS = 3;
@@ -201,6 +203,13 @@ function displayCheckpointBanners(state: DevelopmentState, chtCorePath: string):
     console.log(banner);
     console.log();
   }
+  // Mission 05: for an XLSForm fix, show the bind-level diff — the regenerated
+  // XML is a full rewrite, so the positional file diff below is uninformative.
+  const bindBanner = renderXlsformBindDiffBanner(state.xlsformApply);
+  if (bindBanner) {
+    console.log(bindBanner);
+    console.log();
+  }
 }
 
 async function captureCheckpointFeedback(): Promise<HumanFeedback> {
@@ -347,6 +356,11 @@ async function runPreviewModeIteration(args: {
   const validation = await humanDevelopmentValidationCheckpoint(state, stagingPath, chtCorePath, iterationCount);
   if (validation.approved) {
     console.log('\n📝 Copying approved files to cht-core...');
+    // Mission 05: the .cht-agent descriptor is orchestration-internal — strip it
+    // from staging so it never lands in the partner repo. Its content + bind
+    // diff live on the returned state (codeGeneration.files / xlsformApply) for
+    // the report. No-op when absent.
+    await removeFromStaging(stagingPath, '.cht-agent');
     const filesWritten = await copyToTarget(stagingPath, chtCorePath);
     console.log(`✅ Written ${filesWritten.length} files to ${chtCorePath}`);
     await clearStaging(stagingPath);
@@ -393,6 +407,14 @@ function displayDevelopmentSuccess(
   }
   if (workflowResult.result?.validationResult) {
     console.log(`\n📊 Validation Score: ${workflowResult.result.validationResult.overallScore}%`);
+  }
+  // Mission 05: echo the verified XLSForm bind fix into the completion summary
+  // (report payload) — the descriptor itself never reaches the partner repo.
+  const apply = workflowResult.result?.xlsformApply;
+  if (apply) {
+    console.log(`\n🔧 XLSForm fix applied to forms/app/${apply.form}.xlsx + regenerated .xml`);
+    console.log(`   ${apply.bindDiff.nodeset}: ${apply.bindDiff.before ?? '(none)'} → ${apply.bindDiff.after}`);
+    console.log(`   ${apply.bindDiff.siblingsUnchanged} sibling bind(s) unchanged.`);
   }
   console.log('\n💡 Next Steps:');
   console.log('   1. Review the generated files');

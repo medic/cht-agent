@@ -4,8 +4,9 @@ import {
   validateEnvironment,
   renderCrossFileIssueBanner,
   renderCompileGateSkipBanner,
+  renderXlsformBindDiffBanner,
 } from '../../src/cli/display-helpers';
-import { CrossFileIssue } from '../../src/types';
+import { CrossFileIssue, XlsformApplyResult } from '../../src/types';
 
 /**
  * validateEnvironment gates the research CLI. Its behavior is driven by env:
@@ -150,5 +151,35 @@ describe('renderCompileGateSkipBanner (H.4)', () => {
     expect(banner).to.include('tsc not available in cht-core workspace');
     expect(banner).to.include('cd /home/me/cht-core && npm install');
     expect(banner).to.include('You may still accept the diff');
+  });
+});
+
+describe('renderXlsformBindDiffBanner (mission 05)', () => {
+  const apply: XlsformApplyResult = {
+    form: 'pregnancy_home_visit',
+    xlsxPath: '/tmp/s/forms/app/pregnancy_home_visit.xlsx',
+    xmlPath: '/tmp/s/forms/app/pregnancy_home_visit.xml',
+    xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
+    xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
+    bindDiff: {
+      nodeset: '/data/danger_signs',
+      before: "selected(../pregnancy_summary/visit_option, 'yes') or selected(../pregnancy_summary/visit_option, 'miscarriage')",
+      after: "selected(../pregnancy_summary/visit_option, 'yes')",
+      siblingsUnchanged: 2,
+    },
+    sandboxDir: '/tmp/s',
+  };
+
+  it('renders the target bind old→new and the sibling-unchanged count', () => {
+    const banner = renderXlsformBindDiffBanner(apply);
+    expect(banner).to.include('/data/danger_signs');
+    expect(banner).to.include('pregnancy_home_visit');
+    expect(banner).to.include("or selected(../pregnancy_summary/visit_option, 'miscarriage')"); // before
+    expect(banner).to.include('2 sibling top-level group bind(s) unchanged');
+    expect(banner).to.match(/OFFLINE conversion/i);
+  });
+
+  it('returns an empty string when there is no XLSForm apply', () => {
+    expect(renderXlsformBindDiffBanner(undefined)).to.equal('');
   });
 });

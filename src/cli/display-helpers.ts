@@ -1,5 +1,5 @@
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
-import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
+import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState, XlsformApplyResult } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
 import { isUsingCLIProvider } from '../llm/factory';
@@ -37,6 +37,30 @@ export const renderCrossFileIssueBanner = (issues: CrossFileIssue[] | undefined)
     '─'.repeat(70),
   );
   return lines.join('\n');
+};
+
+/**
+ * Render the mission-05 HC2 bind-level diff for an XLSForm fix. The regenerated
+ * XML is a whole-file rewrite, so the positional line differ is noise; this
+ * banner is the trustworthy view — the one target bind old→new plus the count
+ * of sibling top-level group binds verified byte-unchanged. Empty string when
+ * there is no XLSForm apply (so callers render it unconditionally).
+ */
+export const renderXlsformBindDiffBanner = (apply: XlsformApplyResult | undefined): string => {
+  if (!apply) return '';
+  const { bindDiff, form } = apply;
+  return [
+    '',
+    '🔧 XLSFORM FIX — verified against the OFFLINE conversion',
+    '─'.repeat(70),
+    `form:   ${form}  (source of truth: forms/app/${form}.xlsx)`,
+    `bind:   ${bindDiff.nodeset}`,
+    `  before: ${bindDiff.before ?? '(none)'}`,
+    `  after:  ${bindDiff.after}`,
+    `${bindDiff.siblingsUnchanged} sibling top-level group bind(s) unchanged.`,
+    'Trust this bind diff over the positional file diff below (the XML is a full rewrite).',
+    '─'.repeat(70),
+  ].join('\n');
 };
 
 function groupIssuesByType(issues: CrossFileIssue[]): Map<string, CrossFileIssue[]> {
