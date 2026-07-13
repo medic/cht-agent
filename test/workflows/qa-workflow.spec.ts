@@ -7,9 +7,14 @@ import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
 import * as prompt from '../../src/utils/prompt';
 import {
   createQaInput,
+  defaultApplyActions,
   deriveVerifyOptions,
   executeQaWorkflow,
 } from '../../src/workflows/qa-workflow';
+import { CONFIG_ACTION_COMMANDS } from '../../src/utils/cht-conf-runner';
+import { applyXlsformFixToProject } from '../../src/utils/xlsform-apply';
+import { XlsformFixDescriptor } from '../../src/utils/xlsform-fix';
+import { canOfflineConvert } from '../helpers/offline-convert';
 import {
   ConfigApplyResult,
   DiscoveredConfig,
@@ -220,6 +225,44 @@ describe('qa-workflow', () => {
     it('returns null for a non-form ticket', () => {
       expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }))).to.equal(null);
       expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.equal(null);
+    });
+  });
+
+  describe('mission-05 QA seam (bucket untouched + node→verify loop closure)', () => {
+    it('leaves the QA app-forms bucket at convert+upload (non-goal: no bucket change)', () => {
+      expect(defaultApplyActions('form')).to.deep.equal(['app-forms']);
+      expect(CONFIG_ACTION_COMMANDS['app-forms']).to.deep.equal(['convert-app-forms', 'upload-app-forms']);
+    });
+
+    const withConvert = canOfflineConvert() ? it : it.skip;
+    withConvert('deriveVerifyOptions snapshots the CORRECTED bind the node wrote (self-skips without cht)', async function () {
+      this.timeout(180000);
+      const descriptor: XlsformFixDescriptor = {
+        version: 1,
+        form: 'pregnancy_home_visit',
+        edits: [
+          { sheet: 'survey', match: { column: 'name', value: 'danger_signs' }, set: { column: 'relevant', value: YES_GATE } },
+        ],
+        expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: true },
+        rationale: 'restore the yes-only gate',
+      };
+      const outcome = await applyXlsformFixToProject(descriptor, path.resolve('demo/config-pnc-demo'));
+      expect(outcome.ok, outcome.ok ? '' : outcome.error).to.equal(true);
+      if (!outcome.ok) {
+        return;
+      }
+      try {
+        // QA reads <configPath>/forms/app/<name>.xml — here the node's sandbox
+        // stands in for the mount after copyToTarget. The snapshot must be the
+        // corrected gate, not the planted one.
+        const verify = deriveVerifyOptions(outcome.result.sandboxDir, formIssue());
+        expect(verify).to.not.equal(null);
+        const danger = verify!.expectedBinds.find((b) => b.nodeset === '/data/danger_signs');
+        expect(danger?.relevant).to.equal(YES_GATE);
+        expect(danger?.relevant).to.not.equal(PLANTED_GATE);
+      } finally {
+        fs.rmSync(outcome.result.sandboxDir, { recursive: true, force: true });
+      }
     });
   });
 });

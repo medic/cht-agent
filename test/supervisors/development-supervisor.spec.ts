@@ -544,6 +544,18 @@ describe('DevelopmentSupervisor applyXlsformFixNode (mission 05)', () => {
     expect(out.xlsformApply).to.equal(undefined);
   });
 
+  it('works from a dev.ts stub state (no research/orchestration/context findings)', async () => {
+    // dev.ts synthesizes research stubs and always previews; the node must not
+    // depend on those channels — only codeGeneration + options.chtCorePath.
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const out = await supervisor.applyXlsformFixNode(mkDevState({
+      options: { chtCorePath: '/tmp/cht-core', previewMode: true },
+      codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, '{ bad json', 'config')]),
+    }));
+    const feedback = out.perFileFeedback as Array<{ filePath: string }>;
+    expect(feedback[0].filePath).to.equal(DESCRIPTOR_PATH);
+  });
+
   const maybe = canOfflineConvert() ? it : it.skip;
   maybe('applies + verifies against the real fixture and sets xlsformApply (self-skips without cht)', async function () {
     this.timeout(180000);
