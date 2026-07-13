@@ -36,6 +36,7 @@
     "ajv-formats": "^3.0.1",
     "diff": "^8.0.4",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.1.1",
     "langfuse": "^3.38.20",
