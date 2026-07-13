@@ -1079,12 +1079,13 @@ Respond with a JSON object:
       allFiles.push(...state.testGeneration.files);
     }
 
-    // Mission 05: the descriptor is orchestration-internal — it must never land
-    // in the partner repo. On the direct-write path (no staging/HC2), drop it
-    // and write the byte-safe corrected artifacts instead.
-    const targetFiles = state.xlsformApply
-      ? allFiles.filter((f) => f.relativePath !== XLSFORM_FIX_DESCRIPTOR_PATH)
-      : allFiles;
+    // Mission 05: anything under .cht-agent/ is orchestration-internal and must
+    // NEVER land in the partner repo — drop it UNCONDITIONALLY on the direct-
+    // write path (even when the apply failed and xlsformApply is unset, so the
+    // descriptor is still in codeGeneration.files). Mirrors the preview path's
+    // removeFromStaging('.cht-agent') before copyToTarget. The corrected binary
+    // artifacts are byte-copied separately below only on success.
+    const targetFiles = allFiles.filter((f) => !f.relativePath.startsWith('.cht-agent/'));
 
     const writtenFiles = await writeToChtCore(targetFiles, chtCorePath);
 

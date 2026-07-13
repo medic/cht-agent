@@ -68,6 +68,39 @@ const describeSiblingChanges = (
   return changes;
 };
 
+/**
+ * Byte/line-level collateral check: the non-blank lines that differ between two
+ * SAME-VERSION conversions and do NOT belong to the target bind. The top-level
+ * group oracle (describeSiblingChanges) only sees `/data/<segment>` binds and
+ * misses child/nested binds; this catches ANY collateral change (a second edit
+ * corrupting a leaf field, etc.). Same-version convert is deterministic (proven
+ * byte-identical unedited, one-line delta for the single-cell fix — R11), so
+ * the only line permitted to differ is the target bind's. Multiset diff, so
+ * benign reordering is ignored; the exact `nodeset="<target>"` marker
+ * (closing quote included) never matches a `/data/<target>/child` line.
+ */
+export const collateralChangedLines = (
+  baselineXml: string,
+  regenXml: string,
+  targetNodeset: string
+): string[] => {
+  const counts = new Map<string, number>();
+  for (const line of baselineXml.split('\n')) {
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  for (const line of regenXml.split('\n')) {
+    counts.set(line, (counts.get(line) ?? 0) - 1);
+  }
+  const marker = `nodeset="${targetNodeset}"`;
+  const collateral: string[] = [];
+  for (const [line, n] of counts) {
+    if (n !== 0 && line.trim().length > 0 && !line.includes(marker)) {
+      collateral.push(line.trim());
+    }
+  }
+  return collateral;
+};
+
 export const applyXlsformFixToProject = async (
   descriptor: XlsformFixDescriptor,
   configPath: string,
@@ -142,13 +175,23 @@ export const applyXlsformFixToProject = async (
     }
 
     // 5b. assert sibling invariance (default on).
-    if (descriptor.expect.siblingsUnchanged !== false) {
+    const checkSiblings = descriptor.expect.siblingsUnchanged !== false;
+    if (checkSiblings) {
       const regenSiblings = extractTopLevelGroupBinds(regenXml).filter(
         (b) => b.nodeset !== targetNodeset
       );
       const changes = describeSiblingChanges(baselineSiblings, regenSiblings);
       if (changes.length > 0) {
-        return fail(`sibling bind(s) changed unexpectedly: ${changes.join('; ')}`);
+        return fail(`sibling top-level group bind(s) changed unexpectedly: ${changes.join('; ')}`);
+      }
+      // Stronger: catch collateral changes to ANY bind (incl. child/nested),
+      // which the top-level-group oracle above cannot see.
+      const collateral = collateralChangedLines(baselineXml, regenXml, targetNodeset);
+      if (collateral.length > 0) {
+        return fail(
+          `convert changed ${collateral.length} line(s) beyond the target bind ` +
+            `(collateral damage): ${collateral.slice(0, 3).join(' | ')}`
+        );
       }
     }
 
@@ -156,7 +199,8 @@ export const applyXlsformFixToProject = async (
       nodeset: targetNodeset,
       before: beforeRelevant,
       after: afterRelevant,
-      siblingsUnchanged: baselineSiblings.length,
+      // Honest count: 0 when the invariance check was disabled (nothing verified).
+      siblingsUnchanged: checkSiblings ? baselineSiblings.length : 0,
     };
     return {
       ok: true,

@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { applyXlsformFixToProject } from '../../src/utils/xlsform-apply';
+import { applyXlsformFixToProject, collateralChangedLines } from '../../src/utils/xlsform-apply';
 import { XlsformFixDescriptor } from '../../src/utils/xlsform-fix';
 import { canOfflineConvert } from '../helpers/offline-convert';
 
@@ -19,6 +19,50 @@ const descriptor = (overrides: Partial<XlsformFixDescriptor> = {}): XlsformFixDe
   expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: true },
   rationale: 'Restore the yes-only gate.',
   ...overrides,
+});
+
+describe('collateralChangedLines (mission 05 — child-bind collateral detection)', () => {
+  const model = (danger: string, leaf: string, summary: string): string =>
+    [
+      '<model>',
+      `  <bind nodeset="/data/danger_signs" relevant="${danger}"/>`,
+      `  <bind nodeset="/data/danger_signs/leaf" relevant="${leaf}"/>`,
+      `  <bind nodeset="/data/summary" relevant="${summary}"/>`,
+      '</model>',
+    ].join('\n');
+
+  it('reports no collateral when ONLY the target bind line changed', () => {
+    const baseline = model(PLANTED_GATE, 'true()', 'S');
+    const regen = model(YES_GATE, 'true()', 'S');
+    expect(collateralChangedLines(baseline, regen, '/data/danger_signs')).to.deep.equal([]);
+  });
+
+  it('catches a changed CHILD bind that the top-level-group oracle misses', () => {
+    const baseline = model(PLANTED_GATE, 'true()', 'S');
+    const regen = model(YES_GATE, 'false()', 'S'); // target fixed + child corrupted
+    const collateral = collateralChangedLines(regen, baseline, '/data/danger_signs');
+    // a changed line surfaces as both its old and new form; the point is it is flagged
+    expect(collateral.length).to.be.greaterThan(0);
+    expect(collateral.join('\n')).to.contain('/data/danger_signs/leaf');
+  });
+
+  it('catches a changed top-level sibling bind too', () => {
+    const baseline = model(PLANTED_GATE, 'true()', 'S');
+    const regen = model(YES_GATE, 'true()', 'DIFFERENT');
+    const collateral = collateralChangedLines(baseline, regen, '/data/danger_signs');
+    expect(collateral.length).to.be.greaterThan(0);
+    expect(collateral.join('\n')).to.contain('/data/summary');
+  });
+
+  it('does not confuse the target with a same-prefix child nodeset', () => {
+    // only the /data/danger_signs/leaf line differs; the exact-quote marker
+    // must NOT treat it as the target -> it IS flagged as collateral.
+    const baseline = model(YES_GATE, 'true()', 'S');
+    const regen = model(YES_GATE, 'false()', 'S');
+    const collateral = collateralChangedLines(baseline, regen, '/data/danger_signs');
+    expect(collateral.length).to.be.greaterThan(0);
+    expect(collateral.join('\n')).to.contain('/data/danger_signs/leaf');
+  });
 });
 
 const withConvert = canOfflineConvert() ? describe : describe.skip;
@@ -81,6 +125,16 @@ withConvert('applyXlsformFixToProject (mission 05, self-skips without cht)', fun
     expect(outcome.ok).to.equal(false);
     if (!outcome.ok) {
       expect(outcome.error).to.match(/not present in the regenerated XML/);
+    }
+  });
+
+  it('reports siblingsUnchanged: 0 when the invariance check is disabled (honest count)', async () => {
+    const d = descriptor({ expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: false } });
+    const outcome = await applyXlsformFixToProject(d, CONFIG);
+    expect(outcome.ok, outcome.ok ? '' : outcome.error).to.equal(true);
+    if (outcome.ok) {
+      cleanups.push(outcome.result.sandboxDir);
+      expect(outcome.result.bindDiff.siblingsUnchanged).to.equal(0);
     }
   });
 });

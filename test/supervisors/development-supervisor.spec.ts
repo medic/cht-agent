@@ -652,4 +652,25 @@ describe('DevelopmentSupervisor xlsform staging (mission 05)', () => {
       await fs.rm(target, { recursive: true, force: true });
     }
   });
+
+  it('writeToChtCore drops the descriptor even on a FAILED apply (no xlsformApply)', async () => {
+    // Direct-write path: a persistently-failing apply leaves xlsformApply unset
+    // but the descriptor still in codeGeneration.files — it must NEVER reach the
+    // partner repo regardless (mission-05 invariant).
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const target = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-target-fail-'));
+    try {
+      const state = mkDevState({
+        ...baseValidInputFragment,
+        codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, validDescriptorJson, 'config')]),
+        // xlsformApply intentionally undefined (apply failed / gave up)
+      });
+      const written = await supervisor.writeToChtCore(state, target);
+      expect(written).to.not.include(DESCRIPTOR_PATH);
+      const landed = await fs.access(path.join(target, DESCRIPTOR_PATH)).then(() => true).catch(() => false);
+      expect(landed, 'descriptor must NOT land even when the apply failed').to.equal(false);
+    } finally {
+      await fs.rm(target, { recursive: true, force: true });
+    }
+  });
 });
