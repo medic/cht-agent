@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cht-agent/schemas/xlsform-fix.schema.json",
+  "title": "XlsformFixDescriptor",
+  "description": "The structured, machine-applicable fix a cht-conf form ticket's code-gen phase emits at .cht-agent/xlsform-fix.json. A deterministic orchestrator step validates it, applies the edits to a sandbox copy of the workbook, converts offline, and asserts the compiled bind against `expect` before staging for HC2. The LLM never touches the binary .xlsx.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "form", "edits", "expect", "rationale"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "Descriptor schema version. Only 1 is supported."
+    },
+    "form": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Base form name; resolves to forms/app/<form>.xlsx and .xml. No path separators, dots, or traversal."
+    },
+    "edits": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Surgical cell edits applied in order to the workbook.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sheet", "match", "set"],
+        "properties": {
+          "sheet": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Worksheet name (e.g. survey)."
+          },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["column", "value"],
+            "properties": {
+              "column": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Header name of the column to match on (typically name)."
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Exact value the match column must equal."
+              },
+              "groupPath": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional ancestor group-name path (outermost first) to disambiguate a repeated name."
+              }
+            }
+          },
+          "set": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["column", "value"],
+            "properties": {
+              "column": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Header name of the column to write (e.g. relevant)."
+              },
+              "value": {
+                "type": "string",
+                "description": "New cell value in XLSForm syntax. Written verbatim."
+              }
+            }
+          }
+        }
+      }
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeset", "relevant"],
+      "description": "The dev-phase oracle: what the OFFLINE-CONVERTED XML must show. Compared against the real converted output, not the LLM's own edit.",
+      "properties": {
+        "nodeset": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Absolute XForm nodeset of the target bind (e.g. /data/danger_signs)."
+        },
+        "relevant": {
+          "type": "string",
+          "description": "The relevant expression the converted bind must carry after the fix."
+        },
+        "siblingsUnchanged": {
+          "type": "boolean",
+          "description": "When true (default), every other top-level group bind must be byte-invariant vs the pre-edit conversion."
+        }
+      }
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One paragraph for the HC2 reviewer and the operator report."
+    }
+  }
+}

@@ -5,6 +5,7 @@ import { FileManifest, buildManifestSection } from './file-manifest';
 import { isLargeFile } from './large-file';
 import { extractPublicSurface } from './public-surface';
 import { getArchPatternsSection } from './arch-patterns';
+import { isXlsformFixTicket, XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../utils/xlsform-fix';
 
 /**
  * Render the architecture-insights section from the research phase's DeepWiki /
@@ -127,7 +128,84 @@ function truncationNote(count: number): string {
     `Files are ranked by relevance; omitted entries are the least relevant.]\n`;
 }
 
+/**
+ * Layer-aware brief shared by the plan and execute prompts for a cht-conf FORM
+ * fix (mission 05). Frames the workspace as a config project, forbids editing
+ * the binary `.xlsx`/generated `.xml`, and specifies the structured descriptor
+ * the CLI must write instead. Keeping it here (the shared prompt lib) lets both
+ * the plan prompt and the claude-code-cli execute prompt embed the same schema.
+ */
+export function buildXlsformFixBrief(input: CodeGenModuleInput): string {
+  const ctx = input.ticket.issue.technical_context;
+  const form = ctx.artifactName ?? '<form>';
+  return `## CHT config project — XLSForm fix (do NOT edit the form files)
+This is a cht-conf DEPLOYMENT CONFIG project, not cht-core. The bug lives in an XLSForm whose source of truth is the BINARY workbook \`forms/app/${form}.xlsx\`. You must NOT edit any \`.xlsx\` (binary) or \`.xml\` (generated) file — a text edit to them is clobbered the moment cht-conf reconverts the workbook.
+
+Instead, express the fix as a structured descriptor at \`${XLSFORM_FIX_DESCRIPTOR_PATH}\` (relative to the project root) and write NOTHING else. A deterministic orchestrator step applies it to a sandbox copy of the workbook, converts it offline, and asserts the result before any human review.
+
+### How to find the fix
+- Use \`Read\`/\`Grep\` on \`forms/app/${form}.xml\` to locate the target question's \`<bind nodeset="/data/..." relevant="..."/>\` and read its CURRENT \`relevant\`.
+- The workbook is binary — you cannot open it. Derive, from the ticket and the compiled \`.xml\`, the survey-row \`name\` of the question/group to fix and the CORRECTED \`relevant\` expression.
+
+### Descriptor schema (${XLSFORM_FIX_DESCRIPTOR_PATH})
+\`\`\`json
+{
+  "version": 1,
+  "form": "${form}",
+  "edits": [{
+    "sheet": "survey",
+    "match": { "column": "name", "value": "<survey-row name of the question/group>" },
+    "set": { "column": "relevant", "value": "<corrected XLSForm expression>" }
+  }],
+  "expect": {
+    "nodeset": "/data/<target bind nodeset>",
+    "relevant": "<what the CONVERTED bind must read — identical to set.value unless it uses \${...} references>",
+    "siblingsUnchanged": true
+  },
+  "rationale": "One paragraph explaining the bug and the fix for the reviewer."
+}
+\`\`\`
+- If the target \`name\` appears in more than one group, add \`match.groupPath\` (outermost group name first) to disambiguate.
+- \`edits\` may hold more than one cell edit; keep it minimal.
+- \`expect\` is REQUIRED and is the oracle: the orchestrator converts the edited workbook and checks the target bind equals \`expect.relevant\` with siblings unchanged. Commit to the true outcome.`;
+}
+
+function buildXlsformFixPlanPrompt(input: CodeGenModuleInput): string {
+  const { ticket } = input;
+  const form = ticket.issue.technical_context.artifactName ?? 'target';
+  return `You are a CHT (Community Health Toolkit) cht-conf configuration engineer. Plan the fix for the form bug below.
+
+## Issue Details
+Title: ${ticket.issue.title}
+Type: ${ticket.issue.type}
+Domain: ${ticket.issue.technical_context.domain}
+
+Description:
+${ticket.issue.description}
+
+Requirements:
+${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+Acceptance Criteria:
+${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+${buildXlsformFixBrief(input)}
+
+## Instructions
+The ONLY file you will produce is the fix descriptor. Emit a one-item plan that CREATEs it.
+Use this EXACT format (do NOT wrap file paths in backticks):
+
+=== PLAN ===
+1. CREATE ${XLSFORM_FIX_DESCRIPTOR_PATH} - structured XLSForm fix descriptor for the ${form} form
+=== END PLAN ===
+
+Output ONLY the plan section. Do not generate any file content.`;
+}
+
 export function buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifest): string {
+  if (isXlsformFixTicket(input.ticket)) {
+    return buildXlsformFixPlanPrompt(input);
+  }
   const { ticket, orchestrationPlan, researchFindings, contextFiles } = input;
   const feedbackContext = extractValidationFeedback(contextFiles);
   const existingCodeContext = buildExistingCodeContext(contextFiles);

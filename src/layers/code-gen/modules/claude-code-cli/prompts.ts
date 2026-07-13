@@ -1,7 +1,46 @@
 import { CodeGenModuleInput } from '../../interface';
 import { PlanItem } from '../../lib/plan';
 import { getArchPatternsSection } from '../../lib/arch-patterns';
-import { buildArchInsightsSection } from '../../lib/prompts';
+import { buildArchInsightsSection, buildXlsformFixBrief } from '../../lib/prompts';
+import { isXlsformFixTicket, XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../../utils/xlsform-fix';
+
+/**
+ * Execute-phase prompt for a cht-conf FORM fix (mission 05). The sandboxed CLI
+ * writes ONLY the structured descriptor; the deterministic orchestrator applies
+ * it to the binary workbook. Used for both the strict and relaxed passes — the
+ * task is the same single-file write either way.
+ */
+function buildXlsformFixExecutePrompt(input: CodeGenModuleInput): string {
+  const { ticket } = input;
+  const targetDirectory = input.targetDirectory ?? '<config-project>';
+
+  return `You are inside a CHT cht-conf CONFIG project at \`${targetDirectory}\`. You have Read, Write, Edit, Grep, and Glob tool access. Bash is disabled.
+
+## Task
+${ticket.issue.title}
+
+${ticket.issue.description}
+
+## Requirements
+${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+## Acceptance Criteria
+${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+${buildXlsformFixBrief(input)}
+
+## Output
+Write ONLY \`${XLSFORM_FIX_DESCRIPTOR_PATH}\` with \`Write\` — no other files, and never touch any \`.xlsx\`/\`.xml\`. Then output a brief JSON summary on the final line:
+\`\`\`json
+{
+  "files_modified": [],
+  "files_created": ["${XLSFORM_FIX_DESCRIPTOR_PATH}"],
+  "summary": "One-paragraph description of the bug and the corrected relevant expression."
+}
+\`\`\`
+
+Do not commit. Do not run shell commands. Only Read/Write/Edit/Grep/Glob.`;
+}
 
 /**
  * Execute-phase prompt for the claude-code-cli module's tool-using agent.
@@ -12,6 +51,9 @@ import { buildArchInsightsSection } from '../../lib/prompts';
  * tool calls directly against the workspace.
  */
 export function buildExecutePrompt(input: CodeGenModuleInput, plan: PlanItem[]): string {
+  if (isXlsformFixTicket(input.ticket)) {
+    return buildXlsformFixExecutePrompt(input);
+  }
   const { ticket } = input;
   const archPatterns = getArchPatternsSection(ticket.issue.technical_context.domain);
   const targetDirectory = input.targetDirectory ?? '<cht-core>';
@@ -74,6 +116,9 @@ Do not commit. Do not run shell commands. Only Read/Write/Edit/Grep/Glob.`;
  * surfaces uncertainty to the user.
  */
 export function buildRelaxedExecutePrompt(input: CodeGenModuleInput, plan: PlanItem[]): string {
+  if (isXlsformFixTicket(input.ticket)) {
+    return buildXlsformFixExecutePrompt(input);
+  }
   const { ticket } = input;
   const archPatterns = getArchPatternsSection(ticket.issue.technical_context.domain);
   const targetDirectory = input.targetDirectory ?? '<cht-core>';

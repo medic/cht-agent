@@ -118,3 +118,41 @@ describe('buildPlanPrompt architecture insights (bridge #63)', () => {
     expect(prompt).to.not.include('## Architecture insights (from cht-core wiki)');
   });
 });
+
+describe('buildPlanPrompt — cht-conf FORM fix variant (mission 05)', () => {
+  const formInput = (): CodeGenModuleInput =>
+    baseInput({
+      ticket: {
+        issue: {
+          title: 'PNC keeps prompting danger signs after a miscarriage',
+          type: 'bug',
+          priority: 'high',
+          description: 'The danger_signs group still shows for the miscarriage outcome.',
+          technical_context: {
+            domain: 'forms-and-reports',
+            components: [],
+            layer: 'cht-conf',
+            configArtifact: 'form',
+            artifactName: 'pregnancy_home_visit',
+          },
+          requirements: ['Hide danger_signs for miscarriage'],
+          acceptance_criteria: ['danger_signs relevant is yes-only'],
+          constraints: [],
+        },
+      },
+    });
+
+  it('emits a one-item CREATE plan for the descriptor and nothing else', () => {
+    const prompt = buildPlanPrompt(formInput(), emptyManifest);
+    expect(prompt).to.include('1. CREATE .cht-agent/xlsform-fix.json');
+    expect(prompt).to.include('=== PLAN ===');
+    expect(prompt).to.include('cht-conf configuration engineer');
+    expect(prompt).to.include('do NOT edit the form files');
+  });
+
+  it('leaves a cht-core plan prompt unaffected (passthrough)', () => {
+    const prompt = buildPlanPrompt(baseInput(), emptyManifest);
+    expect(prompt).to.include('You are a CHT (Community Health Toolkit) developer');
+    expect(prompt).to.not.include('.cht-agent/xlsform-fix.json');
+  });
+});

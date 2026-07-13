@@ -125,3 +125,54 @@ describe('claude-code-cli prompts architecture insights (bridge #63)', () => {
     expect(buildRelaxedExecutePrompt(baseInput, plan)).to.not.include('## Architecture insights (from cht-core wiki)');
   });
 });
+
+describe('buildExecutePrompt — cht-conf FORM fix variant (mission 05)', () => {
+  const formInput: CodeGenModuleInput = {
+    ...baseInput,
+    ticket: {
+      issue: {
+        ...baseInput.ticket.issue,
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          artifactName: 'pregnancy_home_visit',
+        },
+      },
+    },
+  };
+
+  it('instructs writing ONLY the descriptor and never editing the form files', () => {
+    const prompt = buildExecutePrompt(formInput, plan);
+    expect(prompt).to.include('.cht-agent/xlsform-fix.json');
+    expect(prompt).to.include('do NOT edit the form files');
+    expect(prompt).to.match(/must NOT edit any .*\.xlsx/i);
+    expect(prompt).to.include('forms/app/pregnancy_home_visit.xlsx');
+  });
+
+  it('frames the workspace as a cht-conf config project, not cht-core', () => {
+    const prompt = buildExecutePrompt(formInput, plan);
+    expect(prompt).to.include('cht-conf CONFIG project');
+    expect(prompt).to.not.include('inside the cht-core workspace');
+  });
+
+  it('embeds the descriptor schema and declares the file in files_created', () => {
+    const prompt = buildExecutePrompt(formInput, plan);
+    expect(prompt).to.include('"version": 1');
+    expect(prompt).to.include('"expect"');
+    expect(prompt).to.include('siblingsUnchanged');
+    expect(prompt).to.include('"files_created": [".cht-agent/xlsform-fix.json"]');
+  });
+
+  it('the relaxed variant also routes to the descriptor prompt', () => {
+    const prompt = buildRelaxedExecutePrompt(formInput, plan);
+    expect(prompt).to.include('.cht-agent/xlsform-fix.json');
+    expect(prompt).to.include('do NOT edit the form files');
+  });
+
+  it('leaves a cht-core ticket byte-identical (passthrough)', () => {
+    expect(buildExecutePrompt(baseInput, plan)).to.include('inside the cht-core workspace');
+    expect(buildExecutePrompt(baseInput, plan)).to.not.include('.cht-agent/xlsform-fix.json');
+  });
+});
