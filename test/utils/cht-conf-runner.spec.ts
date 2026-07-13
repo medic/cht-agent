@@ -1,7 +1,19 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { EventEmitter } from 'node:events';
-import { buildChtConfArgs, classifyChtConfOutput, CONFIG_ACTION_COMMANDS, resolveChtConfBin } from '../../src/utils/cht-conf-runner';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {
+  buildChtConfArgs,
+  classifyChtConfOutput,
+  CONFIG_ACTION_COMMANDS,
+  createConvertSandbox,
+  OfflineConvertOptions,
+  resolveChtConfBin,
+} from '../../src/utils/cht-conf-runner';
+import { runOfflineConvert as realRunOfflineConvert } from '../../src/utils/cht-conf-runner';
+import { canOfflineConvert } from '../helpers/offline-convert';
 import { ChtConfExecOptions, ChtConfExecResult, ChtConfRunOptions, ConfigActionResult } from '../../src/types';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -42,6 +54,7 @@ const loadRunner = (proc: EventEmitter) => {
   return {
     runBucket: mod.runBucket as (o: ChtConfRunOptions) => Promise<ConfigActionResult>,
     runChtConf: mod.runChtConf as (o: ChtConfExecOptions) => Promise<ChtConfExecResult>,
+    runOfflineConvert: mod.runOfflineConvert as (o: OfflineConvertOptions) => Promise<ChtConfExecResult>,
     spawnLog,
   };
 };
@@ -365,5 +378,102 @@ describe('cht-conf-runner', () => {
       const result = await promise;
       expect(result.warnings.join(' ')).to.include('artifact targeting ignored');
     });
+  });
+
+  describe('runOfflineConvert (mission 05)', () => {
+    it('runs convert-app-forms ONLY (never upload), URL-less, --skip-validate, form-filtered', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineConvert, spawnLog } = loadRunner(proc);
+      const promise = runOfflineConvert({ configPath: '/sandbox', form: 'pregnancy_home_visit' });
+      proc.emit('close', 0);
+      await promise;
+
+      const { args } = spawnLog[0];
+      expect(args.some((a) => a.startsWith('--url=')), 'no --url offline').to.equal(false);
+      expect(args).to.include('--source=/sandbox');
+      expect(args).to.include('--skip-validate');
+      expect(args).to.include('convert-app-forms');
+      expect(args).to.not.include('upload-app-forms');
+      const sep = args.indexOf('--');
+      expect(sep, 'has a -- separator').to.be.greaterThan(-1);
+      expect(args.slice(sep + 1)).to.deep.equal(['pregnancy_home_visit']);
+      expect(args.indexOf('convert-app-forms')).to.be.lessThan(sep);
+    });
+
+    it('supports the contact-forms bucket (convert-contact-forms only)', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineConvert, spawnLog } = loadRunner(proc);
+      const promise = runOfflineConvert({ configPath: '/s', form: 'chw', bucket: 'contact-forms' });
+      proc.emit('close', 0);
+      await promise;
+      const { args } = spawnLog[0];
+      expect(args).to.include('convert-contact-forms');
+      expect(args).to.not.include('upload-contact-forms');
+    });
+
+    it('never rejects on a spawn error (folds into startError)', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineConvert } = loadRunner(proc);
+      const promise = runOfflineConvert({ configPath: '/s', form: 'x' });
+      proc.emit('error', new Error('cht not found'));
+      const result = await promise;
+      expect(result.startError).to.include('cht not found');
+    });
+  });
+
+  describe('createConvertSandbox (mission 05)', () => {
+    let src: string;
+    let sandbox: string | undefined;
+
+    beforeEach(() => {
+      src = fs.mkdtempSync(path.join(os.tmpdir(), 'cht-agent-src-'));
+      fs.mkdirSync(path.join(src, 'forms', 'app'), { recursive: true });
+      fs.writeFileSync(path.join(src, 'forms', 'app', 'x.xlsx'), 'binary');
+      fs.mkdirSync(path.join(src, 'node_modules', 'dep'), { recursive: true });
+      fs.writeFileSync(path.join(src, 'node_modules', 'dep', 'index.js'), 'x');
+      fs.mkdirSync(path.join(src, '.git'), { recursive: true });
+      fs.writeFileSync(path.join(src, '.git', 'config'), 'x');
+      fs.mkdirSync(path.join(src, '.cht-agent'), { recursive: true });
+      fs.writeFileSync(path.join(src, '.cht-agent', 'xlsform-fix.json'), '{}');
+    });
+
+    afterEach(() => {
+      fs.rmSync(src, { recursive: true, force: true });
+      if (sandbox) {
+        fs.rmSync(sandbox, { recursive: true, force: true });
+      }
+    });
+
+    it('copies form assets but excludes node_modules, .git, and .cht-agent', () => {
+      sandbox = createConvertSandbox(src);
+      expect(fs.existsSync(path.join(sandbox, 'forms', 'app', 'x.xlsx')), 'form copied').to.equal(true);
+      expect(fs.existsSync(path.join(sandbox, 'node_modules')), 'node_modules excluded').to.equal(false);
+      expect(fs.existsSync(path.join(sandbox, '.git')), '.git excluded').to.equal(false);
+      expect(fs.existsSync(path.join(sandbox, '.cht-agent')), '.cht-agent excluded').to.equal(false);
+      expect(sandbox).to.not.equal(src);
+    });
+  });
+});
+
+const withConvert = canOfflineConvert() ? describe : describe.skip;
+
+withConvert('runOfflineConvert — real convert (mission 05, self-skips without cht)', function () {
+  this.timeout(120000);
+  let sandbox: string | undefined;
+
+  after(() => {
+    if (sandbox) {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it('converts the planted fixture in a sandbox copy without touching the source', async () => {
+    const source = path.resolve('demo/config-pnc-demo');
+    sandbox = createConvertSandbox(source);
+    const result = await realRunOfflineConvert({ configPath: sandbox, form: 'pregnancy_home_visit' });
+    expect(result.exitCode, result.output).to.equal(0);
+    const xml = fs.readFileSync(path.join(sandbox, 'forms', 'app', 'pregnancy_home_visit.xml'), 'utf-8');
+    expect(xml).to.contain('nodeset="/data/danger_signs"');
+    expect(sandbox).to.not.equal(source);
   });
 });

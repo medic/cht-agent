@@ -786,10 +786,20 @@ export interface ChtConfRunOptions {
 export interface ChtConfExecOptions {
   /** cht-conf actions to run, in order (e.g. ['csv-to-docs', 'upload-docs']). */
   verbs: string[];
-  /** The instance URL WITH embedded credentials (https://user:pass@host). */
-  instanceUrl: string;
+  /**
+   * The instance URL WITH embedded credentials (https://user:pass@host).
+   * OMIT for an OFFLINE run (no `--url`) — e.g. the dev-phase convert-only step,
+   * which never touches an instance.
+   */
+  instanceUrl?: string;
   /** Project folder passed to cht-conf `--source`. */
   configPath: string;
+  /**
+   * Add `--skip-validate` (Enketo/pyxform form validation off). Not in
+   * AUTONOMOUS_FLAGS; used by the offline convert step, matching the fixture's
+   * documented offline convert.
+   */
+  skipValidate?: boolean;
   /** Positional args appended after the verbs (e.g. a form filter). */
   extraArgs?: string[];
   /**

@@ -19,6 +19,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   ChtConfExecOptions,
   ChtConfExecResult,
@@ -101,9 +104,10 @@ const minimalEnv = (): NodeJS.ProcessEnv => {
  * environment.extraArgs (which is what args-form-filter reads).
  */
 const buildExecArgs = (options: ChtConfExecOptions): string[] => [
-  `--url=${options.instanceUrl}`,
+  ...(options.instanceUrl !== undefined ? [`--url=${options.instanceUrl}`] : []),
   `--source=${options.configPath}`,
   ...AUTONOMOUS_FLAGS,
+  ...(options.skipValidate ? ['--skip-validate'] : []),
   ...options.verbs,
   ...(options.extraArgs?.length ? ['--', ...options.extraArgs] : []),
 ];
@@ -247,3 +251,63 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     warnings,
   };
 };
+
+// --- Offline convert (mission 05) -------------------------------------------
+//
+// The dev-phase form-fix step converts the edited workbook OFFLINE (no --url,
+// never uploads) so the QA phase's reproduce(RED) step still sees the buggy
+// DEPLOYED form. It converts a temp SANDBOX copy of the config project so the
+// mount is never mutated before human approval.
+
+/** The convert-only verb for each form bucket (never the paired upload verb). */
+const CONVERT_VERBS: Record<'app-forms' | 'contact-forms', string> = {
+  'app-forms': 'convert-app-forms',
+  'contact-forms': 'convert-contact-forms',
+};
+
+// Never copied into the convert sandbox: heavyweight/irrelevant to convert, and
+// .cht-agent carries the descriptor which must never ride into the mount.
+const SANDBOX_EXCLUDES = new Set(['node_modules', '.git', '.cht-agent']);
+
+export interface OfflineConvertOptions {
+  /** The project dir to convert in (should be a sandbox copy, never the mount). */
+  configPath: string;
+  /** Base form name — the positional single-form filter. */
+  form: string;
+  /** Which convert bucket (default 'app-forms'). */
+  bucket?: 'app-forms' | 'contact-forms';
+  bin?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Copy a config project to a fresh temp dir (excluding node_modules/.git/
+ * .cht-agent) so the dev-phase convert never touches the mount (R4). Returns the
+ * sandbox path; the caller is responsible for removing it.
+ */
+export const createConvertSandbox = (configPath: string): string => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cht-agent-convert-'));
+  fs.cpSync(configPath, dir, {
+    recursive: true,
+    filter: (src) => !SANDBOX_EXCLUDES.has(path.basename(src)),
+  });
+  return dir;
+};
+
+/**
+ * Run an OFFLINE `convert-<bucket>` for ONE form (no --url, --skip-validate, the
+ * `-- <form>` filter). Convert-only: the paired upload verb is never run, so a
+ * dev-phase convert cannot fix the deployed form ahead of QA's reproduce step
+ * (R6). Never rejects (folds spawn/timeout into the result, like runChtConf).
+ */
+export const runOfflineConvert = (options: OfflineConvertOptions): Promise<ChtConfExecResult> =>
+  runChtConf({
+    verbs: [CONVERT_VERBS[options.bucket ?? 'app-forms']],
+    configPath: options.configPath,
+    skipValidate: true,
+    extraArgs: [options.form],
+    logLabel: `offline ${CONVERT_VERBS[options.bucket ?? 'app-forms']}: ${options.form}`,
+    bin: options.bin,
+    timeoutMs: options.timeoutMs,
+    // instanceUrl omitted -> URL-less convert, no upload verb.
+  });
