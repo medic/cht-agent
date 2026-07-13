@@ -43,7 +43,8 @@ content check before and after the fix and reports the transition.
 ## 0. Prerequisites (once)
 
 ```bash
-npm ci            # Node 22; installs deps (see the harness/Chromium note in step 6b)
+npm ci            # Node 22; installs deps incl. cht-conf-test-harness (its
+                  # resolver downloads Chromium 93 on install — see step 6b)
 npm run build && npm test && npm run lint
 
 # once, in the live config repo (installs its OWN pinned toolchain —
@@ -51,9 +52,34 @@ npm run build && npm test && npm run lint
 cd /workspace/site-config-test && npm ci
 ```
 
+**Mission-05 prerequisites (blocking — the dev phase dies without them):**
+
+- **Branch + image**: the workbench checkout (and the image built from it,
+  step 3) must carry Mission 05 (`feat/mission-05-xlsform-orchestrator`, or
+  a branch it's merged into). Mission 05 adds **exceljs** as a production
+  dependency — a stale image/`node_modules` crashes at `require('exceljs')`.
+  Re-run `npm ci` after switching branches; rebuild the image.
+- **The config mount must be a git repo with ≥1 commit** (`git init && git
+  add -A && git commit` in the `CHT_CONF_PATH` dir, host-side, remote-less):
+  the code-gen CLI snapshots/rolls back via git, and the fix descriptor rides
+  the git-diff capture.
+- **`.cht-agent/` must NOT be gitignored** in the config repo — the
+  descriptor is the CLI's only output; if git can't see it the run aborts as
+  `execute-no-op`. (The demo stand-in and the engagement repo have no
+  `.gitignore` covering it; check real partner repos.)
+- **Converter pin**: `CHT_CONF_BIN` should point at the deployment-pinned
+  cht-conf (compose defaults to the mount's `node_modules/.bin/cht`; the
+  stand-in fixture is proven with the workbench-global 6.5.0 — for it,
+  override `CHT_CONF_BIN=cht`). Independent of the tier-2 harness's
+  cht-core-4.11 emulation pin.
+- **Ticket frontmatter** must carry `layer: cht-conf`, `configArtifact:
+  form`, `artifactName: <form>`, `chtConfVersion`, `deploymentRef` (see
+  `tickets/demo-pnc-relevant.md`).
+
 Expected (rehearsed this mission): **1351 passing / 0 failing**, build clean,
 `eslint .` clean. (The tier-2 harness spec `test/harness/**` is excluded from
-this suite — it needs Chromium; see step 6b.)
+this suite — it needs Chromium and runs separately via `npm run test:harness`;
+the agent container has Chromium baked in, see step 6b.)
 
 ---
 
@@ -215,8 +241,10 @@ JS+Faker design file that pushes docs directly to `COUCH_URL`, no CSV; noted in
 
 ## 3. [OPERATOR] Rebuild + start the agent runtime
 
-Rebuild the runtime image from this integration branch and start it with the
-CLI provider + OAuth mount + instance env:
+Rebuild the runtime image from the branch carrying **Mission 05**
+(`feat/mission-05-xlsform-orchestrator`, or this integration branch once it's
+merged — see the step-0 prerequisites; exceljs must be in the image) and
+start it with the CLI provider + OAuth mount + instance env:
 
 ```bash
 # HOST side — mount sources consumed by docker-compose.cht-agent.yml. The
@@ -230,7 +258,9 @@ CHT_CONF_PATH=/workspace/site-config-test      # → /workspace/cht-conf-project
 
 # CONTAINER side — the agent process env. Compose hard-sets the paths (the agent
 # always sees the config at /workspace/cht-conf-project regardless of the host
-# dir); add the rest to the compose `environment:` block or an env override:
+# dir). The values below are compose DEFAULTS since the demo env block landed
+# (docker-compose.cht-agent.yml `environment:`) — export a host-side env var of
+# the same name only to override one:
 LLM_PROVIDER=claude-cli
 ANTHROPIC_MODEL=claude-opus-4-8      # override so the run does not burn the Fable session budget
 CHT_URL=https://nginx                # compose default
@@ -239,15 +269,18 @@ CHT_CONF_PATH=/workspace/cht-conf-project    # set by compose — Development wr
 CHT_CONF_BIN=/workspace/cht-conf-project/node_modules/.bin/cht  # ← version parity: every agent
 #   cht-conf invocation (QA applyConfig, step 6) runs the deployment-pinned 3.21.4 that
 #   `npm ci` installed into the MOUNTED config repo — not the image's global cht-conf.
-#   (Not yet in the compose environment block — add it there or via an override.)
+#   (Compose default since the demo env block landed — override only to repoint it.)
 # for the QA phase (step 6): CHT_TEST_DATA_PATH=<container-visible path> (optional; needs its own mount)
 ```
 
 ## 4. [AGENT] Research → **HC1**
 
 ```bash
-docker exec … npm run research tickets/demo-pnc-relevant.md
+docker exec -it cht-agent npm run research -- tickets/demo-pnc-relevant.md
 ```
+
+(Positional args survive npm without the `--`; flags do NOT — see the warning
+at step 5. The `--` habit is safest everywhere.)
 
 - **Ticket routing (no LLM).** All routing comes from frontmatter — rehearsed:
   ```
@@ -281,27 +314,51 @@ docker exec … npm run research tickets/demo-pnc-relevant.md
   (a full `npm run research` needs Claude OAuth; nested `claude -p` works in the
   container but burns session budget — run it live with the model override above).
 
-## 5. [AGENT] Development → **HC2**
+## 5. [AGENT] Development → **HC2** (Mission 05: the fix lands in the `.xlsx` source)
 
 ```bash
-docker exec … npm run full tickets/demo-pnc-relevant.md --qa
+docker exec -it cht-agent npm run full -- tickets/demo-pnc-relevant.md --qa
 ```
 
-(Preview mode is prompted interactively at the start — answer yes to review the
-diff at HC2; `--qa` is the only workflow flag, plus `--qa-auto` to auto-approve HC3.)
+**⚠️ The `--` is load-bearing.** npm (v7+) silently swallows unknown flags
+before `--`: `npm run full tickets/… --qa` runs WITHOUT QA (verified against
+npm 10.9 — the flag never reaches the CLI, no warning). Always
+`npm run full -- <ticket> --qa`. Same for `--qa-auto` (auto-approve HC3 for
+unattended runs). Dev-only preview with no QA: `npm run dev:run -- <ticket>`
+(always preview mode). Preview mode in `full` is prompted interactively at the
+start — answer **yes** to review the diff at HC2.
 
-- Code-gen consumes `codeContextFindings` and produces the corrected `relevant`.
-- **A1 routing:** because `layer: cht-conf`, the fix is generated in and written
-  to the `CHT_CONF_PATH` project (not the cht-core working copy). The CLI prints
+Since **Mission 05** (`feat/mission-05-xlsform-orchestrator`;
+`docs/handoffs/missions/05-xlsform-orchestrator-editor-report.md`), a
+`layer: cht-conf` + `configArtifact: form` ticket fixes the **`.xlsx` source
+of truth**, not just the XML:
+
+- **A1 routing** unchanged: the CLI prints
   `🎯 layer: cht-conf → development target: <CHT_CONF_PATH> (cht-conf)`.
-- Compile/convert validation runs; **HC2** approve the preview diff (the
-  `danger_signs` bind restored to `selected(../pregnancy_summary/visit_option, 'yes')`).
+- The code-gen CLI (file tools only, no Bash) writes exactly ONE file:
+  `.cht-agent/xlsform-fix.json` — a structured fix descriptor (form, survey
+  edits, and an `expect` oracle for the target bind). It never edits the
+  `.xlsx`/`.xml` itself.
+- A deterministic supervisor node applies the descriptor to a **temp copy**
+  of the config project (exceljs, shared-string-safe), runs an **offline**
+  `convert-app-forms -- <form>` (the `CHT_CONF_BIN`-pinned cht-conf, no
+  `--url`), and asserts the regenerated bind matches the descriptor's
+  `expect` — failure feeds back into the code-gen refinement loop (≤3
+  iterations) instead of reaching HC2.
+- **HC2** shows a **bind-level diff** (`/data/… before → after, N sibling
+  binds unchanged`), not a whole-file XML diff. Approve → the corrected
+  **`.xlsx` AND regenerated `.xml`** are written to the mount (`.cht-agent/`
+  is never copied to the partner repo). The corrected `.xlsx` is a partner
+  handback artifact.
 
 ## 6. [AGENT] QA closed loop → **HC3** (opt-in via `--qa`)
 
 Shown as red → green. `--qa` only fires for `layer: cht-conf`; cht-core runs are
-unchanged. Order (forced by the API — `prepareTestData` needs a discovered
-config — and by red-before-approve):
+unchanged. Since Mission 05 the `app-forms` bucket (`convert-app-forms` +
+`upload-app-forms`) is **unchanged and legitimate**: convert regenerates the
+XML from a workbook that already carries the fix, so nothing is clobbered —
+instance and source stay in lockstep. Order (forced by the API —
+`prepareTestData` needs a discovered config — and by red-before-approve):
 
 1. **provision** — poll `https://nginx/api/v2/monitoring` until healthy.
 2. **discoverConfig (pre)** — capture each form's CouchDB rev.
@@ -335,22 +392,44 @@ config — and by red-before-approve):
 **QaResult** carries BOTH the red and green evidence + the pre/post rev diff, so
 the report shows the transition, not just a final pass.
 
-### 6b. Tier-2 (headless Enketo) — the real skip-logic proof — **operator/CI-verified**
+### 6b. Tier-2 (headless Enketo) — the real skip-logic proof — **runs in the agent container**
 
 `test/harness/pregnancy-home-visit.spec.ts` (excluded from the default suite;
 run with `npm run test:harness`) drives real Enketo via `cht-conf-test-harness`:
 `fillForm(..., visit_option=miscarriage)` must SKIP `danger_signs` on the
 corrected config (green) and SHOW it on the planted config (red); `visit_option=yes`
-shows it on both (no regression). **Not run in the mission-04 container** — the
-harness pulls `puppeteer-chromium-resolver`, which downloads **Chromium 93** on
-`npm ci`; the workbench has no Chromium. To enable: add Chromium + the puppeteer
-Debian libs to the runtime/CI image (no `Dockerfile.workbench` exists to edit —
-this stays an operator/CI step), then `npm run test:harness`. Also note: the
-workbench harness 5.0.4 bundles **only cht-core 4.11** (`coreVersion` must be
-`'4.11.0'`; higher versions throw) — the `relevant` skip-logic reproduces under
-4.11 emulation, but it is not the target 4.21.1. For closer parity, the live
-config repo pins its own `cht-conf-test-harness` **3.0.15** (installed by step
-0's `npm ci` there) — run its Enketo-level checks from inside that repo instead.
+shows it on both (no regression).
+
+**In-container support is baked into the runtime image** (`docker/Dockerfile`):
+the puppeteer Debian shared libs are in the root apt layer, and the
+**Chromium 93 (rev 901912)** snapshot that `puppeteer-chromium-resolver`
+downloads during the image's `npm ci` is relocated to
+`/home/agent/.chromium-browser-snapshots` (the build runs as root; the runtime
+`agent` user's resolver only looks in its own home — the resolver reads **no
+env vars**, so `PUPPETEER_EXECUTABLE_PATH`/distro chromium are not options).
+A fail-closed launch check at image build proves the lib set + snapshot as the
+agent user, so a successful build guarantees the capability:
+
+```bash
+docker exec cht-agent bash -lc 'cd /app && npm run test:harness'
+```
+
+The same baked snapshot serves the live config repo's own pinned harness
+**3.0.15** (both harnesses pin resolver `^10` → same revision) — so the agent
+can also run Enketo-level checks from inside `/workspace/cht-conf-project`
+(its toolchain lands there via step 0's `npm ci`, riding the mount).
+
+Caveats: the workbench harness 5.0.4 bundles **only cht-core 4.11**
+(`coreVersion` must be `'4.11.0'`; higher versions throw) — the `relevant`
+skip-logic reproduces under 4.11 emulation, but it is not the target 4.21.1.
+**Known gap (follow-up):** the spec's per-page `PAGES_*` answer arrays are
+incomplete — the suite launches Chromium and exercises real Enketo but
+currently fails on `enketo.constraint.required` (required questions the arrays
+never answer: `miscarriage_date`, `g_age_correct`, the 11 danger-signs
+checks) before reaching the `danger_signs` assertion. Completing them also
+needs planted vs corrected page sets to differ: the planted bug adds a
+required 11-question page on the miscarriage path, so one shared array can
+never submit on both configs.
 
 ### 6c. Tier-3 (live end-to-end submission) — headline, **operator-verified, optional**
 
@@ -368,15 +447,64 @@ Route verified against cht-core: `POST /api/v1/report` (no trailing slash),
 contact UUID; `type` if present must be `data_record`; the server bypasses the
 XForm (no `relevant` evaluation).
 
+### 6d. Manual browser proof — see the bug, then see the fix — **operator**
+
+The human-visible companion to tier-1: reproduce the symptom in the webapp
+BEFORE the loop, and watch it disappear AFTER. Stand-in fixture specifics
+below; the live-engagement walkthrough (different form, different outcome
+question) is in the config repo's `DEMO-STEPS.md`.
+
+**Before the loop (bug proof).** Log in at `https://localhost:10443` as the
+seeded **password user** (created in step 2b's `create-users` — an offline
+user whose role can submit the form; NOT `medic`, which is an online admin
+and shows no offline app). Wait for the initial sync to finish, then:
+
+1. **People** tab → navigate down the hierarchy to the seeded **pregnant
+   woman** (a `person` under a `health_center` — the form's context requires
+   `summary.is_active_pregnancy`, so if "Pregnancy home visit" is not offered
+   on the contact, submit a pregnancy registration for her first).
+2. Open the **"Pregnancy home visit"** action.
+3. Advance to the **Pregnancy summary** page: "Do you want to start this
+   pregnancy visit?" → select **"No, Miscarriage"**.
+4. Continue. **THE BUG:** the **"Danger Sign Check"** page appears — "Does
+   <name> currently have any of these danger signs?", starting with
+   **"Vaginal bleeding"** — for a pregnancy that just ended. Diagnostic tell:
+   it misfires ONLY for "No, Miscarriage"; "No, Abortion" / "No, Refusing
+   care" / "No, Migrated out of area" all skip it correctly.
+
+Content-level proof of the same (no UI, from the host):
+
+```bash
+curl -sk -u medic:password "https://localhost:10443/api/v1/forms/pregnancy_home_visit.xml" \
+  | grep -o '<bind nodeset="/data/danger_signs"[^>]*>'
+# BUGGY:   relevant="selected(../pregnancy_summary/visit_option, 'yes') or selected(../pregnancy_summary/visit_option, 'miscarriage')"
+```
+
+**After the loop (fix proof).** Once QA reports GREEN (step 6.8):
+
+1. Re-run the curl above — the bind now reads
+   `relevant="selected(../pregnancy_summary/visit_option, 'yes')"` only.
+2. In the webapp, as the same offline user, **force a sync** (hamburger menu
+   → **Sync now**) so the client pulls the corrected form — auto-sync is
+   every 5 min on stock 4.21.1 (every 30 min on the
+   `4.21.x-sync-interval-30` fork), so don't wait for it during a demo.
+3. Repeat the walkthrough: "No, Miscarriage" now skips straight past Danger
+   Sign Check into the pregnancy-ended flow ("Date of miscarriage"). The
+   "Yes" path still shows Danger Sign Check — the no-regression half.
+
 ## 7. [AGENT] Report the required change back to the operator + teardown
 
 The deliverable is the **change to apply on the real project** — the agent reports
 the corrected config (the `danger_signs` `relevant` restored to the yes-only gate)
 with the red→green evidence, for the **operator to apply on the live project
 themselves** (the agent never writes to the live instance). Pass checklist:
-routing ✓, canonical-diff ✓, **reproduced/red ✓**, generated fix ✓, upload exit 0
-✓, XML assertion (siblings unchanged, so other users' hierarchy/behaviour is
-untouched) ✓, **harness red→green ✓** (operator/CI), tier-3 filing (optional).
+routing ✓, canonical-diff ✓, **reproduced/red ✓**, generated fix ✓ (descriptor
+→ **corrected `.xlsx` source**, the partner handback artifact), offline
+convert+assert ✓ (dev phase), upload exit 0 ✓, XML assertion (siblings
+unchanged, so other users' hierarchy/behaviour is untouched) ✓, **manual
+browser proof ✓** (step 6d), **harness runs in-container ✓** (red→green
+pending the spec's fill-array completion, step 6b known gap), tier-3 filing
+(optional).
 Then `[OPERATOR]` teardown (`docker compose down -v`) — the throwaway test env and
 its dummy data go away with the volumes.
 

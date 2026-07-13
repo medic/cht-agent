@@ -15,9 +15,11 @@
  *
  *   OPERATOR / CI notes (verified against cht-conf-test-harness 5.0.4):
  *   - `npm i` pulls puppeteer-chromium-resolver, which downloads Chromium 93
- *     to ~/.chromium-browser-snapshots on install (needs network). The workbench
- *     image has no Chromium — add it + the puppeteer Debian libs to the runtime
- *     image, or run this spec in CI. See docs/handoffs/missions/04-...-report.md.
+ *     to ~/.chromium-browser-snapshots on install (needs network). The agent
+ *     runtime image (docker/Dockerfile) bakes the puppeteer Debian libs and
+ *     relocates that snapshot to the agent user's home, with a fail-closed
+ *     launch check at build — this spec runs in-container. Hosts without
+ *     Chromium still self-skip (see above).
  *   - Harness 5.0.4 bundles ONLY cht-core 4.11 — coreVersion must be '4.11.0'
  *     (any 5.x throws). The demo config is cht-core 5.2.0 config/default; the
  *     `relevant` skip-logic is standard XForms and reproduces under 4.11

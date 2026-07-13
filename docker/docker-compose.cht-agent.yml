@@ -58,6 +58,49 @@ services:
       # CHT entry point on cht-agent-net (nginx joins via the #66 override)
       CHT_URL: ${CHT_URL:-https://nginx}
       NODE_ENV: development
+      # --openssl-legacy-provider: deployment-pinned cht-conf (3.21.4) compiles
+      # app_settings with webpack 4, whose MD4 hashing OpenSSL 3 (Node 17+)
+      # removed — without it, compile-app-settings dies with
+      # ERR_OSSL_EVP_UNSUPPORTED. Needed by the agent's app-settings bucket
+      # (cht-conf-runner) and manual 2b execs alike; max-old-space mirrors the
+      # image ENV this block overrides.
+      NODE_OPTIONS: "--max-old-space-size=4096 --openssl-legacy-provider"
+      # --- Demo closed loop (docs/handoffs/demo-runbook.md step 3) ---
+      # CLI provider: the agent drives the baked Claude Code CLI (`claude -p`)
+      # via the OAuth mount below — no API key. Default 'anthropic' needs one.
+      LLM_PROVIDER: ${LLM_PROVIDER:-claude-cli}
+      # Read by the `claude` binary itself — the CLI provider passes no
+      # --model flag (src/llm/providers/claude-cli.ts). Pinned off Fable so
+      # demo runs don't burn the session budget.
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
+      # Version parity (#66): QA cht-conf calls run the deployment-pinned
+      # binary that the config repo's own `npm ci` installed into the mount
+      # above — never the image-global cht.
+      CHT_CONF_BIN: ${CHT_CONF_BIN:-/workspace/cht-conf-project/node_modules/.bin/cht}
+      # TLS trust for the agent's own fetch (readiness poll, discoverConfig,
+      # verifyArtifact — cht-conf has its own --accept-self-signed-certs).
+      # Self-signed test instance: NODE_TLS_REJECT_UNAUTHORIZED=0. Local-CA
+      # cert: prefer NODE_EXTRA_CA_CERTS + the :ro cert mount stub below
+      # (keeps verification on).
+      NODE_TLS_REJECT_UNAUTHORIZED: ${NODE_TLS_REJECT_UNAUTHORIZED:-}
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
+      # QA auth to the throwaway instance — must match step 1's .env. Embedded
+      # CHT_URL credentials would win over these (test-environment-agent.ts).
+      COUCHDB_USER: ${COUCHDB_USER:-medic}
+      COUCHDB_PASSWORD: ${COUCHDB_PASSWORD:-password}
+      # QA seed data (runbook 2b): leave EMPTY to skip seeding (tier-1 verify
+      # is content-only). To seed in-container, generate with
+      # `npm run demo:build-seed -- ... --out /workspace/test-data` and set
+      # this to /workspace/test-data (agent-owned; mount it only if you want
+      # to inspect the CSVs from the host).
+      CHT_TEST_DATA_PATH: ${CHT_TEST_DATA_PATH:-}
+      # Langfuse tracing is ON unless this is literally "false"
+      # (src/observability/index.ts) — keyless runs spam SDK warnings, so
+      # default off; set the keys + true to opt in.
+      LANGFUSE_ENABLED: ${LANGFUSE_ENABLED:-false}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-https://cloud.langfuse.com}
     volumes:
       # The cht-core working copy is an INPUT: a standing local clone the agent
       # local-branches and edits in place. Must be a full clone (a .git
@@ -83,6 +126,10 @@ services:
       # here is fully readable by the agent's shell — use disposable, narrowly-scoped
       # credentials, never your personal OAuth credentials (see docs/docker-agent-runbook.md).
       - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
+      # Local-CA trust for the agent's fetch (pair with NODE_EXTRA_CA_CERTS
+      # above, e.g. NODE_EXTRA_CA_CERTS=/workspace/local-ca.crt). Uncomment and
+      # point LOCAL_CA_CERT at the CA file the test instance's nginx presents:
+      # - ${LOCAL_CA_CERT:?Set LOCAL_CA_CERT to the local CA certificate}:/workspace/local-ca.crt:ro
     deploy:
       resources:
         limits:
