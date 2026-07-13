@@ -85,29 +85,35 @@ only applies to full-source handovers like this engagement's repo.)
   the PR #4 form-builder into the container is rejected (needs Bash + `uv` +
   PyPI at exec, and still couldn't do surgical edits).
 - **(c) DURABLE — first-party Node xlsx surgical editor as an ORCHESTRATOR
-  step** *(recommended post-demo)*: the code-gen CLI stays Read/Write/Edit-
-  only and emits the fix as structured data (form, question name, new
-  `relevant` expression); the workbench applies it to the `.xlsx` survey row
-  in-process (exceljs/SheetJS as a real dependency), then runs the *real,
-  unchanged* `app-forms` bucket — convert no longer clobbers anything, the
-  instance and the source stay in lockstep, and the corrected `.xlsx` is a
-  partner handback artifact. Effort: ~1-2 days (xlsx locate/edit + xml↔xlsx
-  question-name mapping + orchestration seam + tests). Risk: low-medium
-  (round-trip fidelity of the xlsx lib on partner workbooks). Python/openpyxl
-  variant (orchestrator-invoked, not sandbox-invoked) is the fallback if
-  exceljs mangles formatting.
+  step** *(**IMPLEMENTED — Mission 05, 2026-07-13**;
+  `docs/handoffs/missions/05-xlsform-orchestrator-editor-report.md`)*: the
+  code-gen CLI stays Read/Write/Edit-only and emits the fix as a structured
+  descriptor (`.cht-agent/xlsform-fix.json`: form, edits, and an `expect`
+  oracle); a deterministic supervisor node applies it to a sandbox copy of the
+  `.xlsx` survey row in-process (**exceljs**, now a real dependency), converts
+  offline, and asserts the regenerated bind before staging both artifacts for
+  HC2. On approval the corrected `.xlsx` + `.xml` are written to the mount, so
+  the *real, unchanged* `app-forms` bucket (convert+upload) no longer clobbers
+  anything — the instance and the source stay in lockstep, and the corrected
+  `.xlsx` is a partner handback artifact. The exceljs round-trip fidelity risk
+  was the P1 decision gate and **passed** against the planted fixture (only the
+  target cell changes; only the one bind changes on convert), so the documented
+  Python/openpyxl fallback was **not** needed.
 - **(d) cht-ai-tools additive garnish** (unchanged from mission-04 §A4):
   `--compare` for design-vs-form narrative in the report, `/deploy` UI as the
   interactive alternative. Not fix engines.
 
-**Recommendation: (a)** for the demo — implement the bucket variant, it does
-not exist yet — then **(c)** as the durable path that meets the "fix the real
-source, fully automated" goal. Option (c) is now fully specified as
-**Mission 05**: `docs/handoffs/missions/05-xlsform-orchestrator-editor-mission.md`
-(scope/phases/gates + kickoff prompt) with its verified seam map and risk
-register in `docs/handoffs/xlsform-orchestrator-editor-handoff.md`. Full
-research record: the xlsx-pipeline synthesis of 2026-07-13 (memories +
-cht-ai-tools main + PR #4).
+**Recommendation: (c) SHIPPED.** Option (c) — the durable path that meets the
+"fix the real source, fully automated" goal — was specified as **Mission 05**
+(`docs/handoffs/missions/05-xlsform-orchestrator-editor-mission.md`, with its
+verified seam map + risk register in
+`docs/handoffs/xlsform-orchestrator-editor-handoff.md`) and **implemented**
+2026-07-13 on `feat/mission-05-xlsform-orchestrator`
+(`docs/handoffs/missions/05-xlsform-orchestrator-editor-report.md`). The demo
+stopgap (a) (an xml-only `app-forms-xml-only` bucket) was therefore **not**
+built — (c) makes the unchanged convert+upload bucket legitimate, which is
+strictly better than diverging the xlsx/xml. Full research record: the
+xlsx-pipeline synthesis of 2026-07-13 (memories + cht-ai-tools main + PR #4).
 
 ## 3. No reproduce-before-develop for cht-conf bugs (workflow order)
 

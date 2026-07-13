@@ -573,6 +573,25 @@ describe('DevelopmentSupervisor applyXlsformFixNode (mission 05)', () => {
       await fs.rm(apply.sandboxDir, { recursive: true, force: true });
     }
   });
+
+  maybe('develop() routes a descriptor-only run through applyXlsformFix (graph integration, self-skips)', async function () {
+    this.timeout(180000);
+    // Fake code-gen emits ONLY the descriptor every iteration (as the real CLI
+    // would after capture); the mock LLM scores 0 so validateImpl exhausts its
+    // iterations, then the [END] edge routes into applyXlsformFix for real.
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile(DESCRIPTOR_PATH, validDescriptorJson, 'config')]));
+    const supervisor = buildSupervisorWithStubAgents(generate);
+    const finalState = await supervisor.develop({
+      ...baseValidInputFragment,
+      options: { chtCorePath: path.resolve('demo/config-pnc-demo'), previewMode: true },
+    });
+    const apply = finalState.xlsformApply;
+    expect(apply, 'xlsformApply should be set after the graph reaches applyXlsformFix').to.not.equal(undefined);
+    if (apply) {
+      expect(apply.bindDiff.after).to.equal(YES_GATE);
+      await fs.rm(apply.sandboxDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('DevelopmentSupervisor xlsform staging (mission 05)', () => {
