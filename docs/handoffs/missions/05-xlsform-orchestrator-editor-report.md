@@ -6,10 +6,10 @@
 update commit on top of the phase commits, so the true tip is the current
 `HEAD` of that branch at read time.
 
-Gates (verified at the final commit): `npm run build` clean, **1424 passing /
+Gates (verified at the final commit): `npm run build` clean, **1430 passing /
 0 failing** (`env -u ANTHROPIC_MODEL LANGFUSE_ENABLED=false npm test`),
-`eslint .` clean. Baseline was **1354** (integration tip `c75e4a0`) → **+70
-tests**. Convert-dependent and Enketo tiers self-skip when their toolchain is
+`eslint .` clean. Baseline was **1354** (integration tip `c75e4a0`) → **+76
+tests** (P0–P7 plus the post-implementation review fixes below). Convert-dependent and Enketo tiers self-skip when their toolchain is
 absent, so the default gate suite stays green on cht/pyxform/Chromium-less
 hosts (here cht 6.5.0 is present, so every convert-dependent spec ran).
 
@@ -161,6 +161,26 @@ The committed, reproducible equivalents run under `npm test` (self-skipping):
   live LLM descriptor-emission and instance upload are non-deterministic and
   operator-verified (mission wording: "live tiers operator-verified"); the
   rehearsal drives the real deterministic functions the mission adds.
+
+## Post-implementation adversarial review (fixed)
+
+A multi-agent adversarial review of the full diff (correctness + sandbox
+posture, each finding independently verified) confirmed 3 defects, all fixed in
+`7dc2589` with regression tests:
+
+- **HIGH — descriptor leak on the direct-write path.** `writeToChtCore`
+  (non-preview) dropped `.cht-agent/xlsform-fix.json` only when `xlsformApply`
+  was set, so a *failed* apply (descriptor still in `codeGeneration.files`,
+  `xlsformApply` undefined) wrote it into the partner repo — breaking the
+  inviolable invariant (gate 5). Now drops anything under `.cht-agent/`
+  unconditionally, matching the preview path.
+- **MEDIUM — collateral-damage false GREEN.** The sibling oracle compared only
+  top-level `/data/<segment>` binds, so a multi-edit descriptor corrupting a
+  child/nested bind passed. Added `collateralChangedLines` — a byte/line-level
+  check (valid because same-version convert is deterministic) that flags ANY
+  non-target differing line.
+- **LOW — misleading `siblingsUnchanged` count.** Reported a positive count
+  even when the check was disabled (`expect.siblingsUnchanged:false`); now 0.
 
 ## Follow-ups discovered
 
