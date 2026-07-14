@@ -115,6 +115,12 @@ Passthrough (cht-core tickets, no descriptor) byte-identical.
 
 ## F5 — QA red/green oracle is blind to child-bind fixes (second live run, 2026-07-13)
 
+> **STATUS: SHIPPED + PROVEN LIVE, 2026-07-13.** Third live run closed the
+> loop end-to-end: RED = 1 of 10 bind assertions failed (the target child
+> bind, actual "(none)") → HC3 → applyConfig (app-forms, pinned 3.21.4) →
+> GREEN = 10/10, form rev 2-acb009… → 3-b849c0…. Gates at ship time: build
+> clean, 1477 passing / 0 failing, eslint clean; adversarial review PASS.
+
 Observed: with F1–F4 shipped, the dev phase completed end-to-end (descriptor →
 verified apply, 9 siblings unchanged → HC2 bind-diff → corrected `.xlsx`+`.xml`
 written to the mount), but QA aborted "symptom did not reproduce" — while
@@ -145,7 +151,28 @@ Acceptance: spec where the corrected local form gates a child bind but the
 XML → GREEN; existing group-level demo-fixture specs unchanged; standalone
 QA (no dev result) behavior byte-identical.
 
-## F6 — PROPOSED (not built): whole-document QA oracle
+## F6 — IN PROGRESS: whole-document QA oracle
+
+**Implementation contract (added when F6+F7 were greenlit):**
+- Comparator: reuse the dev phase's canonicalized comparison
+  (`collateralChangedLines` — export/move it to a shared seam if needed; it
+  lives in `src/utils/xlsform-apply.ts` and already handles multi-line tags
+  and attr-order churn).
+- ACTIVE ONLY when a dev-phase `bindDiff` is present (the Mission-05 path).
+  Standalone QA / cht-core / no-dev runs: byte-identical current behavior —
+  spec it.
+- reproduce (RED): in addition to the existing bind assertions, fetch the
+  deployed XML and compare whole-document against the corrected local
+  `forms/app/<form>.xml`: the docs must differ EXACTLY at the declared
+  target nodeset(s) and nowhere else. Extra diffs ⇒ abort loudly as
+  ENVIRONMENT DRIFT (sample lines in the message) — escape hatch
+  `QA_ALLOW_DRIFT=1` falls back to the targeted oracle with a warning.
+- verify (GREEN): bind assertions PLUS whole-document canonical identity;
+  any residual diff fails verify and lists the collateral lines.
+- QaResult transition entries must say which oracle level passed/failed.
+- Empirical end-check available in the session scratchpad: `deployed-pnc.xml`
+  (buggy deployed) vs `edited.xml` (corrected conversion) differ exactly at
+  the target bind under the canonical comparator.
 
 Motivation (Hareet's question after F5): the group-bind set has no
 completeness meaning — measured on the deployed postnatal_care_service:
@@ -168,6 +195,50 @@ Trade-off: genuine mount-vs-deployed drift turns into a loud red (desirable
 for a closed loop; document a fallback to the targeted oracle with a
 warning). Converter parity is already pinned via CHT_CONF_BIN. Candidate for
 the next follow-up round after F5 proves out in the live loop.
+
+## F7 — IN PROGRESS: layer-aware test generation → partner harness specs + tier-2 QA hook
+
+Observed (third live run): for cht-conf tickets, test-gen emits generic JS
+unit tests of the fix DESCRIPTOR into `tests/unit/` (plural) — the partner
+repo's mocha glob is `test/**/*.spec.js` (singular), so the generated files
+are dead code their suite never executes, and they test the descriptor JSON
+with a hand-rolled regex evaluator rather than the form.
+
+Proposal: for `layer: cht-conf` + `configArtifact: form`, test-gen should
+emit ONE `cht-conf-test-harness` spec at `<configRoot>/test/forms/<form>.spec.js`
+following the repo's own house pattern (detect from existing specs: harness
+lifecycle in before/after/beforeEach, `fillForm`, `expect(harness.consoleErrors)
+.to.be.empty`), using the repo-pinned harness + its `harness.defaults.json`
+coreVersion. The spec asserts the ticket's behavior (here: has_delivered='no'
+→ next_pnc_visit_date not prompted; ='yes' → prompted) — the durable
+"fails before the fix, passes after" artifact that ships WITH the partner
+repo.
+
+**Implementation contract (added when F6+F7 were greenlit):**
+- Generation (`layer: cht-conf` + `configArtifact: form` ONLY; other tickets
+  byte-identical): replace the current `tests/unit/` descriptor-JS output
+  entirely. Emit ONE spec at `<configRoot>/test/forms/<form>.spec.js`; if
+  that path already exists, emit `<form>.agent.spec.js` beside it instead —
+  never overwrite partner specs. House-pattern detection: read 1-2 existing
+  specs under `test/forms/` for the harness require/lifecycle idiom; fall
+  back to the canonical cht-conf-test-harness pattern when the dir is empty.
+  Spec content derives its scenario from the fix descriptor/bindDiff (gate
+  question, gating values), not from free-form LLM imagination.
+- Tier-2 QA hook (opt-in): new `--qa-tier2` CLI flag → `QaInput.tier2`. When
+  enabled and the config repo has a runnable spec for the affected form,
+  AFTER the tier-1 GREEN the QA phase shells the repo-pinned mocha
+  (`<configRoot>/node_modules/.bin/mocha test/forms/<form>*.spec.js`,
+  cwd=configRoot, minimal env + the repo's TZ convention, generous timeout)
+  and records `QaResult.tier2 { ran, passed, outputTail }`;
+  `succeeded &&= tier2.passed` when the hook ran. Missing harness/spec ⇒
+  tier2 = { ran: false } with an honest reason, succeeded unchanged (mirror
+  the self-skip philosophy). Default OFF (full-suite regression stays an
+  operator step; the hook runs only the affected form's spec).
+- Runtime prerequisites already true in-container: Chromium rev-901912 baked
+  for resolver ^10 (harness 3.0.15 + 5.0.4); the mounted repo's PCR
+  .stats.json self-heals. Workbench unit tests for the runner must mock the
+  child process; an end-to-end spec may self-skip unless a real config-repo
+  path env var is provided (existing self-skip pattern).
 
 ## Gates (after EVERY fix, and finally)
 

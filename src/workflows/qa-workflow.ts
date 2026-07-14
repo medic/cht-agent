@@ -32,6 +32,7 @@ import {
   ConfigArtifact,
   ConfigUploadAction,
   DiscoveredConfig,
+  EnvironmentHandle,
   HumanFeedback,
   IssueTemplate,
   ProvisionOptions,
@@ -46,6 +47,8 @@ import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import { extractTopLevelGroupBinds } from '../utils/xform-inspect';
 import { guardConfigFix } from '../utils/config-type';
 import { resolveDeploymentConfigRoot } from '../utils/canonical-diff';
+import { canonicalDiffLines } from '../utils/xlsform-apply';
+import { runTier2 } from '../utils/cht-conf-tier2';
 import { askYesNo } from '../utils/prompt';
 
 /** cht-conf upload buckets to apply for each verifiable artifact kind. */
@@ -121,6 +124,8 @@ export interface CreateQaInputArgs {
    * asserted red→green. Undefined for standalone QA / cht-core / dev-skipped runs.
    */
   bindDiff?: XlsformBindDiff;
+  /** F7: opt-in tier-2 QA (repo-pinned mocha over the form's harness spec). */
+  tier2?: boolean;
 }
 
 /**
@@ -149,6 +154,11 @@ export const createQaInput = (args: CreateQaInputArgs): QaInput | null => {
     provision: args.provision ?? buildProvisionFromEnv(),
     ...(args.testDataPath ? { testDataPath: args.testDataPath } : {}),
     ...(args.autoApprove ? { autoApprove: args.autoApprove } : {}),
+    // F6: carry the bindDiff onto the input so executeQaWorkflow activates the
+    // whole-document oracle (deployed-vs-local RED-exact-target / GREEN-identity).
+    ...(args.bindDiff ? { bindDiff: args.bindDiff } : {}),
+    // F7: carry the tier-2 opt-in so executeQaWorkflow runs the repo harness spec.
+    ...(args.tier2 ? { tier2: args.tier2 } : {}),
   };
 };
 
@@ -174,6 +184,9 @@ export const humanQaValidationCheckpoint = async (
   console.log(`   • upload the corrected config from ${input.configPath}`);
   console.log(`     (buckets: ${(input.applyActions ?? []).join(', ')}; artifact: ${input.verify.artifactName})`);
   console.log(`   • target instance: ${input.provision.url ?? process.env.CHT_URL ?? 'https://nginx'}`);
+  if (input.tier2) {
+    console.log('   • after GREEN: tier-2 harness spec run (repo-pinned mocha over the form spec)');
+  }
   console.log(CHECKPOINT_RULE);
 
   const timestamp = new Date().toISOString();
@@ -199,6 +212,71 @@ const abort = (
   abortReason,
   ...extra,
 });
+
+/** How many collateral sample lines to surface in a drift / collateral message. */
+const DRIFT_SAMPLE_LINES = 5;
+
+/** Escape hatch: QA_ALLOW_DRIFT=1 downgrades the RED drift abort to a warning. */
+const driftAllowed = (): boolean => process.env.QA_ALLOW_DRIFT === '1';
+
+/**
+ * Read the corrected local form the QA phase applies
+ * (`<configPath>/forms/app/<form>.xml`) — the whole-document reference the F6
+ * oracle diffs the deployed XML against. Returns undefined (with no throw) when
+ * the file is absent so the oracle self-skips rather than crashing QA.
+ */
+const readCorrectedLocalForm = (configPath: string, form: string): string | undefined => {
+  const formPath = path.join(configPath, 'forms', 'app', `${form}.xml`);
+  if (!fs.existsSync(formPath)) {
+    return undefined;
+  }
+  return fs.readFileSync(formPath, 'utf8');
+};
+
+/** Outcome of one whole-document (F6) oracle evaluation. */
+type WholeDocOracle =
+  | { level: 'whole-document'; ok: true }
+  // The deployed and corrected-local docs diverge beyond the declared target(s).
+  | { level: 'whole-document'; ok: false; extraLines: string[] }
+  // The oracle could not run (mock mode / deployed XML or local form absent); the
+  // caller falls back to the targeted bind oracle unchanged.
+  | { level: 'targeted'; ok: true; reason: string };
+
+/**
+ * F6 whole-document canonical comparison of the deployed form against the
+ * corrected local `.xml`, using the SAME comparator the dev phase's collateral
+ * oracle uses (`canonicalDiffLines`). `excludeTarget` excludes the declared
+ * target bind's line(s) (RED — the docs are SUPPOSED to differ there); omit it
+ * for the GREEN identity check (the target must now match too). When the deployed
+ * XML or the local form is unavailable, the oracle self-skips to the targeted
+ * level so mock/standalone runs are byte-identical.
+ */
+const runWholeDocOracle = async (
+  agent: TestEnvironmentAgent,
+  handle: EnvironmentHandle,
+  configPath: string,
+  bindDiff: XlsformBindDiff,
+  form: string,
+  excludeTarget: boolean
+): Promise<WholeDocOracle> => {
+  const deployedXml = await agent.fetchDeployedFormXml(handle, form);
+  if (deployedXml === undefined) {
+    return { level: 'targeted', ok: true, reason: 'deployed XML unavailable (mock mode)' };
+  }
+  const localXml = readCorrectedLocalForm(configPath, form);
+  if (localXml === undefined) {
+    return { level: 'targeted', ok: true, reason: `corrected local form not found at forms/app/${form}.xml` };
+  }
+  const extraLines = canonicalDiffLines(
+    deployedXml,
+    localXml,
+    excludeTarget ? { excludeNodeset: bindDiff.nodeset } : {}
+  );
+  if (extraLines.length === 0) {
+    return { level: 'whole-document', ok: true };
+  }
+  return { level: 'whole-document', ok: false, extraLines };
+};
 
 /**
  * Run the closed-loop QA workflow: reproduce (red) -> HC3 -> seed -> apply ->
@@ -245,6 +323,48 @@ export const executeQaWorkflow = async (
     );
   }
 
+  // 3b. F6 whole-document RED oracle (ACTIVE only when a dev-phase bindDiff is in
+  // scope). The deployed form must differ from the corrected local `.xml` EXACTLY
+  // at the target bind and nowhere else — proving both the bug AND that the mount
+  // is a faithful pre-image of the deployment. Any OTHER canonical diff is
+  // ENVIRONMENT DRIFT: abort loudly (sample lines) BEFORE the destructive
+  // seed/apply, unless QA_ALLOW_DRIFT=1 downgrades it to a warning + the targeted
+  // oracle. No bindDiff ⇒ this whole block is skipped (targeted-oracle behavior).
+  if (input.bindDiff) {
+    const redDoc = await runWholeDocOracle(
+      agent,
+      handle,
+      input.configPath,
+      input.bindDiff,
+      artifact,
+      /* excludeTarget */ true
+    );
+    if (redDoc.level === 'targeted') {
+      messages.push(`RED oracle: targeted (whole-document skipped — ${redDoc.reason})`);
+    } else if (redDoc.ok) {
+      messages.push('RED oracle: whole-document — deployed differs from local ONLY at the target bind');
+    } else if (driftAllowed()) {
+      messages.push(
+        `RED oracle: whole-document drift TOLERATED (QA_ALLOW_DRIFT=1) — ${redDoc.extraLines.length} ` +
+          `unexpected line(s); falling back to the targeted oracle: ` +
+          redDoc.extraLines.slice(0, DRIFT_SAMPLE_LINES).join(' | ')
+      );
+    } else {
+      return abort(
+        messages.concat(
+          `RED oracle: whole-document ENVIRONMENT DRIFT — ${redDoc.extraLines.length} line(s)`
+        ),
+        `ENVIRONMENT DRIFT — the deployed form differs from the corrected local config at ` +
+          `${redDoc.extraLines.length} line(s) BEYOND the target bind ${input.bindDiff.nodeset}. The ` +
+          `mount is not a faithful pre-image of the deployment (converter/version skew or an ` +
+          `out-of-band edit), so a red/green result would be meaningless. Sample: ` +
+          `${redDoc.extraLines.slice(0, DRIFT_SAMPLE_LINES).join(' | ')}. Set QA_ALLOW_DRIFT=1 to ` +
+          `proceed with the targeted oracle instead.`,
+        { reproduced: true, redEvidence, preFormRev }
+      );
+    }
+  }
+
   // 4. HC3 — gate the destructive seed + apply (red is now confirmed)
   const approval = await humanQaValidationCheckpoint(input, redEvidence);
   if (!approval.approved) {
@@ -277,10 +397,63 @@ export const executeQaWorkflow = async (
   const revChanged =
     preFormRev !== undefined && postFormRev !== undefined ? preFormRev !== postFormRev : undefined;
   const greenEvidence = await agent.verifyArtifact(handle, input.verify);
-  const verified = greenEvidence.passed;
-  messages.push(verified ? `GREEN verified — ${greenEvidence.summary}` : `verify FAILED — ${greenEvidence.summary}`);
+  const bindsVerified = greenEvidence.passed;
+  messages.push(
+    bindsVerified ? `GREEN verified — ${greenEvidence.summary}` : `verify FAILED — ${greenEvidence.summary}`
+  );
 
-  const succeeded = reproduced && applyResult.succeeded && verified;
+  // 7b. F6 whole-document GREEN oracle (ACTIVE only when a dev-phase bindDiff is
+  // in scope). Beyond the bind assertions, the deployed form must now be
+  // canonically IDENTICAL to the corrected local `.xml` (target bind included —
+  // no exclusion). Any residual canonical diff FAILS verify and lists the
+  // collateral lines. No bindDiff ⇒ the bind assertions alone decide verify
+  // (targeted-oracle behavior, unchanged).
+  let verified = bindsVerified;
+  if (input.bindDiff && bindsVerified) {
+    const greenDoc = await runWholeDocOracle(
+      agent,
+      handle,
+      input.configPath,
+      input.bindDiff,
+      artifact,
+      /* excludeTarget */ false
+    );
+    if (greenDoc.level === 'targeted') {
+      messages.push(`GREEN oracle: targeted (whole-document skipped — ${greenDoc.reason})`);
+    } else if (greenDoc.ok) {
+      messages.push('GREEN oracle: whole-document — deployed is canonically identical to local');
+    } else {
+      verified = false;
+      messages.push(
+        `GREEN oracle: whole-document FAILED — deployed differs from local at ` +
+          `${greenDoc.extraLines.length} line(s): ` +
+          greenDoc.extraLines.slice(0, DRIFT_SAMPLE_LINES).join(' | ')
+      );
+    }
+  }
+
+  let succeeded = reproduced && applyResult.succeeded && verified;
+
+  // 8. F7 tier-2 (opt-in): after the tier-1 GREEN, run the config repo's OWN
+  // pinned mocha over the affected form's harness spec(s). It folds into
+  // `succeeded` when it ran; a missing harness/spec is an honest self-skip that
+  // leaves `succeeded` unchanged. Only attempted when tier-1 already succeeded —
+  // there is nothing to strengthen about an already-failed loop.
+  let tier2;
+  if (input.tier2 && succeeded) {
+    tier2 = await runTier2({ configRoot: input.configPath, form: artifact });
+    if (tier2.ran) {
+      succeeded = succeeded && tier2.passed === true;
+      messages.push(
+        tier2.passed
+          ? 'tier-2: harness spec(s) PASSED'
+          : 'tier-2: harness spec(s) FAILED — see outputTail',
+      );
+    } else {
+      messages.push(`tier-2: skipped — ${tier2.reason}`);
+    }
+  }
+
   return {
     ran: true,
     approved: true,
@@ -294,6 +467,7 @@ export const executeQaWorkflow = async (
     postFormRev,
     revChanged,
     messages,
+    ...(tier2 ? { tier2 } : {}),
   };
 };
 
@@ -312,6 +486,16 @@ export const displayQaCompletion = (result: QaResult): void => {
     console.log(`🔁 Form rev changed: ${result.revChanged ? '✅' : '❌'} (${result.preFormRev ?? '?'} → ${result.postFormRev ?? '?'})`);
   }
   console.log(`🏁 Closed loop succeeded: ${result.succeeded ? '✅' : '❌'}`);
+  if (result.tier2) {
+    const t = result.tier2;
+    let label: string;
+    if (!t.ran) {
+      label = `⏭️  skipped (${t.reason})`;
+    } else {
+      label = t.passed ? '✅ passed' : '❌ failed';
+    }
+    console.log(`🔬 Tier-2 (harness spec): ${label}`);
+  }
   if (result.abortReason) {
     console.log(`\n⚠️  Aborted: ${result.abortReason}`);
   }

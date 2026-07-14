@@ -197,13 +197,23 @@ const describeSiblingChanges = (
   return changes;
 };
 
+/** Options for {@link canonicalDiffLines}. */
+export interface CanonicalDiffOptions {
+  /**
+   * Exclude any line whose canonical form carries `nodeset="<value>"` from the
+   * result — the diff of the two documents EVERYWHERE ELSE. Omit to compare the
+   * whole document (used by the F6 QA GREEN identity check, where even the
+   * target bind must match).
+   */
+  excludeNodeset?: string;
+}
+
 /**
- * Byte/line-level collateral check: the non-blank lines that differ between two
- * SAME-VERSION conversions and do NOT belong to the target bind. The top-level
- * group oracle (describeSiblingChanges) only sees `/<root>/<segment>` binds and
- * misses child/nested binds; this catches ANY collateral change (a second edit
- * corrupting a leaf field, etc.). Same-version convert is deterministic (proven
- * byte-identical unedited, one-line delta for the single-cell fix — R11).
+ * The canonical whole-document line delta between two SAME-VERSION conversions:
+ * the non-blank canonicalized lines that differ, optionally excluding the lines
+ * of one target bind (`opts.excludeNodeset`). Same-version convert is
+ * deterministic (proven byte-identical unedited, one-line delta for the
+ * single-cell fix — R11).
  *
  * Physical lines are first reassembled into whole TAG units (`toLogicalLines`),
  * then each unit is canonicalized so pure attribute-ORDER churn is neutralized:
@@ -216,33 +226,52 @@ const describeSiblingChanges = (
  * postnatal_care_service: 68 raw churn lines → 0 real delta after tag-level
  * canonicalization). Values stay byte-exact, so a genuine value change still
  * surfaces. Multiset diff, so benign reordering is ignored; the exact
- * `nodeset="<target>"` marker (closing quote included, and preserved byte-exact
- * by canonicalization) never matches a `/<root>/<target>/child` line, so the
- * target bind's line(s) stay excluded.
+ * `nodeset="<value>"` marker (closing quote included, and preserved byte-exact
+ * by canonicalization) never matches a `/<root>/<value>/child` line, so a
+ * same-prefix child bind is never mistaken for the excluded target.
+ *
+ * Shared seam (mission-05 F6): the dev-phase collateral oracle
+ * (`collateralChangedLines`) and the QA whole-document oracle (deployed-vs-local
+ * RED/GREEN in `qa-workflow.ts`) both go through this ONE comparator, so a fix
+ * to the canonicalization benefits both.
+ */
+export const canonicalDiffLines = (
+  aXml: string,
+  bXml: string,
+  opts: CanonicalDiffOptions = {}
+): string[] => {
+  const counts = new Map<string, number>();
+  for (const line of toLogicalLines(aXml)) {
+    const canon = canonicalizeTagLine(line);
+    counts.set(canon, (counts.get(canon) ?? 0) + 1);
+  }
+  for (const line of toLogicalLines(bXml)) {
+    const canon = canonicalizeTagLine(line);
+    counts.set(canon, (counts.get(canon) ?? 0) - 1);
+  }
+  const marker = opts.excludeNodeset !== undefined ? `nodeset="${opts.excludeNodeset}"` : undefined;
+  const diff: string[] = [];
+  for (const [line, n] of counts) {
+    if (n !== 0 && line.trim().length > 0 && !(marker !== undefined && line.includes(marker))) {
+      diff.push(line.trim());
+    }
+  }
+  return diff;
+};
+
+/**
+ * Byte/line-level collateral check: the non-blank lines that differ between two
+ * SAME-VERSION conversions and do NOT belong to the target bind. The top-level
+ * group oracle (describeSiblingChanges) only sees `/<root>/<segment>` binds and
+ * misses child/nested binds; this catches ANY collateral change (a second edit
+ * corrupting a leaf field, etc.). Thin wrapper over {@link canonicalDiffLines}
+ * that excludes the target bind's line(s).
  */
 export const collateralChangedLines = (
   baselineXml: string,
   regenXml: string,
   targetNodeset: string
-): string[] => {
-  const counts = new Map<string, number>();
-  for (const line of toLogicalLines(baselineXml)) {
-    const canon = canonicalizeTagLine(line);
-    counts.set(canon, (counts.get(canon) ?? 0) + 1);
-  }
-  for (const line of toLogicalLines(regenXml)) {
-    const canon = canonicalizeTagLine(line);
-    counts.set(canon, (counts.get(canon) ?? 0) - 1);
-  }
-  const marker = `nodeset="${targetNodeset}"`;
-  const collateral: string[] = [];
-  for (const [line, n] of counts) {
-    if (n !== 0 && line.trim().length > 0 && !line.includes(marker)) {
-      collateral.push(line.trim());
-    }
-  }
-  return collateral;
-};
+): string[] => canonicalDiffLines(baselineXml, regenXml, { excludeNodeset: targetNodeset });
 
 export const applyXlsformFixToProject = async (
   descriptor: XlsformFixDescriptor,

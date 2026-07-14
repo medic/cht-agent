@@ -79,7 +79,7 @@ function ensureTicketPath(): string {
   if (!arg) {
     console.error('❌ Error: No ticket file specified\n');
     console.log('Usage:');
-    console.log('  npm run full <ticket-file> [--qa] [--qa-auto]\n');
+    console.log('  npm run full <ticket-file> [--qa] [--qa-auto] [--qa-tier2]\n');
     console.log('Examples:');
     console.log('  npm run full tickets/my-ticket.md');
     console.log('  npm run full tickets/demo-pnc-relevant.md --qa   # run the QA closed loop\n');
@@ -103,6 +103,9 @@ function parseQaOptions(): QaOptions {
     enabled: args.includes('--qa'),
     autoApprove: args.includes('--qa-auto') || args.includes('--qa-yes'),
     useMockDocker: process.env.TEST_ENV_MOCK_DOCKER === 'true',
+    // F7: opt-in tier-2 QA — after the tier-1 GREEN, run the config repo's own
+    // pinned mocha over the affected form's cht-conf-test-harness spec(s).
+    tier2: args.includes('--qa-tier2'),
     ...(testDataPath ? { testDataPath } : {}),
   };
 }
@@ -153,7 +156,10 @@ const main = async (): Promise<void> => {
 
     const qaOptions = parseQaOptions();
     if (qaOptions.enabled) {
-      console.log(`🧪 QA closed loop enabled (--qa)${qaOptions.autoApprove ? ', HC3 auto-approve' : ''}\n`);
+      console.log(
+        `🧪 QA closed loop enabled (--qa)${qaOptions.autoApprove ? ', HC3 auto-approve' : ''}` +
+          `${qaOptions.tier2 ? ', tier-2 harness spec (--qa-tier2)' : ''}\n`,
+      );
     }
 
     const workflowResult = await executeFullWorkflow(

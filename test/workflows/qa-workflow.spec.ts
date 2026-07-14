@@ -9,7 +9,9 @@ import {
   createQaInput,
   defaultApplyActions,
   deriveVerifyOptions,
+  displayQaCompletion,
   executeQaWorkflow,
+  humanQaValidationCheckpoint,
 } from '../../src/workflows/qa-workflow';
 import { CONFIG_ACTION_COMMANDS } from '../../src/utils/cht-conf-runner';
 import { verifyFormBinds } from '../../src/utils/xform-inspect';
@@ -228,6 +230,119 @@ describe('qa-workflow', () => {
       expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }))).to.equal(null);
       expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.equal(null);
     });
+
+    it('createQaInput threads the F7 tier-2 opt-in onto the QaInput', () => {
+      const input = createQaInput({ issue: formIssue(), configPath: dir, tier2: true, autoApprove: true });
+      expect(input!.tier2).to.equal(true);
+      const off = createQaInput({ issue: formIssue(), configPath: dir, autoApprove: true });
+      expect(off!.tier2).to.equal(undefined);
+    });
+  });
+
+  // F7: opt-in tier-2 QA — after the tier-1 GREEN, shell the config repo's own
+  // pinned mocha over the affected form's harness spec. The runner is exercised
+  // for real against a scaffolded repo with a fake mocha (exit 0 / exit 1) so the
+  // full seam — succeeded-folding + honest self-skip + QaResult.tier2 — is proven.
+  describe('executeQaWorkflow — F7 tier-2 hook', () => {
+    let dir: string;
+    const FORM = 'pregnancy_home_visit';
+
+    const writeCorrectedForm = (root: string) => {
+      fs.mkdirSync(path.join(root, 'forms', 'app'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'forms', 'app', `${FORM}.xml`),
+        `<model><bind nodeset="/data/danger_signs" relevant="${YES_GATE}"/></model>`,
+      );
+    };
+    const scaffoldMocha = (root: string, exitCode: number) => {
+      const binDir = path.join(root, 'node_modules', '.bin');
+      fs.mkdirSync(binDir, { recursive: true });
+      const mocha = path.join(binDir, 'mocha');
+      fs.writeFileSync(mocha, `#!/bin/sh\necho "tier-2 fake mocha ran"\nexit ${exitCode}\n`);
+      fs.chmodSync(mocha, 0o755);
+      fs.mkdirSync(path.join(root, 'node_modules', 'cht-conf-test-harness'), { recursive: true });
+    };
+    const writeFormSpec = (root: string) => {
+      const formsDir = path.join(root, 'test', 'forms');
+      fs.mkdirSync(formsDir, { recursive: true });
+      fs.writeFileSync(path.join(formsDir, `${FORM}.spec.js`), '// spec\n');
+    };
+
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-tier2-'));
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    it('runs after GREEN and keeps succeeded true when the harness spec passes', async () => {
+      writeCorrectedForm(dir);
+      scaffoldMocha(dir, 0);
+      writeFormSpec(dir);
+      const { agent } = stubbedAgent();
+      const result = await executeQaWorkflow(agent, makeQaInput({ configPath: dir, tier2: true }));
+      expect(result.tier2?.ran).to.equal(true);
+      expect(result.tier2?.passed).to.equal(true);
+      expect(result.succeeded).to.equal(true);
+      expect(result.messages.some((m) => /tier-2: harness spec\(s\) PASSED/.test(m))).to.equal(true);
+    });
+
+    it('fails succeeded when the harness spec fails (tier-2 folds in)', async () => {
+      writeCorrectedForm(dir);
+      scaffoldMocha(dir, 1);
+      writeFormSpec(dir);
+      const { agent } = stubbedAgent();
+      const result = await executeQaWorkflow(agent, makeQaInput({ configPath: dir, tier2: true }));
+      expect(result.tier2?.ran).to.equal(true);
+      expect(result.tier2?.passed).to.equal(false);
+      expect(result.verified).to.equal(true); // tier-1 still green
+      expect(result.succeeded).to.equal(false); // tier-2 pulled it down
+    });
+
+    it('self-skips honestly (succeeded unchanged) when no harness spec exists', async () => {
+      writeCorrectedForm(dir);
+      scaffoldMocha(dir, 0); // mocha + harness present, but no form spec
+      const { agent } = stubbedAgent();
+      const result = await executeQaWorkflow(agent, makeQaInput({ configPath: dir, tier2: true }));
+      expect(result.tier2?.ran).to.equal(false);
+      expect(result.tier2?.reason).to.match(/no harness spec/);
+      expect(result.succeeded).to.equal(true); // green loop untouched
+    });
+
+    it('does not run tier-2 when the flag is off (QaResult.tier2 absent)', async () => {
+      writeCorrectedForm(dir);
+      scaffoldMocha(dir, 0);
+      writeFormSpec(dir);
+      const { agent } = stubbedAgent();
+      const result = await executeQaWorkflow(agent, makeQaInput({ configPath: dir }));
+      expect(result.tier2).to.equal(undefined);
+      expect(result.succeeded).to.equal(true);
+    });
+
+    it('HC3 banner mentions the tier-2 run when enabled (and not when disabled)', async () => {
+      const logs: string[] = [];
+      const spy = sinon.stub(console, 'log').callsFake((...a: unknown[]) => logs.push(a.join(' ')));
+      try {
+        await humanQaValidationCheckpoint(makeQaInput({ tier2: true }), verifyResult(false));
+        await humanQaValidationCheckpoint(makeQaInput(), verifyResult(false));
+      } finally {
+        spy.restore();
+      }
+      const tier2Lines = logs.filter((l) => /after GREEN: tier-2 harness spec/.test(l));
+      expect(tier2Lines).to.have.length(1); // exactly the tier2:true call surfaced it
+    });
+
+    it('displayQaCompletion reports the tier-2 outcome', () => {
+      const logs: string[] = [];
+      const spy = sinon.stub(console, 'log').callsFake((...a: unknown[]) => logs.push(a.join(' ')));
+      try {
+        displayQaCompletion({
+          ran: true, approved: true, reproduced: true, verified: true, succeeded: true,
+          messages: [], tier2: { ran: true, passed: true, outputTail: '2 passing' },
+        });
+      } finally {
+        spy.restore();
+      }
+      expect(logs.some((l) => /Tier-2 \(harness spec\).*passed/.test(l))).to.equal(true);
+    });
   });
 
   // F5: the development phase's XlsformApplyResult.bindDiff (nodeset + corrected
@@ -360,6 +475,165 @@ describe('qa-workflow', () => {
         const wouldBeRed = verifyFormBinds(DEPLOYED_BUGGY, groupOnly!.expectedBinds);
         expect(wouldBeRed.passed).to.equal(true); // no RED — the exact live-run miss
       });
+    });
+  });
+
+  // F6: the whole-document QA oracle. ACTIVE only when a dev-phase bindDiff is in
+  // scope. reproduce (RED) additionally requires the deployed form to differ from
+  // the corrected local `.xml` EXACTLY at the target bind — any other canonical
+  // diff aborts as ENVIRONMENT DRIFT (unless QA_ALLOW_DRIFT=1). verify (GREEN)
+  // additionally requires whole-document canonical identity. No bindDiff ⇒
+  // byte-identical targeted-oracle behavior. The comparator is the dev phase's
+  // canonicalDiffLines (attr-order-insensitive, multi-line-tag safe).
+  describe('executeQaWorkflow — F6 whole-document oracle', () => {
+    let dir: string;
+    const TARGET = '/data/danger_signs/next_pnc_visit_date';
+    const bindDiff: XlsformBindDiff = { nodeset: TARGET, before: undefined, after: YES_GATE, siblingsUnchanged: 2 };
+
+    // A form model; `targetRelevant` undefined renders the target bind WITHOUT a
+    // relevant (the buggy deployed state); `summary` lets a spec perturb a
+    // non-target line to synthesize drift/collateral.
+    const model = (targetRelevant: string | undefined, summary = 'S'): string =>
+      [
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms">',
+        '<h:head><model>',
+        `<bind nodeset="/data/danger_signs" relevant="${YES_GATE}"/>`,
+        targetRelevant === undefined
+          ? `<bind nodeset="${TARGET}" type="date"/>`
+          : `<bind nodeset="${TARGET}" type="date" relevant="${targetRelevant}"/>`,
+        `<bind nodeset="/data/summary" relevant="${summary}"/>`,
+        '</model></h:head>',
+        '</h:html>',
+      ].join('\n');
+
+    // The CORRECTED local form: target bind carries the gate.
+    const LOCAL = model(YES_GATE);
+    // DEPLOYED buggy: differs from LOCAL ONLY at the target bind (no relevant).
+    const DEPLOYED_BUGGY = model(undefined);
+    // DEPLOYED buggy WITH environment drift: target ungated AND a sibling differs.
+    const DEPLOYED_DRIFT = model(undefined, 'DRIFTED');
+    // DEPLOYED after a clean apply: canonically identical to LOCAL.
+    const DEPLOYED_FIXED = model(YES_GATE);
+    // DEPLOYED after apply but with collateral damage: target fixed, sibling changed.
+    const DEPLOYED_COLLATERAL = model(YES_GATE, 'COLLATERAL');
+
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-f6-'));
+      fs.mkdirSync(path.join(dir, 'forms', 'app'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'forms', 'app', 'pregnancy_home_visit.xml'), LOCAL);
+    });
+    afterEach(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      delete process.env.QA_ALLOW_DRIFT;
+    });
+
+    const f6Input = (overrides: Partial<QaInput> = {}): QaInput =>
+      makeQaInput({
+        configPath: dir,
+        bindDiff,
+        verify: { configArtifact: 'form', artifactName: 'pregnancy_home_visit', expectedBinds: [{ nodeset: TARGET, relevant: YES_GATE }] },
+        ...overrides,
+      });
+
+    /** Stub fetchDeployedFormXml: RED call returns `red`, GREEN call returns `green`. */
+    const withDeployed = (agent: TestEnvironmentAgent, red: string, green: string) => {
+      const stub = sinon.stub(agent, 'fetchDeployedFormXml');
+      stub.onFirstCall().resolves(red).onSecondCall().resolves(green);
+      return stub;
+    };
+
+    it('RED-exact-target — deployed differs from local ONLY at the target bind → passes to green', async () => {
+      const { agent, stubs } = stubbedAgent();
+      withDeployed(agent, DEPLOYED_BUGGY, DEPLOYED_FIXED);
+
+      const result = await executeQaWorkflow(agent, f6Input({ testDataPath: dir }));
+
+      expect(result.succeeded).to.equal(true);
+      expect(result.abortReason).to.equal(undefined);
+      expect(stubs.applyConfig.called).to.equal(true);
+      expect(result.messages.join('\n')).to.contain('RED oracle: whole-document');
+      expect(result.messages.join('\n')).to.contain('ONLY at the target bind');
+    });
+
+    it('RED-with-extra-drift — aborts as ENVIRONMENT DRIFT BEFORE seed/apply', async () => {
+      const { agent, stubs } = stubbedAgent();
+      withDeployed(agent, DEPLOYED_DRIFT, DEPLOYED_FIXED);
+
+      const result = await executeQaWorkflow(agent, f6Input({ testDataPath: dir }));
+
+      expect(result.succeeded).to.equal(false);
+      expect(result.abortReason).to.match(/ENVIRONMENT DRIFT/);
+      expect(result.abortReason).to.contain(TARGET);
+      // the drift sample surfaces the offending sibling line
+      expect(result.abortReason).to.contain('/data/summary');
+      // reproduced is still true (the bind DID reproduce) but nothing destructive ran
+      expect(result.reproduced).to.equal(true);
+      expect(stubs.prepareTestData.called).to.equal(false);
+      expect(stubs.applyConfig.called).to.equal(false);
+    });
+
+    it('RED-with-extra-drift + QA_ALLOW_DRIFT=1 — proceeds with a warning (targeted fallback)', async () => {
+      process.env.QA_ALLOW_DRIFT = '1';
+      const { agent, stubs } = stubbedAgent();
+      withDeployed(agent, DEPLOYED_DRIFT, DEPLOYED_FIXED);
+
+      const result = await executeQaWorkflow(agent, f6Input({ testDataPath: dir }));
+
+      expect(result.abortReason).to.equal(undefined);
+      expect(result.succeeded).to.equal(true);
+      expect(stubs.applyConfig.called).to.equal(true);
+      expect(result.messages.join('\n')).to.match(/drift TOLERATED \(QA_ALLOW_DRIFT=1\)/);
+    });
+
+    it('GREEN-identical — deployed is canonically identical to local after apply → verified', async () => {
+      const { agent } = stubbedAgent();
+      withDeployed(agent, DEPLOYED_BUGGY, DEPLOYED_FIXED);
+
+      const result = await executeQaWorkflow(agent, f6Input({ testDataPath: dir }));
+
+      expect(result.verified).to.equal(true);
+      expect(result.succeeded).to.equal(true);
+      expect(result.messages.join('\n')).to.contain('GREEN oracle: whole-document');
+      expect(result.messages.join('\n')).to.contain('canonically identical');
+    });
+
+    it('GREEN-with-collateral — bind assertions pass but the doc differs → verify FAILS listing lines', async () => {
+      const { agent, stubs } = stubbedAgent();
+      // verifyArtifact (bind assertions) passes on the GREEN call (target is fixed),
+      // but the whole-document oracle sees a changed sibling → verify must fail.
+      withDeployed(agent, DEPLOYED_BUGGY, DEPLOYED_COLLATERAL);
+
+      const result = await executeQaWorkflow(agent, f6Input({ testDataPath: dir }));
+
+      expect(stubs.applyConfig.called).to.equal(true);
+      expect(result.verified).to.equal(false);
+      expect(result.succeeded).to.equal(false);
+      const log = result.messages.join('\n');
+      expect(log).to.contain('GREEN oracle: whole-document FAILED');
+      expect(log).to.contain('/data/summary');
+    });
+
+    it('FALLBACK — no bindDiff ⇒ the whole-document oracle never runs (byte-identical behavior)', async () => {
+      const { agent } = stubbedAgent();
+      const fetchStub = withDeployed(agent, DEPLOYED_DRIFT, DEPLOYED_COLLATERAL);
+
+      // No bindDiff on the input → oracle inactive even though deployed drift exists.
+      const result = await executeQaWorkflow(agent, makeQaInput({ configPath: dir, testDataPath: dir }));
+
+      expect(result.succeeded).to.equal(true); // targeted oracle only (bind assertions)
+      expect(fetchStub.called).to.equal(false); // the oracle never fetched the deployed XML
+      expect(result.messages.join('\n')).to.not.contain('oracle: whole-document');
+    });
+
+    it('self-skips to the targeted oracle when the deployed XML is unavailable (mock mode)', async () => {
+      const { agent } = stubbedAgent();
+      // No fetchDeployedFormXml stub → the real mock-mode method returns undefined.
+      const result = await executeQaWorkflow(agent, f6Input({ testDataPath: dir }));
+
+      expect(result.succeeded).to.equal(true);
+      const log = result.messages.join('\n');
+      expect(log).to.contain('RED oracle: targeted');
+      expect(log).to.contain('GREEN oracle: targeted');
     });
   });
 

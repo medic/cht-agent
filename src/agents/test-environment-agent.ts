@@ -417,6 +417,24 @@ export class TestEnvironmentAgent {
   }
 
   /**
+   * Fetch the raw deployed XForm for a single form (GET /api/v1/forms/<form>.xml)
+   * — the whole-document source the QA F6 oracle diffs against the corrected
+   * local `.xml`. Returns `undefined` in mock mode (no live instance to fetch
+   * from), which makes the whole-document oracle self-skip rather than fabricate
+   * a document to compare. The real path reads back exactly what
+   * `upload-app-forms` pushed.
+   */
+  async fetchDeployedFormXml(
+    handle: EnvironmentHandle,
+    formId: string
+  ): Promise<string | undefined> {
+    if (this.useMockDocker) {
+      return undefined;
+    }
+    return fetchFormXml(handle.url, handle.auth, formId);
+  }
+
+  /**
    * Seed test data (places, people, reports, users) that conforms to the
    * discovered config. Real path: cht-conf `csv-to-docs` + `upload-docs` turn
    * `<dataPath>/csv/*.csv` into docs on the instance, then `create-users`

@@ -544,6 +544,110 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     expect(testGen.calledOnce).to.equal(true);
     expect(finalState.testGeneration).to.deep.equal(cannedTestGen);
   });
+
+  // F7: layer-aware test generation for cht-conf form tickets.
+  const F7_DESCRIPTOR_PATH = '.cht-agent/xlsform-fix.json';
+  const F7_YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";
+  const f7DescriptorJson = JSON.stringify({
+    version: 1,
+    form: 'pregnancy_home_visit',
+    edits: [
+      { sheet: 'survey', match: { column: 'name', value: 'danger_signs' }, set: { column: 'relevant', value: F7_YES_GATE } },
+    ],
+    expect: { nodeset: '/data/danger_signs', relevant: F7_YES_GATE, siblingsUnchanged: true },
+    rationale: 'restore the yes-only gate',
+  });
+  const f7ApplyResult = (configRoot: string) => ({
+    form: 'pregnancy_home_visit',
+    xlsxPath: '/tmp/sandbox/forms/app/pregnancy_home_visit.xlsx',
+    xmlPath: '/tmp/sandbox/forms/app/pregnancy_home_visit.xml',
+    xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
+    xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
+    bindDiff: { nodeset: '/data/danger_signs', before: undefined, after: F7_YES_GATE, siblingsUnchanged: 9 },
+    sandboxDir: configRoot,
+  });
+  const f7State = (configRoot: string) => mkDevState({
+    ...baseValidInputFragment,
+    options: { chtCorePath: configRoot, previewMode: true },
+    codeGeneration: mkCodeGenResult([mkFile(F7_DESCRIPTOR_PATH, f7DescriptorJson, 'config')]),
+    xlsformApply: f7ApplyResult(configRoot) as unknown as DevelopmentState['xlsformApply'],
+  });
+
+  it('F7: cht-conf form fix emits ONE deterministic harness spec and never calls the LLM agent', async () => {
+    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-f7-'));
+    try {
+      const testGen = sinon.stub().resolves(cannedTestGen);
+      const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+      const out = await supervisor.testGenerationNode(f7State(configRoot));
+
+      // The LLM test-gen agent is bypassed entirely.
+      expect(testGen.called).to.equal(false);
+      expect(out.currentPhase).to.equal('complete');
+      const result = out.testGeneration as { files: GeneratedFile[] };
+      // Exactly one harness spec; NO tests/unit descriptor-JS output.
+      expect(result.files).to.have.length(1);
+      const spec = result.files[0];
+      expect(spec.relativePath).to.equal(path.join('test', 'forms', 'pregnancy_home_visit.spec.js'));
+      expect(spec.type).to.equal('test');
+      expect(spec.language).to.equal('javascript');
+      expect(spec.content).to.include('cht-conf-test-harness');
+      expect(spec.content).to.include(F7_YES_GATE);
+      expect(spec.content).to.include('/data/danger_signs');
+      // Not a descriptor-JS unit test.
+      expect(result.files.some((f) => f.relativePath.startsWith('tests/unit/'))).to.equal(false);
+    } finally {
+      await fs.rm(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('F7: never overwrites a partner spec (falls back to <form>.agent.spec.js)', async () => {
+    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-f7-'));
+    try {
+      const formsDir = path.join(configRoot, 'test', 'forms');
+      await fs.mkdir(formsDir, { recursive: true });
+      await fs.writeFile(path.join(formsDir, 'pregnancy_home_visit.spec.js'), '// partner spec\n');
+
+      const testGen = sinon.stub().resolves(cannedTestGen);
+      const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+      const out = await supervisor.testGenerationNode(f7State(configRoot));
+
+      const result = out.testGeneration as { files: GeneratedFile[]; warnings?: string[] };
+      expect(result.files[0].relativePath).to.equal(
+        path.join('test', 'forms', 'pregnancy_home_visit.agent.spec.js'),
+      );
+      expect(result.warnings?.some((w) => /already exists/.test(w))).to.equal(true);
+    } finally {
+      await fs.rm(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('F7: non-cht-conf ticket is byte-identical — the LLM agent still runs', async () => {
+    // No xlsformApply, no descriptor → the F7 branch is inert; the agent runs.
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.calledOnce).to.equal(true);
+    expect(out.testGeneration).to.deep.equal(cannedTestGen);
+  });
+
+  it('F7: a cht-conf run whose apply did NOT converge (no xlsformApply) falls through to the agent', async () => {
+    // Descriptor present but no verified apply → not a green fix → agent runs.
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile(F7_DESCRIPTOR_PATH, f7DescriptorJson, 'config')]),
+      // xlsformApply intentionally unset
+    });
+    const out = await supervisor.testGenerationNode(state);
+
+    expect(testGen.calledOnce).to.equal(true);
+    expect(out.testGeneration).to.deep.equal(cannedTestGen);
+  });
 });
 
 const YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";

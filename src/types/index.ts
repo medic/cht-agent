@@ -726,6 +726,40 @@ export interface QaInput {
   testDataPath?: string;
   /** Skip the interactive HC3 gate (automated / CI runs). */
   autoApprove?: boolean;
+  /**
+   * F6: the target-bind delta from the development phase's XLSForm apply
+   * (`XlsformApplyResult.bindDiff`). Its presence ACTIVATES the whole-document QA
+   * oracle: reproduce (RED) additionally requires deployed-vs-local to differ
+   * EXACTLY at this nodeset (extra canonical diff ⇒ ENVIRONMENT DRIFT abort), and
+   * verify (GREEN) additionally requires deployed-vs-local canonical identity.
+   * Undefined for standalone QA / cht-core / dev-skipped runs ⇒ byte-identical
+   * targeted-oracle behavior.
+   */
+  bindDiff?: XlsformBindDiff;
+  /**
+   * F7: opt-in tier-2 QA. When true, AFTER the tier-1 GREEN the QA phase shells
+   * the repo-pinned mocha over the affected form's harness spec(s) under
+   * `<configPath>/test/forms/` and folds the result into `succeeded`. Default
+   * OFF (undefined/false) so the full-suite regression stays an operator step.
+   */
+  tier2?: boolean;
+}
+
+/**
+ * Outcome of the F7 tier-2 QA hook: the repo-pinned mocha run over the affected
+ * form's harness spec(s). `ran: false` (with a `reason`) when the harness/spec
+ * is missing — an honest self-skip that does NOT change `succeeded`. When it
+ * ran, `succeeded &&= passed`.
+ */
+export interface QaTier2Result {
+  /** True only when a runnable spec was found and mocha was actually spawned. */
+  ran: boolean;
+  /** Whether mocha exited zero (all specs passed). Only meaningful when ran. */
+  passed?: boolean;
+  /** Tail of mocha's combined stdout/stderr (bounded), for the report. */
+  outputTail?: string;
+  /** Why the hook did not run (missing harness dep, no spec, disabled). */
+  reason?: string;
 }
 
 /**
@@ -757,6 +791,11 @@ export interface QaResult {
   messages: string[];
   /** Why QA did not complete (guard failure, no reproduction, apply/verify fail). */
   abortReason?: string;
+  /**
+   * F7: the opt-in tier-2 harness-spec run (only present when `--qa-tier2` was
+   * set). When it ran, `succeeded` already folds in `tier2.passed`.
+   */
+  tier2?: QaTier2Result;
 }
 
 /**

@@ -151,4 +151,36 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
       expect(nodesets).to.deep.equal(['/data/danger_signs']);
     });
   });
+
+  // F7: runQaPhase must thread the tier-2 opt-in from QaOptions into createQaInput
+  // so the QA phase runs the repo harness spec after GREEN.
+  describe('F7 — tier-2 opt-in threads through runQaPhase', () => {
+    const scaffoldMocha = (root: string) => {
+      const binDir = path.join(root, 'node_modules', '.bin');
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(path.join(binDir, 'mocha'), '#!/bin/sh\nexit 0\n');
+      fs.chmodSync(path.join(binDir, 'mocha'), 0o755);
+      fs.mkdirSync(path.join(root, 'node_modules', 'cht-conf-test-harness'), { recursive: true });
+      const formsDir = path.join(root, 'test', 'forms');
+      fs.mkdirSync(formsDir, { recursive: true });
+      fs.writeFileSync(path.join(formsDir, 'pregnancy_home_visit.spec.js'), '// spec\n');
+    };
+
+    it('runs the harness spec after GREEN when tier2 is set on QaOptions', async () => {
+      scaffoldMocha(confDir);
+      const { agent } = stubbedAgent();
+      const qaOptions: QaOptions = { enabled: true, agent, autoApprove: true, tier2: true, provision: { chtCorePath: '/x' } };
+      const result = await runQaPhase(ticket('cht-conf'), devOptions, qaOptions);
+      expect(result!.tier2?.ran).to.equal(true);
+      expect(result!.tier2?.passed).to.equal(true);
+    });
+
+    it('leaves tier-2 off (QaResult.tier2 absent) when the flag is unset', async () => {
+      scaffoldMocha(confDir);
+      const { agent } = stubbedAgent();
+      const qaOptions: QaOptions = { enabled: true, agent, autoApprove: true, provision: { chtCorePath: '/x' } };
+      const result = await runQaPhase(ticket('cht-conf'), devOptions, qaOptions);
+      expect(result!.tier2).to.equal(undefined);
+    });
+  });
 });

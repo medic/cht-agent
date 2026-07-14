@@ -48,6 +48,7 @@ import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker'
 import { isShutdownRequested } from '../utils/shutdown';
 import { applyXlsformFixToProject } from '../utils/xlsform-apply';
 import { parseXlsformFixDescriptor, XLSFORM_FIX_DESCRIPTOR_PATH } from '../utils/xlsform-fix';
+import { generateHarnessSpec } from '../utils/cht-conf-test-spec';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 
 const MAX_ITERATIONS = 3;
@@ -665,6 +666,17 @@ export class DevelopmentSupervisor {
       return this.finishTestGeneration(todoId, emptyResult);
     }
 
+    // F7: layer-aware test generation. For a cht-conf form ticket whose XLSForm
+    // fix converted (xlsformApply set), emit ONE deterministic
+    // cht-conf-test-harness spec at <configRoot>/test/forms/<form>.spec.js (or
+    // the .agent.spec.js sibling when a partner spec exists) and DROP the generic
+    // tests/unit descriptor-JS output entirely. Every other ticket falls through
+    // to the LLM test-gen agent unchanged.
+    const harnessResult = this.tryGenerateHarnessSpec(state);
+    if (harnessResult) {
+      return this.finishTestGeneration(todoId, harnessResult);
+    }
+
     const input: TestGenerationInput = {
       issue: state.issue,
       researchFindings: state.researchFindings,
@@ -673,6 +685,70 @@ export class DevelopmentSupervisor {
       chtCorePath: state.options.chtCorePath,
     };
     return this.runTestGenWithFallback(input, todoId, emptyResult);
+  }
+
+  /**
+   * F7: deterministic cht-conf harness-spec generation. Returns a
+   * TestGenerationResult carrying the single generated spec when this run is a
+   * cht-conf form fix that converted (an xlsformApply result with a bindDiff and
+   * the descriptor still in the code-gen output); returns undefined for every
+   * other run so the caller falls through to the LLM test-gen agent unchanged.
+   *
+   * Scenario is derived from the descriptor + the verified bindDiff (gate bind +
+   * corrected relevant), never from LLM imagination; the destination never
+   * overwrites a partner spec.
+   */
+  private tryGenerateHarnessSpec(
+    state: typeof DevelopmentStateAnnotation.State,
+  ): TestGenerationResult | undefined {
+    const apply = state.xlsformApply;
+    if (!apply) {
+      return undefined;
+    }
+    const descriptorFile = (state.codeGeneration?.files ?? []).find(
+      (f) => f.relativePath === XLSFORM_FIX_DESCRIPTOR_PATH,
+    );
+    if (!descriptorFile) {
+      return undefined;
+    }
+    const parsed = parseXlsformFixDescriptor(descriptorFile.content);
+    if (!parsed.valid || !parsed.descriptor) {
+      // A converted apply implies a valid descriptor; guard defensively anyway
+      // and fall through to the LLM agent rather than crash the terminal node.
+      return undefined;
+    }
+    const configRoot = state.options?.chtCorePath;
+    if (!configRoot) {
+      return undefined;
+    }
+    const spec = generateHarnessSpec(parsed.descriptor, apply.bindDiff, configRoot);
+    const file: GeneratedFile = {
+      relativePath: spec.relPath,
+      content: spec.content,
+      language: 'javascript',
+      type: 'test',
+      description: `cht-conf-test-harness spec for the ${apply.form} XLSForm fix`,
+      action: 'create',
+    };
+    const warnings: string[] = [];
+    if (spec.overwriteAvoided) {
+      warnings.push(`a partner spec already exists at test/forms/${apply.form}.spec.js; wrote ${spec.relPath} beside it`);
+    }
+    if (spec.housePatternFromDefault) {
+      warnings.push('no existing test/forms spec to detect the house pattern; used the canonical cht-conf-test-harness idiom');
+    }
+    console.log(
+      `[Development Supervisor] F7: emitted deterministic harness spec ${spec.relPath} ` +
+        `(dropped tests/unit descriptor-JS output for this cht-conf form ticket)`,
+    );
+    return {
+      files: [file],
+      explanation:
+        `Deterministic cht-conf-test-harness spec for the ${apply.form} form fix: asserts the ` +
+        `compiled forms/app/${apply.form}.xml gates ${apply.bindDiff.nodeset} on the corrected relevant.`,
+      requirementsChecklist: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
   }
 
   /**

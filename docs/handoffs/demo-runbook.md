@@ -324,8 +324,11 @@ docker exec -it cht-agent npm run full -- tickets/demo-pnc-relevant.md --qa
 before `--`: `npm run full tickets/… --qa` runs WITHOUT QA (verified against
 npm 10.9 — the flag never reaches the CLI, no warning). Always
 `npm run full -- <ticket> --qa`. Same for `--qa-auto` (auto-approve HC3 for
-unattended runs). Dev-only preview with no QA: `npm run dev:run -- <ticket>`
-(always preview mode). Preview mode in `full` is prompted interactively at the
+unattended runs) and `--qa-tier2` (F7: after tier-1 GREEN, QA also runs the
+affected form's generated `cht-conf-test-harness` spec with the repo-pinned
+mocha — baked Chromium serves it — and `succeeded` requires it to pass).
+Dev-only preview with no QA: `npm run dev:run -- <ticket>` (always preview
+mode). Preview mode in `full` is prompted interactively at the
 start — answer **yes** to review the diff at HC2.
 
 Since **Mission 05** (`feat/mission-05-xlsform-orchestrator`;

@@ -57,6 +57,8 @@ export interface QaOptions {
   testDataPath?: string;
   autoApprove?: boolean;
   provision?: ProvisionOptions;
+  /** F7: opt-in tier-2 QA (`--qa-tier2`) — repo-pinned harness spec after GREEN. */
+  tier2?: boolean;
 }
 
 /**
@@ -178,6 +180,7 @@ export const runQaPhase = async (
     testDataPath: qaOptions.testDataPath,
     autoApprove: qaOptions.autoApprove,
     ...(bindDiff ? { bindDiff } : {}),
+    ...(qaOptions.tier2 ? { tier2: qaOptions.tier2 } : {}),
   });
   if (!qaInput) {
     console.error('❌ QA phase could not start — see the reason above; skipping QA.\n');
