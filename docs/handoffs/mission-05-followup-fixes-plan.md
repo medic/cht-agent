@@ -113,6 +113,62 @@ Acceptance: supervisor spec — exhaustion path never reaches testGeneration
 and sets the marker; workflow/CLI spec — marker → no staging, failure result.
 Passthrough (cht-core tickets, no descriptor) byte-identical.
 
+## F5 — QA red/green oracle is blind to child-bind fixes (second live run, 2026-07-13)
+
+Observed: with F1–F4 shipped, the dev phase completed end-to-end (descriptor →
+verified apply, 9 siblings unchanged → HC2 bind-diff → corrected `.xlsx`+`.xml`
+written to the mount), but QA aborted "symptom did not reproduce" — while
+`curl` proved the deployed bind still had NO `relevant` (bug live; nothing was
+ever uploaded — every prior abort happened before `applyConfig`).
+
+Root cause: `deriveVerifyOptions` (qa-workflow.ts) builds the verify
+expectation set from `extractTopLevelGroupBinds` — TWO-segment group binds
+only. The echis fix is a THREE-segment child bind
+(`/postnatal_care_service/group_mother_pnc_danger_signs/next_pnc_visit_date`),
+absent from the set; deployed-vs-local matched on all 9 group binds → no RED.
+The demo fixture masked this: its planted bug IS a group-level bind
+(`/data/danger_signs`).
+
+Fix: when the development phase produced an `XlsformApplyResult`, thread its
+`bindDiff` (nodeset + after-relevant) into the QA verify expectations so the
+target bind itself is asserted — RED fires when the deployed bind differs
+(including a missing `relevant`), GREEN when it matches post-apply. The
+group-bind set stays as the sibling-invariance oracle. Fallback unchanged
+when no dev result is in scope (standalone QA, cht-core tickets). Seams:
+`orchestrator.ts` `runQaPhase`/`createQaInput` (dev result must reach QA),
+`QaInput`/`VerifyArtifactOptions` types, `deriveVerifyOptions`,
+`test-environment-agent.verifyArtifact` (a missing-`relevant` bind must count
+as a MISMATCH against an expected expression, not as "bind not found").
+
+Acceptance: spec where the corrected local form gates a child bind but the
+"deployed" XML lacks it → reproduce = RED; after swapping in the corrected
+XML → GREEN; existing group-level demo-fixture specs unchanged; standalone
+QA (no dev result) behavior byte-identical.
+
+## F6 — PROPOSED (not built): whole-document QA oracle
+
+Motivation (Hareet's question after F5): the group-bind set has no
+completeness meaning — measured on the deployed postnatal_care_service:
+315 binds total, **121 carry `relevant` at some depth, the oracle checks 9**
+(~7%). F5 adds only the one fix-declared bind. Adjacent blind-spot classes
+that would each evade the targeted oracle differently: non-`relevant`
+attribute fixes (constraint/required/calculate), non-bind fixes (choices,
+itext labels, settings), multi-edit descriptors (bindDiff is single-target),
+deeper-than-two-segment page gates (e.g. the demo fixture's own
+`/data/safe_pregnancy_practices/malaria`), contact forms, app_settings
+artifacts.
+
+Proposal: QA compares the FULL deployed XML against the corrected local XML
+with the dev phase's canonicalized comparator (`collateralChangedLines`):
+- reproduce (RED): deployed vs local must differ EXACTLY at the declared
+  target(s) (bindDiff), nothing else — proves the bug AND env fidelity;
+- verify (GREEN): canonically identical documents.
+Covers every bind/body/itext line for any attribute, depth, or edit count.
+Trade-off: genuine mount-vs-deployed drift turns into a loud red (desirable
+for a closed loop; document a fallback to the targeted oracle with a
+warning). Converter parity is already pinned via CHT_CONF_BIN. Candidate for
+the next follow-up round after F5 proves out in the live loop.
+
 ## Gates (after EVERY fix, and finally)
 
 `npm run build` && `env -u ANTHROPIC_MODEL LANGFUSE_ENABLED=false npm test`

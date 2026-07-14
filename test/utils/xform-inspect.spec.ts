@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import {
+  bindExists,
   decodeXmlAttr,
   extractBindRelevant,
   extractTopLevelGroupBinds,
@@ -149,6 +150,65 @@ describe('xform-inspect', () => {
 
       expect(result.passed).to.equal(false);
       expect(result.checks[0].note).to.match(/not found/);
+      // Absent (no <bind> tag at all) — no `actual` recorded, distinct note.
+      expect(result.checks[0].actual).to.equal(undefined);
+    });
+
+    // F5: distinguish a bind PRESENT-but-without-relevant from an ABSENT bind.
+    // The deployed child bind exists (the group renders) but was never gated —
+    // it must count as a MISMATCH (expected "<expr>", actual "(none)"), so the
+    // reproduce step fires RED, not a silent pass and not a "bind not found" that
+    // reads as a wiring error.
+    describe('F5 — expected relevant vs a deployed bind that lacks the attribute', () => {
+      const PRESENT_NO_RELEVANT =
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms">' +
+        '<h:head><model>' +
+        // present, but NO relevant — the still-buggy deployed child bind
+        '<bind nodeset="/data/danger_signs/next_pnc_visit_date" type="date"/>' +
+        '</model></h:head></h:html>';
+
+      it('registers a present-but-unrelevant bind as a MISMATCH with actual "(none)"', () => {
+        const result = verifyFormBinds(PRESENT_NO_RELEVANT, [
+          { nodeset: '/data/danger_signs/next_pnc_visit_date', relevant: YES_GATE },
+        ]);
+
+        expect(result.passed).to.equal(false);
+        const check = result.checks[0];
+        expect(check.passed).to.equal(false);
+        expect(check.expected).to.equal(YES_GATE);
+        expect(check.actual).to.equal('(none)');
+        // Honest message: the fix was not deployed — NOT "bind not found".
+        expect(check.note).to.match(/present but carries no relevant/);
+        expect(check.note).to.not.match(/not found/);
+      });
+
+      it('a genuinely absent bind keeps the distinct "bind not found" note (no actual)', () => {
+        const result = verifyFormBinds(PRESENT_NO_RELEVANT, [
+          { nodeset: '/data/does_not_exist', relevant: YES_GATE },
+        ]);
+
+        expect(result.passed).to.equal(false);
+        const check = result.checks[0];
+        expect(check.actual).to.equal(undefined);
+        expect(check.note).to.match(/bind not found/);
+      });
+    });
+  });
+
+  describe('bindExists', () => {
+    it('true for a bind present with a relevant, and present without one', () => {
+      expect(bindExists(CORRECTED_XML, '/data/danger_signs')).to.equal(true);
+      expect(
+        bindExists('<model><bind nodeset="/data/x" type="date"/></model>', '/data/x')
+      ).to.equal(true);
+    });
+
+    it('false for an absent bind, and does not match a longer child nodeset', () => {
+      expect(bindExists(CORRECTED_XML, '/data/nope')).to.equal(false);
+      // exact-quote match: /data/danger_signs must not match /data/danger_signs/child
+      expect(
+        bindExists('<model><bind nodeset="/data/danger_signs/child"/></model>', '/data/danger_signs')
+      ).to.equal(false);
     });
   });
 });

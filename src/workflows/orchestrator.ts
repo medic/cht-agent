@@ -20,6 +20,7 @@ import {
   DevelopmentWorkflowResult,
   ProvisionOptions,
   QaResult,
+  XlsformBindDiff,
 } from '../types';
 import { askYesNo } from '../utils/prompt';
 import {
@@ -125,8 +126,16 @@ export const executeFullWorkflow = async (
   displayDevelopmentCompletion(developmentResult, developmentOptions);
 
   // QA phase (closed loop) — only when enabled, development approved, cht-conf.
+  // F5: thread the dev phase's XLSForm apply bind-diff (nodeset + corrected
+  // relevant) into QA so the fix's OWN bind is asserted red→green — a child bind
+  // the group snapshot misses now fires RED against the still-buggy deployed form.
   const qa = developmentResult.approved
-    ? await runQaPhase(ticket, developmentOptions, qaOptions)
+    ? await runQaPhase(
+      ticket,
+      developmentOptions,
+      qaOptions,
+      developmentResult.result?.xlsformApply?.bindDiff
+    )
     : undefined;
 
   return {
@@ -140,11 +149,18 @@ export const executeFullWorkflow = async (
  * Run the QA closed loop after an approved Development phase. Returns undefined
  * (skips) when QA is disabled or the ticket is not layer: cht-conf, so cht-core
  * runs are unchanged. Extracted + exported so the wiring is unit-testable.
+ *
+ * F5: `bindDiff` is the development phase's `XlsformApplyResult.bindDiff` (the
+ * corrected target bind). When present it is threaded into the verify
+ * expectation set so QA's reproduce/verify asserts the fix's own bind. Undefined
+ * (no dev result in scope — the caller passes it only when the dev phase
+ * produced one) leaves the verify set at its group-bind fallback, unchanged.
  */
 export const runQaPhase = async (
   ticket: IssueTemplate,
   developmentOptions: DevelopmentOptions,
-  qaOptions?: QaOptions
+  qaOptions?: QaOptions,
+  bindDiff?: XlsformBindDiff
 ): Promise<QaResult | undefined> => {
   if (!qaOptions?.enabled) {
     return undefined;
@@ -161,6 +177,7 @@ export const runQaPhase = async (
     provision: qaOptions.provision,
     testDataPath: qaOptions.testDataPath,
     autoApprove: qaOptions.autoApprove,
+    ...(bindDiff ? { bindDiff } : {}),
   });
   if (!qaInput) {
     console.error('❌ QA phase could not start — see the reason above; skipping QA.\n');

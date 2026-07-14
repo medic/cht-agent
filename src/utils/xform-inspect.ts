@@ -60,6 +60,19 @@ export const extractBindRelevant = (xml: string, nodeset: string): string | unde
   return relMatch ? decodeXmlAttr(relMatch[1]) : undefined;
 };
 
+/**
+ * True when a `<bind>` with EXACTLY this nodeset is present in the XML, regardless
+ * of whether it carries a `relevant` attribute. Distinguishes the two ways
+ * `extractBindRelevant` returns undefined: an ABSENT bind vs. a bind PRESENT
+ * without `relevant`. The QA verify step needs the distinction — an expected
+ * `relevant` whose deployed bind exists but lacks the attribute is a genuine
+ * MISMATCH (the fix was not deployed), not a "bind not found" wiring error.
+ */
+export const bindExists = (xml: string, nodeset: string): boolean => {
+  const tagRe = new RegExp(`<bind\\b[^>]*\\bnodeset="${escapeRegExp(nodeset)}"[^>]*>`);
+  return tagRe.test(xml);
+};
+
 // Matches a self-closing/opening <bind ...> tag and, within it, nodeset + relevant.
 const BIND_TAG_RE = /<bind\b[^>]*>/g;
 const NODESET_ATTR_RE = /\bnodeset="([^"]*)"/;
@@ -118,8 +131,19 @@ export const extractTopLevelGroupBinds = (xml: string): FormBindExpectation[] =>
 
 /**
  * Verify a deployed form's binds against their expected `relevant` expressions.
- * A missing bind or a mismatched expression fails the check; the roll-up passes
- * only when every expectation holds.
+ * A mismatched expression, a bind present WITHOUT the expected `relevant`, or a
+ * genuinely absent bind all fail the check; the roll-up passes only when every
+ * expectation holds.
+ *
+ * The two undefined-`relevant` cases are reported differently because they mean
+ * different things for the red/green oracle (F5):
+ *   - bind PRESENT but no `relevant` → a real MISMATCH (`actual: '(none)'`): the
+ *     deployed form still lacks the fix. This is the child-bind reproduce case —
+ *     the deployed bind exists (the group renders) but was never gated, so it
+ *     must fire RED, not silently pass and not read as a wiring error.
+ *   - bind ABSENT → the expectation references a nodeset the deployed form does
+ *     not have at all (kept as a distinct "not found" note so a genuine
+ *     wiring/nodeset mistake is not disguised as a missing-fix mismatch).
  */
 export const verifyFormBinds = (
   xml: string,
@@ -128,11 +152,20 @@ export const verifyFormBinds = (
   const checks: FormBindCheck[] = expectations.map((exp) => {
     const actual = extractBindRelevant(xml, exp.nodeset);
     if (actual === undefined) {
+      if (bindExists(xml, exp.nodeset)) {
+        return {
+          nodeset: exp.nodeset,
+          expected: exp.relevant,
+          actual: '(none)',
+          passed: false,
+          note: 'deployed bind is present but carries no relevant attribute (fix not deployed)',
+        };
+      }
       return {
         nodeset: exp.nodeset,
         expected: exp.relevant,
         passed: false,
-        note: 'bind (or its relevant attribute) not found in the deployed XML',
+        note: 'bind not found in the deployed XML',
       };
     }
     if (actual === exp.relevant) {

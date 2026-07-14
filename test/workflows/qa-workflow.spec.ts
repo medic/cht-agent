@@ -12,6 +12,7 @@ import {
   executeQaWorkflow,
 } from '../../src/workflows/qa-workflow';
 import { CONFIG_ACTION_COMMANDS } from '../../src/utils/cht-conf-runner';
+import { verifyFormBinds } from '../../src/utils/xform-inspect';
 import { applyXlsformFixToProject } from '../../src/utils/xlsform-apply';
 import { XlsformFixDescriptor } from '../../src/utils/xlsform-fix';
 import { canOfflineConvert } from '../helpers/offline-convert';
@@ -23,6 +24,7 @@ import {
   QaInput,
   TestDataResult,
   VerifyArtifactResult,
+  XlsformBindDiff,
 } from '../../src/types';
 
 const YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";
@@ -225,6 +227,139 @@ describe('qa-workflow', () => {
     it('returns null for a non-form ticket', () => {
       expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }))).to.equal(null);
       expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.equal(null);
+    });
+  });
+
+  // F5: the development phase's XlsformApplyResult.bindDiff (nodeset + corrected
+  // `after` relevant) must reach the QA verify set so the fix's OWN bind — even a
+  // three-segment CHILD bind that extractTopLevelGroupBinds never snapshots — is
+  // asserted red→green. The group-bind set is retained AFTER it as sibling
+  // invariance. The echis case: the corrected local form gates a child bind
+  // (/data/danger_signs/next_pnc_visit_date), absent from the two-segment group
+  // set; without threading, deployed-vs-local matches on all group binds → no RED.
+  describe('deriveVerifyOptions with a bindDiff (F5 — child-bind target)', () => {
+    let dir: string;
+    const CHILD_NODESET = '/data/danger_signs/next_pnc_visit_date';
+    const childBindDiff: XlsformBindDiff = {
+      nodeset: CHILD_NODESET,
+      before: undefined, // deployed form has no relevant on this bind
+      after: YES_GATE,
+      siblingsUnchanged: 2,
+    };
+
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-conf-f5-'));
+      fs.mkdirSync(path.join(dir, 'forms', 'app'), { recursive: true });
+      // The CORRECTED local form: two top-level group binds PLUS the corrected
+      // child bind carrying the gate.
+      fs.writeFileSync(
+        path.join(dir, 'forms', 'app', 'pregnancy_home_visit.xml'),
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+          `<bind nodeset="/data/danger_signs" relevant="${YES_GATE}"/>` +
+          `<bind nodeset="${CHILD_NODESET}" type="date" relevant="${YES_GATE}"/>` +
+          `<bind nodeset="/data/summary" relevant="${YES_GATE}"/>` +
+          '</model></h:head></h:html>'
+      );
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    it('asserts the target child bind FIRST, then the group binds as siblings', () => {
+      const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
+      expect(verify).to.not.equal(null);
+      // Target bind first — its `relevant` is bindDiff.after (the corrected gate).
+      expect(verify!.expectedBinds[0]).to.deep.equal({ nodeset: CHILD_NODESET, relevant: YES_GATE });
+      // Group binds retained AFTER it as sibling invariance.
+      const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
+      expect(nodesets).to.include('/data/danger_signs');
+      expect(nodesets).to.include('/data/summary');
+      // target(child) + 2 group binds = 3, asserted exactly once each
+      expect(verify!.expectedBinds).to.have.lengthOf(3);
+    });
+
+    it('de-duplicates the target when the bindDiff nodeset is itself a group bind', () => {
+      const groupDiff: XlsformBindDiff = { nodeset: '/data/danger_signs', after: YES_GATE, siblingsUnchanged: 2 };
+      const verify = deriveVerifyOptions(dir, formIssue(), groupDiff);
+      expect(verify).to.not.equal(null);
+      // target first (from the diff), and NOT repeated in the sibling set
+      expect(verify!.expectedBinds[0]).to.deep.equal({ nodeset: '/data/danger_signs', relevant: YES_GATE });
+      const occurrences = verify!.expectedBinds.filter((b) => b.nodeset === '/data/danger_signs');
+      expect(occurrences).to.have.lengthOf(1);
+      // /data/danger_signs (target) + /data/summary (sibling) = 2
+      expect(verify!.expectedBinds).to.have.lengthOf(2);
+    });
+
+    it('createQaInput threads args.bindDiff into the verify set (target present)', () => {
+      const input = createQaInput({
+        issue: formIssue(),
+        configPath: dir,
+        provision: { chtCorePath: '/x' },
+        autoApprove: true,
+        bindDiff: childBindDiff,
+      });
+      expect(input).to.not.equal(null);
+      expect(input!.verify.expectedBinds[0].nodeset).to.equal(CHILD_NODESET);
+    });
+
+    // Fallback: no dev result → byte-identical current behavior (group set only).
+    it('FALLBACK — without a bindDiff the verify set is the group binds only (unchanged)', () => {
+      const verify = deriveVerifyOptions(dir, formIssue());
+      expect(verify).to.not.equal(null);
+      const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
+      // group binds only — the child bind is NOT in the set
+      expect(nodesets).to.not.include(CHILD_NODESET);
+      expect(nodesets).to.deep.equal(['/data/danger_signs', '/data/summary']);
+    });
+
+    // The load-bearing acceptance: the bindDiff-threaded expectation set, run
+    // through the REAL verify oracle (verifyFormBinds — the same code path
+    // TestEnvironmentAgent.verifyArtifact uses), must be RED against the
+    // still-buggy DEPLOYED form (child bind present, no relevant) and GREEN once
+    // the corrected XML is "deployed". This is the child-bind case that the
+    // group-only fallback (asserted just above) cannot detect.
+    describe('reproduce→verify red/green on the deployed form (child bind)', () => {
+      const model = (inner: string): string =>
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms">' +
+        `<h:head><model>${inner}</model></h:head></h:html>`;
+      // DEPLOYED (still buggy): the child bind exists (the group renders) but was
+      // never gated — no relevant. The two group binds already carry the gate, so
+      // a group-only oracle would falsely PASS (no RED) — the live-run bug.
+      const DEPLOYED_BUGGY = model(
+        `<bind nodeset="/data/danger_signs" relevant="${YES_GATE}"/>` +
+          `<bind nodeset="${CHILD_NODESET}" type="date"/>` +
+          `<bind nodeset="/data/summary" relevant="${YES_GATE}"/>`
+      );
+      // DEPLOYED after the corrected apply: the child bind now carries the gate.
+      const DEPLOYED_FIXED = model(
+        `<bind nodeset="/data/danger_signs" relevant="${YES_GATE}"/>` +
+          `<bind nodeset="${CHILD_NODESET}" type="date" relevant="${YES_GATE}"/>` +
+          `<bind nodeset="/data/summary" relevant="${YES_GATE}"/>`
+      );
+
+      it('reproduce is RED against the buggy deployed form (child bind lacks relevant)', () => {
+        const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
+        const red = verifyFormBinds(DEPLOYED_BUGGY, verify!.expectedBinds);
+        expect(red.passed).to.equal(false); // reproduced = !passed → RED fires
+        const target = red.checks.find((c) => c.nodeset === CHILD_NODESET);
+        expect(target?.passed).to.equal(false);
+        expect(target?.actual).to.equal('(none)'); // present-but-unrelevant MISMATCH
+        // the group siblings still pass — the failure is isolated to the fix's bind
+        const siblings = red.checks.filter((c) => c.nodeset !== CHILD_NODESET);
+        expect(siblings.every((c) => c.passed)).to.equal(true);
+      });
+
+      it('verify is GREEN once the corrected XML is deployed', () => {
+        const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
+        const green = verifyFormBinds(DEPLOYED_FIXED, verify!.expectedBinds);
+        expect(green.passed).to.equal(true);
+        expect(green.checks.every((c) => c.passed)).to.equal(true);
+      });
+
+      it('a GROUP-ONLY set (the old fallback) would NOT reproduce this — proves the threading is load-bearing', () => {
+        // No bindDiff → group binds only → the buggy deployed form falsely PASSES.
+        const groupOnly = deriveVerifyOptions(dir, formIssue());
+        const wouldBeRed = verifyFormBinds(DEPLOYED_BUGGY, groupOnly!.expectedBinds);
+        expect(wouldBeRed.passed).to.equal(true); // no RED — the exact live-run miss
+      });
     });
   });
 

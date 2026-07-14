@@ -40,6 +40,7 @@ import {
   VerifyArtifactOptions,
   VerifyArtifactResult,
   VerifyArtifactType,
+  XlsformBindDiff,
 } from '../types';
 import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import { extractTopLevelGroupBinds } from '../utils/xform-inspect';
@@ -59,10 +60,21 @@ export const defaultApplyActions = (artifact: VerifyArtifactType): ConfigUploadA
  * Snapshot the verification set from the CORRECTED local form. Returns null when
  * the ticket is not a form fix, names no artifact, or the corrected form is not
  * on disk (so QA fails closed rather than verifying nothing).
+ *
+ * F5: `bindDiff` is the target-bind delta the development phase's deterministic
+ * XLSForm apply produced (nodeset + the corrected `after` relevant). When it is
+ * present the target bind is asserted FIRST — so the red/green oracle fires on
+ * the fix's OWN bind, even a three-segment child bind that
+ * `extractTopLevelGroupBinds` (two-segment groups only) never snapshots. The
+ * group-bind set is retained AFTER it as the sibling-invariance oracle (the
+ * target nodeset is de-duplicated out so it is not asserted twice). When
+ * `bindDiff` is undefined (standalone QA, cht-core tickets, dev-phase-skipped
+ * runs) the behavior is byte-identical to before: the group-bind set only.
  */
 export const deriveVerifyOptions = (
   configPath: string,
-  issue: IssueTemplate
+  issue: IssueTemplate,
+  bindDiff?: XlsformBindDiff
 ): VerifyArtifactOptions | null => {
   const tc = issue.issue.technical_context;
   if (tc.configArtifact !== 'form' || !tc.artifactName) {
@@ -72,11 +84,21 @@ export const deriveVerifyOptions = (
   if (!fs.existsSync(formPath)) {
     return null;
   }
-  const expectedBinds = extractTopLevelGroupBinds(fs.readFileSync(formPath, 'utf8'));
-  if (expectedBinds.length === 0) {
+  const groupBinds = extractTopLevelGroupBinds(fs.readFileSync(formPath, 'utf8'));
+  if (bindDiff) {
+    // Target bind FIRST, then group binds as sibling invariance (drop the target
+    // nodeset from the group set so it is asserted exactly once).
+    const expectedBinds = [
+      { nodeset: bindDiff.nodeset, relevant: bindDiff.after },
+      ...groupBinds.filter((b) => b.nodeset !== bindDiff.nodeset),
+    ];
+    return { configArtifact: 'form', artifactName: tc.artifactName, expectedBinds };
+  }
+  // Fallback (no dev result): group-bind set only — unchanged behavior.
+  if (groupBinds.length === 0) {
     return null;
   }
-  return { configArtifact: 'form', artifactName: tc.artifactName, expectedBinds };
+  return { configArtifact: 'form', artifactName: tc.artifactName, expectedBinds: groupBinds };
 };
 
 const buildProvisionFromEnv = (): ProvisionOptions => ({
@@ -92,6 +114,13 @@ export interface CreateQaInputArgs {
   provision?: ProvisionOptions;
   testDataPath?: string;
   autoApprove?: boolean;
+  /**
+   * F5: the target-bind delta from the development phase's XLSForm apply
+   * (`XlsformApplyResult.bindDiff`). Threaded into the verify expectation set so
+   * the fix's own bind (incl. a child bind the group snapshot misses) is
+   * asserted red→green. Undefined for standalone QA / cht-core / dev-skipped runs.
+   */
+  bindDiff?: XlsformBindDiff;
 }
 
 /**
@@ -104,7 +133,7 @@ export const createQaInput = (args: CreateQaInputArgs): QaInput | null => {
     console.error('❌ QA: no deployment config mounted — set CHT_CONF_PATH to the corrected config');
     return null;
   }
-  const verify = deriveVerifyOptions(configPath, args.issue);
+  const verify = deriveVerifyOptions(configPath, args.issue, args.bindDiff);
   if (!verify) {
     console.error(
       '❌ QA: could not derive form verification — needs configArtifact: form, an artifactName, ' +

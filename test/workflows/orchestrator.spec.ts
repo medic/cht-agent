@@ -55,7 +55,7 @@ const stubbedAgent = () => {
   const verifyArtifact = sinon.stub(agent, 'verifyArtifact');
   verifyArtifact.onFirstCall().resolves(verifyResult(false)).onSecondCall().resolves(verifyResult(true));
   sinon.stub(agent, 'applyConfig').resolves(applyOk);
-  return { agent, provision };
+  return { agent, provision, verifyArtifact };
 };
 
 describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
@@ -115,5 +115,40 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
   it('skips QA when no qaOptions are provided', async () => {
     const result = await runQaPhase(ticket('cht-conf'), devOptions, undefined);
     expect(result).to.equal(undefined);
+  });
+
+  // F5: the dev phase's XlsformApplyResult.bindDiff must reach the verify set so
+  // QA asserts the fix's OWN bind (incl. a child bind the group snapshot misses).
+  describe('F5 — bindDiff from the dev result threads into the verify set', () => {
+    const CHILD_NODESET = '/data/danger_signs/next_pnc_visit_date';
+    const bindDiff = { nodeset: CHILD_NODESET, before: undefined, after: YES_GATE, siblingsUnchanged: 1 };
+
+    it('asserts the target child bind FIRST when a bindDiff is threaded in', async () => {
+      const { agent, verifyArtifact } = stubbedAgent();
+      const qaOptions: QaOptions = { enabled: true, agent, autoApprove: true, provision: { chtCorePath: '/x' } };
+
+      const result = await runQaPhase(ticket('cht-conf'), devOptions, qaOptions, bindDiff);
+
+      expect(result).to.not.equal(undefined);
+      // reproduce (call 0) received the child target bind first, then the group bind as sibling
+      const passedOptions = verifyArtifact.firstCall.args[1];
+      expect(passedOptions.expectedBinds[0]).to.deep.equal({ nodeset: CHILD_NODESET, relevant: YES_GATE });
+      const nodesets = passedOptions.expectedBinds.map((b) => b.nodeset);
+      expect(nodesets).to.include('/data/danger_signs'); // group bind retained as sibling invariance
+    });
+
+    it('FALLBACK — no bindDiff → the verify set is the group binds only (byte-identical to before)', async () => {
+      const { agent, verifyArtifact } = stubbedAgent();
+      const qaOptions: QaOptions = { enabled: true, agent, autoApprove: true, provision: { chtCorePath: '/x' } };
+
+      // runQaPhase called WITHOUT a bindDiff (the executeFullWorkflow path when
+      // the dev phase produced no XlsformApplyResult).
+      await runQaPhase(ticket('cht-conf'), devOptions, qaOptions);
+
+      const passedOptions = verifyArtifact.firstCall.args[1];
+      const nodesets = passedOptions.expectedBinds.map((b) => b.nodeset);
+      expect(nodesets).to.not.include(CHILD_NODESET);
+      expect(nodesets).to.deep.equal(['/data/danger_signs']);
+    });
   });
 });
