@@ -12,7 +12,10 @@
  *   npm run research <ticket-file>
  *
  * Usage:
- *   npm run full <ticket-file>
+ *   npm run full <ticket-file> [--verbose]
+ *
+ * Flags:
+ *   --verbose, -v  Emit detailed debug output to stderr (redacted + truncated).
  *
  * Environment Variables:
  *   ANTHROPIC_API_KEY - Required when CODE_GEN_MODULE=claude-api
@@ -28,6 +31,7 @@
  * Examples:
  *   npm run full tickets/my-ticket.md
  *   npm run full /path/to/ticket.md
+ *   npm run full tickets/my-ticket.md --verbose
  */
 
 import * as dotenv from 'dotenv';
@@ -43,6 +47,8 @@ import {
 } from '../workflows/orchestrator';
 import { getConfiguredModel } from '../llm/types';
 import { isUsingCLIProvider } from '../llm';
+import { createDebugLogger } from '../utils/debug-logger';
+import { parseCliArgs } from './full-args';
 
 // Load environment variables
 dotenv.config();
@@ -71,11 +77,11 @@ function ensureChtCorePath(): string {
   return chtCorePath;
 }
 
-function ensureTicketPath(): string {
-  if (!process.argv[2]) {
+function ensureTicketPath(ticketPath: string | null): string {
+  if (!ticketPath) {
     console.error('❌ Error: No ticket file specified\n');
     console.log('Usage:');
-    console.log('  npm run full <ticket-file>\n');
+    console.log('  npm run full <ticket-file> [--verbose]\n');
     console.log('Examples:');
     console.log('  npm run full tickets/my-ticket.md');
     console.log('  npm run full /path/to/ticket.md\n');
@@ -83,40 +89,58 @@ function ensureTicketPath(): string {
     console.log('💡 For research-only workflow, use: npm run research <ticket-file>\n');
     process.exit(1);
   }
-  return path.resolve(process.argv[2]);
+  return path.resolve(ticketPath);
 }
 
 const main = async (): Promise<void> => {
+  const { verbose, ticketPath } = parseCliArgs(process.argv);
+  const debug = createDebugLogger({ enabled: verbose });
+
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║        CHT Multi-Agent System - Full Workflow CLI              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
 
+  debug.log('verbose mode enabled');
   ensureApiKey();
   const chtCorePath = ensureChtCorePath();
+  debug.log('cht-core path', chtCorePath);
 
   try {
-    const ticketPath = ensureTicketPath();
-    console.log(`📄 Loading ticket from: ${ticketPath}\n`);
+    const resolvedTicketPath = ensureTicketPath(ticketPath);
+    console.log(`📄 Loading ticket from: ${resolvedTicketPath}\n`);
 
-    const ticket = parseTicketFile(ticketPath);
+    const ticket = parseTicketFile(resolvedTicketPath);
     console.log('✅ Ticket parsed successfully!\n');
+    debug.log('parsed ticket', {
+      title: ticket.issue.title,
+      type: ticket.issue.type,
+      domain: ticket.issue.technical_context?.domain,
+    });
 
     const modelName = getConfiguredModel();
     console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);
+    debug.log('configured model', modelName);
 
     const researchSupervisor = new ResearchSupervisor({ modelName, useMockMCP: false });
     const developmentSupervisor = new DevelopmentSupervisor();
 
     displayIssueDetails(ticket);
     const developmentOptions = await askDevelopmentOptions(chtCorePath);
+    debug.log('development options', developmentOptions);
 
+    const stopTimer = debug.time('full workflow');
     const workflowResult = await executeFullWorkflow(
       researchSupervisor,
       developmentSupervisor,
       ticket,
       developmentOptions
     );
+    stopTimer();
     displayFullWorkflowSummary(workflowResult);
+    debug.log('workflow complete', {
+      researchApproved: workflowResult.research.approved,
+      developmentRan: workflowResult.development !== undefined,
+    });
   } catch (error) {
     console.error('\n❌ Error running workflow:', error);
     if (error instanceof Error) {
@@ -127,5 +151,7 @@ const main = async (): Promise<void> => {
   }
 };
 
-// Run the CLI
-main();
+// Run the CLI only when invoked directly (not when imported by tests).
+if (require.main === module) {
+  main();
+}

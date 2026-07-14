@@ -90,6 +90,17 @@ npm run lint
 npm run build
 ```
 
+### Verbose debug output
+
+Pass `--verbose` (or `-v`) to the full workflow CLI to emit detailed debug
+output to **stderr** — configuration, parsed ticket, model, options, and phase
+timing. Secrets (API keys, tokens) are redacted and long payloads truncated, so
+it is safe to share. Normal stdout output is unchanged.
+
+```bash
+npm run full tickets/my-ticket.md --verbose
+```
+
 ## Memory Pipeline: LLM Provider
 
 The memory distillation pipeline (filter + distiller stages) reaches its LLM through
