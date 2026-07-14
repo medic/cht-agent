@@ -1,5 +1,12 @@
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
-import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState, XlsformApplyResult } from '../types';
+import {
+  CrossFileIssue,
+  IssueTemplate,
+  OrchestrationPlan,
+  ResearchState,
+  XlsformApplyResult,
+  XlsformApplyExhausted,
+} from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
 import { isUsingCLIProvider } from '../llm/factory';
@@ -59,6 +66,28 @@ export const renderXlsformBindDiffBanner = (apply: XlsformApplyResult | undefine
     `  after:  ${bindDiff.after}`,
     `${bindDiff.siblingsUnchanged} sibling top-level group bind(s) unchanged.`,
     'Trust this bind diff over the positional file diff below (the XML is a full rewrite).',
+    '─'.repeat(70),
+  ].join('\n');
+};
+
+/**
+ * Render the mission-05 F4 "NO FIX PRODUCED" banner. Shown at HC2 (and echoed by
+ * the CLI failure summary) when the XLSForm-fix refinement loop exhausted every
+ * iteration without a converting descriptor. Staging writes nothing on this
+ * path and the workflow result is a failure; this banner tells the human WHY.
+ * Empty string when there is no exhaustion marker (so callers render it
+ * unconditionally).
+ */
+export const renderXlsformExhaustedBanner = (exhausted: XlsformApplyExhausted | undefined): string => {
+  if (!exhausted) return '';
+  return [
+    '',
+    `❌ NO FIX PRODUCED — xlsform apply failed after ${exhausted.iterations} iteration(s)`,
+    '─'.repeat(70),
+    `Last failure: ${exhausted.reason}`,
+    'Nothing was staged and no changes will be written. The descriptor never',
+    'converted cleanly, so there is no verified fix to apply. Refine the ticket',
+    'or the fix descriptor and re-run.',
     '─'.repeat(70),
   ].join('\n');
 };

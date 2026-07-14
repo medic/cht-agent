@@ -1,10 +1,12 @@
 import { expect } from 'chai';
+import sinon from 'sinon';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   createDevelopmentInput,
   executeDevelopmentWorkflow,
+  displayDevelopmentCompletion,
   resolveWriteTarget,
 } from '../../src/workflows/development-workflow';
 import {
@@ -12,6 +14,7 @@ import {
   DevelopmentOptions,
   DevelopmentInput,
   DevelopmentState,
+  DevelopmentWorkflowResult,
   IssueTemplate,
   OrchestrationPlan,
   ResearchFindings,
@@ -257,5 +260,149 @@ describe('executeDevelopmentWorkflow write routing (#134 A1)', () => {
     expect(record.writePath).to.equal('/custom/cht-core');
     expect(record.workspace).to.equal('/custom/cht-core');
     expect(result.filesWritten).to.have.lengthOf(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mission 05 F4 — exhaustion is a loud stop (no staging/write, failure result)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stub supervisor whose develop() returns an EXHAUSTED state (the F4 marker set)
+ * and whose write/stage methods are spies so the test can assert they never run.
+ */
+const exhaustedSupervisor = (): {
+  supervisor: Supervisor;
+  writeToStaging: sinon.SinonStub;
+  writeToChtCore: sinon.SinonStub;
+} => {
+  const writeToStaging = sinon.stub().resolves({ stagingPath: '/tmp/should-not-happen', writtenFiles: [] });
+  const writeToChtCore = sinon.stub().resolves([]);
+  const supervisor = {
+    async develop(input: DevelopmentInput): Promise<DevelopmentState> {
+      return {
+        messages: [],
+        issue: input.issue,
+        orchestrationPlan,
+        researchFindings,
+        contextAnalysis,
+        options: input.options,
+        codeGeneration: {
+          files: [{
+            relativePath: '.cht-agent/xlsform-fix.json',
+            content: '{ bad',
+            language: 'json',
+            type: 'config',
+            description: 'descriptor',
+            action: 'create',
+          }],
+          summary: 'attempted fix',
+          implementedRequirements: [],
+          pendingRequirements: [],
+          notes: [],
+          confidence: 0.9,
+          crossFileIssues: [{ filePath: '.cht-agent/xlsform-fix.json', issueType: 'xlsform-apply-failed', description: 'descriptor is invalid' }],
+        },
+        currentPhase: 'validation',
+        errors: [],
+        iterationCount: 3,
+        xlsformApplyExhausted: { iterations: 3, reason: 'descriptor is invalid: bad json' },
+      };
+    },
+    writeToStaging,
+    writeToChtCore,
+  } as unknown as Supervisor;
+  return { supervisor, writeToStaging, writeToChtCore };
+};
+
+describe('executeDevelopmentWorkflow exhaustion loud stop (mission 05 F4)', () => {
+  const ENV_VARS = ['CHT_CONF_PATH', 'CHT_CORE_PATH'] as const;
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = {};
+    ENV_VARS.forEach((name) => { savedEnv[name] = process.env[name]; });
+  });
+  afterEach(() => {
+    ENV_VARS.forEach((name) => {
+      if (savedEnv[name] === undefined) { delete process.env[name]; }
+      else { process.env[name] = savedEnv[name]; }
+    });
+  });
+
+  it('preview mode: stages nothing, writes nothing, and returns a failure result', async () => {
+    const { supervisor, writeToStaging, writeToChtCore } = exhaustedSupervisor();
+    const input = makeInput(issueWithLayer('cht-core'), { chtCorePath: '/custom/cht-core', previewMode: true });
+
+    const result = await executeDevelopmentWorkflow(supervisor, input);
+
+    expect(writeToStaging.called, 'must not write to staging on exhaustion').to.equal(false);
+    expect(writeToChtCore.called, 'must not write to cht-core on exhaustion').to.equal(false);
+    expect(result.approved, 'exhaustion is a failure').to.equal(false);
+    expect(result.filesWritten).to.have.lengthOf(0);
+    expect(result.result?.xlsformApplyExhausted).to.not.equal(undefined);
+  });
+
+  it('direct mode: writes nothing and returns a failure result (does not force-approve)', async () => {
+    const { supervisor, writeToChtCore } = exhaustedSupervisor();
+    const input = makeInput(issueWithLayer('cht-core'), { chtCorePath: '/custom/cht-core', previewMode: false });
+
+    const result = await executeDevelopmentWorkflow(supervisor, input);
+
+    expect(writeToChtCore.called, 'direct mode must not force-write on exhaustion').to.equal(false);
+    expect(result.approved).to.equal(false);
+    expect(result.filesWritten).to.have.lengthOf(0);
+  });
+
+  it('does not loop the HC2 retry: develop() is called exactly once on exhaustion', async () => {
+    const { supervisor } = exhaustedSupervisor();
+    const developSpy = sinon.spy(supervisor, 'develop' as keyof Supervisor);
+    const input = makeInput(issueWithLayer('cht-core'), { chtCorePath: '/custom/cht-core', previewMode: true });
+
+    await executeDevelopmentWorkflow(supervisor, input);
+
+    expect((developSpy as sinon.SinonSpy).callCount).to.equal(1);
+  });
+});
+
+describe('displayDevelopmentCompletion Target banner (mission 05 F4 cosmetic)', () => {
+  let logSpy: sinon.SinonStub;
+
+  beforeEach(() => { logSpy = sinon.stub(console, 'log'); });
+  afterEach(() => { logSpy.restore(); });
+
+  const loggedText = (): string => logSpy.getCalls().map((c) => String(c.args[0] ?? '')).join('\n');
+
+  const mkResult = (state: Partial<DevelopmentState>): DevelopmentWorkflowResult => ({
+    approved: true,
+    iterationCount: 1,
+    filesWritten: ['forms/app/pregnancy_home_visit.xml'],
+    result: {
+      messages: [],
+      issue,
+      orchestrationPlan,
+      researchFindings,
+      contextAnalysis,
+      currentPhase: 'complete',
+      errors: [],
+      ...state,
+    } as DevelopmentState,
+  });
+
+  it('reports the actual write target (the rewritten chtCorePath) for a cht-conf run', () => {
+    // The workflow rewrites options.chtCorePath to the deployment config for a
+    // cht-conf ticket; the returned state carries that. The banner must echo it,
+    // not the caller-supplied cht-core working copy.
+    const result = mkResult({ options: { chtCorePath: '/mounted/deployment-config', previewMode: true } });
+    displayDevelopmentCompletion(result, { chtCorePath: '/workspace/cht-core', previewMode: true });
+    const text = loggedText();
+    expect(text).to.contain('Target: /mounted/deployment-config');
+    expect(text).to.not.contain('Target: /workspace/cht-core');
+  });
+
+  it('reports chtCorePath unchanged for a cht-core run (byte-identical default)', () => {
+    const result = mkResult({ options: { chtCorePath: '/workspace/cht-core', previewMode: true } });
+    displayDevelopmentCompletion(result, { chtCorePath: '/workspace/cht-core', previewMode: true });
+    expect(loggedText()).to.contain('Target: /workspace/cht-core');
   });
 });

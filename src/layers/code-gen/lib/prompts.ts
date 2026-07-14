@@ -34,6 +34,55 @@ export function extractValidationFeedback(contextFiles: ReadonlyArray<ContextFil
     .join('\n');
 }
 
+/** Byte budget for the whole retry-feedback section — bounds a runaway failing file. */
+const MAX_FEEDBACK_SECTION_BYTES = 8 * 1024;
+
+function clampFeedback(text: string, budget: number): string {
+  if (text.length <= budget) return text;
+  const kept = text.slice(0, budget);
+  return `${kept}\n... (truncated to ${Math.floor(budget / 1024)} KB)`;
+}
+
+/**
+ * F3 (mission 05): render the retry-feedback block the code-gen CLI must consume.
+ *
+ * A retry carries two signals that the first-attempt prompts ignored:
+ *  - the failure reason, packed as a `feedback/additional-context.md` external
+ *    context file (see code-generation-agent.buildModuleInput), surfaced here
+ *    via {@link extractValidationFeedback};
+ *  - `failingFiles` — the paths (+ action) that failed validation. `FailingFileRef`
+ *    carries no content, so the previous attempt's content is recovered from the
+ *    context files by path (the agent packs prior workspace files as `workspace`
+ *    context entries keyed by path).
+ *
+ * Returns '' when neither signal is present, so callers interpolate it
+ * unconditionally. The whole block is clamped to {@link MAX_FEEDBACK_SECTION_BYTES}
+ * so an oversized failing file cannot blow the prompt budget.
+ */
+export function buildRetryFeedbackSection(input: CodeGenModuleInput): string {
+  const reason = extractValidationFeedback(input.contextFiles).trim();
+  const failing = input.failingFiles ?? [];
+  if (!reason && failing.length === 0) return '';
+
+  const contentByPath = new Map(input.contextFiles.map(f => [f.path, f.content]));
+  const parts: string[] = ['', '=== FEEDBACK (previous attempt failed — read before you act) ==='];
+  if (reason) parts.push(`Failure reason:\n${reason}`);
+
+  for (const file of failing) {
+    const prev = contentByPath.get(file.path);
+    const header = `--- Previous content of ${file.path} (${file.action}) ---`;
+    parts.push(prev ? `${header}\n${prev}` : `${header}\n(previous content not carried in context)`);
+  }
+
+  parts.push(
+    'Your previous attempt produced the content above and failed for the stated reason. ' +
+    'Produce a CORRECTED version. Do NOT repeat the previous content verbatim.',
+    '=== END FEEDBACK ===',
+    '',
+  );
+  return clampFeedback(parts.join('\n'), MAX_FEEDBACK_SECTION_BYTES);
+}
+
 function formatNumberedList(items: ReadonlyArray<string>): string {
   return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
 }
@@ -190,7 +239,7 @@ Acceptance Criteria:
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
 ${buildXlsformFixBrief(input)}
-
+${buildRetryFeedbackSection(input)}
 ## Instructions
 The ONLY file you will produce is the fix descriptor. Emit a one-item plan that CREATEs it.
 Use this EXACT format (do NOT wrap file paths in backticks):

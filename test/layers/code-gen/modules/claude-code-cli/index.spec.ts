@@ -714,4 +714,89 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       expect(result.partialGenerationReason).to.equal(undefined);
     });
   });
+
+  describe('retry feedback threading (F3)', () => {
+    it('threads input.failingFiles + feedback into the execute prompt', async () => {
+      const spawnStub = sinon.stub()
+        .onFirstCall().resolves('plan stdout')
+        .onSecondCall().resolves('execute stdout');
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const captureStub = sinon.stub().resolves([
+        { path: 'src/a.ts', content: 'export const a = 2;\n', purpose: 'CLI-created file' },
+      ]);
+      const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
+
+      const parseStub = sinon.stub();
+      parseStub.onFirstCall().returns({ result: planResultText, isError: false, numTurns: 5 });
+      parseStub.onSecondCall().returns({ result: 'execute output', isError: false, numTurns: 20 });
+
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': {
+          spawnClaudeCli: spawnStub,
+          parseCliResult: parseStub,
+          ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
+          DEFAULT_MAX_TURNS: 150,
+        },
+        './workspace': {
+          snapshotChtCore: snapshotStub,
+          captureChtCoreDiff: captureStub,
+          rollbackChtCore: rollbackStub,
+        },
+      });
+
+      const input: CodeGenModuleInput = {
+        ...baseInput(),
+        contextFiles: [
+          { path: 'feedback/additional-context.md', content: 'The bind still read the buggy expression.', source: 'external' },
+          { path: 'src/a.ts', content: 'export const a = 1;\n', source: 'workspace' },
+        ],
+        failingFiles: [{ path: 'src/a.ts', action: 'modify' }],
+      };
+
+      const module = new ClaudeCodeCLICodeGenModule();
+      await module.generate(input);
+
+      // Second spawn is the execute phase; its prompt is the first arg.
+      const executePrompt = String(spawnStub.getCall(1).args[0]);
+      expect(executePrompt).to.include('=== FEEDBACK (previous attempt failed');
+      expect(executePrompt).to.include('The bind still read the buggy expression.');
+      expect(executePrompt).to.include('Previous content of src/a.ts (modify)');
+      expect(executePrompt).to.include('export const a = 1;');
+    });
+
+    it('emits no FEEDBACK section in the execute prompt on a first attempt', async () => {
+      const spawnStub = sinon.stub()
+        .onFirstCall().resolves('plan stdout')
+        .onSecondCall().resolves('execute stdout');
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const captureStub = sinon.stub().resolves([
+        { path: 'src/a.ts', content: 'export const a = 1;\n', purpose: 'CLI-created file' },
+      ]);
+      const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
+
+      const parseStub = sinon.stub();
+      parseStub.onFirstCall().returns({ result: planResultText, isError: false, numTurns: 5 });
+      parseStub.onSecondCall().returns({ result: 'execute output', isError: false, numTurns: 20 });
+
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': {
+          spawnClaudeCli: spawnStub,
+          parseCliResult: parseStub,
+          ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
+          DEFAULT_MAX_TURNS: 150,
+        },
+        './workspace': {
+          snapshotChtCore: snapshotStub,
+          captureChtCoreDiff: captureStub,
+          rollbackChtCore: rollbackStub,
+        },
+      });
+
+      const module = new ClaudeCodeCLICodeGenModule();
+      await module.generate(baseInput());
+
+      const executePrompt = String(spawnStub.getCall(1).args[0]);
+      expect(executePrompt).to.not.include('=== FEEDBACK');
+    });
+  });
 });

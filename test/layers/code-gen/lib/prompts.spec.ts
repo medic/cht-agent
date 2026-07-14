@@ -155,4 +155,26 @@ describe('buildPlanPrompt — cht-conf FORM fix variant (mission 05)', () => {
     expect(prompt).to.include('You are a CHT (Community Health Toolkit) developer');
     expect(prompt).to.not.include('.cht-agent/xlsform-fix.json');
   });
+
+  it('appends the FEEDBACK section with the previous descriptor when a retry carries it (F3)', () => {
+    const previous =
+      '{"version":1,"form":"pregnancy_home_visit","edits":[],"expect":{"nodeset":"/data/danger_signs","relevant":"stale"},"rationale":"first try"}';
+    const input: CodeGenModuleInput = {
+      ...formInput(),
+      contextFiles: [
+        { path: 'feedback/additional-context.md', content: 'Converted bind still read the buggy gate.', source: 'external' },
+        { path: '.cht-agent/xlsform-fix.json', content: previous, source: 'workspace' },
+      ],
+      failingFiles: [{ path: '.cht-agent/xlsform-fix.json', action: 'modify' }],
+    };
+    const prompt = buildPlanPrompt(input, emptyManifest);
+    expect(prompt).to.include('=== FEEDBACK (previous attempt failed');
+    expect(prompt).to.include('Converted bind still read the buggy gate.');
+    expect(prompt).to.include(previous);
+    expect(prompt).to.match(/do NOT repeat the previous content verbatim/i);
+  });
+
+  it('omits the FEEDBACK section from the plan prompt on a first attempt', () => {
+    expect(buildPlanPrompt(formInput(), emptyManifest)).to.not.include('=== FEEDBACK');
+  });
 });

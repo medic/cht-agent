@@ -231,6 +231,13 @@ const main = async (): Promise<void> => {
     // Display completion
     displayDevelopmentCompletion(workflowResult, developmentInput.options);
 
+    // Mission 05 (F4): a loud stop — the XLSForm-fix loop exhausted without a
+    // converting descriptor. Nothing was written; exit non-zero so callers and
+    // CI see the failure.
+    if (workflowResult.result?.xlsformApplyExhausted) {
+      process.exit(1);
+    }
+
   } catch (error) {
     console.error('\n❌ Error running development:', error);
     if (error instanceof Error) {

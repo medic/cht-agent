@@ -31,6 +31,7 @@ import {
   FailingFileRef,
   CrossFileIssue,
   XlsformApplyResult,
+  XlsformApplyExhausted,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { TestGenerationAgent, TestGenerationInput } from '../agents/test-generation-agent';
@@ -114,36 +115,60 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
  */
 export interface ApplyXlsformFixEdgeState {
   xlsformApply?: unknown;
+  xlsformApplyExhausted?: unknown;
   iterationCount?: number;
   codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
 }
 
 /**
- * Route out of the applyXlsformFix node (mission 05):
+ * Route out of the applyXlsformFix node (mission 05, F4):
  *  - applied & verified (xlsformApply set) OR nothing to do (passthrough) →
  *    'generateTests' (proceed)
  *  - an xlsform-apply-failed issue with iterations remaining → 'generateCode'
  *    (regenerate the descriptor via the existing refinement loop)
- *  - failed but out of iterations, or shutdown → 'generateTests' (give up; the
- *    failure surfaces at HC2)
+ *  - failed AND out of iterations (exhausted), or shutdown after a failed
+ *    apply → '__end__'. This is a LOUD STOP: the descriptor never converted, so
+ *    there is no fix to test — generating unit tests here would just produce
+ *    junk tests FOR THE DESCRIPTOR JSON (the live-run defect). The node has set
+ *    the `xlsformApplyExhausted` marker; the workflow/CLI turn it into a
+ *    non-zero-exit failure with a "NO FIX PRODUCED" banner.
  * Pure + exported for unit tests.
  */
-export function resolveApplyXlsformFixEdge(state: ApplyXlsformFixEdgeState): 'generateCode' | 'generateTests' {
+export function resolveApplyXlsformFixEdge(
+  state: ApplyXlsformFixEdgeState,
+): 'generateCode' | 'generateTests' | '__end__' {
+  // The node stamps the exhaustion marker on the last failing iteration; once it
+  // is set there is nothing left to try — end even if a shutdown races in.
+  if (state.xlsformApplyExhausted) {
+    return '__end__';
+  }
   if (isShutdownRequested()) {
-    return 'generateTests';
+    // A shutdown mid-loop with a failed apply and no marker (edge case): stop
+    // rather than segue into test generation over a descriptor that never
+    // converted.
+    return applyFailed(state) ? '__end__' : 'generateTests';
   }
   if (state.xlsformApply) {
     return 'generateTests';
   }
-  const failed = (state.codeGeneration?.crossFileIssues ?? []).some(
-    (i) => i.issueType === 'xlsform-apply-failed'
-  );
   const iterations = state.iterationCount ?? 0;
-  if (failed && iterations < MAX_ITERATIONS) {
+  if (applyFailed(state) && iterations < MAX_ITERATIONS) {
     console.log('[Development Supervisor] xlsform apply failed; looping to regenerate the descriptor');
     return 'generateCode';
   }
+  if (applyFailed(state)) {
+    // Out of iterations with a still-failing apply — exhausted. (In practice the
+    // node has already set the marker, handled above; this keeps the pure
+    // resolver correct on its own for direct unit tests.)
+    return '__end__';
+  }
   return 'generateTests';
+}
+
+function applyFailed(state: ApplyXlsformFixEdgeState): boolean {
+  return (state.codeGeneration?.crossFileIssues ?? []).some(
+    (i) => i.issueType === 'xlsform-apply-failed',
+  );
 }
 
 function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
@@ -253,6 +278,15 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
+  /**
+   * Mission 05 (F4): terminal marker set when the XLSForm-fix loop is exhausted
+   * (applied + failed every iteration). Its presence routes the graph straight
+   * to END and turns the run into a loud CLI failure — never test generation.
+   */
+  xlsformApplyExhausted: Annotation<XlsformApplyExhausted | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
 });
 
 export class DevelopmentSupervisor {
@@ -307,14 +341,17 @@ export class DevelopmentSupervisor {
           [END]: 'applyXlsformFix',
         },
       )
-      // Mission 05: applyXlsformFix either proceeds or loops back to regenerate
-      // the descriptor (bounded by the shared iterationCount budget).
+      // Mission 05: applyXlsformFix either proceeds, loops back to regenerate
+      // the descriptor (bounded by the shared iterationCount budget), or — when
+      // the loop is exhausted (F4) — routes straight to END (the loud stop; NO
+      // test generation over a descriptor that never converted).
       .addConditionalEdges(
         'applyXlsformFix',
         (state) => resolveApplyXlsformFixEdge(state),
         {
           generateCode: 'generateCode',
           generateTests: 'generateTests',
+          [END]: END,
         },
       )
       .addEdge('generateTests', END);
@@ -555,6 +592,12 @@ export class DevelopmentSupervisor {
    * Build the FAIL state update for applyXlsformFix: append a CrossFileIssue and
    * set perFileFeedback keyed to the descriptor path (an LLM-generated file, so
    * selective regeneration targets it). Does not set xlsformApply.
+   *
+   * F4: when this is the last iteration (the refinement budget is spent), stamp
+   * the `xlsformApplyExhausted` marker so the graph ends loudly instead of
+   * generating junk tests, and the CLI reports a failure with `message` as the
+   * banner reason. On earlier iterations the marker is left unset so the loop
+   * can still regenerate the descriptor.
    */
   private xlsformFail(state: typeof DevelopmentStateAnnotation.State, message: string) {
     console.log(`[Development Supervisor] XLSForm fix FAILED: ${message}`);
@@ -575,6 +618,15 @@ export class DevelopmentSupervisor {
         ...state.codeGeneration,
         crossFileIssues: [...(state.codeGeneration.crossFileIssues ?? []), issue],
       };
+    }
+    const iterations = state.iterationCount ?? 0;
+    if (iterations >= MAX_ITERATIONS) {
+      const exhausted: XlsformApplyExhausted = { iterations, reason: message };
+      update.xlsformApplyExhausted = exhausted;
+      console.log(
+        `[Development Supervisor] XLSForm fix exhausted after ${iterations} iteration(s); ` +
+          'ending without test generation (NO FIX PRODUCED).',
+      );
     }
     return update;
   }
@@ -999,6 +1051,7 @@ Respond with a JSON object:
       validationFeedback: input.additionalContext,
       perFileFeedback: undefined,
       xlsformApply: undefined,
+      xlsformApplyExhausted: undefined,
     };
 
     const result = await this.graph.invoke(initialState);

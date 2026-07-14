@@ -35,6 +35,7 @@ import {
   renderCrossFileIssueBanner,
   renderCompileGateSkipBanner,
   renderXlsformBindDiffBanner,
+  renderXlsformExhaustedBanner,
 } from '../cli/display-helpers';
 
 const MAX_DEVELOPMENT_ITERATIONS = 3;
@@ -314,6 +315,19 @@ export const executeDevelopmentWorkflow = async (
     const { state, duration } = await runDevelopment(supervisor, runInput, additionalContext);
     finalState = state;
     displayDevelopmentResults(state, duration);
+    // Mission 05 (F4): the XLSForm-fix loop exhausted without a converting
+    // descriptor — a loud stop. Print the NO FIX PRODUCED banner, stage/write
+    // NOTHING, and leave developmentApproved false so the workflow result is a
+    // failure (non-zero CLI exit). Break out of the HC2 retry loop: re-running
+    // development cannot help (the supervisor already spent its refinement
+    // budget), and there is nothing to approve.
+    if (state.xlsformApplyExhausted) {
+      console.log(renderXlsformExhaustedBanner(state.xlsformApplyExhausted));
+      console.log();
+      developmentApproved = false;
+      filesWritten = [];
+      break;
+    }
     if (previewMode) {
       const outcome = await runPreviewModeIteration({
         supervisor, state, chtCorePath: targetPath, iterationCount,
@@ -399,7 +413,12 @@ function displayDevelopmentSuccess(
   console.log('║                Development Phase Complete! ✅                  ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
   console.log(`📁 Files Written: ${workflowResult.filesWritten.length}`);
-  console.log(`📂 Target: ${options.chtCorePath}`);
+  // Mission 05 (F4): report the REAL write target. For a cht-conf ticket the fix
+  // lands in the mounted deployment config (developmentTarget.repoPath), not the
+  // cht-core working copy that chtCorePath points at — echoing chtCorePath here
+  // was the cosmetic "Target: /workspace/cht-core" lie.
+  const targetPath = resolveCompletionTargetPath(workflowResult, options);
+  console.log(`📂 Target: ${targetPath}`);
   console.log(`🔄 Iterations: ${workflowResult.iterationCount}`);
   if (workflowResult.filesWritten.length > 0) {
     console.log(`\n📋 Written Files:`);
@@ -422,6 +441,26 @@ function displayDevelopmentSuccess(
   console.log('   3. Make any necessary manual adjustments');
   console.log('   4. Submit for code review');
   console.log();
+}
+
+/**
+ * Resolve the path to report as the completion "Target" (F4 cosmetic fix).
+ *
+ * Ground truth is the workspace the supervisor actually developed + wrote into:
+ * `executeDevelopmentWorkflow` rewrites `options.chtCorePath` to the resolved
+ * write target for a cht-conf ticket, and the returned state carries that
+ * rewritten value. Fall back to the pre-resolved developmentTarget, then to the
+ * caller's chtCorePath, so cht-core runs stay byte-identical.
+ */
+function resolveCompletionTargetPath(
+  workflowResult: DevelopmentWorkflowResult,
+  options: DevelopmentOptions,
+): string {
+  return (
+    workflowResult.result?.options.chtCorePath ??
+    options.developmentTarget?.repoPath ??
+    options.chtCorePath
+  );
 }
 
 function displayDevelopmentNeedsReview(): void {

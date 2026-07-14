@@ -1,7 +1,7 @@
 import { CodeGenModuleInput } from '../../interface';
 import { PlanItem } from '../../lib/plan';
 import { getArchPatternsSection } from '../../lib/arch-patterns';
-import { buildArchInsightsSection, buildXlsformFixBrief } from '../../lib/prompts';
+import { buildArchInsightsSection, buildXlsformFixBrief, buildRetryFeedbackSection } from '../../lib/prompts';
 import { isXlsformFixTicket, XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../../utils/xlsform-fix';
 
 /**
@@ -28,7 +28,7 @@ ${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
 ${buildXlsformFixBrief(input)}
-
+${buildRetryFeedbackSection(input)}
 ## Output
 Write ONLY \`${XLSFORM_FIX_DESCRIPTOR_PATH}\` with \`Write\` — no other files, and never touch any \`.xlsx\`/\`.xml\`. Then output a brief JSON summary on the final line:
 \`\`\`json
@@ -76,6 +76,7 @@ ${plan.map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`).j
 
 ${archPatterns}
 ${buildArchInsightsSection(input.codeContextFindings)}
+${buildRetryFeedbackSection(input)}
 ## Plan Adherence (STRICT)
 You MUST implement EXACTLY the files listed in the Approved Plan above:
 - For each MODIFY plan item, you MUST use \`Edit\` on that file.
@@ -141,6 +142,7 @@ ${plan.map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`).j
 
 ${archPatterns}
 ${buildArchInsightsSection(input.codeContextFindings)}
+${buildRetryFeedbackSection(input)}
 ## Plan Adherence (GUIDANCE)
 Your earlier attempt at this ticket read the relevant files but did not write any edits.
 You are getting a second chance with relaxed rules:

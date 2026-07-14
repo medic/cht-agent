@@ -133,12 +133,51 @@ describe('resolveApplyXlsformFixEdge (mission 05)', () => {
     expect(resolveApplyXlsformFixEdge(state)).to.equal('generateCode');
   });
 
-  it('gives up (generateTests) on a failed apply once iterations are exhausted', () => {
+  it('ends loudly (__end__) on a failed apply once iterations are exhausted (F4)', () => {
+    // Re-derivation branch: even without the marker on the state, an out-of-
+    // iterations failure must route to END — never generateTests over a
+    // descriptor that never converted.
     const state: ApplyXlsformFixEdgeState = {
       iterationCount: 3,
       codeGeneration: { crossFileIssues: [{ issueType: 'xlsform-apply-failed' }] },
     };
-    expect(resolveApplyXlsformFixEdge(state)).to.equal('generateTests');
+    expect(resolveApplyXlsformFixEdge(state)).to.equal('__end__');
+  });
+
+  it('ends loudly (__end__) whenever the exhaustion marker is set, regardless of iterationCount (F4)', () => {
+    const state: ApplyXlsformFixEdgeState = {
+      xlsformApplyExhausted: { iterations: 3, reason: 'boom' },
+      iterationCount: 3,
+      codeGeneration: { crossFileIssues: [{ issueType: 'xlsform-apply-failed' }] },
+    };
+    expect(resolveApplyXlsformFixEdge(state)).to.equal('__end__');
+  });
+
+  it('does NOT loop back to generateCode once exhausted (never re-enters codegen) (F4)', () => {
+    const state: ApplyXlsformFixEdgeState = {
+      iterationCount: 3,
+      codeGeneration: { crossFileIssues: [{ issueType: 'xlsform-apply-failed' }] },
+    };
+    expect(resolveApplyXlsformFixEdge(state)).to.not.equal('generateCode');
+  });
+
+  it('ends (__end__) on shutdown after a failed apply rather than segueing into test generation (F4)', () => {
+    const shutdownMod = proxyquire('../../src/supervisors/development-supervisor', {
+      '../utils/shutdown': { isShutdownRequested: () => true },
+    });
+    const state: ApplyXlsformFixEdgeState = {
+      iterationCount: 1, // iterations remain, but shutdown races in
+      codeGeneration: { crossFileIssues: [{ issueType: 'xlsform-apply-failed' }] },
+    };
+    expect(shutdownMod.resolveApplyXlsformFixEdge(state)).to.equal('__end__');
+  });
+
+  it('still proceeds to generateTests on a clean shutdown with no failed apply', () => {
+    const shutdownMod = proxyquire('../../src/supervisors/development-supervisor', {
+      '../utils/shutdown': { isShutdownRequested: () => true },
+    });
+    const state: ApplyXlsformFixEdgeState = { iterationCount: 1, codeGeneration: { crossFileIssues: [] } };
+    expect(shutdownMod.resolveApplyXlsformFixEdge(state)).to.equal('generateTests');
   });
 });
 
@@ -544,6 +583,34 @@ describe('DevelopmentSupervisor applyXlsformFixNode (mission 05)', () => {
     expect(out.xlsformApply).to.equal(undefined);
   });
 
+  it('does NOT set the exhaustion marker while iterations remain (F4)', async () => {
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const out = await supervisor.applyXlsformFixNode(mkDevState({
+      ...baseValidInputFragment,
+      iterationCount: 1, // < MAX_ITERATIONS (3)
+      codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, '{ not valid json', 'config')]),
+    }));
+    expect(out.xlsformApplyExhausted).to.equal(undefined);
+    // still records the failure so the loop can regenerate the descriptor
+    const codeGen = out.codeGeneration as CodeGenerationResult;
+    expect(codeGen.crossFileIssues?.some((i) => i.issueType === 'xlsform-apply-failed')).to.equal(true);
+  });
+
+  it('sets the exhaustion marker with the last failure reason on the final iteration (F4)', async () => {
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub());
+    const out = await supervisor.applyXlsformFixNode(mkDevState({
+      ...baseValidInputFragment,
+      iterationCount: 3, // == MAX_ITERATIONS: last attempt
+      codeGeneration: mkCodeGenResult([mkFile(DESCRIPTOR_PATH, '{ not valid json', 'config')]),
+    }));
+    const exhausted = out.xlsformApplyExhausted as { iterations: number; reason: string } | undefined;
+    expect(exhausted, JSON.stringify(out)).to.not.equal(undefined);
+    expect(exhausted!.iterations).to.equal(3);
+    expect(exhausted!.reason).to.match(/descriptor is invalid/);
+    // xlsformApply stays unset — there is no verified fix
+    expect(out.xlsformApply).to.equal(undefined);
+  });
+
   it('works from a dev.ts stub state (no research/orchestration/context findings)', async () => {
     // dev.ts synthesizes research stubs and always previews; the node must not
     // depend on those channels — only codeGeneration + options.chtCorePath.
@@ -572,6 +639,32 @@ describe('DevelopmentSupervisor applyXlsformFixNode (mission 05)', () => {
       expect(apply.bindDiff.siblingsUnchanged).to.be.greaterThan(0);
       await fs.rm(apply.sandboxDir, { recursive: true, force: true });
     }
+  });
+
+  it('develop() ends loudly on exhaustion: marker set, testGeneration never reached (F4 graph integration)', async () => {
+    // Fake code-gen emits ONLY an INVALID descriptor every iteration, so
+    // applyXlsformFix fails on parse each time. validateImpl scores 0 (mock LLM
+    // returns {}), so the loop exhausts its iterations; the final applyXlsformFix
+    // stamps the marker and the graph routes straight to END — never
+    // generateTests. No cht binary needed (parse fails before any conversion).
+    const invalidDescriptor = '{ not valid json';
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile(DESCRIPTOR_PATH, invalidDescriptor, 'config')]));
+    const testGen = sinon.stub().resolves({ files: [], explanation: '', requirementsChecklist: [] });
+    const supervisor = buildSupervisorWithStubAgents(generate, { testGenImpl: testGen });
+
+    const finalState = await supervisor.develop({
+      ...baseValidInputFragment,
+      options: { chtCorePath: '/tmp/does-not-matter', previewMode: true },
+    });
+
+    // The loud-stop marker is set with the parse-failure reason.
+    expect(finalState.xlsformApplyExhausted, JSON.stringify(finalState.errors)).to.not.equal(undefined);
+    expect(finalState.xlsformApplyExhausted!.reason).to.match(/descriptor is invalid/);
+    // Test generation was NEVER invoked and no testGeneration result was written.
+    expect(testGen.called).to.equal(false);
+    expect(finalState.testGeneration).to.equal(undefined);
+    // No verified fix was produced.
+    expect(finalState.xlsformApply).to.equal(undefined);
   });
 
   maybe('develop() routes a descriptor-only run through applyXlsformFix (graph integration, self-skips)', async function () {

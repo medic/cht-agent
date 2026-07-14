@@ -64,24 +64,51 @@ export const extractBindRelevant = (xml: string, nodeset: string): string | unde
 const BIND_TAG_RE = /<bind\b[^>]*>/g;
 const NODESET_ATTR_RE = /\bnodeset="([^"]*)"/;
 const RELEVANT_ATTR_RE = /\brelevant="([^"]*)"/;
-// A top-level group nodeset: /data/<segment> with no further path segments.
-const TOP_LEVEL_GROUP_RE = /^\/data\/[^/]+$/;
+// The leading segment of any absolute nodeset: /<root>/… (root itself has no
+// further slash). Derives the primary-instance root from the form's own binds
+// instead of assuming `/data` — real partner forms use the form id as root
+// (e.g. `/postnatal_care_service/…`).
+const NODESET_ROOT_RE = /^\/([^/]+)\//;
 
 /**
- * Snapshot every top-level group bind (`/data/<segment>`) that carries a
- * `relevant` expression. The QA loop uses the CORRECTED local form's snapshot as
+ * Derive the primary-instance root segment from the form's binds. The first
+ * absolute bind nodeset names it (`/<root>/…`). Returns undefined when no
+ * multi-segment absolute nodeset is present (nothing to snapshot).
+ */
+const deriveInstanceRoot = (xml: string): string | undefined => {
+  for (const tag of xml.match(BIND_TAG_RE) ?? []) {
+    const nodeset = NODESET_ATTR_RE.exec(tag)?.[1];
+    const rootMatch = nodeset ? NODESET_ROOT_RE.exec(nodeset) : null;
+    if (rootMatch) {
+      return rootMatch[1];
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Snapshot every top-level group bind (`/<root>/<segment>`) that carries a
+ * `relevant` expression, where `<root>` is the form's own primary-instance root
+ * (derived from the binds; `/data` for the demo form, `/postnatal_care_service`
+ * for the partner form). The QA loop uses the CORRECTED local form's snapshot as
  * the expectation set: the deployed pre-fix form differs from it (reproduce =
  * red), and the deployed post-fix form matches it (verify = green). Restricting
  * to single-segment group nodesets keeps the set to the page/group gates (the
  * level the danger_signs fix lives at) and excludes noisy child-field binds.
  */
 export const extractTopLevelGroupBinds = (xml: string): FormBindExpectation[] => {
+  const root = deriveInstanceRoot(xml);
+  if (root === undefined) {
+    return [];
+  }
+  // /<root>/<segment> with no further path segments.
+  const topLevelGroupRe = new RegExp(`^/${escapeRegExp(root)}/[^/]+$`);
   const binds: FormBindExpectation[] = [];
   const seen = new Set<string>();
   for (const tag of xml.match(BIND_TAG_RE) ?? []) {
     const nodeset = NODESET_ATTR_RE.exec(tag)?.[1];
     const relevant = RELEVANT_ATTR_RE.exec(tag)?.[1];
-    if (nodeset && relevant !== undefined && TOP_LEVEL_GROUP_RE.test(nodeset) && !seen.has(nodeset)) {
+    if (nodeset && relevant !== undefined && topLevelGroupRe.test(nodeset) && !seen.has(nodeset)) {
       seen.add(nodeset);
       binds.push({ nodeset, relevant: decodeXmlAttr(relevant) });
     }

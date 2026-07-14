@@ -1270,6 +1270,27 @@ export interface DevelopmentState {
    * routed back to refinement).
    */
   xlsformApply?: XlsformApplyResult;
+  /**
+   * Terminal marker (mission 05, F4): set when the XLSForm-fix refinement loop
+   * is exhausted (descriptor applied + failed on every iteration, no
+   * xlsformApply). Its presence means NO FIX was produced — the graph routes
+   * straight to END (never generateTests), staging writes nothing, and the CLI
+   * reports a failure. Undefined on every other path (success, passthrough,
+   * cht-core tickets).
+   */
+  xlsformApplyExhausted?: XlsformApplyExhausted;
+}
+
+/**
+ * The loud-stop marker for an exhausted XLSForm fix (mission 05, F4). Carries
+ * the last failure reason so the HC2/CLI banner can tell the human WHY no fix
+ * was produced.
+ */
+export interface XlsformApplyExhausted {
+  /** How many refinement iterations were spent before giving up. */
+  iterations: number;
+  /** The last apply/verify failure reason (verbatim from the node). */
+  reason: string;
 }
 
 /**

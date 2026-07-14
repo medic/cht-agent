@@ -176,3 +176,80 @@ describe('buildExecutePrompt — cht-conf FORM fix variant (mission 05)', () => 
     expect(buildExecutePrompt(baseInput, plan)).to.not.include('.cht-agent/xlsform-fix.json');
   });
 });
+
+describe('execute prompts — retry FEEDBACK section (F3)', () => {
+  const formInput: CodeGenModuleInput = {
+    ...baseInput,
+    ticket: {
+      issue: {
+        ...baseInput.ticket.issue,
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          artifactName: 'pregnancy_home_visit',
+        },
+      },
+    },
+  };
+
+  const PREVIOUS_DESCRIPTOR =
+    '{"version":1,"form":"pregnancy_home_visit","edits":[],"expect":{"nodeset":"/data/danger_signs","relevant":"stale"},"rationale":"first try"}';
+
+  // A retry input carries the failure reason as an external context file and the
+  // failing descriptor as a workspace context file keyed by its path (mirrors
+  // code-generation-agent.buildModuleInput).
+  const withFeedback = (input: CodeGenModuleInput): CodeGenModuleInput => ({
+    ...input,
+    contextFiles: [
+      { path: 'feedback/additional-context.md', content: 'Converted relevant was "stale", expected yes-only gate.', source: 'external' },
+      { path: '.cht-agent/xlsform-fix.json', content: PREVIOUS_DESCRIPTOR, source: 'workspace' },
+    ],
+    failingFiles: [{ path: '.cht-agent/xlsform-fix.json', action: 'modify' }],
+  });
+
+  it('appends the FEEDBACK section with failure reason and previous file content (generic execute)', () => {
+    const prompt = buildExecutePrompt(withFeedback(baseInput), plan);
+    expect(prompt).to.include('=== FEEDBACK (previous attempt failed');
+    expect(prompt).to.include('Converted relevant was "stale", expected yes-only gate.');
+    expect(prompt).to.include('Previous content of .cht-agent/xlsform-fix.json (modify)');
+    expect(prompt).to.include(PREVIOUS_DESCRIPTOR);
+    expect(prompt).to.match(/do NOT repeat the previous content verbatim/i);
+    expect(prompt).to.include('=== END FEEDBACK ===');
+  });
+
+  it('appends the FEEDBACK section to the relaxed execute prompt too', () => {
+    const prompt = buildRelaxedExecutePrompt(withFeedback(baseInput), plan);
+    expect(prompt).to.include('=== FEEDBACK (previous attempt failed');
+    expect(prompt).to.include(PREVIOUS_DESCRIPTOR);
+  });
+
+  it('appends the FEEDBACK section to the cht-conf FORM fix execute prompt', () => {
+    const prompt = buildExecutePrompt(withFeedback(formInput), plan);
+    expect(prompt).to.include('=== FEEDBACK (previous attempt failed');
+    expect(prompt).to.include('Converted relevant was "stale", expected yes-only gate.');
+    expect(prompt).to.include(PREVIOUS_DESCRIPTOR);
+    // still the descriptor-only prompt, not clobbered
+    expect(prompt).to.include('.cht-agent/xlsform-fix.json');
+  });
+
+  it('omits the FEEDBACK section entirely when no feedback is carried', () => {
+    expect(buildExecutePrompt(baseInput, plan)).to.not.include('=== FEEDBACK');
+    expect(buildRelaxedExecutePrompt(baseInput, plan)).to.not.include('=== FEEDBACK');
+    expect(buildExecutePrompt(formInput, plan)).to.not.include('=== FEEDBACK');
+  });
+
+  it('still lists failing files (path + action) when their content was not carried', () => {
+    const input: CodeGenModuleInput = {
+      ...baseInput,
+      contextFiles: [
+        { path: 'feedback/additional-context.md', content: 'compile error', source: 'external' },
+      ],
+      failingFiles: [{ path: 'src/a.ts', action: 'modify' }],
+    };
+    const prompt = buildExecutePrompt(input, plan);
+    expect(prompt).to.include('Previous content of src/a.ts (modify)');
+    expect(prompt).to.include('(previous content not carried in context)');
+  });
+});

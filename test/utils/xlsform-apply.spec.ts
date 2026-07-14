@@ -63,6 +63,131 @@ describe('collateralChangedLines (mission 05 — child-bind collateral detection
     expect(collateral.length).to.be.greaterThan(0);
     expect(collateral.join('\n')).to.contain('/data/danger_signs/leaf');
   });
+
+  // F1: the exceljs re-save perturbs pyxform's attribute ordering (required
+  // migrating to a tag's end, relevant/calculate swapping) — a raw line diff
+  // reports every reordered tag as collateral. The canonicalizer must neutralize
+  // pure attribute-ORDER churn.
+  describe('attribute-order insensitivity (mission 05 follow-up F1)', () => {
+    const orderA = (danger: string): string =>
+      [
+        '<model>',
+        `  <bind nodeset="/data/danger_signs" relevant="${danger}" required="true()"/>`,
+        `  <bind nodeset="/data/summary" calculate="format-date(x)" relevant="${YES_GATE}" constraint=". != ''"/>`,
+        `  <bind nodeset="/data/danger_signs/leaf" type="string" relevant="true()"/>`,
+        '</model>',
+      ].join('\n');
+    // Same binds, same values, permuted attribute positions on every tag.
+    const orderB = (danger: string): string =>
+      [
+        '<model>',
+        `  <bind required="true()" relevant="${danger}" nodeset="/data/danger_signs"/>`,
+        `  <bind relevant="${YES_GATE}" nodeset="/data/summary" constraint=". != ''" calculate="format-date(x)"/>`,
+        `  <bind relevant="true()" type="string" nodeset="/data/danger_signs/leaf"/>`,
+        '</model>',
+      ].join('\n');
+
+    it('reports ZERO collateral when tags differ ONLY in attribute order', () => {
+      const baseline = orderA(PLANTED_GATE);
+      const regen = orderB(PLANTED_GATE); // same values, reordered attrs everywhere
+      expect(collateralChangedLines(baseline, regen, '/data/danger_signs')).to.deep.equal([]);
+    });
+
+    it('reports ZERO collateral when the ONLY real change is the target bind, atop attr-order churn', () => {
+      // The target bind's value also changes AND every tag is reordered; the
+      // reordering must be neutralized and the target line excluded by marker.
+      const baseline = orderA(PLANTED_GATE);
+      const regen = orderB(YES_GATE);
+      expect(collateralChangedLines(baseline, regen, '/data/danger_signs')).to.deep.equal([]);
+    });
+
+    it('still catches a real sibling value change hidden under attr-order churn', () => {
+      const baseline = orderA(PLANTED_GATE);
+      // reorder everything, fix the target, AND corrupt a sibling value
+      const regen = orderB(YES_GATE).replace('calculate="format-date(x)"', 'calculate="format-date(y)"');
+      const collateral = collateralChangedLines(baseline, regen, '/data/danger_signs');
+      expect(collateral.length).to.be.greaterThan(0);
+      expect(collateral.join('\n')).to.contain('/data/summary');
+    });
+
+    it('still catches a real child value change hidden under attr-order churn', () => {
+      const baseline = orderA(PLANTED_GATE);
+      const regen = orderB(YES_GATE).replace('relevant="true()" type="string"', 'relevant="false()" type="string"');
+      const collateral = collateralChangedLines(baseline, regen, '/data/danger_signs');
+      expect(collateral.length).to.be.greaterThan(0);
+      expect(collateral.join('\n')).to.contain('/data/danger_signs/leaf');
+    });
+  });
+
+  // F1 (follow-up): pyxform wraps a long constraint/calculate value across
+  // physical lines, so a single <bind> spans two+ lines with a LITERAL newline
+  // inside the quoted value. When the exceljs re-save migrates an attribute
+  // (e.g. required="true()") ACROSS that newline, a per-physical-line diff sees
+  // both physical lines change and reports false-positive collateral. The
+  // canonicalizer must reassemble the whole tag before comparison. Fixtures here
+  // mirror the real postnatal_care_service repro (mother_danger_signs bind).
+  describe('multi-line tag reassembly (mission 05 follow-up F1)', () => {
+    // required on the FIRST physical line, before the wrapped constraint value.
+    const wrappedRequiredFirst = (root: string): string =>
+      [
+        '<model>',
+        `  <bind nodeset="/${root}/danger_signs" required="true()" type="select" constraint="not(selected(., 'none')`,
+        `and count-selected(.) &gt; 1)"/>`,
+        `  <bind nodeset="/${root}/danger_signs/leaf" type="string" relevant="true()"/>`,
+        '</model>',
+      ].join('\n');
+    // Identical bind, required MIGRATED across the newline to the tag end.
+    const wrappedRequiredLast = (root: string): string =>
+      [
+        '<model>',
+        `  <bind nodeset="/${root}/danger_signs" type="select" constraint="not(selected(., 'none')`,
+        `and count-selected(.) &gt; 1)" required="true()"/>`,
+        `  <bind nodeset="/${root}/danger_signs/leaf" type="string" relevant="true()"/>`,
+        '</model>',
+      ].join('\n');
+
+    it('reports ZERO collateral when a multi-line tag differs ONLY in attr order across the newline', () => {
+      const baseline = wrappedRequiredFirst('postnatal_care_service');
+      const regen = wrappedRequiredLast('postnatal_care_service');
+      // Sanity: raw physical lines DO differ (the churn is real), the oracle
+      // must neutralize it at the tag level, not miss the difference entirely.
+      expect(baseline).to.not.equal(regen);
+      expect(collateralChangedLines(baseline, regen, '/postnatal_care_service/danger_signs')).to.deep.equal(
+        []
+      );
+    });
+
+    it('still catches a real value change inside a multi-line tag', () => {
+      const baseline = wrappedRequiredFirst('postnatal_care_service');
+      // reorder AND change the wrapped constraint value (> 1 -> > 2)
+      const regen = wrappedRequiredLast('postnatal_care_service').replace('&gt; 1)', '&gt; 2)');
+      const collateral = collateralChangedLines(
+        baseline,
+        regen,
+        '/postnatal_care_service/danger_signs/leaf'
+      );
+      expect(collateral.length).to.be.greaterThan(0);
+      expect(collateral.join('\n')).to.contain('count-selected');
+    });
+
+    it('excludes the target bind even when the target itself is a multi-line tag', () => {
+      // The target IS the wrapped bind; its cross-newline attr churn must not be
+      // reported (marker match) while a sibling change still would be.
+      const baseline = wrappedRequiredFirst('postnatal_care_service');
+      const regen = wrappedRequiredLast('postnatal_care_service').replace(
+        'relevant="true()"',
+        'relevant="false()"'
+      );
+      const collateral = collateralChangedLines(
+        baseline,
+        regen,
+        '/postnatal_care_service/danger_signs'
+      );
+      // only the leaf sibling change surfaces; the target's churn is excluded
+      expect(collateral.join('\n')).to.contain('/postnatal_care_service/danger_signs/leaf');
+      expect(collateral.join('\n')).to.not.contain('count-selected');
+    });
+  });
 });
 
 const withConvert = canOfflineConvert() ? describe : describe.skip;
@@ -125,6 +250,24 @@ withConvert('applyXlsformFixToProject (mission 05, self-skips without cht)', fun
     expect(outcome.ok).to.equal(false);
     if (!outcome.ok) {
       expect(outcome.error).to.match(/not present in the regenerated XML/);
+    }
+  });
+
+  it('passes step-5a when expect.relevant differs from the converted value only in whitespace', async () => {
+    // The converter trims/normalizes whitespace, so a leading space and internal
+    // double-spaces written into expect.relevant must not fail the byte-exact
+    // check (F1). The edit still writes the clean YES_GATE into the cell.
+    const spacedExpect = `  ${YES_GATE.replace(/ /g, '  ')}  `;
+    expect(spacedExpect).to.not.equal(YES_GATE); // proves the values differ byte-for-byte
+    const d = descriptor({
+      expect: { nodeset: '/data/danger_signs', relevant: spacedExpect, siblingsUnchanged: true },
+    });
+    const outcome = await applyXlsformFixToProject(d, CONFIG);
+    expect(outcome.ok, outcome.ok ? '' : outcome.error).to.equal(true);
+    if (outcome.ok) {
+      cleanups.push(outcome.result.sandboxDir);
+      // the converted bind is the trimmed gate; the whitespace-only expect still matched
+      expect(outcome.result.bindDiff.after).to.equal(YES_GATE);
     }
   });
 

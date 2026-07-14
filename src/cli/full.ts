@@ -164,6 +164,13 @@ const main = async (): Promise<void> => {
       qaOptions
     );
     displayFullWorkflowSummary(workflowResult);
+
+    // Mission 05 (F4): a loud stop — the XLSForm-fix loop exhausted without a
+    // converting descriptor. Nothing was written; exit non-zero so callers and
+    // CI see the failure (the report/summary above still prints).
+    if (workflowResult.development?.result?.xlsformApplyExhausted) {
+      process.exit(1);
+    }
   } catch (error) {
     console.error('\n❌ Error running workflow:', error);
     if (error instanceof Error) {
