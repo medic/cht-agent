@@ -799,4 +799,208 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       expect(executePrompt).to.not.include('=== FEEDBACK');
     });
   });
+
+  describe('session-resume retries (F8)', () => {
+    // A retry generation carries feedback (failingFiles + external context file);
+    // mirrors code-generation-agent.buildModuleInput on a refinement iteration.
+    const retryInput = (chtCorePath = '/tmp/cht-core-test'): CodeGenModuleInput => ({
+      ...baseInput(chtCorePath),
+      contextFiles: [
+        { path: 'feedback/additional-context.md', content: 'apply failed: bind mismatch', source: 'external' },
+        { path: 'src/a.ts', content: 'export const a = 1;\n', source: 'workspace' },
+      ],
+      failingFiles: [{ path: 'src/a.ts', action: 'modify' }],
+    });
+
+    // Build a module whose driver is stubbed. `execParses` supplies the
+    // parseCliResult return for each EXECUTE spawn in order; the plan spawn
+    // always parses to the canned plan text.
+    const buildModule = (opts: {
+      spawnStub: sinon.SinonStub;
+      execParses: Array<{ result?: string; isError?: boolean; numTurns?: number; sessionId?: string }>;
+    }) => {
+      const parseStub = sinon.stub();
+      let execCall = 0;
+      parseStub.callsFake((stdout: string) => {
+        if (stdout === 'PLAN') return { result: planResultText, isError: false, numTurns: 3 };
+        const p = opts.execParses[execCall++] ?? {};
+        return { result: p.result ?? 'execute output', isError: p.isError ?? false, numTurns: p.numTurns ?? 20, sessionId: p.sessionId };
+      });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const captureStub = sinon.stub().resolves([
+        { path: 'src/a.ts', content: 'export const a = 2;\n', purpose: 'CLI-created file' },
+      ]);
+      const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': {
+          spawnClaudeCli: opts.spawnStub,
+          parseCliResult: parseStub,
+          ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
+          DEFAULT_MAX_TURNS: 150,
+        },
+        './workspace': { snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub },
+      });
+      return new ClaudeCodeCLICodeGenModule();
+    };
+
+    // spawn stub that returns 'PLAN' for plan phases and 'EXEC' for execute
+    // phases (so parseCliResult can distinguish), tagging by allowedTools.
+    const makeSpawnStub = () =>
+      sinon.stub().callsFake((_prompt: string, spawnOpts: { phase: string }) =>
+        Promise.resolve(spawnOpts.phase === 'plan' ? 'PLAN' : 'EXEC'),
+      );
+
+    it('records the execute session on attempt 1 and resumes it on the retry (rollback notice + fresh plan)', async () => {
+      const spawnStub = makeSpawnStub();
+      const module = buildModule({
+        spawnStub,
+        execParses: [{ sessionId: 'sess-A' }, { sessionId: 'sess-A' }],
+      });
+
+      await module.generate(baseInput());   // attempt 1 → records sess-A
+      await module.generate(retryInput());  // retry → resumes sess-A
+
+      // Spawns: [0]=plan1 [1]=exec1 [2]=plan2 [3]=exec2
+      const exec1 = spawnStub.getCall(1).args[1] as { resumeSessionId?: string };
+      const plan2 = spawnStub.getCall(2).args[1] as { resumeSessionId?: string; phase: string };
+      const exec2Opts = spawnStub.getCall(3).args[1] as { resumeSessionId?: string };
+      const exec2Prompt = String(spawnStub.getCall(3).args[0]);
+
+      // Attempt-1 execute is fresh (no resume). Plan phase never resumes.
+      expect(exec1.resumeSessionId).to.equal(undefined);
+      expect(plan2.phase).to.equal('plan');
+      expect(plan2.resumeSessionId).to.equal(undefined);
+      // Retry execute resumes the recorded session…
+      expect(exec2Opts.resumeSessionId).to.equal('sess-A');
+      // …and its prompt states the workspace was rolled back + carries feedback.
+      expect(exec2Prompt).to.include('WORKSPACE WAS ROLLED BACK');
+      expect(exec2Prompt).to.match(/recreate the corrected file/i);
+      expect(exec2Prompt).to.include('=== FEEDBACK (previous attempt failed');
+    });
+
+    it('a first (non-retry) generation never resumes a stale session from a prior ticket', async () => {
+      const spawnStub = makeSpawnStub();
+      const module = buildModule({
+        spawnStub,
+        execParses: [{ sessionId: 'sess-A' }, { sessionId: 'sess-B' }],
+      });
+
+      await module.generate(baseInput());  // records sess-A
+      await module.generate(baseInput());  // NEW ticket (no feedback) → must NOT resume
+
+      const exec2Opts = spawnStub.getCall(3).args[1] as { resumeSessionId?: string };
+      const exec2Prompt = String(spawnStub.getCall(3).args[0]);
+      expect(exec2Opts.resumeSessionId).to.equal(undefined);
+      expect(exec2Prompt).to.not.include('WORKSPACE WAS ROLLED BACK');
+    });
+
+    it('falls back once to a fresh execute when the resumed spawn exits nonzero (is_error)', async () => {
+      const spawnStub = makeSpawnStub();
+      const module = buildModule({
+        spawnStub,
+        // attempt1 exec ok (sess-A); retry: resumed exec is_error, then fresh exec ok
+        execParses: [
+          { sessionId: 'sess-A' },
+          { isError: true, result: 'unknown session', sessionId: 'sess-A' },
+          { sessionId: 'sess-C' },
+        ],
+      });
+
+      await module.generate(baseInput());   // attempt 1
+      await module.generate(retryInput());  // retry: resume fails → fallback
+
+      // Retry produced TWO execute spawns: [3]=resumed (is_error), [4]=fresh fallback.
+      const resumedOpts = spawnStub.getCall(3).args[1] as { resumeSessionId?: string };
+      const fallbackOpts = spawnStub.getCall(4).args[1] as { resumeSessionId?: string };
+      const fallbackPrompt = String(spawnStub.getCall(4).args[0]);
+      expect(resumedOpts.resumeSessionId).to.equal('sess-A');
+      expect(fallbackOpts.resumeSessionId).to.equal(undefined); // fresh session
+      // The fallback fresh execute still carries the failure feedback.
+      expect(fallbackPrompt).to.include('=== FEEDBACK (previous attempt failed');
+      // Exactly one fallback: 5 spawns total (plan1, exec1, plan2, resumed, fresh).
+      expect(spawnStub.callCount).to.equal(5);
+    });
+
+    it('falls back once to a fresh execute when the resumed spawn THROWS (unknown/expired session)', async () => {
+      // The real CLI signals a missing session with exit 1 + empty stdout, which
+      // cli-driver turns into a REJECTION (not an is_error resolve). This is the
+      // primary resume-failure trigger and must route to the fallback rather than
+      // aborting the whole generation (which would roll back + rethrow).
+      const spawnStub = sinon.stub().callsFake(
+        (_prompt: string, spawnOpts: { phase: string; resumeSessionId?: string }) => {
+          if (spawnOpts.phase === 'plan') return Promise.resolve('PLAN');
+          if (spawnOpts.resumeSessionId) {
+            return Promise.reject(
+              new Error('Claude CLI execute exited with code 1: No conversation found with session ID: sess-A'),
+            );
+          }
+          return Promise.resolve('EXEC');
+        },
+      );
+      const module = buildModule({
+        spawnStub,
+        // exec parses only ever see resolved stdout: attempt1 (sess-A), then the
+        // fresh fallback (sess-C). The rejected resume never reaches parseCliResult.
+        execParses: [{ sessionId: 'sess-A' }, { sessionId: 'sess-C' }],
+      });
+
+      await module.generate(baseInput());   // attempt 1 → records sess-A
+      const result = await module.generate(retryInput()); // retry: resume throws → fallback
+
+      // The retry did NOT throw/roll back to failure — it produced files.
+      expect(result.files).to.have.length(1);
+      // Spawns: [0]=plan1 [1]=exec1 [2]=plan2 [3]=resumed(throws) [4]=fresh fallback.
+      const resumedOpts = spawnStub.getCall(3).args[1] as { resumeSessionId?: string };
+      const fallbackOpts = spawnStub.getCall(4).args[1] as { resumeSessionId?: string };
+      const fallbackPrompt = String(spawnStub.getCall(4).args[0]);
+      expect(resumedOpts.resumeSessionId).to.equal('sess-A');
+      expect(fallbackOpts.resumeSessionId).to.equal(undefined); // fresh session
+      expect(fallbackPrompt).to.include('=== FEEDBACK (previous attempt failed');
+      // Exactly one fallback: 5 spawns total.
+      expect(spawnStub.callCount).to.equal(5);
+    });
+
+    it('a second ticket whose FIRST generation carries feedback never resumes the prior ticket session', async () => {
+      // Cross-ticket leak guard: keying the reset to the ticket identity (not to
+      // isRetryInput) means a NEW ticket's first generate() call that already
+      // carries additionalContext/feedback still starts fresh.
+      const spawnStub = makeSpawnStub();
+      const module = buildModule({
+        spawnStub,
+        execParses: [{ sessionId: 'sess-A' }, { sessionId: 'sess-B' }],
+      });
+
+      await module.generate(baseInput());       // ticket A records sess-A
+      // Ticket B: different title, but its very first call carries feedback.
+      const ticketBFirst: CodeGenModuleInput = {
+        ...retryInput(),
+        ticket: {
+          ...retryInput().ticket,
+          issue: { ...retryInput().ticket.issue, title: 'A totally different ticket' },
+        },
+      };
+      await module.generate(ticketBFirst);
+
+      const exec2Opts = spawnStub.getCall(3).args[1] as { resumeSessionId?: string };
+      const exec2Prompt = String(spawnStub.getCall(3).args[0]);
+      expect(exec2Opts.resumeSessionId).to.equal(undefined); // never resumes sess-A
+      expect(exec2Prompt).to.not.include('WORKSPACE WAS ROLLED BACK');
+    });
+
+    it('a same-ticket retry still resumes even when generate() is re-entered as a fresh call', async () => {
+      // Regression guard for the ticket-key reset: the SAME ticket's retry must
+      // continue to resume (the reset only fires when the ticket identity changes).
+      const spawnStub = makeSpawnStub();
+      const module = buildModule({
+        spawnStub,
+        execParses: [{ sessionId: 'sess-A' }, { sessionId: 'sess-A' }],
+      });
+
+      await module.generate(baseInput());   // records sess-A under ticket A
+      await module.generate(retryInput());  // SAME ticket (baseInput title) → resumes
+
+      const exec2Opts = spawnStub.getCall(3).args[1] as { resumeSessionId?: string };
+      expect(exec2Opts.resumeSessionId).to.equal('sess-A');
+    });
+  });
 });

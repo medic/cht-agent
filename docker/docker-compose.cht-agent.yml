@@ -66,6 +66,11 @@ services:
       # image ENV this block overrides.
       NODE_OPTIONS: "--max-old-space-size=4096 --openssl-legacy-provider"
       # --- Demo closed loop (docs/handoffs/demo-runbook.md step 3) ---
+      # Development refinement-loop iteration budget (development-supervisor
+      # MAX_ITERATIONS). Parsed as an int, clamped 1–10; leave empty for the
+      # default (3). Raise it when a fix legitimately needs more descriptor
+      # retries; a non-default value is logged at run start.
+      DEV_MAX_ITERATIONS: ${DEV_MAX_ITERATIONS:-}
       # CLI provider: the agent drives the baked Claude Code CLI (`claude -p`)
       # via the OAuth mount below — no API key. Default 'anthropic' needs one.
       LLM_PROVIDER: ${LLM_PROVIDER:-claude-cli}

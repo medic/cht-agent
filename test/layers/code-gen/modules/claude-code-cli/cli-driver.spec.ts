@@ -79,6 +79,46 @@ describe('cli-driver (A.2a)', () => {
     expect(args[allowIdx + 1]).to.equal('Read,Write,Edit,Grep,Glob');
   });
 
+  it('F8: emits --resume <id> before -p when resumeSessionId is set', async () => {
+    const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
+    const driver = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/cli-driver', {
+      'node:child_process': { spawn: spawnStub },
+    });
+
+    await driver.spawnClaudeCli('execute prompt', {
+      cwd: '/tmp/cht-core',
+      allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob'],
+      permissionMode: 'acceptEdits',
+      phase: ClaudeCliPhase.Execute,
+      resumeSessionId: 'sess-123',
+    });
+
+    const args = spawnStub.firstCall.args[1] as string[];
+    const resumeIdx = args.indexOf('--resume');
+    expect(resumeIdx).to.equal(0);
+    expect(args[resumeIdx + 1]).to.equal('sess-123');
+    // --resume must precede -p (the CLI parses resume before the print flag).
+    expect(resumeIdx).to.be.lessThan(args.indexOf('-p'));
+  });
+
+  it('F8: omits --resume entirely on a fresh session (pre-F8 argv shape)', async () => {
+    const spawnStub = sinon.stub().callsFake(() => buildFakeProc(standardResult));
+    const driver = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/cli-driver', {
+      'node:child_process': { spawn: spawnStub },
+    });
+
+    await driver.spawnClaudeCli('execute prompt', {
+      cwd: '/tmp/cht-core',
+      allowedTools: ['Read'],
+      permissionMode: 'acceptEdits',
+      phase: ClaudeCliPhase.Execute,
+    });
+
+    const args = spawnStub.firstCall.args[1] as string[];
+    expect(args).to.not.include('--resume');
+    expect(args[0]).to.equal('-p');
+  });
+
   it('does NOT include the prompt as an argv (stdin pipe instead)', async () => {
     let stdinReceived = '';
     const spawnStub = sinon.stub().callsFake(() => {

@@ -50,8 +50,38 @@ import { applyXlsformFixToProject } from '../utils/xlsform-apply';
 import { parseXlsformFixDescriptor, XLSFORM_FIX_DESCRIPTOR_PATH } from '../utils/xlsform-fix';
 import { generateHarnessSpec } from '../utils/cht-conf-test-spec';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
+import { readEnv } from '../utils/env';
 
-const MAX_ITERATIONS = 3;
+/**
+ * The refinement-loop iteration budget. Default 3; overridable via
+ * `DEV_MAX_ITERATIONS` (parsed as an int, clamped to 1–10). Resolved ONCE at
+ * module load so the whole graph (both edge resolvers and the exhaustion check)
+ * reads a single consistent value. A non-default value is logged so a live run's
+ * transcript records the override. Garbage or out-of-range values fall back to
+ * the clamped default rather than throwing.
+ */
+export function resolveMaxIterations(): number {
+  const DEFAULT = 3;
+  const MIN = 1;
+  const MAX = 10;
+  const raw = readEnv('DEV_MAX_ITERATIONS');
+  if (raw === undefined || raw.trim() === '') return DEFAULT;
+  const parsed = Number.parseInt(raw.trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    console.log(
+      `[Development Supervisor] DEV_MAX_ITERATIONS="${raw}" is not an integer; using default ${DEFAULT}`,
+    );
+    return DEFAULT;
+  }
+  const clamped = Math.min(MAX, Math.max(MIN, parsed));
+  if (clamped !== DEFAULT) {
+    const note = clamped !== parsed ? ` (clamped from ${parsed} into ${MIN}–${MAX})` : '';
+    console.log(`[Development Supervisor] MAX_ITERATIONS overridden to ${clamped} via DEV_MAX_ITERATIONS${note}`);
+  }
+  return clamped;
+}
+
+const MAX_ITERATIONS = resolveMaxIterations();
 const REFINEMENT_THRESHOLD = 75;
 
 /**
@@ -71,7 +101,23 @@ function renderBulletSection<T>(heading: string, items: T[], format: (item: T) =
 export interface ValidateImplEdgeState {
   validationResult?: { overallScore?: number };
   iterationCount?: number;
-  codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
+  codeGeneration?: {
+    crossFileIssues?: { issueType?: string }[];
+    files?: { relativePath?: string }[];
+  };
+}
+
+/**
+ * True when this run's generation produced the XLSForm-fix descriptor — i.e. a
+ * cht-conf form ticket that reached the deterministic apply. Used by the
+ * validateImpl resolver to hand the routing decision to applyXlsformFix instead
+ * of looping on the (contract-blind) LLM score. Returns false for every
+ * cht-core ticket and every no-descriptor run, so their routing is unchanged.
+ */
+function hasXlsformDescriptor(state: ValidateImplEdgeState): boolean {
+  return (state.codeGeneration?.files ?? []).some(
+    (f) => f.relativePath === XLSFORM_FIX_DESCRIPTOR_PATH,
+  );
 }
 
 /**
@@ -80,6 +126,13 @@ export interface ValidateImplEdgeState {
  *
  *  - Shutdown requested → '__end__'
  *  - execute-no-op present → '__end__' (R17 v7: looping cannot help)
+ *  - XLSForm-fix descriptor present (F8 economics) → '__end__' so the graph
+ *    proceeds to applyXlsformFix: the DETERMINISTIC apply verdict, not the
+ *    LLM score, decides whether to loop. A passing apply must never be sent
+ *    back for a low LLM score; a failing apply loops from applyXlsformFix
+ *    with the apply feedback. (This branch keeps cross-file issues honoured:
+ *    a compile/adherence issue still loops before we reach the apply — those
+ *    signal a broken descriptor write, not a low-quality-but-valid fix.)
  *  - Score below threshold OR any cross-file issue → 'generateCode' (refine) if iterations left
  *  - Otherwise → '__end__'
  */
@@ -96,6 +149,18 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
   // same plan. End cleanly so the user sees the HC2 banner.
   if (issues.some(i => i.issueType === 'execute-no-op')) {
     console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
+    return '__end__';
+  }
+  // F8 (iteration economics): a cht-conf form ticket that produced a descriptor
+  // must let the deterministic applyXlsformFix decide the verdict. Route past
+  // the LLM-score gate (which does not understand the descriptor contract)
+  // UNLESS a module-level cross-file issue says the descriptor write itself is
+  // broken — in that case the normal refine loop still applies.
+  if (hasXlsformDescriptor(state) && issues.length === 0) {
+    console.log(
+      '[Development Supervisor] XLSForm-fix descriptor present; deferring the verdict to applyXlsformFix ' +
+        `(LLM score ${score}% is advisory only for this path)`,
+    );
     return '__end__';
   }
   const belowBar = score < REFINEMENT_THRESHOLD || issues.length > 0;

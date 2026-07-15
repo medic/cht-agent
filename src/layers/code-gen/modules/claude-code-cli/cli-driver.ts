@@ -29,6 +29,15 @@ export interface SpawnOptions {
   timeoutMs?: number;
   /** Max agentic turns the CLI is allowed. Tool-using agents need more than text oracles. */
   maxTurns?: number;
+  /**
+   * When set, resume the prior CLI conversation with this session id so the
+   * agent retains its earlier context on a retry (F8). Emitted as
+   * `--resume <id>` before `-p`. Verified against `claude --help`: `-r,
+   * --resume [value]` resumes a conversation by session id and works with
+   * `--print` (`-p`). The plan phase never sets this (it always runs fresh);
+   * only the execute phase resumes, on a retry that carries failure feedback.
+   */
+  resumeSessionId?: string;
 }
 
 const DEFAULT_EXECUTE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -43,7 +52,12 @@ export const DEFAULT_MAX_TURNS = 150;
 const PROGRESS_INTERVAL_MS = 60_000;
 
 function buildCliArgs(opts: SpawnOptions, maxTurns: number): string[] {
+  // `--resume <id>` must precede `-p` (the CLI parses resume before the print
+  // flag). Omitted entirely on a fresh session so the argv is byte-identical to
+  // the pre-F8 shape for the non-resume path.
+  const resumeArgs = opts.resumeSessionId ? ['--resume', opts.resumeSessionId] : [];
   return [
+    ...resumeArgs,
     '-p',
     '--output-format', 'json',
     '--max-turns', maxTurns.toString(),
@@ -61,9 +75,10 @@ function resolveTimeoutMs(opts: SpawnOptions): number {
 
 function logSpawnStart(prompt: string, opts: SpawnOptions, maxTurns: number): void {
   const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
+  const resumeNote = opts.resumeSessionId ? `, resume=${opts.resumeSessionId}` : '';
   console.log(
     `[claude-code-cli ${opts.phase}] Starting: "${promptPreview}..." ` +
-    `(${prompt.length} chars, tools=${opts.allowedTools.join('+')}, maxTurns=${maxTurns})`
+    `(${prompt.length} chars, tools=${opts.allowedTools.join('+')}, maxTurns=${maxTurns}${resumeNote})`
   );
 }
 

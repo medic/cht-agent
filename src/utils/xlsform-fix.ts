@@ -66,8 +66,32 @@ const getValidator = (): ValidateFunction => {
 const formatError = (error: ErrorObject): string =>
   `${error.instancePath || '(root)'} ${error.message ?? 'is invalid'}`.trim();
 
+/**
+ * Coerce a string `match.groupPath` to a one-element array in place (F8): the
+ * schema (and applier) require an array, but the LLM sometimes emits the bare
+ * string. Warns on each coercion so the live-run transcript records the salvage.
+ * No-op for well-formed descriptors (groupPath already an array or absent) and
+ * for shapes the applier will reject anyway.
+ */
+const normalizeGroupPaths = (data: unknown): void => {
+  if (typeof data !== 'object' || data === null) return;
+  const edits = (data as Record<string, unknown>).edits;
+  if (!Array.isArray(edits)) return;
+  for (const edit of edits) {
+    if (typeof edit !== 'object' || edit === null) continue;
+    const match = (edit as Record<string, unknown>).match;
+    if (typeof match !== 'object' || match === null) continue;
+    const gp = (match as Record<string, unknown>).groupPath;
+    if (typeof gp === 'string') {
+      (match as Record<string, unknown>).groupPath = [gp];
+      console.warn(`[xlsform-fix] WARN: coerced string groupPath "${gp}" to a one-element array`);
+    }
+  }
+};
+
 /** Validate already-parsed data against the descriptor schema. */
 export const validateXlsformFixDescriptor = (data: unknown): XlsformFixValidation => {
+  normalizeGroupPaths(data);
   const validate = getValidator();
   if (validate(data)) {
     return { valid: true, errors: [], descriptor: data as XlsformFixDescriptor };
@@ -75,15 +99,83 @@ export const validateXlsformFixDescriptor = (data: unknown): XlsformFixValidatio
   return { valid: false, errors: (validate.errors ?? []).map(formatError) };
 };
 
-/** Parse a descriptor file's text and validate it. Malformed JSON is a failure. */
-export const parseXlsformFixDescriptor = (content: string): XlsformFixValidation => {
-  let data: unknown;
-  try {
-    data = JSON.parse(content);
-  } catch (err) {
-    return { valid: false, errors: [`invalid JSON: ${(err as Error).message}`] };
+/**
+ * Extract the first balanced, top-level JSON object from arbitrary text (F8).
+ *
+ * The sandboxed CLI is told to write ONLY the JSON object, but live runs keep
+ * producing trailing prose and ```json fences after (or around) the object.
+ * Rather than reject the whole file, scan for the first `{` and walk forward
+ * tracking brace depth — string-literal-aware (so braces or quotes inside string
+ * values never mislead the scan) — and return the substring of the first
+ * balanced object. Anything before the `{` or after the matching `}` is dropped.
+ *
+ * Returns null when no balanced object exists (genuine garbage still errors).
+ */
+const extractFirstJsonObject = (text: string): string | null => {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
   }
-  return validateXlsformFixDescriptor(data);
+  return null;
+};
+
+/**
+ * Parse a descriptor file's text and validate it. Tolerant (F8): first tries a
+ * strict JSON parse of the whole content; on failure, falls back to extracting
+ * the first balanced top-level JSON object (stripping code fences and trailing
+ * prose) with a WARN. Only when no parseable object exists at all does it fail.
+ */
+export const parseXlsformFixDescriptor = (content: string): XlsformFixValidation => {
+  // Strip a leading UTF-8 BOM (U+FEFF): JSON.parse rejects it, but an otherwise
+  // clean descriptor should still parse on the strict path. Without this, the
+  // salvage guard below is defeated for a BOM-only prefix — String.trim() strips
+  // the BOM, so `extracted === content.trim()` and the short-circuit skips salvage.
+  const normalized = content.charCodeAt(0) === 0xfeff ? content.slice(1) : content;
+  const strict = tryParseJson(normalized);
+  if (strict.ok) return validateXlsformFixDescriptor(strict.data);
+
+  const extracted = extractFirstJsonObject(normalized);
+  if (extracted !== null && extracted !== normalized.trim()) {
+    const salvaged = tryParseJson(extracted);
+    if (salvaged.ok) {
+      console.warn(
+        '[xlsform-fix] WARN: descriptor carried extra content (fences/prose) around the JSON object; ' +
+          'salvaged the first balanced object. The prompt requires ONLY the JSON object with no fences or trailing text.',
+      );
+      return validateXlsformFixDescriptor(salvaged.data);
+    }
+  }
+  return { valid: false, errors: [`invalid JSON: ${strict.error}`] };
+};
+
+const tryParseJson = (text: string): { ok: true; data: unknown } | { ok: false; error: string } => {
+  try {
+    return { ok: true, data: JSON.parse(text) };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
 };
 
 /**

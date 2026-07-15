@@ -30,7 +30,7 @@ import { compileCheck, CompileValidationResult } from '../../../../agents/compil
 import { PlanItem, parsePlan } from '../../lib/plan';
 import { buildPlanPrompt } from '../../lib/prompts';
 import { buildFileManifest } from '../../lib/file-manifest';
-import { buildExecutePrompt, buildRelaxedExecutePrompt } from './prompts';
+import { buildExecutePrompt, buildRelaxedExecutePrompt, withResumeRollbackNotice } from './prompts';
 import { spawnClaudeCli, parseCliResult, ClaudeCliPhase, DEFAULT_MAX_TURNS } from './cli-driver';
 import {
   snapshotChtCore,
@@ -54,6 +54,30 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
   /** Per-invocation cache for the CLI binary check. Reset at the top of generate(). */
   private cliValidationCache: boolean | null = null;
 
+  /**
+   * F8 (session-resume retries): the session id of the most recent execute
+   * phase, remembered ACROSS generate() calls within one supervisor run. The
+   * registry holds a single module instance for the life of a DevelopmentSupervisor,
+   * so instance state is the cleanest seam for carrying the session forward
+   * (documented alternative — threading through input/output — would touch the
+   * CodeGenModuleInput/Output contract and every module). Cleared when the
+   * ticket identity changes (see {@link lastExecuteTicketKey}) so a new ticket
+   * never resumes a stale session — even a first attempt that already carries
+   * feedback (a genuine first generation with `additionalContext`, which
+   * isRetryInput cannot distinguish from a same-ticket refinement). Same-ticket
+   * retries (failingFiles/feedback present) resume it.
+   */
+  private lastExecuteSessionId: string | null = null;
+
+  /**
+   * F8: the ticket identity the remembered {@link lastExecuteSessionId} belongs
+   * to. Keying the reset to the ticket (rather than to isRetryInput) enforces the
+   * real invariant — "a session is only ever resumed by the ticket that created
+   * it" — for every input shape, including a second ticket's first generate()
+   * call that carries additionalContext. Set alongside the session id.
+   */
+  private lastExecuteTicketKey: string | null = null;
+
   async validate(): Promise<boolean> {
     if (this.cliValidationCache !== null) return this.cliValidationCache;
     const cliPath = readEnv('CLAUDE_CLI_PATH') || 'claude';
@@ -68,6 +92,17 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
   async generate(input: CodeGenModuleInput): Promise<CodeGenModuleOutput> {
     this.cliValidationCache = null;
     const chtCorePath = this.requireChtCorePath(input);
+    // F8: a session is only ever resumed by the ticket that created it. When the
+    // ticket identity changes, forget the remembered session — this is the real
+    // invariant, and (unlike keying off isRetryInput) it holds even for a NEW
+    // ticket's first generate() call that already carries feedback/additionalContext.
+    // Same-ticket retries keep the recorded session so runExecuteWithOptionalResume
+    // can resume it below.
+    const ticketKey = ticketIdentity(input);
+    if (ticketKey !== this.lastExecuteTicketKey) {
+      this.lastExecuteSessionId = null;
+      this.lastExecuteTicketKey = ticketKey;
+    }
     console.log(`[claude-code-cli] Generating code for "${input.ticket.issue.title}"...`);
 
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before snapshot');
@@ -124,7 +159,8 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     await this.surfacePlan(input, plan);
 
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before execute');
-    const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
+    const executeResult = await this.runExecuteWithOptionalResume(input, plan, chtCorePath);
+    this.lastExecuteSessionId = executeResult.sessionId ?? this.lastExecuteSessionId;
     const captureResult = await this.captureWithRelaxedRetry({
       input, plan, executeResult, snapshotSha: snapshot.headSha, chtCorePath,
     });
@@ -186,7 +222,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     console.warn(
       '[claude-code-cli] Zero files captured on STRICT execute; attempting relaxed retry (R17)'
     );
-    await this.runExecutePhase(input, plan, chtCorePath, buildRelaxedExecutePrompt);
+    await this.runExecutePhase(input, plan, chtCorePath, { promptBuilder: buildRelaxedExecutePrompt });
     files = await captureChtCoreDiff(chtCorePath, snapshotSha);
     console.log(
       `[claude-code-cli] After relaxed retry: ${files.length} file change(s) captured`
@@ -220,33 +256,124 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     return parsePlan(parsed.result);
   }
 
+  /**
+   * F8: run the execute phase, resuming the prior CLI session on a retry that
+   * carries failure feedback. On a retry with a remembered session id, resume
+   * it (prepending the rollback notice so the agent recreates the corrected file
+   * rather than assuming its wiped edits persist). The resume can fail two ways
+   * — both fall back ONCE to a fresh-session execute (which still carries the
+   * failure feedback via buildRetryFeedbackSection, so no context is lost):
+   *   (a) the resumed spawn RESOLVES with is_error=true in the CLI JSON; or
+   *   (b) the resumed spawn REJECTS (spawnClaudeCli throws). The real CLI signals
+   *       an unknown/expired session with exit code 1 + empty stdout, which
+   *       cli-driver turns into a rejection — this is in fact the PRIMARY
+   *       resume-failure trigger, so it MUST route to the fallback rather than
+   *       aborting the whole generation.
+   * A first (non-retry) generation or a retry with no remembered session runs
+   * fresh with the pre-F8 argv shape.
+   */
+  private async runExecuteWithOptionalResume(
+    input: CodeGenModuleInput,
+    plan: PlanItem[],
+    cwd: string,
+  ): Promise<ExecutePhaseResult> {
+    const resumeId = isRetryInput(input) ? this.lastExecuteSessionId : null;
+    if (!resumeId) {
+      return this.runExecutePhase(input, plan, cwd);
+    }
+    console.log(`[claude-code-cli] Retry: resuming execute session ${resumeId}`);
+    let resumed: ExecutePhaseResult;
+    try {
+      resumed = await this.runExecutePhase(input, plan, cwd, {
+        resumeSessionId: resumeId,
+        resumed: true,
+      });
+    } catch (err) {
+      // Unknown/expired session: the CLI exits nonzero with empty stdout and
+      // cli-driver rejects. Treat exactly like is_error — fall back once.
+      console.warn(
+        `[claude-code-cli] Resume of session ${resumeId} threw (${err instanceof Error ? err.message : String(err)}); ` +
+          'falling back once to a fresh execute session (feedback still carried).',
+      );
+      return this.runExecutePhase(input, plan, cwd);
+    }
+    if (!resumed.isError) return resumed;
+    console.warn(
+      `[claude-code-cli] Resume of session ${resumeId} failed (is_error); ` +
+        'falling back once to a fresh execute session (feedback still carried).',
+    );
+    return this.runExecutePhase(input, plan, cwd);
+  }
+
   private async runExecutePhase(
     input: CodeGenModuleInput,
     plan: PlanItem[],
     cwd: string,
-    promptBuilder: (input: CodeGenModuleInput, plan: PlanItem[]) => string = buildExecutePrompt,
-  ): Promise<{ partialCompletion: boolean; reason?: string; resultText: string }> {
-    const prompt = promptBuilder(input, plan);
+    opts: {
+      promptBuilder?: (input: CodeGenModuleInput, plan: PlanItem[]) => string;
+      resumeSessionId?: string;
+      resumed?: boolean;
+    } = {},
+  ): Promise<ExecutePhaseResult> {
+    const promptBuilder = opts.promptBuilder ?? buildExecutePrompt;
+    const base = promptBuilder(input, plan);
+    const prompt = opts.resumed ? withResumeRollbackNotice(base) : base;
     const stdout = await spawnClaudeCli(prompt, {
       cwd,
       allowedTools: EXECUTE_PHASE_TOOLS,
       permissionMode: 'acceptEdits',
       phase: ClaudeCliPhase.Execute,
+      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
     });
 
     const parsed = parseCliResult(stdout);
     if (parsed.isError) {
       const reason = `is_error=true from CLI: ${parsed.result.substring(0, 200)}`;
       console.warn(`[claude-code-cli] Execute phase: ${reason}`);
-      return { partialCompletion: true, reason, resultText: parsed.result };
+      return { partialCompletion: true, reason, resultText: parsed.result, isError: true, sessionId: parsed.sessionId };
     }
     if (parsed.numTurns >= DEFAULT_MAX_TURNS - 1) {
       const reason = `numTurns=${parsed.numTurns} reached max-turns cap (${DEFAULT_MAX_TURNS}); output likely incomplete`;
       console.warn(`[claude-code-cli] Execute phase: ${reason}`);
-      return { partialCompletion: true, reason, resultText: parsed.result };
+      return { partialCompletion: true, reason, resultText: parsed.result, isError: false, sessionId: parsed.sessionId };
     }
-    return { partialCompletion: false, resultText: parsed.result };
+    return { partialCompletion: false, resultText: parsed.result, isError: false, sessionId: parsed.sessionId };
   }
+}
+
+interface ExecutePhaseResult {
+  partialCompletion: boolean;
+  reason?: string;
+  resultText: string;
+  isError: boolean;
+  /** Session id from the CLI transcript; remembered for a resumed retry (F8). */
+  sessionId?: string;
+}
+
+/**
+ * F8: true when this generation is a retry — the supervisor's refinement loop
+ * re-entered code generation with failure signals. Two signals mark a retry
+ * (either suffices): `failingFiles` (selective regeneration targets) or the
+ * `feedback/additional-context.md` external context file the agent packs from
+ * `additionalContext`. On a first attempt neither is present.
+ */
+function isRetryInput(input: CodeGenModuleInput): boolean {
+  if ((input.failingFiles?.length ?? 0) > 0) return true;
+  return input.contextFiles.some((f) => f.source === 'external' && f.content.trim().length > 0);
+}
+
+/**
+ * F8: a stable-enough identity for the ticket a generation belongs to, used only
+ * to decide whether a remembered execute session may be resumed. The refinement
+ * loop re-enters generate() with the SAME ticket object (title/type/description
+ * unchanged) across retries, so keying on those fields groups a ticket's
+ * attempts together while distinguishing a genuinely different ticket. This is a
+ * cache key, not a security boundary; a collision only risks resuming a session,
+ * which the CLI itself rejects if the id is unknown (→ fresh fallback).
+ */
+function ticketIdentity(input: CodeGenModuleInput): string {
+  const issue = input.ticket.issue;
+  return [issue.title, issue.type, issue.description].join('\n');
 }
 
 async function fireCallback<Args extends unknown[]>(

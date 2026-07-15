@@ -89,6 +89,93 @@ describe('parseXlsformFixDescriptor', () => {
   it('exposes the descriptor path constant', () => {
     expect(XLSFORM_FIX_DESCRIPTOR_PATH).to.equal('.cht-agent/xlsform-fix.json');
   });
+
+  // F8: tolerant extraction — salvage the first balanced top-level JSON object.
+  describe('tolerant extraction (F8)', () => {
+    it('salvages a descriptor wrapped in a ```json code fence', () => {
+      const fenced = '```json\n' + JSON.stringify(VALID) + '\n```';
+      const result = parseXlsformFixDescriptor(fenced);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.form).to.equal('pregnancy_home_visit');
+    });
+
+    it('salvages a descriptor with trailing prose after the closing brace', () => {
+      const withProse = JSON.stringify(VALID) + '\n\nThat completes the fix descriptor.';
+      const result = parseXlsformFixDescriptor(withProse);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.expect.nodeset).to.equal('/data/danger_signs');
+    });
+
+    it('salvages a descriptor with leading prose before the opening brace', () => {
+      const withLead = 'Here is the descriptor:\n' + JSON.stringify(VALID);
+      const result = parseXlsformFixDescriptor(withLead);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+    });
+
+    it('is string-literal-aware: braces inside a string value do not confuse the scan', () => {
+      const tricky = clone();
+      (((tricky.edits as Record<string, unknown>[])[0]).set as Record<string, unknown>).value =
+        "if(x, '{ not a real brace }', '')";
+      const withProse = JSON.stringify(tricky) + '\ntrailing }}} noise';
+      const result = parseXlsformFixDescriptor(withProse);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.edits[0].set.value).to.equal("if(x, '{ not a real brace }', '')");
+    });
+
+    it('still errors on genuine garbage with no parseable object', () => {
+      const result = parseXlsformFixDescriptor('not json at all, no braces here');
+      expect(result.valid).to.equal(false);
+      expect(result.errors[0]).to.match(/invalid JSON/i);
+    });
+
+    it('still errors when the only brace-region is itself malformed', () => {
+      const result = parseXlsformFixDescriptor('prefix { "version": 1, oops no colon } suffix');
+      expect(result.valid).to.equal(false);
+    });
+
+    it('parses a BOM-prefixed but otherwise-clean descriptor', () => {
+      // JSON.parse chokes on a leading U+FEFF; String.trim() strips it, which
+      // previously defeated the salvage guard (extracted === content.trim()).
+      const withBom = '﻿' + JSON.stringify(VALID);
+      const result = parseXlsformFixDescriptor(withBom);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.form).to.equal('pregnancy_home_visit');
+    });
+
+    it('salvages a BOM-prefixed descriptor that also carries trailing prose', () => {
+      const withBom = '﻿' + JSON.stringify(VALID) + '\n\nThat completes the descriptor.';
+      const result = parseXlsformFixDescriptor(withBom);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.expect.nodeset).to.equal('/data/danger_signs');
+    });
+  });
+
+  // F8: groupPath string→[string] normalization before ajv.
+  describe('groupPath normalization (F8)', () => {
+    it('coerces a string groupPath to a one-element array and validates', () => {
+      const d = clone();
+      (((d.edits as Record<string, unknown>[])[0]).match as Record<string, unknown>).groupPath = 'pnc_visit';
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.edits[0].match.groupPath).to.deep.equal(['pnc_visit']);
+    });
+
+    it('coerces via the text parser path too', () => {
+      const d = clone();
+      (((d.edits as Record<string, unknown>[])[0]).match as Record<string, unknown>).groupPath = 'pnc_visit';
+      const result = parseXlsformFixDescriptor(JSON.stringify(d));
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.edits[0].match.groupPath).to.deep.equal(['pnc_visit']);
+    });
+
+    it('leaves an already-array groupPath untouched', () => {
+      const d = clone();
+      (((d.edits as Record<string, unknown>[])[0]).match as Record<string, unknown>).groupPath = ['a', 'b'];
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid).to.equal(true);
+      expect(result.descriptor?.edits[0].match.groupPath).to.deep.equal(['a', 'b']);
+    });
+  });
 });
 
 describe('isXlsformFixTicket', () => {

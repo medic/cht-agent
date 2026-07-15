@@ -240,6 +240,55 @@ repo.
   child process; an end-to-end spec may self-skip unless a real config-repo
   path env var is provided (existing self-skip pattern).
 
+## F8 — SHIPPED (2026-07-15): retry continuity, descriptor robustness, iteration economics
+
+> Implemented + adversarially reviewed; review confirmed 3 issues (dead
+> resume-fallback on thrown spawn errors, cross-ticket session leak, BOM
+> rejection), all fixed. Final gates: build clean, **1553 passing / 1
+> pending / 0 failing**, eslint clean.
+
+Observed (fourth live run, 2026-07-15): F4's exhaustion stop fired correctly
+(NO FIX PRODUCED, nothing staged), but all 3 iterations were lost to
+avoidable causes: iter 1 burned by the LLM validator score (52%<75) BEFORE
+the deterministic apply ever ran (the validator doesn't understand the
+descriptor contract); iter 2 failed on trailing non-JSON content after the
+descriptor object (recurring signature — line 25, twice across runs); iter 3
+failed on `groupPath` as string instead of array. Retries are fresh
+`claude -p` sessions — the captured sessionId is never used — so each retry
+can invent new mistakes instead of building on its own context.
+
+**Implementation contract:**
+1. `DEV_MAX_ITERATIONS` env → supervisor `MAX_ITERATIONS` (parse int,
+   clamp 1–10, default 3, log when non-default). Compose passthrough
+   `DEV_MAX_ITERATIONS: ${DEV_MAX_ITERATIONS:-}` in the demo env block.
+2. Session-resume retries: `cli-driver.spawnClaudeCli` gains a
+   `resumeSessionId` option → argv `--resume <id>` before `-p`. The module
+   records the execute-phase sessionId per generation; a retry that carries
+   feedback resumes that session with a retry prompt that MUST state the
+   workspace was rolled back (its file edits are gone — recreate the
+   corrected file). Resume failure (nonzero exit / unknown session) falls
+   back to today's fresh-session path once, with a log line. Plan phase
+   stays fresh each iteration.
+3. Descriptor robustness in `parseXlsformFixDescriptor` (src/utils/
+   xlsform-fix.ts): (a) tolerant extraction — take the first balanced
+   top-level JSON object; strip fences/trailing prose with a WARN, only
+   erroring when no parseable object exists; (b) normalization before ajv —
+   string `groupPath` coerced to one-element array (warn); (c) harden the
+   execute prompt with an exact minimal descriptor example + "the file must
+   contain ONLY the JSON object — no trailing text, no code fences;
+   groupPath is an ARRAY".
+4. Iteration economics: for cht-conf form tickets whose generation produced
+   a descriptor, run the deterministic applyXlsformFix verdict BEFORE the
+   LLM-score gate can loop the graph — a passing apply must not be sent back
+   for a low LLM score (apply verdict outranks); a failing apply loops with
+   the apply feedback as today. cht-core tickets byte-identical.
+
+Acceptance: env-clamp spec; resume argv + rollback-notice + fallback specs
+(mocked driver); tolerant-parse specs (trailing prose, fenced object, string
+groupPath — each salvages with warn; garbage still errors); economics spec
+(descriptor + low LLM score + passing apply ⇒ proceeds, no loop; failing
+apply ⇒ loops); gates: build + full suite + eslint clean.
+
 ## Gates (after EVERY fix, and finally)
 
 `npm run build` && `env -u ANTHROPIC_MODEL LANGFUSE_ENABLED=false npm test`

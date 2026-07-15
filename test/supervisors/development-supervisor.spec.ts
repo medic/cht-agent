@@ -9,6 +9,7 @@ import {
   ValidateImplEdgeState,
   resolveApplyXlsformFixEdge,
   ApplyXlsformFixEdgeState,
+  resolveMaxIterations,
 } from '../../src/supervisors/development-supervisor';
 import { canOfflineConvert } from '../helpers/offline-convert';
 import {
@@ -112,6 +113,42 @@ describe('resolveValidateImplEdge (R17.4)', () => {
     };
     expect(resolveValidateImplEdge(state)).to.equal('__end__');
   });
+
+  // F8 iteration economics: for a cht-conf form ticket whose generation produced
+  // the descriptor, the deterministic applyXlsformFix (reached via the __end__
+  // branch) must decide the verdict BEFORE the LLM-score gate can loop.
+  const DESCRIPTOR = '.cht-agent/xlsform-fix.json';
+
+  it('F8: a low LLM score does NOT loop when a descriptor is present — defers to applyXlsformFix', () => {
+    const state: ValidateImplEdgeState = {
+      validationResult: { overallScore: 52 }, // below threshold; would normally loop
+      iterationCount: 0,
+      codeGeneration: { crossFileIssues: [], files: [{ relativePath: DESCRIPTOR }] },
+    };
+    // __end__ is the branch that the graph remaps to applyXlsformFix.
+    expect(resolveValidateImplEdge(state)).to.equal('__end__');
+  });
+
+  it('F8: a descriptor run with a cross-file issue STILL loops (broken descriptor write)', () => {
+    const state: ValidateImplEdgeState = {
+      validationResult: { overallScore: 95 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-extra' }],
+        files: [{ relativePath: DESCRIPTOR }],
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('generateCode');
+  });
+
+  it('F8: a cht-core run (no descriptor) with a low score still loops (byte-identical)', () => {
+    const state: ValidateImplEdgeState = {
+      validationResult: { overallScore: 52 },
+      iterationCount: 0,
+      codeGeneration: { crossFileIssues: [], files: [{ relativePath: 'src/a.ts' }] },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('generateCode');
+  });
 });
 
 describe('resolveApplyXlsformFixEdge (mission 05)', () => {
@@ -178,6 +215,79 @@ describe('resolveApplyXlsformFixEdge (mission 05)', () => {
     });
     const state: ApplyXlsformFixEdgeState = { iterationCount: 1, codeGeneration: { crossFileIssues: [] } };
     expect(shutdownMod.resolveApplyXlsformFixEdge(state)).to.equal('generateTests');
+  });
+});
+
+describe('resolveMaxIterations (F8 — DEV_MAX_ITERATIONS env)', () => {
+  const KEY = 'DEV_MAX_ITERATIONS';
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env[KEY];
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env[KEY];
+    else process.env[KEY] = saved;
+  });
+
+  const withEnv = (value: string | undefined, fn: () => void) => {
+    if (value === undefined) delete process.env[KEY];
+    else process.env[KEY] = value;
+    fn();
+  };
+
+  it('defaults to 3 when unset', () => {
+    withEnv(undefined, () => expect(resolveMaxIterations()).to.equal(3));
+  });
+
+  it('defaults to 3 when empty/whitespace', () => {
+    withEnv('   ', () => expect(resolveMaxIterations()).to.equal(3));
+  });
+
+  it('honours an in-range value', () => {
+    withEnv('7', () => expect(resolveMaxIterations()).to.equal(7));
+  });
+
+  it('clamps below the minimum to 1', () => {
+    withEnv('0', () => expect(resolveMaxIterations()).to.equal(1));
+    withEnv('-5', () => expect(resolveMaxIterations()).to.equal(1));
+  });
+
+  it('clamps above the maximum to 10', () => {
+    withEnv('99', () => expect(resolveMaxIterations()).to.equal(10));
+  });
+
+  it('falls back to the default on non-integer garbage', () => {
+    withEnv('abc', () => expect(resolveMaxIterations()).to.equal(3));
+  });
+
+  it('parses a leading integer from a trailing-garbage value', () => {
+    // parseInt('4x', 10) === 4 (in range) — a lenient salvage, still clamped.
+    withEnv('4x', () => expect(resolveMaxIterations()).to.equal(4));
+  });
+
+  it('the resolved value actually drives the graph loop budget (end-to-end)', async () => {
+    // MAX_ITERATIONS is resolved at module load, so set the env BEFORE importing
+    // the supervisor fresh via proxyquire. A cht-core ticket + mock LLM (score 0)
+    // loops generateCode until the budget exhausts; the call count must equal the
+    // clamped budget (2), proving the constant threads into the edge resolver.
+    process.env[KEY] = '2';
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile('src/a.ts')]));
+    class FakeCodeGenAgent { generate = generate; }
+    class FakeTestGenAgent {
+      generate = sinon.stub().resolves({ files: [], explanation: '', requirementsChecklist: [] });
+    }
+    const mod = proxyquire('../../src/supervisors/development-supervisor', {
+      '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
+      '../agents/test-generation-agent': { TestGenerationAgent: FakeTestGenAgent },
+    });
+    const supervisor = new mod.DevelopmentSupervisor({ llmProvider: mkMockLLM() });
+    const finalState = await (supervisor as unknown as {
+      develop: (i: unknown) => Promise<DevelopmentState>;
+    }).develop(baseValidInputFragment);
+
+    expect(finalState.iterationCount).to.equal(2);
+    expect(generate.callCount).to.equal(2);
   });
 });
 
@@ -788,6 +898,83 @@ describe('DevelopmentSupervisor applyXlsformFixNode (mission 05)', () => {
       expect(apply.bindDiff.after).to.equal(YES_GATE);
       await fs.rm(apply.sandboxDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('DevelopmentSupervisor iteration economics (F8, graph integration)', () => {
+  // Build a supervisor with BOTH the code-gen agent stubbed AND
+  // applyXlsformFixToProject stubbed, so the deterministic apply verdict is
+  // controlled without a cht binary. The mock LLM scores 0 (invokeForJSON → {}),
+  // which pre-F8 would loop the graph before applyXlsformFix ever ran.
+  const buildWithStubbedApply = (
+    generateImpl: sinon.SinonStub,
+    applyImpl: sinon.SinonStub,
+    testGenImpl: sinon.SinonStub,
+  ) => {
+    class FakeCodeGenAgent { generate = generateImpl; }
+    class FakeTestGenAgent { generate = testGenImpl; }
+    const mod = proxyquire('../../src/supervisors/development-supervisor', {
+      '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
+      '../agents/test-generation-agent': { TestGenerationAgent: FakeTestGenAgent },
+      '../utils/xlsform-apply': { applyXlsformFixToProject: applyImpl },
+    });
+    return new mod.DevelopmentSupervisor({ llmProvider: mkMockLLM() }) as unknown as {
+      develop: (input: unknown) => Promise<DevelopmentState>;
+    };
+  };
+
+  const passingApplyResult = {
+    ok: true,
+    result: {
+      form: 'pregnancy_home_visit',
+      xlsxPath: '/tmp/sandbox/forms/app/pregnancy_home_visit.xlsx',
+      xmlPath: '/tmp/sandbox/forms/app/pregnancy_home_visit.xml',
+      xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
+      xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
+      bindDiff: { nodeset: '/data/danger_signs', before: undefined, after: YES_GATE, siblingsUnchanged: 9 },
+      sandboxDir: '/tmp/sandbox',
+    },
+  };
+
+  it('a PASSING apply proceeds on iteration 1 despite a low LLM score (no loop)', async () => {
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile(DESCRIPTOR_PATH, validDescriptorJson, 'config')]));
+    const apply = sinon.stub().resolves(passingApplyResult);
+    const testGen = sinon.stub().resolves({ files: [], explanation: '', requirementsChecklist: [] });
+    const supervisor = buildWithStubbedApply(generate, apply, testGen);
+
+    const finalState = await supervisor.develop({
+      ...baseValidInputFragment,
+      options: { chtCorePath: '/tmp/does-not-matter', previewMode: true },
+    });
+
+    // The deterministic apply ran exactly once — the graph did NOT loop on the
+    // low LLM score. code-gen ran exactly once (iteration 1); no refinement.
+    expect(apply.callCount, 'apply should run once, not loop').to.equal(1);
+    expect(generate.callCount, 'code-gen should run once (no refinement loop)').to.equal(1);
+    expect(finalState.iterationCount).to.equal(1);
+    expect(finalState.xlsformApply, JSON.stringify(finalState.errors)).to.not.equal(undefined);
+    expect(finalState.xlsformApplyExhausted).to.equal(undefined);
+  });
+
+  it('a FAILING apply loops with apply feedback until exhaustion (marker set, no test-gen)', async () => {
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile(DESCRIPTOR_PATH, validDescriptorJson, 'config')]));
+    const apply = sinon.stub().resolves({ ok: false, error: 'converted bind did not match expect.relevant' });
+    const testGen = sinon.stub().resolves({ files: [], explanation: '', requirementsChecklist: [] });
+    const supervisor = buildWithStubbedApply(generate, apply, testGen);
+
+    const finalState = await supervisor.develop({
+      ...baseValidInputFragment,
+      options: { chtCorePath: '/tmp/does-not-matter', previewMode: true },
+    });
+
+    // Looped the full budget: code-gen + apply each ran MAX_ITERATIONS (3) times.
+    expect(generate.callCount).to.equal(3);
+    expect(apply.callCount).to.equal(3);
+    expect(finalState.xlsformApplyExhausted, JSON.stringify(finalState)).to.not.equal(undefined);
+    expect(finalState.xlsformApplyExhausted!.reason).to.match(/did not match expect\.relevant/);
+    // Loud stop: test generation never ran; no verified fix.
+    expect(testGen.called).to.equal(false);
+    expect(finalState.xlsformApply).to.equal(undefined);
   });
 });
 

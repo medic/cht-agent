@@ -5,6 +5,33 @@ import { buildArchInsightsSection, buildXlsformFixBrief, buildRetryFeedbackSecti
 import { isXlsformFixTicket, XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../../utils/xlsform-fix';
 
 /**
+ * F8: the rollback notice prepended to a RESUMED execute prompt. On a retry the
+ * module resumes the prior CLI session (so the agent keeps its reasoning
+ * context), but the orchestrator rolled the workspace back after the previous
+ * execute — every file edit the agent made last time is GONE. The agent must be
+ * told explicitly to recreate the corrected file from scratch; otherwise it may
+ * assume its earlier edits are still on disk and no-op. The concrete failure
+ * feedback still rides in via {@link buildRetryFeedbackSection} inside the base
+ * prompt; this prefix only establishes the rolled-back precondition.
+ */
+export const RESUME_ROLLBACK_NOTICE =
+  '=== SESSION RESUMED — WORKSPACE WAS ROLLED BACK ===\n' +
+  'This continues your previous session, but the workspace has been reset to its ' +
+  'pre-run state: EVERY file you created or edited in your last attempt is GONE ' +
+  'from disk. Do NOT assume any earlier edit persisted. Recreate the CORRECTED ' +
+  'file from scratch with Write, applying the failure feedback below. Verify with ' +
+  'Read after writing.\n' +
+  '=== END ROLLBACK NOTICE ===\n\n';
+
+/**
+ * Prepend the rollback notice to a freshly-built execute prompt for a resumed
+ * retry. Kept as a thin wrapper so the module does not inline prompt text.
+ */
+export function withResumeRollbackNotice(basePrompt: string): string {
+  return RESUME_ROLLBACK_NOTICE + basePrompt;
+}
+
+/**
  * Execute-phase prompt for a cht-conf FORM fix (mission 05). The sandboxed CLI
  * writes ONLY the structured descriptor; the deterministic orchestrator applies
  * it to the binary workbook. Used for both the strict and relaxed passes — the
@@ -29,6 +56,28 @@ ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
 
 ${buildXlsformFixBrief(input)}
 ${buildRetryFeedbackSection(input)}
+## Descriptor format (STRICT)
+\`${XLSFORM_FIX_DESCRIPTOR_PATH}\` must contain ONLY the JSON object — no code fences, no leading or trailing prose, nothing after the closing \`}\`. The file's first character is \`{\` and its last is \`}\`. \`match.groupPath\`, when present, is an ARRAY of group names (outermost first), never a bare string. A minimal, exactly-shaped example:
+\`\`\`json
+{
+  "version": 1,
+  "form": "example_form",
+  "edits": [
+    {
+      "sheet": "survey",
+      "match": { "column": "name", "value": "target_question", "groupPath": ["outer_group"] },
+      "set": { "column": "relevant", "value": "selected(../other, 'yes')" }
+    }
+  ],
+  "expect": {
+    "nodeset": "/data/outer_group/target_question",
+    "relevant": "selected(../other, 'yes')",
+    "siblingsUnchanged": true
+  },
+  "rationale": "One paragraph describing the bug and the corrected expression."
+}
+\`\`\`
+
 ## Output
 Write ONLY \`${XLSFORM_FIX_DESCRIPTOR_PATH}\` with \`Write\` — no other files, and never touch any \`.xlsx\`/\`.xml\`. Then output a brief JSON summary on the final line:
 \`\`\`json
