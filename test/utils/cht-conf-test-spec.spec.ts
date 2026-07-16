@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import {
   deriveScenario,
   detectHousePattern,
+  extractHouseOptions,
   generateHarnessSpec,
   renderSpec,
   resolveSpecPath,
@@ -156,6 +157,45 @@ describe('cht-conf-test-spec (F7 generation)', () => {
     });
   });
 
+  describe('extractHouseOptions — HOUSE_OPTIONS literal (F9)', () => {
+    it('returns {} for an empty construction', () => {
+      expect(extractHouseOptions('new TestHarness()')).to.equal('{}');
+    });
+
+    it('returns the object literal verbatim (nested calls survive)', () => {
+      expect(
+        extractHouseOptions("new TestHarness({ xformFolderPath: path.resolve(__dirname, '../forms/app') })"),
+      ).to.equal("{ xformFolderPath: path.resolve(__dirname, '../forms/app') }");
+    });
+
+    it('falls back to {} for a non-object-literal arg (identifier)', () => {
+      expect(extractHouseOptions('new TestHarness(config)')).to.equal('{}');
+    });
+
+    it('falls back to {} for positional (non-object) args', () => {
+      expect(extractHouseOptions("new TestHarness('subject', { a: 1 })")).to.equal('{}');
+    });
+
+    it('falls back to {} for two positional object-literal args (comma-operator trap)', () => {
+      // `{a:1}, {b:2}` starts with `{` and ends with `}`, but it is TWO positional
+      // args, not one object literal. A `return (${trimmed})` guard would treat the
+      // top-level comma as the comma operator and wrongly accept it, emitting the
+      // un-parseable `const HOUSE_OPTIONS = {a:1}, {b:2};` (a bare second declarator
+      // → SyntaxError). Must fall back to {} so the emitted spec always parses.
+      expect(extractHouseOptions('new TestHarness({a:1}, {b:2})')).to.equal('{}');
+      expect(extractHouseOptions('new TestHarness({ a: 1 }, { b: 2 })')).to.equal('{}');
+    });
+
+    it('keeps a single object literal with nested objects / interior commas', () => {
+      // The fix must not over-reject: an interior comma inside one object literal
+      // (or a nested object) is valid and must be returned verbatim.
+      expect(extractHouseOptions('new TestHarness({ a: 1, b: 2 })')).to.equal('{ a: 1, b: 2 }');
+      expect(extractHouseOptions('new TestHarness({ obj: { nested: 1 } })')).to.equal(
+        '{ obj: { nested: 1 } }',
+      );
+    });
+  });
+
   describe('deriveScenario — from descriptor + bindDiff, not LLM', () => {
     it('takes the corrected relevant + nodeset from the verified bindDiff', () => {
       const scenario = deriveScenario(descriptor(), bindDiff());
@@ -175,7 +215,10 @@ describe('cht-conf-test-spec (F7 generation)', () => {
         fromDefault: false,
       });
       expect(content).to.include(`require(${JSON.stringify('cht-conf-test-harness')})`);
-      expect(content).to.include("new TestHarness({ subject: 'patient_id' })");
+      // F9: the detected partner options become the HOUSE_OPTIONS literal, spread
+      // into a runtime-merged construction (not emitted verbatim as the ctor RHS).
+      expect(content).to.include("const HOUSE_OPTIONS = { subject: 'patient_id' };");
+      expect(content).to.include('...HOUSE_OPTIONS');
       expect(content).to.include(JSON.stringify(NODESET));
       expect(content).to.include(JSON.stringify(YES_GATE));
       // Harness lifecycle + consoleErrors invariant (house idiom).
@@ -198,6 +241,111 @@ describe('cht-conf-test-spec (F7 generation)', () => {
       // new Function throws on a syntax error; module-level require/describe are
       // just identifiers to the parser, so this validates syntax only.
       expect(() => new Function(content)).to.not.throw();
+    });
+  });
+
+  // F9: the emitted harness construction must merge sandbox-safe launch args at
+  // RUNTIME (cap_drop ALL container → Chromium "No usable sandbox!").
+  describe('renderSpec — sandbox-safe launch args (F9)', () => {
+    const render = (harnessConstruction: string): string =>
+      renderSpec(deriveScenario(descriptor(), bindDiff()), {
+        harnessRequire: 'cht-conf-test-harness',
+        harnessConstruction,
+        fromDefault: false,
+      });
+
+    // Evaluate the emitted HOUSE_OPTIONS + merge expression against a stub harness
+    // (returned from a stub `require`) to observe the args the harness receives.
+    const mergedArgs = (harnessConstruction: string): string[] => {
+      const content = render(harnessConstruction);
+      let captured: { args?: string[] } = {};
+      const HarnessStub = function (this: unknown, opts: { args?: string[] }) {
+        captured = opts;
+      };
+      const req = (id: string): unknown => {
+        if (id === 'chai') return { expect };
+        if (id === 'node:path') return path;
+        if (id === 'node:fs') return fs;
+        return HarnessStub; // the harness require (emitted `const TestHarness = ...`)
+      };
+      // Run the emitted module top-level: require + HOUSE_OPTIONS + harness ctor.
+      // `describe`/`before`/etc. are stubbed as no-ops so only the construction runs.
+      const noop = (): void => {};
+      // eslint-disable-next-line no-new-func
+      new Function('require', 'describe', 'it', 'before', 'after', 'beforeEach', 'afterEach', content)(
+        req, noop, noop, noop, noop, noop, noop,
+      );
+      return captured.args ?? [];
+    };
+
+    it('emits the two sandbox flags with a doc comment explaining why', () => {
+      const content = render('new TestHarness()');
+      expect(content).to.include("'--no-sandbox'");
+      expect(content).to.include("'--disable-dev-shm-usage'");
+      expect(content).to.include('cap_drop ALL'); // the rationale comment
+      expect(content).to.include('const HOUSE_OPTIONS = {};');
+    });
+
+    it('injects both flags when the partner supplied no args', () => {
+      expect(mergedArgs('new TestHarness()')).to.deep.equal([
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+      ]);
+    });
+
+    it('concatenates (never clobbers) partner-supplied args', () => {
+      expect(mergedArgs("new TestHarness({ args: ['--lang=en-US'] })")).to.deep.equal([
+        '--lang=en-US',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+      ]);
+    });
+
+    it('dedupes --no-sandbox / --disable-dev-shm-usage the partner already set', () => {
+      const merged = mergedArgs(
+        "new TestHarness({ args: ['--no-sandbox', '--foo', '--disable-dev-shm-usage'] })",
+      );
+      expect(merged).to.deep.equal(['--no-sandbox', '--foo', '--disable-dev-shm-usage']);
+      // exactly one of each sandbox flag
+      expect(merged.filter((a) => a === '--no-sandbox')).to.have.length(1);
+      expect(merged.filter((a) => a === '--disable-dev-shm-usage')).to.have.length(1);
+    });
+
+    it('preserves other partner options while merging args', () => {
+      const content = render("new TestHarness({ subject: 'chu_id', args: ['--x'] })");
+      expect(content).to.include("const HOUSE_OPTIONS = { subject: 'chu_id', args: ['--x'] };");
+      expect(mergedArgs("new TestHarness({ subject: 'chu_id', args: ['--x'] })")).to.deep.equal([
+        '--x',
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+      ]);
+    });
+
+    it('falls back to {} when the construction arg is not an object literal', () => {
+      // an identifier / positional arg cannot be safely spread
+      expect(render('new TestHarness(config)')).to.include('const HOUSE_OPTIONS = {};');
+      expect(mergedArgs('new TestHarness(config)')).to.deep.equal([
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+      ]);
+    });
+
+    it('keeps the parse guard green with the runtime-merge construction', () => {
+      expect(() => new Function(render("new TestHarness({ subject: 'p' })"))).to.not.throw();
+      expect(() => new Function(render('new TestHarness()'))).to.not.throw();
+    });
+
+    it('emits a PARSEABLE spec for a two-object positional ctor (comma-operator trap)', () => {
+      // A partner ctor of `new TestHarness({a:1}, {b:2})` must not leak the second
+      // object literal into `const HOUSE_OPTIONS = {a:1}, {b:2};` (un-parseable). It
+      // falls back to `{}` and the whole emitted file still parses.
+      const content = render('new TestHarness({a:1}, {b:2})');
+      expect(content).to.include('const HOUSE_OPTIONS = {};');
+      expect(() => new Function(content)).to.not.throw();
+      expect(mergedArgs('new TestHarness({a:1}, {b:2})')).to.deep.equal([
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+      ]);
     });
   });
 
@@ -226,7 +374,8 @@ describe('cht-conf-test-spec (F7 generation)', () => {
       expect(spec.relPath).to.equal(path.join('test', 'forms', `${FORM}.agent.spec.js`));
       expect(spec.overwriteAvoided).to.equal(true);
       expect(spec.housePatternFromDefault).to.equal(false);
-      expect(spec.content).to.include("new TestHarness({ subject: 'chu_id' })");
+      // F9: the partner options survive as HOUSE_OPTIONS, spread + sandbox-merged.
+      expect(spec.content).to.include("const HOUSE_OPTIONS = { subject: 'chu_id' };");
     });
 
     it('emits VALID JS when the partner spec builds the harness with path.resolve(...)', () => {
@@ -245,7 +394,11 @@ describe('cht-conf-test-spec (F7 generation)', () => {
         ].join('\n'),
       );
       const spec = generateHarnessSpec(descriptor(), bindDiff(), root);
-      expect(spec.content).to.include(construction);
+      // F9: the nested-call options survive verbatim inside the HOUSE_OPTIONS
+      // literal (balanced-paren extraction), then spread into the merged ctor.
+      expect(spec.content).to.include(
+        "const HOUSE_OPTIONS = { xformFolderPath: path.resolve(__dirname, '../forms/app') };",
+      );
       // The whole generated file must parse — the failing case threw here.
       expect(() => new Function(spec.content)).to.not.throw();
     });

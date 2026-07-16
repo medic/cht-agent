@@ -4,7 +4,14 @@ import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { findFormSpecs, resolveRepoMocha, runTier2 } from '../../src/utils/cht-conf-tier2';
+import {
+  findFormSpecs,
+  parseMochaPassing,
+  resolveRepoMocha,
+  runTier2,
+  tier2PassLine,
+  tier2TailExcerpt,
+} from '../../src/utils/cht-conf-tier2';
 
 const FORM = 'postnatal_care_service';
 
@@ -58,6 +65,60 @@ describe('cht-conf-tier2 (F7 runner)', () => {
   afterEach(() => {
     if (root) fs.rmSync(root, { recursive: true, force: true });
     sinon.restore();
+  });
+
+  // F9: tier-2 output visibility helpers (used by the QA panel/transition).
+  describe('parseMochaPassing (F9)', () => {
+    it('parses the mocha spec-reporter passing count', () => {
+      expect(parseMochaPassing('  12 passing (3s)\n')).to.equal(12);
+    });
+
+    it('takes the LAST passing summary (ignores incidental "passing" text)', () => {
+      const out = 'the run is passing along\n  ...\n  5 passing (1s)\n  1 pending\n';
+      expect(parseMochaPassing(out)).to.equal(5);
+    });
+
+    it('returns undefined when there is no summary line', () => {
+      expect(parseMochaPassing('No usable sandbox!\nboom\n')).to.equal(undefined);
+      expect(parseMochaPassing(undefined)).to.equal(undefined);
+      expect(parseMochaPassing('')).to.equal(undefined);
+    });
+  });
+
+  describe('tier2PassLine (F9)', () => {
+    it('includes the passing count when present', () => {
+      expect(tier2PassLine('  9 passing (2s)')).to.equal('tier-2 passed (9 passing)');
+    });
+
+    it('degrades to a countless one-liner when no summary is present', () => {
+      expect(tier2PassLine('crashed before epilogue')).to.equal('tier-2 passed');
+      expect(tier2PassLine(undefined)).to.equal('tier-2 passed');
+    });
+  });
+
+  describe('tier2TailExcerpt (F9)', () => {
+    it('keeps only the last N lines, each prefixed', () => {
+      const out = Array.from({ length: 40 }, (_, i) => `line${i}`).join('\n');
+      const excerpt = tier2TailExcerpt(out, 5);
+      const lines = excerpt.split('\n');
+      expect(lines).to.have.length(5);
+      expect(lines[0]).to.match(/^\s+│ line35$/);
+      expect(lines[4]).to.match(/^\s+│ line39$/);
+      // earlier lines are dropped
+      expect(excerpt).to.not.include('line0');
+    });
+
+    it('trims leading/trailing blank lines before taking the tail', () => {
+      const out = '\n\n  1 failing\n\n\n';
+      const excerpt = tier2TailExcerpt(out);
+      expect(excerpt.split('\n')).to.have.length(1);
+      expect(excerpt).to.match(/1 failing$/);
+    });
+
+    it('reports a placeholder when there is no output', () => {
+      expect(tier2TailExcerpt(undefined)).to.match(/no tier-2 output captured/);
+      expect(tier2TailExcerpt('   \n  \n')).to.match(/no tier-2 output captured/);
+    });
   });
 
   describe('findFormSpecs', () => {

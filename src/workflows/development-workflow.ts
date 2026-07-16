@@ -37,6 +37,7 @@ import {
   renderXlsformBindDiffBanner,
   renderXlsformExhaustedBanner,
 } from '../cli/display-helpers';
+import { formatValidationScore } from '../utils/score-display';
 
 const MAX_DEVELOPMENT_ITERATIONS = 3;
 
@@ -47,7 +48,9 @@ export const displayDevelopmentResults = (state: DevelopmentState, duration: str
   displayDevelopmentHeader(state, duration);
   if (state.codeGeneration) displayCodeGenerationResults(state.codeGeneration);
   if (state.testGeneration) displayTestGenerationResults(state.testGeneration);
-  if (state.validationResult) displayValidationResults(state.validationResult);
+  if (state.validationResult) {
+    displayValidationResults(state.validationResult, state.xlsformApply !== undefined);
+  }
 };
 
 function displayDevelopmentHeader(state: DevelopmentState, duration: string): void {
@@ -112,10 +115,15 @@ function displayTestGenerationResults(testGen: NonNullable<DevelopmentState['tes
   console.log();
 }
 
-function displayValidationResults(validation: NonNullable<DevelopmentState['validationResult']>): void {
+function displayValidationResults(
+  validation: NonNullable<DevelopmentState['validationResult']>,
+  hasVerifiedApply: boolean,
+): void {
   console.log('✅ VALIDATION RESULTS');
   console.log('─'.repeat(70));
-  console.log(`Overall Score: ${validation.overallScore}%`);
+  // F9: annotate when a verified deterministic apply overrode a below-threshold
+  // LLM score (F8 economics), so a low number is not misread as a failed run.
+  console.log(`Overall Score: ${formatValidationScore({ overallScore: validation.overallScore, hasVerifiedApply })}`);
   const metCount = validation.requirementsMet.filter(r => r.met).length;
   console.log(`Requirements Met: ${metCount}/${validation.requirementsMet.length}`);
   const passedCount = validation.acceptanceCriteriaPassed.filter(c => c.passed).length;
@@ -425,7 +433,13 @@ function displayDevelopmentSuccess(
     workflowResult.filesWritten.forEach((file, i) => console.log(`   ${i + 1}. ${file}`));
   }
   if (workflowResult.result?.validationResult) {
-    console.log(`\n📊 Validation Score: ${workflowResult.result.validationResult.overallScore}%`);
+    // F9: annotate an apply-overridden below-threshold LLM score.
+    console.log(
+      `\n📊 Validation Score: ${formatValidationScore({
+        overallScore: workflowResult.result.validationResult.overallScore,
+        hasVerifiedApply: workflowResult.result.xlsformApply !== undefined,
+      })}`,
+    );
   }
   // Mission 05: echo the verified XLSForm bind fix into the completion summary
   // (report payload) — the descriptor itself never reaches the partner repo.

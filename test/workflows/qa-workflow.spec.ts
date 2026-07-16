@@ -282,7 +282,10 @@ describe('qa-workflow', () => {
       expect(result.tier2?.ran).to.equal(true);
       expect(result.tier2?.passed).to.equal(true);
       expect(result.succeeded).to.equal(true);
-      expect(result.messages.some((m) => /tier-2: harness spec\(s\) PASSED/.test(m))).to.equal(true);
+      // F9: the transition entry carries the honest pass one-liner (with the
+      // parsed passing count when the fake mocha printed one; here it did not,
+      // so the countless form is expected).
+      expect(result.messages.some((m) => /tier-2 passed/.test(m))).to.equal(true);
     });
 
     it('fails succeeded when the harness spec fails (tier-2 folds in)', async () => {
@@ -295,6 +298,10 @@ describe('qa-workflow', () => {
       expect(result.tier2?.passed).to.equal(false);
       expect(result.verified).to.equal(true); // tier-1 still green
       expect(result.succeeded).to.equal(false); // tier-2 pulled it down
+      // F9: the transition carries the bounded output excerpt, not "see outputTail".
+      expect(result.messages.some((m) => /tier-2 FAILED — last output:/.test(m))).to.equal(true);
+      expect(result.messages.some((m) => /tier-2 fake mocha ran/.test(m))).to.equal(true);
+      expect(result.messages.some((m) => /see outputTail/.test(m))).to.equal(false);
     });
 
     it('self-skips honestly (succeeded unchanged) when no harness spec exists', async () => {
@@ -342,6 +349,49 @@ describe('qa-workflow', () => {
         spy.restore();
       }
       expect(logs.some((l) => /Tier-2 \(harness spec\).*passed/.test(l))).to.equal(true);
+    });
+
+    // F9: on success the panel shows the parsed mocha passing count (one line).
+    it('displayQaCompletion — tier-2 pass shows the parsed passing count', () => {
+      const logs: string[] = [];
+      const spy = sinon.stub(console, 'log').callsFake((...a: unknown[]) => logs.push(a.join(' ')));
+      try {
+        displayQaCompletion({
+          ran: true, approved: true, reproduced: true, verified: true, succeeded: true,
+          messages: [],
+          tier2: { ran: true, passed: true, outputTail: 'some noise\n  7 passing (3s)\n' },
+        });
+      } finally {
+        spy.restore();
+      }
+      expect(logs.some((l) => /Tier-2 \(harness spec\).*tier-2 passed \(7 passing\)/.test(l))).to.equal(true);
+    });
+
+    // F9: on failure the panel prints a bounded, prefixed excerpt of the output
+    // (last lines) INLINE — the diagnosis no longer needs a manual rerun.
+    it('displayQaCompletion — tier-2 failure prints a bounded output excerpt inline', () => {
+      const logs: string[] = [];
+      const spy = sinon.stub(console, 'log').callsFake((...a: unknown[]) => logs.push(a.join(' ')));
+      const outputTail = [
+        'No usable sandbox!',
+        '  1) postnatal_care_service — loads the corrected form',
+        '  0 passing (1s)',
+        '  1 failing',
+      ].join('\n');
+      try {
+        displayQaCompletion({
+          ran: true, approved: true, reproduced: true, verified: true, succeeded: false,
+          messages: [], tier2: { ran: true, passed: false, outputTail },
+        });
+      } finally {
+        spy.restore();
+      }
+      const joined = logs.join('\n');
+      expect(joined).to.match(/Tier-2 \(harness spec\).*failed — last output:/);
+      // The actual failing lines are echoed (prefixed), not "see outputTail".
+      expect(joined).to.include('No usable sandbox!');
+      expect(joined).to.include('1 failing');
+      expect(joined).to.not.include('see outputTail');
     });
   });
 

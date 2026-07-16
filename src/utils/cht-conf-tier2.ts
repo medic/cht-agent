@@ -101,6 +101,69 @@ const harnessRunnable = (configRoot: string, mochaBin: string): { ok: true } | {
 
 const keepTail = (s: string): string => (s.length > OUTPUT_TAIL_CHARS ? s.slice(-OUTPUT_TAIL_CHARS) : s);
 
+/** Default number of trailing output lines the QA panel echoes on a failure. */
+const TIER2_TAIL_LINES = 20;
+
+/** Line prefix for the echoed tier-2 output (so it reads as quoted child output). */
+const TIER2_TAIL_PREFIX = '   │ ';
+
+/**
+ * Parse mocha's spec-reporter passing count from tier-2 output (F9). The
+ * reporter prints a summary line like `  12 passing (3s)`; we take the LAST such
+ * match (the run's own summary, not any incidental "passing" text). Returns
+ * undefined when no summary line is present (e.g. the harness crashed before the
+ * epilogue), so callers degrade to a countless "tier-2 passed".
+ */
+export const parseMochaPassing = (outputTail: string | undefined): number | undefined => {
+  if (!outputTail) {
+    return undefined;
+  }
+  const re = /(\d+)\s+passing\b/g;
+  let last: number | undefined;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(outputTail)) !== null) {
+    last = Number(m[1]);
+  }
+  return last;
+};
+
+/**
+ * A bounded, prefixed excerpt of the tier-2 output for the QA panel on failure
+ * (F9): the last `maxLines` non-blank lines, each prefixed so it reads as quoted
+ * child output rather than the workbench's own log. The stored `outputTail` is
+ * already char-bounded; this bounds it by LINES for a readable panel.
+ */
+export const tier2TailExcerpt = (
+  outputTail: string | undefined,
+  maxLines: number = TIER2_TAIL_LINES,
+): string => {
+  if (!outputTail) {
+    return `${TIER2_TAIL_PREFIX}(no tier-2 output captured)`;
+  }
+  const lines = outputTail.split('\n').map((l) => l.replace(/\s+$/, ''));
+  // Drop leading/trailing blank lines, then keep the last `maxLines`.
+  while (lines.length > 0 && lines[0].trim() === '') {
+    lines.shift();
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+    lines.pop();
+  }
+  const tail = lines.slice(-maxLines);
+  if (tail.length === 0) {
+    return `${TIER2_TAIL_PREFIX}(no tier-2 output captured)`;
+  }
+  return tail.map((l) => `${TIER2_TAIL_PREFIX}${l}`).join('\n');
+};
+
+/**
+ * The success one-liner for the QA transition/panel (F9): "tier-2 passed" plus
+ * the parsed mocha passing count when the summary line was present.
+ */
+export const tier2PassLine = (outputTail: string | undefined): string => {
+  const passing = parseMochaPassing(outputTail);
+  return passing !== undefined ? `tier-2 passed (${passing} passing)` : 'tier-2 passed';
+};
+
 /**
  * Run tier-2: shell the repo-pinned mocha over the affected form's harness
  * spec(s) from the config-repo root. Never rejects — spawn errors and timeouts

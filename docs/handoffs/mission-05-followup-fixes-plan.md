@@ -289,6 +289,46 @@ groupPath — each salvages with warn; garbage still errors); economics spec
 (descriptor + low LLM score + passing apply ⇒ proceeds, no loop; failing
 apply ⇒ loops); gates: build + full suite + eslint clean.
 
+## F9 — SHIPPED (2026-07-16): sandbox-safe generated specs + tier-2 output visibility
+
+> Implemented + adversarially reviewed; review confirmed one real emission
+> bug (a two-object-literal positional ctor slipped the object-literal guard
+> via the comma operator and emitted unparseable JS — fixed by validating
+> with the exact emitted statement shape). Final gates: build clean,
+> **1587 passing / 1 pending / 0 failing**, eslint clean.
+
+Observed (fifth live run, 2026-07-16): the ENTIRE loop went green through
+both F6 oracles on iteration 1 (the 15% LLM score correctly overruled by the
+passing apply), but tier-2 failed: the generated harness spec faithfully
+copied the partner's `new TestHarness()` construction, and Chromium's SUID
+sandbox cannot initialize under the container's cap_drop ALL hardening
+("No usable sandbox!"). Harness 3.0.15 forwards its options object to
+`puppeteer.launch()` (harness.js:133), so constructor `args` ride through.
+Also: the QA summary said "tier-2 FAILED — see outputTail" without printing
+it — the diagnosis needed a manual rerun.
+
+**Implementation contract:**
+1. `src/utils/cht-conf-test-spec.ts` `renderSpec`: the emitted harness
+   construction must merge sandbox-safe launch args AT RUNTIME —
+   `new TestHarness({ ...HOUSE_OPTIONS, args: [...(HOUSE_OPTIONS.args || []),
+   '--no-sandbox', '--disable-dev-shm-usage'] })` with HOUSE_OPTIONS being
+   the detected partner options object (or `{}`) — concatenating (never
+   clobbering) any partner-supplied args, deduping the two flags, and still
+   passing the parse guard. Manual proof of the shape exists: the mount's
+   generated spec was hand-patched with these args after the live failure.
+2. Tier-2 visibility: when tier-2 ran, the QA result panel prints a bounded
+   `outputTail` excerpt (last ~20 lines) on failure and a one-line
+   "tier-2 passed (N passing)" on success; the transition entry carries the
+   same instead of "see outputTail".
+3. Score display honesty: when the deterministic apply verdict overrode a
+   below-threshold LLM score (F8 economics), annotate the displayed
+   validation score ("overridden by verified apply") so a low number does
+   not read as a failed run.
+
+Acceptance: emitted-spec specs (sandbox args present; partner args
+concatenated not clobbered; dedupe; parse guard green); QA display specs
+(fail → tail excerpt; pass → one-liner); score annotation spec; full gates.
+
 ## Gates (after EVERY fix, and finally)
 
 `npm run build` && `env -u ANTHROPIC_MODEL LANGFUSE_ENABLED=false npm test`

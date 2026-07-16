@@ -405,4 +405,55 @@ describe('displayDevelopmentCompletion Target banner (mission 05 F4 cosmetic)', 
     displayDevelopmentCompletion(result, { chtCorePath: '/workspace/cht-core', previewMode: true });
     expect(loggedText()).to.contain('Target: /workspace/cht-core');
   });
+
+  // F9: a below-threshold LLM score that a verified deterministic apply overrode
+  // (F8 economics) must be annotated so the low number does not read as a failure.
+  const validation = (overallScore: number) => ({
+    requirementsMet: [],
+    acceptanceCriteriaPassed: [],
+    overallScore,
+    recommendations: [],
+  });
+  const applyResult = () => ({
+    form: 'pregnancy_home_visit',
+    xlsxPath: '/tmp/x.xlsx',
+    xmlPath: '/tmp/x.xml',
+    xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
+    xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
+    bindDiff: { nodeset: '/data/danger_signs', after: "selected(../x, 'y')", siblingsUnchanged: 9 },
+    sandboxDir: '/tmp/sandbox',
+  });
+
+  it('annotates a below-threshold score overridden by a verified apply', () => {
+    const result = mkResult({
+      options: { chtCorePath: '/mounted/conf', previewMode: true },
+      validationResult: validation(15),
+      xlsformApply: applyResult(),
+    });
+    displayDevelopmentCompletion(result, { chtCorePath: '/workspace/cht-core', previewMode: true });
+    expect(loggedText()).to.contain('Validation Score: 15% (overridden by verified apply)');
+  });
+
+  it('does not annotate a below-threshold score when there is no verified apply', () => {
+    const result = mkResult({
+      options: { chtCorePath: '/workspace/cht-core', previewMode: true },
+      validationResult: validation(15),
+    });
+    displayDevelopmentCompletion(result, { chtCorePath: '/workspace/cht-core', previewMode: true });
+    const text = loggedText();
+    expect(text).to.contain('Validation Score: 15%');
+    expect(text).to.not.contain('overridden by verified apply');
+  });
+
+  it('does not annotate an at/above-threshold score even with a verified apply', () => {
+    const result = mkResult({
+      options: { chtCorePath: '/mounted/conf', previewMode: true },
+      validationResult: validation(90),
+      xlsformApply: applyResult(),
+    });
+    displayDevelopmentCompletion(result, { chtCorePath: '/workspace/cht-core', previewMode: true });
+    const text = loggedText();
+    expect(text).to.contain('Validation Score: 90%');
+    expect(text).to.not.contain('overridden by verified apply');
+  });
 });

@@ -48,7 +48,7 @@ import { extractTopLevelGroupBinds } from '../utils/xform-inspect';
 import { guardConfigFix } from '../utils/config-type';
 import { resolveDeploymentConfigRoot } from '../utils/canonical-diff';
 import { canonicalDiffLines } from '../utils/xlsform-apply';
-import { runTier2 } from '../utils/cht-conf-tier2';
+import { runTier2, tier2PassLine, tier2TailExcerpt } from '../utils/cht-conf-tier2';
 import { askYesNo } from '../utils/prompt';
 
 /** cht-conf upload buckets to apply for each verifiable artifact kind. */
@@ -444,11 +444,16 @@ export const executeQaWorkflow = async (
     tier2 = await runTier2({ configRoot: input.configPath, form: artifact });
     if (tier2.ran) {
       succeeded = succeeded && tier2.passed === true;
-      messages.push(
-        tier2.passed
-          ? 'tier-2: harness spec(s) PASSED'
-          : 'tier-2: harness spec(s) FAILED — see outputTail',
-      );
+      if (tier2.passed) {
+        // F9: carry the parsed passing count in the transition, not a bare label.
+        messages.push(tier2PassLine(tier2.outputTail));
+      } else {
+        // F9: carry the bounded output excerpt in the transition instead of the
+        // useless "see outputTail" (the diagnosis needed a manual rerun before).
+        messages.push(
+          `tier-2 FAILED — last output:\n${tier2TailExcerpt(tier2.outputTail)}`,
+        );
+      }
     } else {
       messages.push(`tier-2: skipped — ${tier2.reason}`);
     }
@@ -488,13 +493,17 @@ export const displayQaCompletion = (result: QaResult): void => {
   console.log(`🏁 Closed loop succeeded: ${result.succeeded ? '✅' : '❌'}`);
   if (result.tier2) {
     const t = result.tier2;
-    let label: string;
     if (!t.ran) {
-      label = `⏭️  skipped (${t.reason})`;
+      console.log(`🔬 Tier-2 (harness spec): ⏭️  skipped (${t.reason})`);
+    } else if (t.passed) {
+      // F9: one-line pass with the parsed mocha passing count when available.
+      console.log(`🔬 Tier-2 (harness spec): ✅ ${tier2PassLine(t.outputTail)}`);
     } else {
-      label = t.passed ? '✅ passed' : '❌ failed';
+      // F9: print a bounded tail excerpt inline so the failure is diagnosable
+      // from the panel itself (no manual rerun to see why it failed).
+      console.log('🔬 Tier-2 (harness spec): ❌ failed — last output:');
+      console.log(tier2TailExcerpt(t.outputTail));
     }
-    console.log(`🔬 Tier-2 (harness spec): ${label}`);
   }
   if (result.abortReason) {
     console.log(`\n⚠️  Aborted: ${result.abortReason}`);

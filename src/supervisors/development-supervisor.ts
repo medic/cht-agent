@@ -51,6 +51,7 @@ import { parseXlsformFixDescriptor, XLSFORM_FIX_DESCRIPTOR_PATH } from '../utils
 import { generateHarnessSpec } from '../utils/cht-conf-test-spec';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 import { readEnv } from '../utils/env';
+import { REFINEMENT_THRESHOLD, formatValidationScore } from '../utils/score-display';
 
 /**
  * The refinement-loop iteration budget. Default 3; overridable via
@@ -82,7 +83,6 @@ export function resolveMaxIterations(): number {
 }
 
 const MAX_ITERATIONS = resolveMaxIterations();
-const REFINEMENT_THRESHOLD = 75;
 
 /**
  * Render a "Heading:\n- bullet\n- bullet" section if `items` is non-empty.
@@ -1208,7 +1208,15 @@ Respond with a JSON object:
       console.log(`Generated Files: ${result.codeGeneration.files.length}`);
     }
     if (result.validationResult) {
-      console.log(`Validation Score: ${result.validationResult.overallScore}%`);
+      // F9: annotate when the deterministic apply verdict overrode a
+      // below-threshold LLM score (F8 economics) so a low number is not read as
+      // a failed run.
+      console.log(
+        `Validation Score: ${formatValidationScore({
+          overallScore: result.validationResult.overallScore,
+          hasVerifiedApply: result.xlsformApply !== undefined,
+        })}`,
+      );
     }
 
     console.log('========================================\n');

@@ -23,6 +23,7 @@ import {
   XlsformBindDiff,
 } from '../types';
 import { askYesNo } from '../utils/prompt';
+import { formatValidationScore } from '../utils/score-display';
 import {
   executeResearchWorkflow,
   displayWorkflowCompletion as displayResearchCompletion,
@@ -272,6 +273,12 @@ function displayDevelopmentSummary(development: NonNullable<FullWorkflowResult['
   console.log(`   Approved: ${development.approved ? '✅' : '❌'}`);
   console.log(`   Files Written: ${development.filesWritten.length}`);
   if (development.result?.validationResult) {
-    console.log(`   Validation Score: ${development.result.validationResult.overallScore}%`);
+    // F9: annotate an apply-overridden below-threshold LLM score (F8 economics).
+    console.log(
+      `   Validation Score: ${formatValidationScore({
+        overallScore: development.result.validationResult.overallScore,
+        hasVerifiedApply: development.result.xlsformApply !== undefined,
+      })}`,
+    );
   }
 }
