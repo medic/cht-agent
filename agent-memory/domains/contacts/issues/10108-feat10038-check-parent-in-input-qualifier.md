@@ -1,10 +1,10 @@
 ---
-id: cht-core-10108
+id: cht-core-10038
 category: improvement
 domain: contacts
 domainFit: strong
-issueNumber: 10108
-issueUrl: https://github.com/medic/cht-core/issues/10108
+issueNumber: 10038
+issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Add parent field validation to the place input qualifier in cht-datasource local provider
 lastUpdated: '2026-06-22'
 summary: The local place data access in cht-datasource did not validate the `parent` field when qualifying a place document. This PR adds parent-field checks to the place input qualifier with accompanying unit tests.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-9090
+id: cht-core-9065
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9090
-issueUrl: https://github.com/medic/cht-core/issues/9090
+issueNumber: 9065
+issueUrl: https://github.com/medic/cht-core/issues/9065
 title: Introduce cht-datasource shared data-access library (converted from cht-script-api) with get-person-by-UUID over local/remote data contexts
 lastUpdated: '2026-06-23'
 summary: CHT had no unified, context-aware data-access layer for fetching domain entities consistently across server, client, and custom config code. This PR converts cht-script-api into a new cht-datasource TypeScript library exposing person.getByUuid through both imperative and declarative APIs over local (offline) and remote (online) data contexts.

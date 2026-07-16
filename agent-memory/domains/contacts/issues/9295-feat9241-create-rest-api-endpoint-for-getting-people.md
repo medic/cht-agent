@@ -1,10 +1,10 @@
 ---
-id: cht-core-9295
+id: cht-core-9241
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9295
-issueUrl: https://github.com/medic/cht-core/issues/9295
+issueNumber: 9241
+issueUrl: https://github.com/medic/cht-core/issues/9241
 title: Add REST API endpoint for getting people via cht-datasource
 lastUpdated: '2026-06-23'
 summary: CHT had no dedicated REST API endpoint for programmatically retrieving person (contact) documents. This adds a person module to the cht-datasource shared library (local and remote variants) and exposes it through a new api controller and route that resolves a person by qualifier.

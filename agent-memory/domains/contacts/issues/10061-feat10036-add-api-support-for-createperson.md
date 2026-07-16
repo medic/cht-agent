@@ -1,10 +1,10 @@
 ---
-id: cht-core-10061
+id: cht-core-10036
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10061
-issueUrl: https://github.com/medic/cht-core/issues/10061
+issueNumber: 10036
+issueUrl: https://github.com/medic/cht-core/issues/10036
 title: Add API support for createPerson via the cht-datasource person concept module
 lastUpdated: '2026-06-22'
 summary: There was no unified, programmatic way to create a person (contact) through the cht-datasource interface or the API. This PR adds a createPerson function to the person concept module with qualifier and parameter-validation support, exposes it through the remote implementation and the public datasource index, and wires up a new API controller and route.

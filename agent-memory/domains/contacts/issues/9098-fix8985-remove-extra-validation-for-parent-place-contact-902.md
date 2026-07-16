@@ -1,10 +1,10 @@
 ---
-id: cht-core-9098
+id: cht-core-8985
 category: bug
 domain: contacts
 domainFit: strong
-issueNumber: 9098
-issueUrl: https://github.com/medic/cht-core/issues/9098
+issueNumber: 8985
+issueUrl: https://github.com/medic/cht-core/issues/8985
 title: Remove extra validation of ancestor places' primary contacts when creating a new place
 lastUpdated: '2026-06-23'
 summary: Creating a new place unnecessarily re-validated the primary contacts of ancestor (parent) places, which could block legitimate place creation. The fix removes that extra validation so ancestors' primary contacts are no longer checked during creation.

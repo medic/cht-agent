@@ -1,10 +1,10 @@
 ---
-id: cht-core-10056
+id: cht-core-10036
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10056
-issueUrl: https://github.com/medic/cht-core/issues/10056
+issueNumber: 10036
+issueUrl: https://github.com/medic/cht-core/issues/10036
 title: Implement createPerson for the local cht-datasource implementation
 lastUpdated: '2026-06-22'
 summary: The cht-datasource library had no way to create a Person (contact) document through its local implementation. This PR adds the createPerson function to the local datasource plus supporting qualifier logic and unit tests.

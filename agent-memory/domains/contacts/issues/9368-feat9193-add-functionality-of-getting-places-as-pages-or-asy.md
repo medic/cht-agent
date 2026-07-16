@@ -1,10 +1,10 @@
 ---
-id: cht-core-9368
+id: cht-core-9193
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9368
-issueUrl: https://github.com/medic/cht-core/issues/9368
+issueNumber: 9193
+issueUrl: https://github.com/medic/cht-core/issues/9193
 title: Add paginated and async-iterable retrieval of places by type to cht-datasource, plus GET /api/v1/place and /api/v1/person REST endpoints
 lastUpdated: '2026-06-23'
 summary: cht-datasource could fetch individual places but had no way to retrieve places by contact type in bulk. This PR adds cursor-based pagination (Place.v1.getPageByType) and an async-generator API (Place.v1.getByType), and exposes paginated REST endpoints GET /api/v1/place and GET /api/v1/person.

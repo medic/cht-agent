@@ -1,10 +1,10 @@
 ---
-id: cht-core-9394
+id: cht-core-9269
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9394
-issueUrl: https://github.com/medic/cht-core/issues/9394
+issueNumber: 9269
+issueUrl: https://github.com/medic/cht-core/issues/9269
 title: Expose an analytics.targetDocs() cht-datasource API and pass the logged-in user's last three months of target docs into the contact summary
 lastUpdated: '2026-06-23'
 summary: Contact summaries had no access to target/analytics data. This PR adds an `analytics.targetDocs()` namespace to the webapp CHTDatasourceAPI and passes the latest three months of the logged-in user's target docs into the contact-summary context when viewing one of the user's own facilities.

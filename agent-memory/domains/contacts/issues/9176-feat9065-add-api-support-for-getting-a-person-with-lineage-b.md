@@ -1,10 +1,10 @@
 ---
-id: cht-core-9176
+id: cht-core-9065
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9176
-issueUrl: https://github.com/medic/cht-core/issues/9176
+issueNumber: 9065
+issueUrl: https://github.com/medic/cht-core/issues/9065
 title: Add cht-datasource and REST API support for getting a person with lineage by UUID
 lastUpdated: '2026-06-23'
 summary: There was no way to fetch a person along with their full parent-contact lineage in one call. This PR adds a get-with-lineage capability to cht-datasource (with local and remote bindings) and exposes it through a new person REST API endpoint.

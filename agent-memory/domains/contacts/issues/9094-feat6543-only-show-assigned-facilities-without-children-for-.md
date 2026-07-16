@@ -1,10 +1,10 @@
 ---
-id: cht-core-9094
+id: cht-core-6543
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9094
-issueUrl: https://github.com/medic/cht-core/issues/9094
+issueNumber: 6543
+issueUrl: https://github.com/medic/cht-core/issues/6543
 title: Show only assigned facilities without children in the contact list for users with multiple facility_ids
 lastUpdated: '2026-06-23'
 summary: 'With support for users assigned to multiple facilities (facility_id as an array), the contact list had no sensible way to render multiple homeplaces. The PR branches the contacts UI on facility count: multi-facility users see only their assigned homeplaces (children surfaced via a ''places'' card in the detail view, with sort and highlight hidden), while single-facility users keep the existing homeplace-plus-children behavior.'

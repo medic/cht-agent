@@ -1,10 +1,10 @@
 ---
-id: cht-core-10083
+id: cht-core-9835
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10083
-issueUrl: https://github.com/medic/cht-core/issues/10083
+issueNumber: 9835
+issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Add cht-datasource create/update APIs for contacts and reports (local + remote data contexts)
 lastUpdated: '2026-06-22'
 summary: The cht-datasource library and api only exposed read operations for contacts and reports. This PR adds create and update operations for person, place and report entities across both local (PouchDB) and remote (HTTP) data contexts, with a new shared input-validation flow and corresponding api controller endpoints.

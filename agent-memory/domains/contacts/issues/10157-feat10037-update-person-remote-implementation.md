@@ -1,10 +1,10 @@
 ---
-id: cht-core-10157
+id: cht-core-10037
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10157
-issueUrl: https://github.com/medic/cht-core/issues/10157
+issueNumber: 10037
+issueUrl: https://github.com/medic/cht-core/issues/10037
 title: Add updatePerson operation to cht-datasource remote (and local) implementations, with API controllers and routing (place/report extended in lockstep)
 lastUpdated: '2026-06-22'
 summary: The cht-datasource remote (API-backed) implementation had no update operation for persons. This PR implements updatePerson across the public/local/remote datasource layers and wires matching API controller handlers and routes, extending place and report in parallel.

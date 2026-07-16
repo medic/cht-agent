@@ -1,10 +1,10 @@
 ---
-id: cht-core-8684
+id: cht-core-6669
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 8684
-issueUrl: https://github.com/medic/cht-core/issues/8684
+issueNumber: 6669
+issueUrl: https://github.com/medic/cht-core/issues/6669
 title: Add barcode scanner to search for contacts using the native Barcode Detection API
 lastUpdated: '2026-06-23'
 summary: Health workers had no way to look up contacts by scanning a barcode and had to type identifiers manually. This adds a permission-gated barcode scanner button to the search bar that opens the device camera, reads the barcode from the captured image via the browser's native Barcode Detection API, and triggers a contact search with the decoded value.

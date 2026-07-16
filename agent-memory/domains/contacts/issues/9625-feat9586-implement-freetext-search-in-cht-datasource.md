@@ -1,10 +1,10 @@
 ---
-id: cht-core-9625
+id: cht-core-9586
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9625
-issueUrl: https://github.com/medic/cht-core/issues/9625
+issueNumber: 9586
+issueUrl: https://github.com/medic/cht-core/issues/9586
 title: Implement freetext search for contacts and reports in the cht-datasource shared library
 lastUpdated: '2026-06-22'
 summary: cht-datasource (the typed read-access library) could only fetch records by identifier and had no freetext search capability. This PR adds a freetext qualifier plus search functions for contacts (persons/places) and reports across both local (CouchDB view-backed) and remote (API-backed) data contexts, and exposes them via new API controller endpoints.

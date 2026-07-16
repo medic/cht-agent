@@ -1,10 +1,10 @@
 ---
-id: cht-core-10141
+id: cht-core-10037
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10141
-issueUrl: https://github.com/medic/cht-core/issues/10141
+issueNumber: 10037
+issueUrl: https://github.com/medic/cht-core/issues/10037
 title: Implement update-person operation in the cht-datasource local data module
 lastUpdated: '2026-06-22'
 summary: The cht-datasource local (offline-capable) backend exposed read operations for person documents but had no update operation. This PR implements update-person in the local module, wiring it through the public datasource API, input validation, and shared core libs, following the existing place/report pattern.

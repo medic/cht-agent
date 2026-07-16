@@ -1,10 +1,10 @@
 ---
-id: cht-core-10089
+id: cht-core-10038
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10089
-issueUrl: https://github.com/medic/cht-core/issues/10089
+issueNumber: 10038
+issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Add cht-datasource and REST API support to create place contacts
 lastUpdated: '2026-06-22'
 summary: The cht-datasource library and API previously exposed only read operations for places; this PR adds a createPlace capability across the local and remote datasource adapters and a new API controller/route to create place contacts programmatically.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10124
+id: cht-core-10038
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10124
-issueUrl: https://github.com/medic/cht-core/issues/10124
+issueNumber: 10038
+issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Store person/place (and report) parent/contact fields as a dehydrated lineage object instead of a bare string id
 lastUpdated: '2026-06-22'
 summary: When creating persons/places/reports through cht-datasource, the parent and contact fields were persisted as plain string IDs. This PR fetches and validates the referenced parent (ensuring its contact_type is one of the allowed parents for the new contact's type) and stores the parent/contact field as a dehydrated (minified) lineage object instead.

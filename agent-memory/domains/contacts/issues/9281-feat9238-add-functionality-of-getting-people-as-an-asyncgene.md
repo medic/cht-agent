@@ -1,10 +1,10 @@
 ---
-id: cht-core-9281
+id: cht-core-9238
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 9281
-issueUrl: https://github.com/medic/cht-core/issues/9281
+issueNumber: 9238
+issueUrl: https://github.com/medic/cht-core/issues/9238
 title: Add Person.v1.getAll AsyncGenerator to cht-datasource for paginated iteration over all people
 lastUpdated: '2026-06-23'
 summary: cht-datasource could only fetch a single cursor-paginated page of people at a time, forcing callers to manage cursors manually. This adds Person.v1.getAll(ctx)(qualifier), returning an AsyncGenerator that lazily yields successive pages of person docs across both local and remote data contexts.

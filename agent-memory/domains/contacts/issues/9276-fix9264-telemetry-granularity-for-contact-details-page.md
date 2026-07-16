@@ -1,10 +1,10 @@
 ---
-id: cht-core-9276
+id: cht-core-9264
 category: bug
 domain: contacts
 domainFit: strong
-issueNumber: 9276
-issueUrl: https://github.com/medic/cht-core/issues/9276
+issueNumber: 9264
+issueUrl: https://github.com/medic/cht-core/issues/9264
 title: Fix telemetry granularity for the contact details page so the load event records the specific contact type
 lastUpdated: '2026-06-23'
 summary: The contact details page recorded a generic `contact_detail:contact:load` telemetry event instead of one reflecting the contact's actual type. The fix derives the telemetry key from the contact's `contact_type`/`type` (with a default fallback) so loads are recorded at the correct granularity, e.g. `contact_detail:clinic:load`.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10043
+id: cht-core-10036
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10043
-issueUrl: https://github.com/medic/cht-core/issues/10043
+issueNumber: 10036
+issueUrl: https://github.com/medic/cht-core/issues/10036
 title: Add PersonQualifier and related functions to cht-datasource to enable person document creation
 lastUpdated: '2026-06-22'
 summary: The cht-datasource library lacked a qualifier abstraction for person documents, which is a prerequisite for creating persons via the datasource. This PR adds a `PersonQualifier` type plus related helper/guard functions and unit tests as groundwork for person-creation support.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10081
+id: cht-core-9835
 category: improvement
 domain: contacts
 domainFit: strong
-issueNumber: 10081
-issueUrl: https://github.com/medic/cht-core/issues/10081
+issueNumber: 9835
+issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Remove lineage checks from cht-datasource person data source and qualifier
 lastUpdated: '2026-06-22'
 summary: 'The cht-datasource person module and qualifier performed lineage validation checks that were deemed unnecessary during review of PR #10043. This PR removes those checks and updates the associated unit and integration tests.'

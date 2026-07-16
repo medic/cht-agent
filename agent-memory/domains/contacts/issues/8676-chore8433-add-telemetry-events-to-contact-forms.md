@@ -1,10 +1,10 @@
 ---
-id: cht-core-8676
+id: cht-core-8433
 category: improvement
 domain: contacts
 domainFit: strong
-issueNumber: 8676
-issueUrl: https://github.com/medic/cht-core/issues/8676
+issueNumber: 8433
+issueUrl: https://github.com/medic/cht-core/issues/8433
 title: Add telemetry events to contact forms in the contacts-edit component
 lastUpdated: '2026-06-23'
 summary: Contact form interactions in the contacts-edit component were not instrumented, leaving no telemetry data on contact form load/save behavior. This PR adds telemetry events to record that data, with unit tests updated to cover the new instrumentation.

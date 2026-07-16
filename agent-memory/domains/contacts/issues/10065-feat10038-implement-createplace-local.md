@@ -1,10 +1,10 @@
 ---
-id: cht-core-10065
+id: cht-core-10038
 category: feature
 domain: contacts
 domainFit: strong
-issueNumber: 10065
-issueUrl: https://github.com/medic/cht-core/issues/10065
+issueNumber: 10038
+issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Implement createPlace in the cht-datasource local data context
 lastUpdated: '2026-06-22'
 summary: The cht-datasource local data context could read places but had no way to create them. This PR implements `createPlace` in the local place module with accompanying unit tests, enabling programmatic place-contact creation through the unified datasource API.
