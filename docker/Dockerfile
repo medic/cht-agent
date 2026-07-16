@@ -134,11 +134,16 @@ RUN npm install -g @anthropic-ai/claude-code
 # --break-system-packages is bookworm PEP 668 (no other python payload here).
 # Trailing -h run fails the build closed if the fork stops importing on the
 # image's Python. (The image's own cht-conf ≥4 needs only system python3.)
-RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
+# xsltproc: cht-conf-test-harness 3.x's loadForm runs the legacy cht-core XSL
+# form pipeline via the `xsltproc` binary — without it the tier-2 QA hook's
+# form-load smoke test fails ("check that 'xsltproc' command is available"),
+# proven in the sixth live run; the bind assertion alone still passed.
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip xsltproc \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --break-system-packages \
         "https://github.com/medic/pyxform/archive/refs/heads/medic-conf-1.17.tar.gz#egg=pyxform-medic" \
-    && xls2xform-medic -h > /dev/null
+    && xls2xform-medic -h > /dev/null \
+    && command -v xsltproc > /dev/null
 
 USER agent
 

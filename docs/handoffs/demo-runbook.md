@@ -420,7 +420,11 @@ docker exec cht-agent bash -lc 'cd /app && npm run test:harness'
 The same baked snapshot serves the live config repo's own pinned harness
 **3.0.15** (both harnesses pin resolver `^10` → same revision) — so the agent
 can also run Enketo-level checks from inside `/workspace/cht-conf-project`
-(its toolchain lands there via step 0's `npm ci`, riding the mount).
+(its toolchain lands there via step 0's `npm ci`, riding the mount). Note:
+harness **3.x** `loadForm` additionally shells out to **`xsltproc`** (the
+legacy cht-core XSL form pipeline) — baked into the image's
+deployment-toolchain layer with a fail-closed build check; harness 5.x does
+not need it.
 
 Caveats: the workbench harness 5.0.4 bundles **only cht-core 4.11**
 (`coreVersion` must be `'4.11.0'`; higher versions throw) — the `relevant`

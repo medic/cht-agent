@@ -296,6 +296,14 @@ apply ⇒ loops); gates: build + full suite + eslint clean.
 > via the comma operator and emitted unparseable JS — fixed by validating
 > with the exact emitted statement shape). Final gates: build clean,
 > **1587 passing / 1 pending / 0 failing**, eslint clean.
+>
+> **Addendum (sixth live run):** tier-2 ran end-to-end and surfaced one
+> environment gap — harness 3.x's `loadForm` runs the legacy cht-core XSL
+> pipeline via the **`xsltproc`** binary, absent from the image (the
+> workbench harness 5.x doesn't need it). The bind assertion passed; only
+> the form-load smoke failed. Proven single-gap by running the emitted spec
+> on the host (has xsltproc): 2 passing. Fix: `xsltproc` baked into the
+> Dockerfile's deployment-toolchain layer with a fail-closed check.
 
 Observed (fifth live run, 2026-07-16): the ENTIRE loop went green through
 both F6 oracles on iteration 1 (the 15% LLM score correctly overruled by the
