@@ -2,7 +2,7 @@
 id: cht-core-9618
 category: bug
 domain: forms-and-reports
-domainFit: strong
+domainFit: weak
 issueNumber: 9618
 issueUrl: https://github.com/medic/cht-core/issues/9618
 title: Prevent API from crashing on startup when a form is broken/invalid
@@ -78,6 +78,6 @@ Added an integration test in tests/integration/api/server.spec.js asserting that
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The bug is triggered by broken/invalid form definitions and the fix isolates form-processing failures during API startup, so forms are the clear subject and forms-and-reports is the most specific functional domain. It is not infrastructure, since that bucket is reserved for operational lifecycle (CI/build/deploy/upgrade) rather than application runtime error handling.
+The fix is API startup resilience (isolating a failing form-processing step so the whole service survives); broken forms are the trigger rather than the subject, so forms-and-reports is the least-bad home rather than a principled fit.

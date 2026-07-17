@@ -1,6 +1,6 @@
 ---
 id: cht-core-9413
-category: bug
+category: improvement
 domain: forms-and-reports
 domainFit: strong
 issueNumber: 9413
@@ -63,7 +63,7 @@ Replace deprecated synchronous DOM mutation events (DOMSubtreeModified) with a M
 
 ## Design Choices
 
-MutationObserver is the modern, supported replacement for mutation events and required minimal additional code. Because MutationObserver callbacks fire asynchronously, the e2e assertion is structured to run last on the macro-task queue to avoid flaky timing while reliably observing the update; a reviewer raised a minor question about the type check before approving.
+MutationObserver is the modern, supported replacement for mutation events and required minimal additional code. Because MutationObserver callbacks fire asynchronously, the e2e assertion is structured to run last on the macro-task queue to avoid flaky timing while reliably observing the update.
 
 ## Related Files
 

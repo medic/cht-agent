@@ -68,7 +68,7 @@ XmlFormsContextUtilsService.extensionLib(libId, ...args) retrieves an extension-
 
 ## Design Choices
 
-Modeled extensionLib() on the existing cht:extension-lib xPath function for consistency rather than inventing a new mechanism. Following reviewer (jkuester) feedback, the extension-lib lookup was kept off a synchronous getExtensionLib accessor on CHTDatasourceService, ensuring the datasource is fully initialized before an extension-lib is returned and invoked.
+Modeled extensionLib() on the existing cht:extension-lib xPath function for consistency rather than inventing a new mechanism. The extension-lib lookup was kept off a synchronous getExtensionLib accessor on CHTDatasourceService, ensuring the datasource is fully initialized before an extension-lib is returned and invoked.
 
 ## Related Files
 
@@ -81,7 +81,7 @@ Modeled extensionLib() on the existing cht:extension-lib xPath function for cons
 
 ## Testing
 
-Added/updated Karma unit tests for xml-forms-context-utils.service, deduplicate.service, form.service, xml-forms.service, cht-datasource.service and parse.provider. A WebdriverIO e2e test (tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js) with a supporting page object (custom-doc.wdio.page.js) was added by the reviewer to guard against future regressions in calling extension-libs from duplicate-check expressions.
+Added/updated Karma unit tests for xml-forms-context-utils.service, deduplicate.service, form.service, xml-forms.service, cht-datasource.service and parse.provider. A WebdriverIO e2e test (tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js) with a supporting page object (custom-doc.wdio.page.js) was added to guard against future regressions in calling extension-libs from duplicate-check expressions.
 
 ## Related Issues
 

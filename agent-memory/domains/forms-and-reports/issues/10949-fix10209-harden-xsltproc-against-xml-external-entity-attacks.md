@@ -72,7 +72,7 @@ An input allowlist (reject DOCTYPE/ENTITY) was chosen as the primary, cheapest, 
 
 ## Testing
 
-npm run unit-api on generate-xform.spec.js: 46 existing tests pass unchanged, plus 4 new tests — (a) --nonet is the first argument on every xsltproc spawn, (b) XForms with <!DOCTYPE> are rejected with a clear error and xsltproc is never spawned, (c) XForms with <!ENTITY> are rejected the same way, (d) XForms whose comments merely mention the literal text <!DOCTYPE/<!ENTITY> are still accepted (no false positives). npm run lint clean on both files; reviewer (witash) confirmed locally that a malicious form can no longer be uploaded.
+npm run unit-api on generate-xform.spec.js: 46 existing tests pass unchanged, plus 4 new tests — (a) --nonet is the first argument on every xsltproc spawn, (b) XForms with <!DOCTYPE> are rejected with a clear error and xsltproc is never spawned, (c) XForms with <!ENTITY> are rejected the same way, (d) XForms whose comments merely mention the literal text <!DOCTYPE/<!ENTITY> are still accepted (no false positives). npm run lint clean on both files; it was confirmed locally that a malicious form can no longer be uploaded.
 
 ## Related Issues
 

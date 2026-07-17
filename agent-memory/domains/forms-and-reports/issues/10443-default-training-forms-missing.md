@@ -6,12 +6,14 @@ subDomain: build
 issueNumber: 10443
 issueUrl: https://github.com/medic/cht-core/issues/10443
 title: Default training forms not included in released Docker images
-lastUpdated: 2025-11-12
+lastUpdated: 2026-07-16
 summary: The default training form ("Welcome Guide" for new admins) was not included in the published CHT Docker images because the build script did not process training forms from the default config directory.
 services:
   - api
 techStack:
   - javascript
+source_prs:
+  - "medic/cht-core#10445"
 ---
 
 ## Problem
@@ -23,6 +25,8 @@ A training form was added to the default config (PR #10290) to show a "Welcome G
 The build script (`scripts/build/build-config.sh`) that packages the default config into Docker images did not include the training forms directory. It processed app forms and contact forms but skipped the training forms folder.
 
 ## Solution
+
+The fix merged as PR #10445: the build script now includes the default training forms, and the e2e suites write the training doc in setupUserDoc during login so tests can delete the report (auto re-added on next login).
 
 Updated the build configuration script to include default training forms in the build output. PR #10445 also updated test constants and E2E test utilities to account for the training form.
 

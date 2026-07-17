@@ -71,7 +71,7 @@ Appearance-driven widget behavior — the Enketo widget inspects its `appearance
 
 ## Design Choices
 
-Reused the existing `contact_by_parent` CouchDB view rather than adding a new index or Nouveau search, keeping the filter cheap and consistent with existing hierarchy queries. The behavior is opt-in per field via a declarative form `appearance` attribute, so configurers enable it without code changes, and is scoped to forms opened in the contact tab. A reviewer flagged the original `with-same-parent` naming as ambiguous (sounding like a siblings-of filter); the final `descendant-of-current-contact` name was chosen to clearly convey subtree/descendant semantics.
+Reused the existing `contact_by_parent` CouchDB view rather than adding a new index or Nouveau search, keeping the filter cheap and consistent with existing hierarchy queries. The behavior is opt-in per field via a declarative form `appearance` attribute, so configurers enable it without code changes, and is scoped to forms opened in the contact tab. The original `with-same-parent` naming was ambiguous (sounding like a siblings-of filter); the final `descendant-of-current-contact` name was chosen to clearly convey subtree/descendant semantics.
 
 ## Related Files
 

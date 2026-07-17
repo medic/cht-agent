@@ -76,7 +76,7 @@ Native DOM dispatch was mandatory because enketo-core 7.x removed jQuery, so jQu
 
 ## Testing
 
-Karma unit tests added/updated for both enketo.service and the contacts-edit component to assert the native `before-save` event is dispatched on save. Reviewer (jkuester) additionally manually tested with both a contact form and an app form, confirming `end` is now correctly populated and diverges from `start`.
+Karma unit tests added/updated for both enketo.service and the contacts-edit component to assert the native `before-save` event is dispatched on save. Additionally manually tested with both a contact form and an app form, confirming `end` is now correctly populated and diverges from `start`.
 
 ## Related Issues
 

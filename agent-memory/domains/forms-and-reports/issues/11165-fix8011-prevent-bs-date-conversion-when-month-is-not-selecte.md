@@ -59,7 +59,7 @@ Guard a derived/converted value on completeness of all its source inputs before 
 
 ## Design Choices
 
-Rather than treating a missing month as a sensible default (Baisakh), the fix treats incomplete input as no input and clears the Gregorian output so existing required-field validation surfaces the error instead of silently persisting a wrong date. The reviewer (sugat009) initially requested changes because the first attempt did not fully resolve the issue, then re-reviewed and confirmed end-to-end that day+year with no month no longer saves a date while a complete date still saves correctly.
+Rather than treating a missing month as a sensible default (Baisakh), the fix treats incomplete input as no input and clears the Gregorian output so existing required-field validation surfaces the error instead of silently persisting a wrong date. The first attempt did not fully resolve the issue; the final fix was confirmed end-to-end — day+year with no month no longer saves a date, while a complete date still saves correctly.
 
 ## Related Files
 
@@ -70,7 +70,7 @@ Rather than treating a missing month as a sensible default (Baisakh), the fix tr
 
 ## Testing
 
-Added/updated Karma unit tests for the widget (bikram-sambat-datepicker.spec.ts) with a corresponding karma-unit.conf.js update to include the spec, plus an end-to-end WebdriverIO spec (nepali-dates-and-numbers.wdio-spec.js) exercising Nepali date entry. The reviewer additionally built the branch's webapp and manually verified that day+year without a month no longer saves a date (field stays empty, required validation blocks submit) and that a complete date saves correctly.
+Added/updated Karma unit tests for the widget (bikram-sambat-datepicker.spec.ts) with a corresponding karma-unit.conf.js update to include the spec, plus an end-to-end WebdriverIO spec (nepali-dates-and-numbers.wdio-spec.js) exercising Nepali date entry. The branch's webapp was additionally built and manually verified: day+year without a month no longer saves a date (field stays empty, required validation blocks submit) and that a complete date saves correctly.
 
 ## Related Issues
 

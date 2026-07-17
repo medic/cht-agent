@@ -57,7 +57,7 @@ Enketo's pager only skips pages for groups it considers non-relevant or disabled
 
 ## Solution
 
-Added a new Enketo widget (HiddenGroup, in webapp/src/js/enketo/widgets/hidden-group.js) that selects top-level groups with the `hidden` appearance and adds the `disabled` class to them, leveraging Enketo's existing behavior of skipping disabled groups during navigation. The widget is registered in webapp/src/js/enketo/widgets.js. Per reviewer feedback, the original matcher (requiring both `field-list` and `hidden` appearances) was broadened so any top-level group with the `hidden` appearance is automatically disabled/skipped.
+Added a new Enketo widget (HiddenGroup, in webapp/src/js/enketo/widgets/hidden-group.js) that selects top-level groups with the `hidden` appearance and adds the `disabled` class to them, leveraging Enketo's existing behavior of skipping disabled groups during navigation. The widget is registered in webapp/src/js/enketo/widgets.js. The original matcher (requiring both `field-list` and `hidden` appearances) was broadened so any top-level group with the `hidden` appearance is automatically disabled/skipped.
 
 ## Code Patterns
 

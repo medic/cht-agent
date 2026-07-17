@@ -6,18 +6,22 @@ subDomain: enketo
 issueNumber: 10509
 issueUrl: https://github.com/medic/cht-core/issues/10509
 title: Support uploading attachments in contact forms
-lastUpdated: 2026-02-20
+lastUpdated: 2026-07-16
 summary: Extended contact form submission to save file attachments (images, documents) to the contact document, matching the existing behavior in app forms where attachments are stored on the report document.
 services:
   - webapp
 techStack:
   - typescript
   - angular
+source_prs:
+  - "medic/cht-core#10570"
 ---
 
 ## Problem
 
 App forms supported file uploads (images, audio, video) which were saved as attachments on the resulting report document. Contact forms accepted the same upload questions but silently discarded the selected files on submission. The files were never stored as attachments on the contact document.
+
+The feature merged as PR #10570: contact-save.service.ts gained file-widget and binary-field extraction (XPath-based attachment naming), attaching uploads to the main contact document, covered by Karma unit tests, cht-form integration tests, and wdio e2e specs (create with single/multiple attachments, edit preserving existing ones).
 
 ## Root Cause
 

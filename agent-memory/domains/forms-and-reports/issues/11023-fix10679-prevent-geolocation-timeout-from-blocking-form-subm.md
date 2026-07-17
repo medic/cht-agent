@@ -2,7 +2,7 @@
 id: cht-core-10679
 category: bug
 domain: forms-and-reports
-domainFit: strong
+domainFit: weak
 issueNumber: 10679
 issueUrl: https://github.com/medic/cht-core/issues/10679
 title: Prevent weak-GPS geolocation timeout from blocking form submission by resolving complete() immediately with a sentinel -1 code
@@ -68,7 +68,7 @@ Chose to prioritize form-submission UX over guaranteed geolocation capture: reso
 
 ## Testing
 
-Karma unit tests in geolocation.service.spec.ts cover 'submit before any data is acquired' and 'data acquired before submit'. A late-callback test was added per reviewer request, asserting that success/failure callbacks firing after complete() are silently discarded. Reviewer (dianabarsan) noted that removing the old 'should resolve promise even if watcher never calls any callback' test leaves the 30s -2 timeout path without a direct isolated test, relying on the remaining timeout test for coverage.
+Karma unit tests in geolocation.service.spec.ts cover 'submit before any data is acquired' and 'data acquired before submit'. A late-callback test asserts that success/failure callbacks firing after complete() are silently discarded. Note: removing the old 'should resolve promise even if watcher never calls any callback' test leaves the 30s -2 timeout path without a direct isolated test, relying on the remaining timeout test for coverage.
 
 ## Related Issues
 
@@ -76,6 +76,6 @@ Karma unit tests in geolocation.service.spec.ts cover 'submit before any data is
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The change governs the form submission flow — geolocation metadata is acquired during form fill and written onto the saved form/report doc via complete(), and the user-facing bug is forms hanging on submit. There is no dedicated geolocation domain, and this is a principled fit rather than a least-bad pick since the behavior lives inside the form save lifecycle.
+The change lives entirely in geolocation.service.ts; it affects the form save lifecycle only as a consumer, so forms-and-reports is the least-bad home rather than a principled fit.

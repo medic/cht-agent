@@ -6,7 +6,11 @@ subDomain: validation
 issueNumber: 8806
 issueUrl: https://github.com/medic/cht-core/issues/8806
 title: Multiple validation functions in a single rule do not work
-lastUpdated: 2024-11-03
+lastUpdated: '2026-07-16'
+source_prs:
+  - "medic/cht-core#9602"
+related_issues:
+  - cht-core-8402
 summary: Combining multiple CHT validation functions with logical operators in a single rule failed silently. The fix merged the extra validation functions into the pupil validation engine so rules can use both custom and built-in validators together.
 services:
   - api
@@ -25,7 +29,7 @@ The validation pipeline had two separate systems: the pupil validation library f
 
 ## Solution
 
-Merged the CHT extra validation functions into the pupil validation engine so that rules can reference both pupil built-in validators and CHT custom validators in the same expression. PR #9602 updated the validation library, pupil integration, and validator functions.
+Merged the CHT extra validation functions into the pupil validation engine so that rules can reference both pupil built-in validators and CHT custom validators in the same expression. PR #9602 updated the validation library, pupil integration, and validator functions. The pupil validations and the extra validator functions are evaluated independently and their outcomes merged into a single result with AND semantics, so a combined rule passes only if both the pupil and extra checks pass (PR #9602).
 
 ## Code Patterns
 
@@ -34,6 +38,7 @@ Merged the CHT extra validation functions into the pupil validation engine so th
 - File: `shared-libs/validation/src/pupil.js` is the core validation engine
 - File: `shared-libs/validation/src/validator_functions.js` defines CHT-specific validators
 - File: `shared-libs/validation/src/validation.js` orchestrates the pipeline
+- File: `shared-libs/validation/src/validation_result.js` folds the pupil and extra-validation outcomes into one `ValidationResult` (PR #9602)
 - Pattern: when adding new validation functions, register them in pupil rather than adding parallel evaluation paths
 
 ## Design Choices
@@ -48,6 +53,7 @@ Merged the CHT extra validation functions into the pupil validation engine so th
 - shared-libs/validation/src/validation_utils.js
 - shared-libs/validation/src/validator.js
 - shared-libs/validation/src/validator_functions.js
+- shared-libs/validation/src/validation_result.js
 
 ## Testing
 
@@ -57,4 +63,4 @@ Merged the CHT extra validation functions into the pupil validation engine so th
 
 ## Related Issues
 
-- None directly linked
+- #8402: related validation-rule limitation also addressed by supporting combined rules (PR #9602)

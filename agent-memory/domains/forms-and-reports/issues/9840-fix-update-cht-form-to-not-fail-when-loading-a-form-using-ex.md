@@ -1,6 +1,6 @@
 ---
 id: cht-core-9844
-category: feature
+category: improvement
 domain: forms-and-reports
 domainFit: strong
 issueNumber: 9844

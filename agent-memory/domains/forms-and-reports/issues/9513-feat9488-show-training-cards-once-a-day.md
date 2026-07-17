@@ -2,7 +2,7 @@
 id: cht-core-9488
 category: feature
 domain: forms-and-reports
-domainFit: strong
+domainFit: weak
 issueNumber: 9488
 issueUrl: https://github.com/medic/cht-core/issues/9488
 title: Show training cards once per day by persisting last-viewed date in localStorage
@@ -76,6 +76,6 @@ Unit tests in webapp/tests/karma/ts/services/training-cards.service.spec.ts cove
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-Training cards are Enketo-based training forms (the e2e test lives under tests/e2e/default/enketo/) and this PR governs when those forms are surfaced to users; managing display behavior of a first-class forms feature squarely fits forms-and-reports rather than being a least-bad pick.
+The change is display-frequency gating (when to surface the training card), not form-engine work; forms-and-reports is the least-bad home because the surfaced artifact is a training form.

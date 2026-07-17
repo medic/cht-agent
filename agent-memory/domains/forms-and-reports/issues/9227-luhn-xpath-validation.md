@@ -6,17 +6,20 @@ subDomain: enketo
 issueNumber: 9227
 issueUrl: https://github.com/medic/cht-core/issues/9227
 title: Add XPath function for Luhn identifier validation in forms
-lastUpdated: 2024-07-15
-summary: Added a custom XPath function to validate identifiers using the Luhn algorithm directly within Enketo forms, enabling client-side checksum validation to catch typos on ID fields.
+lastUpdated: '2026-07-16'
+summary: Added a custom XPath function to validate identifiers using the Luhn algorithm directly within Enketo forms, enabling client-side checksum validation to catch typos on ID fields (e.g., South African ID numbers).
 services:
   - webapp
 techStack:
   - javascript
+source_prs:
+  - "medic/cht-core#9220"
+related_issues: []
 ---
 
 ## Problem
 
-Health workers entering patient identifiers (national IDs, insurance numbers, etc.) in forms had no way to validate checksum digits on the client side. Typos in ID fields would only be caught later during data processing, causing data quality issues and requiring manual correction.
+Health workers entering patient identifiers (national IDs, insurance numbers, etc.) in forms had no way to validate checksum digits on the client side. Typos in ID fields would only be caught later during data processing, causing data quality issues and requiring manual correction. The concrete driver was validating South African ID numbers and other Luhn-based identifiers (credit cards, IMEI, tax reference numbers) without bespoke per-form logic (PR #9220).
 
 ## Root Cause
 
@@ -37,6 +40,7 @@ Added a `cht:luhn-check` custom XPath function to the medic XPath extensions. Fo
 
 - Implemented as an XPath function rather than a JavaScript validation hook, so it works within the standard XForm constraint mechanism and is accessible to form designers using XLSForm
 - Kept the implementation in the existing medic-xpath-extensions file rather than creating a separate module, since it is a single function
+- Luhn is a checksum designed to catch accidental/transcription errors, not malicious tampering, which fits validating government ID numbers; implementing it as a generic extension (rather than hardcoding validation in one form) makes it reusable across all forms and any Luhn-based identifier (PR #9220)
 
 ## Related Files
 

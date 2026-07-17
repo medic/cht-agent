@@ -70,7 +70,7 @@ There was discussion on the issue about whether it is acceptable to mutate the d
 
 ## Testing
 
-Karma unit tests for the phone widget were updated to assert that the proxy input displays the formatted value after entry. Reviewer (witash) additionally tested the change locally and confirmed it works as expected.
+Karma unit tests for the phone widget were updated to assert that the proxy input displays the formatted value after entry. The change was additionally tested locally.
 
 ## Related Issues
 

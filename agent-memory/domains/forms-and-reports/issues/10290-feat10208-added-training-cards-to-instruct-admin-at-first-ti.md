@@ -79,7 +79,7 @@ Instead of hiding training cards or blocking contactless users, training forms a
 
 ## Testing
 
-Added unit tests in `webapp/tests/karma/ts/services/form.service.spec.ts` (Karma), including one asserting that `requiresContact` returns false for training forms, per reviewer request.
+Added unit tests in `webapp/tests/karma/ts/services/form.service.spec.ts` (Karma), including one asserting that `requiresContact` returns false for training forms.
 
 ## Related Issues
 

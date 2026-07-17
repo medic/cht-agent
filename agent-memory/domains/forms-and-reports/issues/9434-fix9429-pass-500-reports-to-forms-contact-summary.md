@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9429
 issueUrl: https://github.com/medic/cht-core/issues/9429
 title: Pass up to 500 of a contact's reports into the contact summary when rendering forms
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-16'
 summary: When rendering an enketo form, the contact summary received only a limited subset of the contact's reports, so report-derived summary fields were computed from incomplete data for contacts with large histories. The fix loads and passes up to 500 of the contact's reports into the forms contact summary (capped at 500).
 services:
   - webapp
@@ -14,6 +14,7 @@ techStack:
   - typescript
   - angular
   - enketo
+  - xforms
   - webdriverio
   - karma
 tags:
@@ -25,6 +26,9 @@ tags:
 related_workflows:
   - form-submission
 source_pr: medic/cht-core#9434
+source_prs:
+  - "medic/cht-core#9434"
+  - "medic/cht-core#9436"
 source_sha: a2fe0b43d4161d80c93d7fd8980d56afcaea01b6
 distilled_at: '2026-06-23'
 reviewed_by: null
@@ -52,7 +56,7 @@ The form-rendering path (form.service.ts) loaded the contact's reports with a lo
 
 ## Solution
 
-Raised the report limit applied when building the forms contact summary to 500: form.service.ts now requests up to 500 of the contact's reports (via ContactViewModelGeneratorService) and passes them into the contact summary used during enketo form rendering. 500 acts as a hard cap — contacts with more than 500 reports get the first 500, while contacts with fewer get all of them.
+Raised the report limit applied when building the forms contact summary to 500: form.service.ts now requests up to 500 of the contact's reports (via ContactViewModelGeneratorService) and passes them into the contact summary used during enketo form rendering. 500 acts as a hard cap — contacts with more than 500 reports get the first 500, while contacts with fewer get all of them. This aligns the forms contact summary with the contact-page summary, which already loads the same 500-report set via contact-view-model-generator.service.ts, so both call sites produce the same summary instead of each choosing its own limit (PR #9436).
 
 ## Code Patterns
 
@@ -79,6 +83,7 @@ Added a Karma unit test in form.service.spec.ts asserting the report limit passe
 ## Related Issues
 
 - #9429: all reports in contact summary — the forms contact summary should receive the contact's reports (resolved with a 500-report cap)
+- PR #9434 was cherry-picked into backport PR #9436 (same fix on a release branch).
 
 ## Domain Rationale
 

@@ -6,13 +6,17 @@ subDomain: enketo
 issueNumber: 9301
 issueUrl: https://github.com/medic/cht-core/issues/9301
 title: Expose user's contact summary when filling out forms
-lastUpdated: 2025-06-16
-summary: Made the logged-in user's contact summary data available inside Enketo forms via an XPath instance, enabling forms to reference the user's own summary fields (e.g. stock levels) during data entry.
+lastUpdated: '2026-07-16'
+summary: Made the logged-in user's contact summary data available inside Enketo forms via a named external data instance and a form-context variable, enabling forms to reference the user's own summary fields (e.g. stock levels) during data entry.
 services:
   - webapp
 techStack:
   - typescript
   - angular
+source_prs:
+  - "medic/cht-core#9824"
+related_issues:
+  - cht-core-9269
 ---
 
 ## Problem
@@ -21,39 +25,50 @@ Deployments using stock monitoring stored inventory data in a CHW's contact summ
 
 ## Root Cause
 
-The Enketo form rendering pipeline only injected the subject contact's summary into the form context. There was no mechanism to also inject the current user's contact summary data.
+The Enketo form rendering pipeline only injected the subject contact's summary into the form context. There was no mechanism to also inject the current user's contact summary data. Separately, the contact detail page did not react to synced-in changes, so it failed to auto-display incoming reports for relevant contacts (#9825, fixed in the same PR).
 
 ## Solution
 
-Added the logged-in user's contact summary as a separate XPath instance (`contact-summary-user`) available in forms. Forms can now reference user-level data via `instance('contact-summary-user')/context/<variable>`. PR #9824 implemented this across the form service, XML forms context utils, and contact summary service.
+Added a dedicated `user-contact-summary.service.ts` that resolves the logged-in user's contact (via user-settings.service and lineage-model-generator.service), runs it through the existing contact-summary.service, and caches the result. The cached summary is surfaced to forms two ways: as a `user-contact-summary` external data instance in form content and as the `user.summary` variable in form context (PR #9824), wired through the enketo, form, and xml-forms services and mirrored in the standalone cht-form web component. The same PR also updated contact-change-filter / contacts-content so the contact detail page auto-refreshes when relevant incoming reports arrive (#9825).
 
 ## Code Patterns
 
-- When forms need data beyond the subject contact, expose it via named XPath instances rather than custom variables
+- When forms need data beyond the subject contact, expose it via named external data instances and/or context variables rather than custom variables
 - The user's contact summary is loaded once per form session and cached, not re-fetched per question
-- Pattern: `instance('contact-summary-user')/context/<field>` for accessing user-level summary fields in XForms
-- File: `webapp/src/ts/services/xml-forms-context-utils.service.ts` manages context injection into forms
-- File: `webapp/src/ts/services/user-contact-summary.service.ts` fetches the user's own contact summary
+- Access user-level summary in forms via the `user-contact-summary` external data instance or the `user.summary` form-context variable
+- Compute-and-cache a derived view for the current user: resolve user → contact (user-settings.service + lineage-model-generator.service) → contact-summary.service → cache in a dedicated service (user-contact-summary.service.ts)
+- Replicate the same enketo wiring in `webapp/web-components/cht-form/src/app.component.ts` so embedded forms behave identically
+- File: `webapp/src/ts/services/user-contact-summary.service.ts` fetches and caches the user's own contact summary
 
 ## Design Choices
 
-- Used a separate named instance (`contact-summary-user`) rather than merging into the existing `contact-summary` instance, to avoid ambiguity between subject and user data
-- Only loads the user summary when a form actually references it, to avoid unnecessary computation
+- Exposed the user summary via a dedicated `user-contact-summary` instance and `user.summary` context variable rather than merging into the existing subject `contact-summary`, to avoid ambiguity between subject and user data and to give form authors flexibility in how they consume it
+- A dedicated caching service avoids recomputing the potentially expensive summary every time a form opens
+- Reused the existing contact-summary.service to keep summary-computation logic single-sourced rather than duplicating it for the user-contact case
 
 ## Related Files
 
-- webapp/src/ts/services/xml-forms-context-utils.service.ts
 - webapp/src/ts/services/user-contact-summary.service.ts
 - webapp/src/ts/services/contact-summary.service.ts
+- webapp/src/ts/services/contact-view-model-generator.service.ts
 - webapp/src/ts/services/enketo.service.ts
 - webapp/src/ts/services/form.service.ts
+- webapp/src/ts/services/xml-forms.service.ts
+- webapp/src/ts/services/lineage-model-generator.service.ts
+- webapp/src/ts/services/user-settings.service.ts
+- webapp/src/ts/services/contact-change-filter.service.ts
+- webapp/src/ts/modules/contacts/contacts-content.component.ts
+- webapp/web-components/cht-form/src/app.component.ts
+- tests/e2e/default/enketo/users-contact-summary.wdio-spec.js
 
 ## Testing
 
 - Unit tests for the user contact summary service
-- Unit tests verifying the XML forms context utils inject the user summary instance
-- E2E tests filling forms that reference user-level contact summary fields
+- Unit tests verifying the enketo/form/xml-forms services inject the user summary instance and `user.summary` context variable
+- Updated karma specs for enketo, form, xml-forms, contact-change-filter, and contacts-content, plus a karma fixture exercising form-instance injection and an updated cht-form app.component spec
+- E2E spec `tests/e2e/default/enketo/users-contact-summary.wdio-spec.js` with a dedicated test form verifies the summary surfaces in forms
 
 ## Related Issues
 
 - #9269: Expose the user's target documents into the contact summary
+- #9825: Contact detail page does not automatically display incoming reports for relevant contacts (fixed in PR #9824 alongside this feature)

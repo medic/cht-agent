@@ -72,7 +72,7 @@ Implemented the date math as reusable, unit-tested XPath extension functions rat
 
 ## Testing
 
-Added mocha unit tests in medic-xpath-extensions.spec.js covering the new date-diff functions, plus an e2e suite (dates.wdio-spec.js) with a dedicated cht-form test form (dates.xlsx/dates.xml) verifying the functions evaluate correctly in a rendered form. Reviewers explicitly praised the unit and e2e test coverage.
+Added mocha unit tests in medic-xpath-extensions.spec.js covering the new date-diff functions, plus an e2e suite (dates.wdio-spec.js) with a dedicated cht-form test form (dates.xlsx/dates.xml) verifying the functions evaluate correctly in a rendered form.
 
 ## Related Issues
 

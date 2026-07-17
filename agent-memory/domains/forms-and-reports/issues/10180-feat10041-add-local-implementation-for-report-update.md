@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10041
 issueUrl: https://github.com/medic/cht-core/issues/10041
 title: Add local datasource implementation for updating reports in cht-datasource
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: The cht-datasource shared library lacked a local (direct-database) implementation for updating report documents, so report updates could not be performed through the local data context. This PR adds the local update operation for reports along with unit tests.
 services:
   - api
@@ -24,6 +24,9 @@ tags:
   - crud
 related_workflows: []
 source_pr: medic/cht-core#10180
+source_prs:
+  - "medic/cht-core#10180"
+  - "medic/cht-core#10200"
 source_sha: 70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -53,9 +56,13 @@ The local report module in cht-datasource only implemented a subset of CRUD oper
 
 Added an update operation to the local report implementation (shared-libs/cht-datasource/src/local/report.ts) that persists changes to a report document via the local data context, following the established cht-datasource local-implementation conventions, and added corresponding unit tests.
 
+The remote (API-backed) path completes the same update end to end (PR #10200): an update handler in api/src/controllers/report.js with the route registered in api/src/routing.js; update methods on the report datasource interface (src/report.ts) delegating to remote (src/remote/report.ts, HTTP to API) and local (src/local/report.ts, PouchDB) backends; a reusable doc-update helper in src/local/libs/doc.ts; and input parsing/validation in src/input.ts, with the capability exported via src/index.ts.
+
 ## Code Patterns
 
 Follows the cht-datasource local-implementation pattern in shared-libs/cht-datasource/src/local/report.ts: a factory/curried function that takes a local data context (database binding) and returns the operation function, mirroring the structure used by other entity modules (contact/person/place). The update operation writes the report doc through the local DB binding rather than via an HTTP/remote call.
+
+At the entity level (PR #10200), a public interface module (src/report.ts) delegates to the remote backend (src/remote/report.ts, calling the API over HTTP) and the local backend, with shared input validation in src/input.ts and a generic document helper in src/local/libs/doc.ts. New mutating operations are added consistently across both backends rather than as a one-off API endpoint.
 
 ## Design Choices
 
@@ -66,9 +73,29 @@ Mirrors the library's existing local/remote split — the local implementation p
 - shared-libs/cht-datasource/src/local/report.ts
 - shared-libs/cht-datasource/test/local/report.spec.ts
 
+Remote path (PR #10200):
+
+- api/src/controllers/report.js
+- api/src/routing.js
+- api/tests/mocha/controllers/report.spec.js
+- shared-libs/cht-datasource/src/index.ts
+- shared-libs/cht-datasource/src/input.ts
+- shared-libs/cht-datasource/src/libs/core.ts
+- shared-libs/cht-datasource/src/local/libs/doc.ts
+- shared-libs/cht-datasource/src/place.ts
+- shared-libs/cht-datasource/src/remote/report.ts
+- shared-libs/cht-datasource/src/report.ts
+- shared-libs/cht-datasource/test/index.spec.ts
+- shared-libs/cht-datasource/test/input.spec.ts
+- shared-libs/cht-datasource/test/remote/report.spec.ts
+- tests/integration/api/controllers/report.spec.js
+- tests/integration/shared-libs/cht-datasource/report.spec.js
+
 ## Testing
 
-Added unit tests in shared-libs/cht-datasource/test/local/report.spec.ts covering the new local report update operation, mocking the data context/database to verify the report document is persisted and edge/error cases are handled; the PR checklist marks unit testing as completed.
+Added unit tests in shared-libs/cht-datasource/test/local/report.spec.ts covering the new local report update operation, mocking the data context/database to verify the report document is persisted and edge/error cases are handled.
+
+The remote path (PR #10200) adds cht-datasource unit specs (test/remote/report.spec.ts, test/input.spec.ts, test/index.spec.ts), API mocha controller tests (api/tests/mocha/controllers/report.spec.js), and integration tests for both the API controller (tests/integration/api/controllers/report.spec.js) and the datasource (tests/integration/shared-libs/cht-datasource/report.spec.js).
 
 ## Related Issues
 

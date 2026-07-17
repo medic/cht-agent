@@ -6,14 +6,19 @@ subDomain: enketo
 issueNumber: 8308
 issueUrl: https://github.com/medic/cht-core/issues/8308
 title: Add support for Signature/Draw Widget in Enketo forms
-lastUpdated: 2024-06-14
+lastUpdated: '2026-07-16'
 summary: Enabled the Enketo draw widget for collecting signatures and sketches within CHT forms. Required enabling the widget, adding file management support, and updating styles.
 services:
   - webapp
+  - api
 techStack:
   - javascript
   - typescript
   - angular
+  - scss
+  - enketo
+source_prs:
+  - "medic/cht-core#8904"
 ---
 
 ## Problem
@@ -26,7 +31,7 @@ The CHT maintains a curated list of enabled Enketo widgets in `webapp/src/js/enk
 
 ## Solution
 
-Enabled the draw widget by adding it to the widgets list, updated the file manager to handle drawn image data, added the required CSS styles, and added a window shim for the widget's DOM requirements. PR #8904 was a substantial change across 31 files including translations, styles, and tests.
+Enabled the draw widget by adding it to the widgets list, updated the file manager to handle drawn image data, added the required CSS styles, and added a window shim for the widget's DOM requirements. PR #8904 was a substantial change across translations, styles, and tests. The same PR also fixed a repeated-upload bug (#8072): forms containing repeated file uploads had triggered a TypeError during submission because the file manager dereferenced a missing property when normalizing multiple files from repeat groups, so the report failed to save (PR #8904).
 
 ## Code Patterns
 
@@ -51,16 +56,21 @@ Enabled the draw widget by adding it to the widgets list, updated the file manag
 - webapp/src/js/enketo/lib/window.js
 - webapp/src/css/enketo/draw.scss
 - webapp/src/css/enketo/_widgets.scss
+- webapp/src/css/enketo/medic.less
 - webapp/src/ts/services/enketo.service.ts
 - webapp/src/ts/services/format-data-record.service.ts
+- webapp/src/ts/modules/reports/reports-add.component.ts
+- api/resources/translations/messages-en.properties
+- webapp/package.json
 
 ## Testing
 
 - Unit tests for file manager handling draw widget output
-- Integration tests for the draw widget rendering and submission
+- Integration tests for the draw widget rendering and submission (tests/integration/cht-form/default/draw-widget.wdio-spec.js with draw-widget.xlsx/.xml fixtures)
 - E2E test for photo upload forms (updated)
 - Form fixture files for draw widget testing
+- Test strategy: the integration test asserts the saved image size to confirm a substantial drawing was captured, rather than doing brittle pixel-level comparisons (PR #8904)
 
 ## Related Issues
 
-- None directly linked
+- #8072: Form with repeated file uploads fails to submit/save (TypeError, report not saved) — fixed in the same PR

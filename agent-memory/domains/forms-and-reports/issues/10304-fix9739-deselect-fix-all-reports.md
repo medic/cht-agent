@@ -67,7 +67,7 @@ Fix targeted the deselect branch of the existing select-all toggle rather than r
 
 ## Testing
 
-Karma unit tests in reports.component.spec.ts were added/modified to verify that deselecting 'Select all' clears the selected reports; reviewer (dianabarsan) confirmed the fix works as expected.
+Karma unit tests in reports.component.spec.ts were added/modified to verify that deselecting 'Select all' clears the selected reports.
 
 ## Related Issues
 

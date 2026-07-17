@@ -138,6 +138,15 @@
           "pattern": "^medic/(cht-core|cht-interoperability)#[1-9][0-9]*$",
           "description": "Source PR reference, format: medic/<repo>#<number>"
         },
+        "source_prs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^medic/(cht-core|cht-interoperability)#[1-9][0-9]*$"
+          },
+          "minItems": 1,
+          "description": "All PR refs that resolve to this issue (backport cherry-picks, multi-PR epics), set by the dedup pass when more than one draft collapsed into this one. source_pr remains the canonical PR."
+        },
         "source_sha": {
           "type": "string",
           "pattern": "^[0-9a-f]{7,40}$",

@@ -2,7 +2,7 @@
 id: cht-core-8119
 category: improvement
 domain: forms-and-reports
-domainFit: strong
+domainFit: weak
 issueNumber: 8119
 issueUrl: https://github.com/medic/cht-core/issues/8119
 title: Add route guard to show the 'lose your progress' confirmation before navigating away from an open training card
@@ -92,6 +92,6 @@ Added/updated e2e coverage in tests/e2e/default/enketo/training-cards.wdio-spec.
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-Training cards are Enketo forms (the e2e test lives under tests/e2e/default/enketo/), and the change protects the user's in-progress training-form fill from being lost. No other functional domain is a better match; the only nuance is that the mechanism itself is cross-cutting Angular navigation plumbing applied across many feature modules.
+The mechanism is cross-cutting Angular navigation plumbing (a canDeactivate route guard wired across seven feature modules' *.routes.ts), not form-engine code; it protects an in-progress training-form fill, so forms-and-reports is the least-bad home rather than a principled fit.

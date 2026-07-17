@@ -72,7 +72,7 @@ Implemented as a passive, backwards-compatible change so existing android-app-va
 
 ## Testing
 
-Karma unit tests were added in webapp/tests/karma/js/enketo/widgets/android-app-launcher.spec.ts covering the new primitive-array-to-space-delimited-string behavior and confirming the existing repeat-group behavior is unchanged. Note: the reviewer (jkuester) indicated his additional tweak for arrays nested inside objects was confirmed manually rather than fully covered by automated tests.
+Karma unit tests were added in webapp/tests/karma/js/enketo/widgets/android-app-launcher.spec.ts covering the new primitive-array-to-space-delimited-string behavior and confirming the existing repeat-group behavior is unchanged. Note: the handling for arrays nested inside objects was confirmed manually rather than fully covered by automated tests.
 
 ## Related Issues
 
