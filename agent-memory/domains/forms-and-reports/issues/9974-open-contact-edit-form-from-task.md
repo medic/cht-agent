@@ -6,13 +6,15 @@ subDomain: tasks-forms-integration
 issueNumber: 9974
 issueUrl: https://github.com/medic/cht-core/issues/9974
 title: Support opening contact edit form from task
-lastUpdated: 2025-06-13
+lastUpdated: 2026-07-16
 summary: Enabled tasks to open a contact edit form by setting the action type to "contact", allowing follow-up workflows to update existing contact data directly from task actions.
 services:
   - webapp
 techStack:
   - typescript
   - angular
+source_prs:
+  - "medic/cht-core#9975"
 ---
 
 ## Problem
@@ -26,6 +28,8 @@ The task action handler only supported opening app forms. There was no code path
 ## Solution
 
 Added support for action type "contact" in the task resolution flow. When a task action has `type: "contact"`, the system loads the linked contact's full data and opens the appropriate contact edit form with the contact's current values pre-populated. PR #9975 implemented this with minimal changes to 4 files.
+
+The feature merged as PR #9975, reusing the existing task-action contact-form mechanism and redirecting to the contact profile page on completion.
 
 ## Code Patterns
 
