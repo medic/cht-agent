@@ -1,10 +1,10 @@
 ---
-id: cht-core-8942
+id: cht-core-8925
 category: improvement
 domain: infrastructure
 domainFit: strong
-issueNumber: 8942
-issueUrl: https://github.com/medic/cht-core/issues/8942
+issueNumber: 8925
+issueUrl: https://github.com/medic/cht-core/issues/8925
 title: Enable HTTP keep-alive in HAProxy frontend configuration
 lastUpdated: '2026-06-23'
 summary: HAProxy was closing connections after each request, forcing a fresh handshake per request between CouchDB clients and the proxy. Enabling http-keep-alive lets connections be reused across requests, cutting connection-setup overhead.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-9466
+id: cht-core-9468
 category: feature
 domain: infrastructure
 domainFit: strong
-issueNumber: 9466
-issueUrl: https://github.com/medic/cht-core/issues/9466
+issueNumber: 9468
+issueUrl: https://github.com/medic/cht-core/issues/9468
 title: Use latest helm-charts in deploy script and add get-volume-binding Kubernetes troubleshooting tool
 lastUpdated: '2026-06-23'
 summary: CHT's Helm-based deploy script lagged the latest helm-charts and operators had no easy way to discover the PV/PVC/subPath needed to bind pre-existing CouchDB data. This PR updates install.js to use the latest helm-charts and adds a get-volume-binding troubleshooting script that emits volume binding details as JSON.

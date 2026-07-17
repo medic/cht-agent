@@ -1,10 +1,10 @@
 ---
-id: cht-core-8978
+id: cht-core-8909
 category: feature
 domain: infrastructure
 domainFit: strong
-issueNumber: 8978
-issueUrl: https://github.com/medic/cht-core/issues/8978
+issueNumber: 8909
+issueUrl: https://github.com/medic/cht-core/issues/8909
 title: Add CI jobs that run the integration test suite against a CHT instance deployed in a K3D (Kubernetes) cluster via Helm charts
 lastUpdated: '2026-06-23'
 summary: CHT integration tests previously only ran against the Docker Compose deployment; this PR adds two new CI jobs that deploy CHT into a K3D Kubernetes cluster using new Helm charts (with local-path persistent storage) and run the existing integration specs against that architecture.

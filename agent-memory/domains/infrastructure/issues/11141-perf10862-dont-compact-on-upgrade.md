@@ -1,10 +1,10 @@
 ---
-id: cht-core-11141
+id: cht-core-10862
 category: improvement
 domain: infrastructure
 domainFit: strong
-issueNumber: 11141
-issueUrl: https://github.com/medic/cht-core/issues/11141
+issueNumber: 10862
+issueUrl: https://github.com/medic/cht-core/issues/10862
 title: Skip CouchDB compaction during post-upgrade cleanup so upgrades only run cheap view and Nouveau cleanups
 lastUpdated: '2026-06-22'
 summary: The post-upgrade cleanup step forced CouchDB compaction, a space- and compute-intensive operation that slowed deploys. It now performs only viewCleanup and nouveauCleanup — simple deletions of stale data sets that require no extra space or compute.

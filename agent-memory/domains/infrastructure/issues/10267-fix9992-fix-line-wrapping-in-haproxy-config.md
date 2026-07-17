@@ -1,10 +1,10 @@
 ---
-id: cht-core-10267
+id: cht-core-9992
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 10267
-issueUrl: https://github.com/medic/cht-core/issues/10267
+issueNumber: 9992
+issueUrl: https://github.com/medic/cht-core/issues/9992
 title: Add base64 no-wrap flag in HAProxy entrypoint to support long CouchDB credentials
 lastUpdated: '2026-06-22'
 summary: The base64 utility wraps output at 76 characters by default, inserting newlines that corrupted the generated HAProxy health config when CouchDB username+password were long. Adding the no-wrap flag keeps the encoded credentials on a single line.

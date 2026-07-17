@@ -1,10 +1,10 @@
 ---
-id: cht-core-10750
+id: cht-core-8816
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 10750
-issueUrl: https://github.com/medic/cht-core/issues/10750
+issueNumber: 8816
+issueUrl: https://github.com/medic/cht-core/issues/8816
 title: Fix fragile CouchDB docker-entrypoint admin check by parsing the [admins] block in cluster-credentials.ini to avoid duplicate admin blocks on restart
 lastUpdated: '2026-06-22'
 summary: The CouchDB docker-entrypoint.sh used a brittle multiline grep that only matched the admin user if it sat on the exact line after the [admins] header, so with multiple admins it silently failed and appended a duplicate [admins] block that corrupted config across restarts. It was replaced with an INI-section-aware check that finds the username anywhere in the active [admins] block and skips the duplicate insertion.

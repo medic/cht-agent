@@ -1,10 +1,10 @@
 ---
-id: cht-core-9039
+id: cht-core-9024
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 9039
-issueUrl: https://github.com/medic/cht-core/issues/9039
+issueNumber: 9024
+issueUrl: https://github.com/medic/cht-core/issues/9024
 title: Assert CouchDB version compatibility and stop enforcing Node version in server startup checks
 lastUpdated: '2026-06-23'
 summary: The startup server checks enforced a Node.js version requirement that was causing problems while not reliably asserting CouchDB compatibility; this change makes the checks assert the CouchDB version and ignore (no longer enforce) the Node version.

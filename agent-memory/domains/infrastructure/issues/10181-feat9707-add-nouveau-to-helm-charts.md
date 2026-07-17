@@ -1,10 +1,10 @@
 ---
-id: cht-core-10181
+id: cht-core-9707
 category: feature
 domain: infrastructure
 domainFit: strong
-issueNumber: 10181
-issueUrl: https://github.com/medic/cht-core/issues/10181
+issueNumber: 9707
+issueUrl: https://github.com/medic/cht-core/issues/9707
 title: Add nouveau pod and service to Helm charts for Kubernetes deployment
 lastUpdated: '2026-06-22'
 summary: The Helm charts had no way to deploy the nouveau full-text search component on Kubernetes. This adds a nouveau Deployment and Service that reuse the first CouchDB node's persistent volume instead of provisioning a separate one.

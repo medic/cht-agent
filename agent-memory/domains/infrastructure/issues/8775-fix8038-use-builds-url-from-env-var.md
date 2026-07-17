@@ -1,10 +1,10 @@
 ---
-id: cht-core-8775
+id: cht-core-8038
 category: improvement
 domain: infrastructure
 domainFit: strong
-issueNumber: 8775
-issueUrl: https://github.com/medic/cht-core/issues/8775
+issueNumber: 8038
+issueUrl: https://github.com/medic/cht-core/issues/8038
 title: Read the CHT builds-server URL from an environment variable instead of hardcoding it in the API and admin upgrade controllers
 lastUpdated: '2026-06-23'
 summary: The builds-server URL used by the in-app upgrade feature to discover available CHT versions was hardcoded; this change reads it from an environment variable so the build source can be configured per deployment.

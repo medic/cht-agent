@@ -1,10 +1,10 @@
 ---
-id: cht-core-8908
+id: cht-core-8599
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 8908
-issueUrl: https://github.com/medic/cht-core/issues/8908
+issueNumber: 8599
+issueUrl: https://github.com/medic/cht-core/issues/8599
 title: Support special characters in the CouchDB admin password across Docker entrypoints, HAProxy, and setup scripts
 lastUpdated: '2026-06-23'
 summary: CouchDB failed to start, cluster, or proxy correctly when the admin password contained URL-reserved special characters because credentials were interpolated into connection URLs without escaping. The fix URL-encodes credentials in the CouchDB/HAProxy entrypoints and healthcheck and adds a bats test suite plus a path-filtered CI workflow.

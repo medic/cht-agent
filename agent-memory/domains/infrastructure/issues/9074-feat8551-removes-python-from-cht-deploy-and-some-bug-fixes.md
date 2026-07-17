@@ -1,10 +1,10 @@
 ---
-id: cht-core-9074
+id: cht-core-8551
 category: improvement
 domain: infrastructure
 domainFit: strong
-issueNumber: 9074
-issueUrl: https://github.com/medic/cht-core/issues/9074
+issueNumber: 8551
+issueUrl: https://github.com/medic/cht-core/issues/8551
 title: Reimplement cht-deploy from Python to Node.js for feature parity, plus deploy-time validation, completion-URL output, and a get-all-logs troubleshooting command
 lastUpdated: '2026-06-23'
 summary: 'The cht-deploy tool was written in Python (tasks.py), forcing a Python runtime alongside the Node.js toolchain used by the rest of cht-core, and it lacked input validation, completion feedback, and a log-collection helper. It was reimplemented in Node.js with feature parity (modular src/), Python removed, tests added, and three bundled bug fixes/features: catch missing values, print the instance URL on completion, and a get-all-logs troubleshooting script.'

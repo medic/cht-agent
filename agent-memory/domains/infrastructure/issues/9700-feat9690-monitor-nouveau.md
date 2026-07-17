@@ -1,10 +1,10 @@
 ---
-id: cht-core-9700
+id: cht-core-9690
 category: feature
 domain: infrastructure
 domainFit: strong
-issueNumber: 9700
-issueUrl: https://github.com/medic/cht-core/issues/9700
+issueNumber: 9690
+issueUrl: https://github.com/medic/cht-core/issues/9690
 title: Expose Nouveau full-text search metrics via the /api/v2/monitoring observability endpoint
 lastUpdated: '2026-06-22'
 summary: The monitoring API exposed health metrics for components like CouchDB and Sentinel but had no visibility into the Nouveau search engine. This PR extends the monitoring service to collect and report Nouveau metrics so operators can observe its state.

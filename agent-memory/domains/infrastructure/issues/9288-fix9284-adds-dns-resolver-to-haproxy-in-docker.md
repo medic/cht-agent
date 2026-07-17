@@ -1,10 +1,10 @@
 ---
-id: cht-core-9288
+id: cht-core-9284
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 9288
-issueUrl: https://github.com/medic/cht-core/issues/9288
+issueNumber: 9284
+issueUrl: https://github.com/medic/cht-core/issues/9284
 title: Add DNS resolver to HAProxy in Docker so backend hostnames re-resolve after container restart
 lastUpdated: '2026-06-23'
 summary: HAProxy resolved backend hostnames only once at startup and cached the IP, so when a backend container restarted in Docker with a new IP, routing broke. The fix configures a DNS resolver in HAProxy so it dynamically re-resolves backend addresses at runtime.

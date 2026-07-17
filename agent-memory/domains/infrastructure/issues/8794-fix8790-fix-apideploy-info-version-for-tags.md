@@ -1,10 +1,10 @@
 ---
-id: cht-core-8794
+id: cht-core-8790
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 8794
-issueUrl: https://github.com/medic/cht-core/issues/8794
+issueNumber: 8790
+issueUrl: https://github.com/medic/cht-core/issues/8790
 title: Force api/deploy-info version to be valid semver for tag builds
 lastUpdated: '2026-06-23'
 summary: The api/deploy-info endpoint returned an invalid semver version for tag builds (e.g. `4.5.1.4327432`) while branch builds were fine; the fix normalizes the deploy-info version so it is always semver-valid.

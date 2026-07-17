@@ -1,10 +1,10 @@
 ---
-id: cht-core-10488
+id: cht-core-10481
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 10488
-issueUrl: https://github.com/medic/cht-core/issues/10488
+issueNumber: 10481
+issueUrl: https://github.com/medic/cht-core/issues/10481
 title: Run Nouveau search engine as a sidecar container in CHT Helm deployment templates
 lastUpdated: '2026-06-22'
 summary: Nouveau (CouchDB's Lucene full-text search engine) was deployed as a standalone Kubernetes Deployment/Service in the Helm chart; this PR co-locates it as a sidecar container with CouchDB and updates the dependent deployment templates, correcting the deployment topology.

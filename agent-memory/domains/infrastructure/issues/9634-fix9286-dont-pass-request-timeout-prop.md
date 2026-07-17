@@ -1,10 +1,10 @@
 ---
-id: cht-core-9634
+id: cht-core-9286
 category: bug
 domain: infrastructure
 domainFit: strong
-issueNumber: 9634
-issueUrl: https://github.com/medic/cht-core/issues/9634
+issueNumber: 9286
+issueUrl: https://github.com/medic/cht-core/issues/9286
 title: Remove ineffective request timeout property from setup view-indexer (didn't terminate requests at HAProxy level)
 lastUpdated: '2026-06-22'
 summary: The setup view-indexer passed a request timeout property meant to terminate long-running CouchDB view indexing requests, but the timeout never terminated the request at the HAProxy level. The fix removes the ineffective timeout property and updates the unit test.

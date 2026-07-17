@@ -1,10 +1,10 @@
 ---
-id: cht-core-8813
+id: cht-core-8644
 category: improvement
 domain: infrastructure
 domainFit: strong
-issueNumber: 8813
-issueUrl: https://github.com/medic/cht-core/issues/8813
+issueNumber: 8644
+issueUrl: https://github.com/medic/cht-core/issues/8644
 title: Add concurrency support and build-time frozen dependencies to the haproxy-healthcheck service
 lastUpdated: '2026-06-23'
 summary: The haproxy-healthcheck service could hang when a connection wasn't closed properly and installed unpinned Python dependencies at startup; this PR reworks it to handle concurrent connections and bundles frozen, version-pinned dependencies into the container image at build time.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-8918
+id: cht-core-8841
 category: feature
 domain: infrastructure
 domainFit: strong
-issueNumber: 8918
-issueUrl: https://github.com/medic/cht-core/issues/8918
+issueNumber: 8841
+issueUrl: https://github.com/medic/cht-core/issues/8841
 title: Build multi-platform (linux/amd64 + linux/arm64) Docker images in the CI build pipeline
 lastUpdated: '2026-06-23'
 summary: CHT Docker images were built for a single CPU architecture, forcing emulation on ARM hardware; this PR updates the build scripts and GitHub Actions build workflow to build and tag multi-platform images for both linux/amd64 and linux/arm64.
