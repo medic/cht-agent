@@ -1,10 +1,10 @@
 ---
-id: cht-core-8752
+id: cht-core-8745
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 8752
-issueUrl: https://github.com/medic/cht-core/issues/8752
+issueNumber: 8745
+issueUrl: https://github.com/medic/cht-core/issues/8745
 title: Don't evaluate the form `context` expression when opening a form from a task
 lastUpdated: '2026-06-23'
 summary: When opening a form via a task, the Enketo service unnecessarily evaluated the form's `context` expression (meant for the contact 'new action' list), which could error or prevent the form from opening. The fix skips context evaluation on the task-launch path.

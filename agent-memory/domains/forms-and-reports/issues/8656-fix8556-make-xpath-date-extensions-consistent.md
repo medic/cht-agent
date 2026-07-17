@@ -1,10 +1,10 @@
 ---
-id: cht-core-8656
+id: cht-core-8556
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 8656
-issueUrl: https://github.com/medic/cht-core/issues/8656
+issueNumber: 8556
+issueUrl: https://github.com/medic/cht-core/issues/8556
 title: Make Enketo XPath date extension functions handle dates consistently
 lastUpdated: '2026-06-23'
 summary: The custom XPath date extension functions exposed to Enketo forms behaved inconsistently in how they parsed/normalized date inputs; the fix aligns their date handling and updates the unit tests accordingly.

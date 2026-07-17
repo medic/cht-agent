@@ -1,10 +1,10 @@
 ---
-id: cht-core-10304
+id: cht-core-9739
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10304
-issueUrl: https://github.com/medic/cht-core/issues/10304
+issueNumber: 9739
+issueUrl: https://github.com/medic/cht-core/issues/9739
 title: Fix 'Select all' deselection not clearing selected reports on the reports page
 lastUpdated: '2026-06-22'
 summary: Deselecting the 'Select all' checkbox on the reports page left previously selected reports still selected; the reports component's deselect handler was corrected to clear the selection state.

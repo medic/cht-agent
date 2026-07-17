@@ -1,10 +1,10 @@
 ---
-id: cht-core-10071
+id: cht-core-10040
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10071
-issueUrl: https://github.com/medic/cht-core/issues/10071
+issueNumber: 10040
+issueUrl: https://github.com/medic/cht-core/issues/10040
 title: Add createReport support to the cht-datasource local adapter
 lastUpdated: '2026-06-22'
 summary: The cht-datasource local (direct-database) adapter could read reports but had no way to create them. This PR implements `createReport` in the local report adapter with supporting qualifier changes, bringing the local context to parity with the create operation.

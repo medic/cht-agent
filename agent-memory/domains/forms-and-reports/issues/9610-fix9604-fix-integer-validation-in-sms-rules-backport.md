@@ -1,10 +1,10 @@
 ---
-id: cht-core-9610
+id: cht-core-9604
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9610
-issueUrl: https://github.com/medic/cht-core/issues/9610
+issueNumber: 9604
+issueUrl: https://github.com/medic/cht-core/issues/9604
 title: Fix integer validation logic in SMS form validation rules (backport to 4.14.x)
 lastUpdated: '2026-06-22'
 summary: The integer validator in the shared validation library mis-validated integer field values used by SMS form validation rules. The fix corrects the integer-checking logic and adds regression tests, delivered as a backport to 4.14.x.

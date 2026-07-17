@@ -1,10 +1,10 @@
 ---
-id: cht-core-8759
+id: cht-core-8074
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 8759
-issueUrl: https://github.com/medic/cht-core/issues/8759
+issueNumber: 8074
+issueUrl: https://github.com/medic/cht-core/issues/8074
 title: Add 'descendant-of-current-contact' appearance to filter the db-object (select-contact) Enketo widget by parent contact
 lastUpdated: '2026-06-23'
 summary: The db-object/select-contact widget could not constrain its options to a contact's subtree. This adds a `descendant-of-current-contact` appearance that filters selectable contacts to descendants of the contact whose tab the form was opened from, using the `contact_by_parent` CouchDB view combined with contact type.

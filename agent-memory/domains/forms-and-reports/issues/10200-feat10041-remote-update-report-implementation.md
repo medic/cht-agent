@@ -1,10 +1,10 @@
 ---
-id: cht-core-10200
+id: cht-core-10041
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10200
-issueUrl: https://github.com/medic/cht-core/issues/10200
+issueNumber: 10041
+issueUrl: https://github.com/medic/cht-core/issues/10041
 title: Add remote (API-backed) update support for reports in cht-datasource and the API report controller
 lastUpdated: '2026-06-22'
 summary: cht-datasource and the API could read/create reports but had no way to update an existing report through the remote path. This PR implements remote update for reports, adding an API update route/handler, datasource update methods (remote + local), input validation, and tests.

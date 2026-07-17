@@ -1,10 +1,10 @@
 ---
-id: cht-core-9220
+id: cht-core-9227
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9220
-issueUrl: https://github.com/medic/cht-core/issues/9220
+issueNumber: 9227
+issueUrl: https://github.com/medic/cht-core/issues/9227
 title: Add Luhn algorithm validation function as an Enketo XPath extension for form-level ID number validation
 lastUpdated: '2026-06-23'
 summary: CHT forms had no native function to verify that entered ID numbers (e.g., South African ID numbers) pass a checksum. A Luhn algorithm validation function was added to the Enketo XPath extensions so any form can validate such numbers and catch accidental transcription errors.

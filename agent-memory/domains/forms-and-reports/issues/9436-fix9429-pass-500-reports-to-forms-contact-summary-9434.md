@@ -1,10 +1,10 @@
 ---
-id: cht-core-9436
+id: cht-core-9429
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9436
-issueUrl: https://github.com/medic/cht-core/issues/9436
+issueNumber: 9429
+issueUrl: https://github.com/medic/cht-core/issues/9429
 title: Pass up to 500 reports to the contact summary injected into Enketo forms
 lastUpdated: '2026-06-23'
 summary: When a form was opened from a contact, the contact summary made available to the form was generated from too few of the contact's reports, so form logic depending on that context could be wrong. The fix passes up to 500 reports to the forms contact summary, aligning it with the contact-page summary.

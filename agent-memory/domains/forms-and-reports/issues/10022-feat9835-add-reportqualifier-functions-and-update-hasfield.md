@@ -1,10 +1,10 @@
 ---
-id: cht-core-10022
+id: cht-core-9835
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10022
-issueUrl: https://github.com/medic/cht-core/issues/10022
+issueNumber: 9835
+issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Add ReportQualifier functions to cht-datasource and add optional truthy check to hasField/hasFields
 lastUpdated: '2026-06-22'
 summary: cht-datasource had no ReportQualifier and its field-presence helpers accepted empty-string values as valid. This PR adds ReportQualifier (with an error for non-object data) and an optional truthy check to hasField/hasFields so contact and report qualifiers reject empty/falsy field values.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10246
+id: cht-core-9835
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10246
-issueUrl: https://github.com/medic/cht-core/issues/10246
+issueNumber: 9835
+issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Fix missing reported_date on report updates by normalizing the update payload's reported_date to a unix epoch before validation in cht-datasource
 lastUpdated: '2026-06-22'
 summary: Updating a report via cht-datasource's local data source could drop `reported_date` because the update payload's value (e.g. a date/ISO string) did not match the original document's unix-epoch format during validation. The fix autoconverts the payload's `reported_date` to a unix epoch before the validation checks against the original document.

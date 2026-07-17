@@ -1,10 +1,10 @@
 ---
-id: cht-core-9755
+id: cht-core-9653
 category: improvement
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9755
-issueUrl: https://github.com/medic/cht-core/issues/9755
+issueNumber: 9653
+issueUrl: https://github.com/medic/cht-core/issues/9653
 title: Refactor shared-libs/validation to query cht-datasource for uniqueness/existence checks, falling back to freetext index only for whitespace search strings
 lastUpdated: '2026-06-22'
 summary: The validation library queried CouchDB freetext indexes directly for uniqueness/existence validators; this refactor routes those lookups through the unified cht-datasource layer where possible and only falls back to the freetext index when the search string contains whitespace.

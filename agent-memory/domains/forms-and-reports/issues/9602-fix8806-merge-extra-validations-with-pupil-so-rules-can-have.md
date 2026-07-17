@@ -1,10 +1,10 @@
 ---
-id: cht-core-9602
+id: cht-core-8806
 category: improvement
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9602
-issueUrl: https://github.com/medic/cht-core/issues/9602
+issueNumber: 8806
+issueUrl: https://github.com/medic/cht-core/issues/8806
 title: Allow validation rules to combine pupil rule syntax with extra/custom validator functions in a single rule
 lastUpdated: '2026-06-22'
 summary: Previously a single validation rule could use either pupil's built-in rule syntax or a custom/extra validator function, but not both; this change merges the two so one rule can run pupil validations and extra validations together and pass only if both succeed.

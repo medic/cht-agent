@@ -1,10 +1,10 @@
 ---
-id: cht-core-8740
+id: cht-core-7462
 category: improvement
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 8740
-issueUrl: https://github.com/medic/cht-core/issues/8740
+issueNumber: 7462
+issueUrl: https://github.com/medic/cht-core/issues/7462
 title: 'Uplift Enketo forms module: enable excludeNonRelevant and patch date pickers to not auto-open as first question'
 lastUpdated: '2026-06-23'
 summary: The Enketo forms module was uplifted to enable `excludeNonRelevant` and to stop the date and date-time picker widgets from auto-popping open when they are the first question on a page. The enketo-core relevance patch was updated so CHT `inputs` group fields remain accessible to expressions even when the group is non-relevant.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10099
+id: cht-core-10040
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 10099
-issueUrl: https://github.com/medic/cht-core/issues/10099
+issueNumber: 10040
+issueUrl: https://github.com/medic/cht-core/issues/10040
 title: Add API and cht-datasource support for creating reports
 lastUpdated: '2026-06-22'
 summary: Adds the ability to create reports programmatically through the API and the cht-datasource shared library, exposing a new report-creation path (domain module, remote HTTP adapter, controller, route) modeled on the existing person/place create flow.

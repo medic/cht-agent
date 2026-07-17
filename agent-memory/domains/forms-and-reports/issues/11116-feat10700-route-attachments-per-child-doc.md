@@ -1,10 +1,10 @@
 ---
-id: cht-core-11116
+id: cht-core-10700
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 11116
-issueUrl: https://github.com/medic/cht-core/issues/11116
+issueNumber: 10700
+issueUrl: https://github.com/medic/cht-core/issues/10700
 title: Route Enketo form file attachments to their owning child (db-doc) document instead of attaching all files to the primary doc
 lastUpdated: '2026-06-22'
 summary: Forms that generate multiple documents via the db-doc pattern attached all uploaded files to a single document, misplacing attachments on child docs. This change routes each binary/file field to the specific db-doc that owns it, correctly handling contact photos, sub-contact attachments, and files inside repeats.

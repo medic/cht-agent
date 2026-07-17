@@ -1,10 +1,10 @@
 ---
-id: cht-core-9641
+id: cht-core-9618
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9641
-issueUrl: https://github.com/medic/cht-core/issues/9641
+issueNumber: 9618
+issueUrl: https://github.com/medic/cht-core/issues/9618
 title: Prevent API from crashing on startup when a form is broken/invalid
 lastUpdated: '2026-06-22'
 summary: A single broken or invalid form would throw during the API startup sequence and crash the whole API service. The fix isolates per-form failures so a broken form is logged and skipped while the API continues starting up.

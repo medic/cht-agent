@@ -1,10 +1,10 @@
 ---
-id: cht-core-9592
+id: cht-core-9598
 category: feature
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9592
-issueUrl: https://github.com/medic/cht-core/issues/9592
+issueNumber: 9598
+issueUrl: https://github.com/medic/cht-core/issues/9598
 title: Add a dedicated training materials page to browse, sort, paginate, and re-open training cards; make the modal form title/buttons sticky
 lastUpdated: '2026-06-22'
 summary: Training cards were only reachable through a once-a-day modal, with no place to browse or re-take trainings on demand. This PR adds a routable training materials page (sorted by start date, paginated infinite scroll, openable multiple times a day) reached from the hamburger menu, refactors form rendering into a shared component used by both the page and the modal, adds a quit-confirmation modal, and makes the modal's form title and action buttons sticky.

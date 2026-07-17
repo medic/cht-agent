@@ -1,10 +1,10 @@
 ---
-id: cht-core-9608
+id: cht-core-9604
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9608
-issueUrl: https://github.com/medic/cht-core/issues/9608
+issueNumber: 9604
+issueUrl: https://github.com/medic/cht-core/issues/9604
 title: Fix integer validation logic for SMS report validation rules in shared-libs/validation
 lastUpdated: '2026-06-22'
 summary: Integer validation rules applied to SMS-submitted report fields were not validating values correctly. The fix corrects the integer validator function in shared-libs/validation and adds unit test coverage.

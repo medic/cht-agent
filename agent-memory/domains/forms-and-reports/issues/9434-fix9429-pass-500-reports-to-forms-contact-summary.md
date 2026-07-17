@@ -1,10 +1,10 @@
 ---
-id: cht-core-9434
+id: cht-core-9429
 category: bug
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 9434
-issueUrl: https://github.com/medic/cht-core/issues/9434
+issueNumber: 9429
+issueUrl: https://github.com/medic/cht-core/issues/9429
 title: Pass up to 500 of a contact's reports into the contact summary when rendering forms
 lastUpdated: '2026-06-23'
 summary: When rendering an enketo form, the contact summary received only a limited subset of the contact's reports, so report-derived summary fields were computed from incomplete data for contacts with large histories. The fix loads and passes up to 500 of the contact's reports into the forms contact summary (capped at 500).
