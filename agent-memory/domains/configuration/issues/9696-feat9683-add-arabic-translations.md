@@ -59,7 +59,7 @@ Added a new api/resources/translations/messages-ar.properties file with Arabic s
 
 ## Code Patterns
 
-To add a new language to CHT: (1) create api/resources/translations/messages-<locale>.properties, and (2) register the locale code in api/src/translations.js plus every webapp locale-loading entry point — webapp/src/js/bootstrapper/translator.js, webapp/src/js/enketo/main.js, and webapp/src/ts/main.ts. The reviewer flagged that translator.js and enketo/main.js are easy to miss when only the API and main webapp files are updated.
+To add a new language to CHT: (1) create api/resources/translations/messages-<locale>.properties, and (2) register the locale code in api/src/translations.js plus every webapp locale-loading entry point — webapp/src/js/bootstrapper/translator.js, webapp/src/js/enketo/main.js, and webapp/src/ts/main.ts. Note: translator.js and enketo/main.js are easy to miss when only the API and main webapp files are updated.
 
 ## Design Choices
 

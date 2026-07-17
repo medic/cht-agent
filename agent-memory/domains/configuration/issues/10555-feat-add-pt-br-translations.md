@@ -64,7 +64,7 @@ To add a new UI language: drop a messages-<locale>.properties file into api/reso
 
 ## Design Choices
 
-Used the `pt` extension rather than `pt-BR`/`pt-PT` since separate Portugal-Portuguese translations are unlikely in the short term for CHT's target regions. Chose Brazilian Portuguese conventions (e.g. "usuário" over "utilizador", "senha" over "palavra-passe") as more widely understood across Lusophone Africa. Included an explicit AI-disclosure comment documenting Claude-assisted authorship, which a reviewer specifically called out as a useful reference pattern.
+Used the `pt` extension rather than `pt-BR`/`pt-PT` since separate Portugal-Portuguese translations are unlikely in the short term for CHT's target regions. Chose Brazilian Portuguese conventions (e.g. "usuário" over "utilizador", "senha" over "palavra-passe") as more widely understood across Lusophone Africa. Included an explicit AI-disclosure comment documenting Claude-assisted authorship as a reference pattern.
 
 ## Related Files
 
@@ -86,4 +86,4 @@ PR checklist reports the change was verified for UI/UX backwards compatibility (
 
 **Fit:** strong
 
-Adding translations and registering a new locale is canonically the configuration domain (per the seed example for translations/locale work); this is a textbook strong fit, not a catch-all pick.
+Adding translations and registering a new locale is canonically the configuration domain; this is a textbook strong fit, not a catch-all pick.

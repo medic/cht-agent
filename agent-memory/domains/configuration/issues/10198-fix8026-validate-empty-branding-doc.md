@@ -69,7 +69,7 @@ Rather than failing on incomplete branding docs, the controller defensively scaf
 
 ## Testing
 
-Added a new unit test file (admin/tests/unit/controllers/images-branding.spec.js) for the previously untested controller, following conventions of existing controller tests, exercising the empty-branding-doc scenario. A reviewer noted one related case not covered by the fix.
+Added a new unit test file (admin/tests/unit/controllers/images-branding.spec.js) for the previously untested controller, following conventions of existing controller tests, exercising the empty-branding-doc scenario. One related case is not covered by the fix.
 
 ## Related Issues
 

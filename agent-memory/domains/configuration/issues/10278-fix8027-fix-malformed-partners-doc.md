@@ -78,7 +78,7 @@ Chose graceful degradation over rejecting/validating the bad document: initializ
 
 ## Testing
 
-Added comprehensive unit tests covering all malformed-document scenarios, including a new Admin controller test file (images-partners.spec.js), plus updates to the Admin service spec and the Webapp Karma service spec. Tests were consolidated during review to reduce duplication. Reviewer witash also verified the fix locally.
+Added comprehensive unit tests covering all malformed-document scenarios, including a new Admin controller test file (images-partners.spec.js), plus updates to the Admin service spec and the Webapp Karma service spec. Tests were consolidated to reduce duplication; the fix was also verified locally.
 
 ## Related Issues
 

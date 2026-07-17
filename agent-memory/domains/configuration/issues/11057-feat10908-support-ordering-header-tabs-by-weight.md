@@ -95,4 +95,4 @@ Karma unit tests added/updated for header-tabs.service, ui-extensions.service, h
 
 **Fit:** strong
 
-The feature's purpose is to give deployments configuration control over navigation: a new `weight` property in the `header_tabs` app settings (and on `header_tab` UI Extensions) drives tab order and the initial landing tab. App-settings-driven behavior is canonically the configuration domain per the seeds, even though the implementation lives in webapp UI components/services (there is no dedicated navigation/UI domain).
+The feature's purpose is to give deployments configuration control over navigation: a new `weight` property in the `header_tabs` app settings (and on `header_tab` UI Extensions) drives tab order and the initial landing tab. App-settings-driven behavior is canonically the configuration domain, even though the implementation lives in webapp UI components/services (there is no dedicated navigation/UI domain).

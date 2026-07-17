@@ -92,7 +92,7 @@ Delivered the brand change as a CouchDB migration rather than only swapping stat
 
 ## Testing
 
-Added a mocha unit test for the new migration (api/tests/mocha/migrations/add-cht-branding-doc.spec.js) and updated branding service unit tests (api/tests/mocha/services/branding.spec.js). Updated the service-worker e2e spec (tests/e2e/default/service-worker/service-worker.wdio-spec.js) and the cht-conf integration spec (tests/integration/cht-conf/cht-conf-actions.spec.js) to reflect the new branded assets. Reviewer (m5r) confirmed the migration output and branding visually matched the issue screenshots.
+Added a mocha unit test for the new migration (api/tests/mocha/migrations/add-cht-branding-doc.spec.js) and updated branding service unit tests (api/tests/mocha/services/branding.spec.js). Updated the service-worker e2e spec (tests/e2e/default/service-worker/service-worker.wdio-spec.js) and the cht-conf integration spec (tests/integration/cht-conf/cht-conf-actions.spec.js) to reflect the new branded assets. The migration output and branding visually match the issue screenshots.
 
 ## Related Issues
 

@@ -78,4 +78,4 @@ Updated unit tests in admin/tests/unit/services/languages.spec.js to assert the 
 
 **Fit:** strong
 
-The admin languages service manages locales/translations and powers the privacy-policies admin page — both canonical configuration concerns — so configuration is the functional home. The change itself is a CouchDB view-query path correction (data-layer), which a reviewer could re-bin to data-sync, but the service's purpose makes configuration the better fit.
+The admin languages service manages locales/translations and powers the privacy-policies admin page — both canonical configuration concerns — so configuration is the functional home. The change itself is a CouchDB view-query path correction (data-layer) that leans data-sync, but the service's purpose makes configuration the better fit.
