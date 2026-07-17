@@ -2,7 +2,7 @@
 id: cht-core-8660
 category: feature
 domain: messaging
-domainFit: strong
+domainFit: weak
 issueNumber: 8660
 issueUrl: https://github.com/medic/cht-core/issues/8660
 title: Add link in SMS conversation to navigate to the sender's contact page
@@ -74,7 +74,7 @@ Implemented as an in-component link kept close to the existing sender display ra
 
 ## Testing
 
-Added a karma unit test (sender.component.spec.ts), a happy-path e2e wdio spec (messages-sender-data.wdio-spec.js), and a supporting page-object method (messages.wdio.page.js); reviewer tatilepizs also manually tested and ran the e2e test successfully.
+Added a karma unit test (sender.component.spec.ts), a happy-path e2e wdio spec (messages-sender-data.wdio-spec.js), and a supporting page-object method (messages.wdio.page.js); the change was also verified manually.
 
 ## Related Issues
 
@@ -82,6 +82,6 @@ Added a karma unit test (sender.component.spec.ts), a happy-path e2e wdio spec (
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The change lives entirely in the SMS conversation's sender component (sender.component.ts/html) and its message-view tests, enhancing the messaging conversation UI; it merely links out to a contact page, so the modified code is squarely in the messaging domain rather than contacts.
+The change lives entirely in the webapp conversation UI (sender.component.ts/html): it adds navigation from a message's sender to the contact page. Messaging is the least-bad home because the sender component belongs to the messages view, but this is UI navigation (related workflow: ui-extensions) rather than message-pipeline work, so the fit is weak.

@@ -61,7 +61,7 @@ Resolve and include the patient document/fields in the template context prior to
 
 ## Design Choices
 
-Fixed the two divergent paths to match admin's correct context construction. Reviewer (garethbowen) raised consolidating context generation into shared code so everywhere uses the same logic for reuse; the change here prioritizes correctness across webapp and Sentinel rather than fully unifying the code, with the author providing clarifications during review.
+Fixed the two divergent paths to match admin's correct context construction. Consolidating context generation into shared code was considered; the change prioritizes correctness across webapp and Sentinel rather than fully unifying the code.
 
 ## Related Files
 
@@ -74,7 +74,7 @@ Fixed the two divergent paths to match admin's correct context construction. Rev
 
 ## Testing
 
-Added/updated unit tests for the Sentinel due_tasks schedule (shared-libs/transitions/test/unit/due_tasks.js) and the webapp format-data-record service (webapp/tests/karma/ts/services/format-data-record.service.spec.ts), plus an e2e spec for SMS messages (tests/e2e/default/reports/sms-messages.wdio-spec.js) and a Sentinel integration spec for due-tasks schedules (tests/integration/sentinel/schedules/due-tasks.spec.js). Reviewer deemed the test coverage sufficient.
+Added/updated unit tests for the Sentinel due_tasks schedule (shared-libs/transitions/test/unit/due_tasks.js) and the webapp format-data-record service (webapp/tests/karma/ts/services/format-data-record.service.spec.ts), plus an e2e spec for SMS messages (tests/e2e/default/reports/sms-messages.wdio-spec.js) and a Sentinel integration spec for due-tasks schedules (tests/integration/sentinel/schedules/due-tasks.spec.js).
 
 ## Related Issues
 
@@ -84,4 +84,4 @@ Added/updated unit tests for the Sentinel due_tasks schedule (shared-libs/transi
 
 **Fit:** strong
 
-The PR fixes the template context used when generating SMS message content in both the webapp and Sentinel's due_tasks schedule; per the seeds, SMS content/delivery is the messaging domain even though 'due tasks' (scheduled messages) are involved as a secondary concern.
+The PR fixes the template context used when generating SMS message content in both the webapp and Sentinel's due_tasks schedule; SMS content/delivery anchors it in the messaging domain even though 'due tasks' (scheduled messages) are involved as a secondary concern.

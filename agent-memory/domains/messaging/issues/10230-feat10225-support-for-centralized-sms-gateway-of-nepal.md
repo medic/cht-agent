@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10225
 issueUrl: https://github.com/medic/cht-core/issues/10225
 title: Add native support for Nepal's government-run centralized SMS (DoIT A2P) gateway in the messaging service
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: CHT core could not send SMS through Nepal's Department of IT centralized A2P SMS gateway, blocking Ministry of Health projects. A new nepal-doit-sms service implements the gateway integration and is wired into messaging.js so outbound SMS can be routed through it.
 services:
   - api
@@ -26,6 +26,9 @@ tags:
 related_workflows:
   - message-processing
 source_pr: medic/cht-core#10230
+source_prs:
+  - "medic/cht-core#10230"
+  - "medic/cht-core#10243"
 source_sha: 2b9065540a96ad7205a56913b7285123d6ee6ade
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -54,7 +57,7 @@ The api messaging service only supported its existing set of SMS gateway integra
 
 ## Solution
 
-Added a dedicated api/src/services/nepal-doit-sms.js service that encapsulates the Nepal DoIT gateway's API integration for sending SMS, and modified api/src/services/messaging.js to dispatch outbound messages through this new gateway. Added unit test coverage for the new service.
+Added a dedicated api/src/services/nepal-doit-sms.js service that encapsulates the Nepal DoIT gateway's API integration for sending SMS, and modified api/src/services/messaging.js to dispatch outbound messages through this new gateway. Added unit test coverage for the new service. Backported to the 4.x line as a cherry-pick (PR #10243).
 
 ## Code Patterns
 

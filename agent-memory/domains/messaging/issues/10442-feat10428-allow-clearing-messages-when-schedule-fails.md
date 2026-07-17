@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10428
 issueUrl: https://github.com/medic/cht-core/issues/10428
 title: Clear scheduled messages when their due_tasks schedule fails or becomes invalid
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: Scheduled messages (scheduled_tasks) had no mechanism to be cleared when their schedule failed or became invalid, risking stale or erroneous delivery. The due_tasks Sentinel schedule now clears those messages instead of leaving them scheduled.
 services:
   - sentinel
@@ -38,7 +38,8 @@ concepts:
   - message scheduling
   - sentinel transitions and schedules
   - outbound message lifecycle
-related_issues: []
+related_issues:
+  - cht-core-10446
 stale: false
 ---
 
@@ -48,7 +49,7 @@ When a scheduled message's schedule failed or became invalid, the due_tasks Sent
 
 ## Root Cause
 
-shared-libs/transitions/src/schedule/due_tasks.js processed scheduled_tasks (outbound messages) but only ever transitioned due tasks to a pending/sendable state — it had no code path to clear or invalidate scheduled messages when schedule resolution failed. During development a related concern surfaced where a 'clear' flag could persist between due_tasks runs (flagged by a failing e2e test), though the reviewer later attributed the e2e breakage to a separate, pre-existing master issue.
+shared-libs/transitions/src/schedule/due_tasks.js processed scheduled_tasks (outbound messages) but only ever transitioned due tasks to a pending/sendable state — it had no code path to clear or invalidate scheduled messages when schedule resolution failed. During development a related concern surfaced where a 'clear' flag could persist between due_tasks runs, but the associated e2e breakage traced to a separate, pre-existing issue on master.
 
 ## Solution
 
@@ -70,7 +71,7 @@ Clearing invalid/failed scheduled messages (preventing erroneous future delivery
 
 ## Testing
 
-Updated unit tests in shared-libs/transitions/test/unit/due_tasks.js and added a new Sentinel integration test at tests/integration/sentinel/schedules/clear-invalid-scheduled-tasks.spec.js. The reviewer also requested e2e coverage alongside tests/integration/sentinel/schedules/due-tasks.spec.js; an unrelated pre-existing e2e failure required merging master to get CI green.
+Updated unit tests in shared-libs/transitions/test/unit/due_tasks.js and added a new Sentinel integration test at tests/integration/sentinel/schedules/clear-invalid-scheduled-tasks.spec.js. Additional coverage sits alongside tests/integration/sentinel/schedules/due-tasks.spec.js.
 
 ## Related Issues
 

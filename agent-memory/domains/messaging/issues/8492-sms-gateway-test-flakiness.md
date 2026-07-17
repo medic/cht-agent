@@ -29,7 +29,7 @@ The message factory in tests didn't properly initialize the `scheduled_tasks[0].
 
 1. **Improved message factory**: Updated test factories to explicitly set message states rather than relying on defaults
 2. **Fixed state initialization**: Ensured `reportWithTwoMessagesToSend.scheduled_tasks[0].state = 'forwarded-to-gateway'` is set consistently
-3. **Fixed formatting**: Consolidated split lines for better readability (reviewer noted unnecessary line splits)
+3. **Fixed formatting**: Consolidated unnecessarily split lines for better readability
 
 The fix ensures tests have deterministic message states, eliminating flakiness.
 

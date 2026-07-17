@@ -69,7 +69,7 @@ Implemented as a render-time Mustache helper rather than mutating stored contact
 
 ## Testing
 
-Unit tests added/extended in shared-libs/message-utils/test/index.js. Per reviewer (binokaryg) feedback, added cases for default_country_code supplied as a numeric value and for whitespace around context variables in templates. Reviewer confirmed all tests passed before merge.
+Unit tests added/extended in shared-libs/message-utils/test/index.js. Cases cover default_country_code supplied as a numeric value and whitespace around context variables in templates.
 
 ## Related Issues
 

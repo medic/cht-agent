@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10068
 issueUrl: https://github.com/medic/cht-core/issues/10068
 title: Fix Africa's Talking SMS gateway double-parsing of the inbound request body
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: The Africa's Talking SMS integration attempted to JSON-parse a request body that had already been parsed, breaking inbound message handling. The fix stops the redundant double-parse and adds a CI-only e2e test that exercises the Africa's Talking Sandbox server.
 services:
   - api
@@ -26,6 +26,9 @@ tags:
 related_workflows:
   - message-processing
 source_pr: medic/cht-core#10073
+source_prs:
+  - "medic/cht-core#10073"
+  - "medic/cht-core#10082"
 source_sha: fb52de8606201fdbc853e3c108f878e8640b4f7f
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -61,6 +64,8 @@ Do not re-parse request bodies that have already been parsed by upstream middlew
 
 The new e2e test is gated to CI only (via build.yml) because it depends on the external Africa's Talking Sandbox server, keeping local/offline test runs unaffected while still validating the integration end-to-end.
 
+This fix was backported to the 4.21 release line (PR #10082, cherry-picked from #10073).
+
 ## Related Files
 
 - .github/workflows/build.yml
@@ -71,7 +76,7 @@ The new e2e test is gated to CI only (via build.yml) because it depends on the e
 
 ## Testing
 
-Updated unit tests in api/tests/mocha/services/africas-talking.spec.js and added a CI-only e2e test in tests/e2e/default/sms/africas-talking.wdio-spec.js that interacts with the Africa's Talking Sandbox server; tests/utils/index.js and .github/workflows/build.yml were updated to support running the e2e test in CI. Reviewer confirmed it works after manual testing.
+Updated unit tests in api/tests/mocha/services/africas-talking.spec.js and added a CI-only e2e test in tests/e2e/default/sms/africas-talking.wdio-spec.js that interacts with the Africa's Talking Sandbox server; tests/utils/index.js and .github/workflows/build.yml were updated to support running the e2e test in CI. The fix was also confirmed by manual testing.
 
 ## Related Issues
 

@@ -6,7 +6,7 @@ subDomain: sms-parsing
 issueNumber: 10729
 issueUrl: https://github.com/medic/cht-core/issues/10729
 title: Fix bugs and typos in smsparser.js and related files
-lastUpdated: 2026-04-02
+lastUpdated: 2026-07-16
 summary: "Fixed two critical bugs in SMS parser: string list iteration bug causing fields to never match, and parseArray crash when def is null. Also fixed typos in code comments."
 services:
   - api
@@ -14,6 +14,10 @@ services:
 techStack:
   - javascript
   - nodejs
+source_prs:
+  - "medic/cht-core#10730"
+related_issues:
+  - cht-core-10802
 ---
 
 ## Problem
@@ -39,6 +43,8 @@ Additionally, there were typos in comments: "becuase" → "because" and "succesf
 2. **Moved null guard**: Relocated the null-check `if (!def || !def.fields) return []` to the top of `parseArray()`, before any calls to `getParser()` or `parser()`.
 
 3. **Fixed typos**: Corrected spelling errors in `smsparser.js`, `infodoc.js`, and `reminders.js`.
+
+The fix merged as PR #10730.
 
 ## Code Patterns
 
@@ -66,11 +72,9 @@ Chose to fix the bugs directly rather than refactoring the entire parsing system
 
 ## Testing
 
-- Bug fixes covered by existing unit tests in `api/tests/mocha/services/report/smsparser.js`
-- No new tests needed as the existing tests already validated the correct behavior
+- Bug fixes covered by existing unit tests in `api/tests/mocha/services/report/smsparser.js`; PR #10730 added no new tests
 - Typos had no functional impact
 
 ## Related Issues
 
 - #10802: Message processing state management (related messaging issue)
-- Multiple issues related to SMS parsing and message handling

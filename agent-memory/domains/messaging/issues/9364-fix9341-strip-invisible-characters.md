@@ -58,7 +58,7 @@ Normalize/sanitize raw inbound message text by stripping invisible (zero-width/n
 
 ## Design Choices
 
-Strip invisible characters once at the parser level so every SMS-submitted report benefits, rather than sanitizing per field or downstream. Per reviewer guidance, tests were written red/green (failing first, then passing after the fix) to both prove the behavior and fill a pre-existing coverage gap in this function.
+Strip invisible characters once at the parser level so every SMS-submitted report benefits, rather than sanitizing per field or downstream. Tests were written red/green (failing first, then passing after the fix) to both prove the behavior and fill a pre-existing coverage gap in this function.
 
 ## Related Files
 

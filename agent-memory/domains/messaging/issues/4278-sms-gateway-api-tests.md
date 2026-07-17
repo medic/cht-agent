@@ -62,7 +62,7 @@ Chose changes listener approach over view polling because:
 - Captures documents directly as they're created
 - Faster than waiting for view index updates
 
-Reviewer (@garethbowen) specifically requested: "The best way may be to register a changes listener including docs before the endpoint is called and then assert the docs come through there within 10s"
+The adopted approach: register a changes listener (including docs) before the endpoint is called, then assert the docs come through it within 10s.
 
 ## Related Files
 
