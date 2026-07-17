@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8985
 issueUrl: https://github.com/medic/cht-core/issues/8985
 title: Remove extra validation of parent place contact so creating a person via the people API no longer fails
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-16'
 summary: Creating a person via POST api/v1/people failed with 'Wrong type, this is not a person.' when the place hierarchy contained a place without a primary contact (a regression from 4.4 to 4.6). The fix removes the overly strict validation of the parent place's contact.
 services:
   - api
@@ -26,6 +26,9 @@ tags:
 related_workflows:
   - contact-creation
 source_pr: medic/cht-core#9027
+source_prs:
+  - "medic/cht-core#9027"
+  - "medic/cht-core#9098"
 source_sha: 6bb7f6963aad9454c22d6836f5c4c7cff33398b9
 distilled_at: '2026-06-23'
 reviewed_by: null
@@ -52,7 +55,7 @@ The place-validation logic in shared-libs/contacts/src/places.js performed extra
 
 ## Solution
 
-Removed the extra validation of the parent place contact in shared-libs/contacts/src/places.js so that person creation no longer hinges on the parent/ancestor place's primary contact, restoring the pre-regression (4.4) behavior.
+Removed the extra validation of the parent place contact in shared-libs/contacts/src/places.js so that person creation no longer hinges on the parent/ancestor place's primary contact, restoring the pre-regression (4.4) behavior. Backported to the 4.7.x release branch via cherry-pick (PR #9098).
 
 ## Code Patterns
 
@@ -60,7 +63,7 @@ When validating a newly created entity (here, a person within a place), validate
 
 ## Design Choices
 
-The fix removes the validation rather than patching it, since the type of a parent place's primary contact is irrelevant to whether a person can be created under that place. Reviewer dianabarsan approved to avoid holding up the release, noting a preference for additional e2e tests to be added later.
+The fix removes the validation rather than patching it, since the type of a parent place's primary contact is irrelevant to whether a person can be created under that place. Additional e2e coverage was noted as a follow-up.
 
 ## Related Files
 

@@ -6,13 +6,15 @@ subDomain: hierarchy-validation
 issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
-lastUpdated: 2026-03-16
+lastUpdated: 2026-07-16
 summary: Fixed a validation gap where contacts could be created under any parent by manipulating the URL, bypassing the configured hierarchy. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp
 techStack:
   - typescript
   - angular
+source_prs:
+  - "medic/cht-core#9563"
 ---
 
 ## Problem
@@ -28,6 +30,8 @@ The `ContactsEditComponent.getForm()` method, when handling contact creation, as
 PR #9563 added a `validateParentForCreateForm()` method to `ContactsEditComponent` that runs before the form is rendered. It has two branches:
 1. **No parent (top-level creation):** Calls `contactTypesService.getChildren()` with no argument to get valid top-level types. If the contact type is not in that list, throws an error.
 2. **Parent present:** Fetches the parent document from PouchDB, resolves its type via `contactTypesService.getTypeId()`, then calls `getChildren(parentType)` to get valid direct children. If the contact type is not in that list, throws an error setting `contentError = true` and preventing form rendering.
+
+The `person` contact-type is handled explicitly as its own case in the validation logic rather than relying on the generic child-type lookup (PR #9563).
 
 ## Code Patterns
 
@@ -50,11 +54,13 @@ PR #9563 added a `validateParentForCreateForm()` method to `ContactsEditComponen
 
 - webapp/src/ts/modules/contacts/contacts-edit.component.ts
 - webapp/src/ts/services/contact-types.service.ts
+- webapp/tests/karma/ts/modules/contacts/contacts-edit.component.spec.ts (PR #9563)
 
 ## Testing
 
 - Unit test verifying that creating a contact under an invalid parent type sets `contentError = true` and never calls `formService.render`
 - Updated existing tests to provide `parent_id` in route params and stub the parent document lookup
+- Karma unit tests in `webapp/tests/karma/ts/modules/contacts/contacts-edit.component.spec.ts` covering both valid and invalid parent/contact_type combinations (PR #9563)
 
 ## Related Issues
 

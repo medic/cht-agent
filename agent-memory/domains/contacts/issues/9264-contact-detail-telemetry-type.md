@@ -6,7 +6,9 @@ subDomain: telemetry
 issueNumber: 9264
 issueUrl: https://github.com/medic/cht-core/issues/9264
 title: Contact detail telemetry not recording contact type in default config
-lastUpdated: 2026-03-16
+lastUpdated: 2026-07-16
+source_prs:
+  - "medic/cht-core#9276"
 summary: Fixed telemetry recording the generic string "contact" instead of the actual contact type (e.g., "person", "clinic") on the contact detail page, caused by not handling legacy hardcoded contact types.
 services:
   - webapp
@@ -35,6 +37,7 @@ PR #9276 replaced the direct field access with a call to `contactTypesService.ge
 - Always use `contactTypesService.getTypeId(doc)` or `contactTypesUtils.getTypeId(doc)` to resolve contact type — never read `doc.contact_type` directly
 - File: `webapp/src/ts/effects/contacts.effects.ts` — changed from `contact?.doc?.contact_type` to `this.contactTypesService.getTypeId(contact?.doc)`
 - File: `shared-libs/contact-types-utils/src/index.js` — `getTypeId()` handles both schemas
+- The telemetry key is built inside an NgRx effect, so the type resolution happens as the load event is emitted (PR #9276)
 
 ## Design Choices
 
@@ -45,11 +48,13 @@ PR #9276 replaced the direct field access with a call to `contactTypesService.ge
 
 - webapp/src/ts/effects/contacts.effects.ts
 - shared-libs/contact-types-utils/src/index.js
+- webapp/tests/karma/ts/effects/contacts.effects.spec.ts (PR #9276)
 
 ## Testing
 
 - Updated unit tests to include both legacy and new-style contact documents
 - Verified telemetry keys contain actual type names (`person`, `hospital`) instead of generic `contact`
+- Karma unit tests in `contacts.effects.spec.ts` cover the default-value, `contact_type`, and `type` resolution paths (PR #9276)
 
 ## Related Issues
 

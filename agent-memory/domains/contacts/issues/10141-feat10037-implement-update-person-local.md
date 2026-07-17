@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10037
 issueUrl: https://github.com/medic/cht-core/issues/10037
 title: Implement update-person operation in the cht-datasource local data module
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: The cht-datasource local (offline-capable) backend exposed read operations for person documents but had no update operation. This PR implements update-person in the local module, wiring it through the public datasource API, input validation, and shared core libs, following the existing place/report pattern.
 services:
   - api
@@ -25,6 +25,9 @@ tags:
   - person
 related_workflows: []
 source_pr: medic/cht-core#10141
+source_prs:
+  - "medic/cht-core#10141"
+  - "medic/cht-core#10157"
 source_sha: d32883fff468de69d481c363dcf6522780cd1c5e
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -48,7 +51,7 @@ stale: false
 
 ## Problem
 
-The cht-datasource local data module lacked an update operation for person documents. Local (offline-capable / server-local) consumers could read persons but could not update them, leaving the local datasource API surface for persons incomplete relative to the intended uniform entity API.
+The cht-datasource local data module lacked an update operation for person documents. Local (offline-capable / server-local) consumers could read persons but could not update them, leaving the local datasource API surface for persons incomplete relative to the intended uniform entity API. The same gap existed on the remote (HTTP/API-backed) side, which exposed reads (get/getPage) but no way to update a person through the datasource abstraction (PR #10157).
 
 ## Root Cause
 
@@ -56,11 +59,11 @@ Incremental build-out of the cht-datasource API: the update-person capability ha
 
 ## Solution
 
-Added the update-person implementation to shared-libs/cht-datasource/src/local/person.ts and exposed it through the public datasource API in src/person.ts. Extended input validation in src/input.ts and shared helpers in src/local/libs/core.ts, and made parallel adjustments to place.ts/report.ts and their local counterparts for a consistent contract. The implementation follows the established curried, context-bound factory pattern (e.g. v1.update(localContext)) already used for place and report.
+Added the update-person implementation to shared-libs/cht-datasource/src/local/person.ts and exposed it through the public datasource API in src/person.ts. Extended input validation in src/input.ts and shared helpers in src/local/libs/core.ts, and made parallel adjustments to place.ts/report.ts and their local counterparts for a consistent contract. The implementation follows the established curried, context-bound factory pattern (e.g. v1.update(localContext)) already used for place and report. The companion remote implementation (PR #10157) added updatePerson in src/remote/person.ts, delegated to it from the public person.ts factory, and extended the remote data-context lib (src/remote/libs/data-context.ts) to issue the update request; matching API controller handlers (api/src/controllers/person.js) and route registrations (api/src/routing.js) expose the endpoints. Place and report were extended in lockstep on the remote side as well (PR #10157).
 
 ## Code Patterns
 
-Local datasource update follows the established pattern: a versioned, curried factory bound to the local data context that validates the input document, loads the existing doc, applies the update, and persists it via the local context. Input shapes are validated centrally in src/input.ts rather than per entity. See shared-libs/cht-datasource/src/local/person.ts and shared-libs/cht-datasource/src/local/libs/core.ts.
+Local datasource update follows the established pattern: a versioned, curried factory bound to the local data context that validates the input document, loads the existing doc, applies the update, and persists it via the local context. Input shapes are validated centrally in src/input.ts rather than per entity. See shared-libs/cht-datasource/src/local/person.ts and shared-libs/cht-datasource/src/local/libs/core.ts. On the remote side (PR #10157) the public factory (person.ts) delegates to remote/person.ts, which builds the request against the API through the remote data context (remote/libs/data-context.ts), so local and remote stay symmetric behind one public API; new operations mirror existing ones such as getPage, including JSDoc on the inner function to document params like updateInput (PR #10157).
 
 ## Design Choices
 
@@ -87,9 +90,21 @@ Preserved cht-datasource's local/remote split and made the local update-person c
 - tests/integration/shared-libs/cht-datasource/report.spec.js
 - shared-libs/nyc.config.js
 
+Remote implementation (PR #10157):
+
+- shared-libs/cht-datasource/src/remote/person.ts
+- shared-libs/cht-datasource/src/remote/libs/data-context.ts
+- shared-libs/cht-datasource/src/remote/place.ts
+- shared-libs/cht-datasource/src/remote/report.ts
+- shared-libs/cht-datasource/src/index.ts
+- api/src/controllers/person.js
+- api/src/routing.js
+- tests/integration/api/controllers/person.spec.js
+- tests/integration/shared-libs/cht-datasource/person.spec.js
+
 ## Testing
 
-Added and extended unit tests for the new local update-person path (test/local/person.spec.ts), input validation (test/input.spec.ts, test/libs/parameter-validators.spec.ts), and entity API surfaces (test/local/place.spec.ts, test/report.spec.ts, test/index.spec.ts). Updated api controller/service tests (api/tests/mocha/controllers/person.spec.js, api/tests/mocha/services/settings.spec.js) and added an integration test (tests/integration/shared-libs/cht-datasource/report.spec.js). Coverage config (shared-libs/nyc.config.js) was adjusted. The 'Tested' checklist item was checked.
+Added and extended unit tests for the new local update-person path (test/local/person.spec.ts), input validation (test/input.spec.ts, test/libs/parameter-validators.spec.ts), and entity API surfaces (test/local/place.spec.ts, test/report.spec.ts, test/index.spec.ts). Updated api controller/service tests (api/tests/mocha/controllers/person.spec.js, api/tests/mocha/services/settings.spec.js) and added an integration test (tests/integration/shared-libs/cht-datasource/report.spec.js). Coverage config (shared-libs/nyc.config.js) was adjusted. The 'Tested' checklist item was checked. The remote implementation (PR #10157) added tests at three levels: mocha unit tests for the API controllers (api/tests/mocha/controllers/{person,place,report}.spec.js), cht-datasource unit tests across the public/local/remote layers (including test/remote/* and test/remote/libs/data-context.spec.ts), and integration tests (tests/integration/api/controllers/person.spec.js and tests/integration/shared-libs/cht-datasource/{person,place,report}.spec.js).
 
 ## Related Issues
 
