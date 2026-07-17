@@ -1,10 +1,10 @@
 ---
-id: cht-core-9569
+id: cht-core-9552
 category: bug
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9569
-issueUrl: https://github.com/medic/cht-core/issues/9569
+issueNumber: 9552
+issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Migrate stale target state on reporting-interval turnover in the rules-engine
 lastUpdated: '2026-06-22'
 summary: When a reporting interval turned over (e.g. the start of a new month), targets kept stale state persisted from the previous interval and showed incorrect values. The rules-state-store/target-state now detect the interval change and migrate the stale target state so targets recompute for the current interval.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-9099
+id: cht-core-6543
 category: improvement
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9099
-issueUrl: https://github.com/medic/cht-core/issues/9099
+issueNumber: 6543
+issueUrl: https://github.com/medic/cht-core/issues/6543
 title: Disable target aggregates page for users associated with multiple facility_ids
 lastUpdated: '2026-06-23'
 summary: Target aggregates were shown (when can_aggregate_targets was enabled) to users with multiple associated facilities, where cross-facility aggregation isn't supported and produces incorrect results. The change gates the aggregate-targets analytics module so users whose facility_id is a multi-entry array no longer see the page.

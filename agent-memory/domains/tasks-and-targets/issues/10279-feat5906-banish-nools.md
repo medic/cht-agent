@@ -1,10 +1,10 @@
 ---
-id: cht-core-10279
+id: cht-core-5906
 category: improvement
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 10279
-issueUrl: https://github.com/medic/cht-core/issues/10279
+issueNumber: 5906
+issueUrl: https://github.com/medic/cht-core/issues/5906
 title: 'Banish Nools from the rules engine: remove the Nools emitter/dependency and make declarative (JavaScript) rules config mandatory'
 lastUpdated: '2026-06-22'
 summary: The rules engine carried two parallel rule-emitter implementations (legacy Nools-based and the newer declarative JavaScript emitter). This PR removes the Nools emitter and library entirely, leaving the declarative emitter as the only path and throwing an error when legacy Nools-format config is supplied.

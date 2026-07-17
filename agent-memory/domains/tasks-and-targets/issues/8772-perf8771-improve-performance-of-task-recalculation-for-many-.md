@@ -1,10 +1,10 @@
 ---
-id: cht-core-8772
+id: cht-core-8771
 category: improvement
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 8772
-issueUrl: https://github.com/medic/cht-core/issues/8772
+issueNumber: 8771
+issueUrl: https://github.com/medic/cht-core/issues/8771
 title: Improve task recalculation performance by short-circuiting large keyed PouchDB view queries
 lastUpdated: '2026-06-23'
 summary: Task recalculation for users with many contacts issued PouchDB view queries with thousands of keys, which took minutes and sometimes crashed PouchDB (IndexedDB). The fix short-circuits to fetching all rows and filtering them in memory when the key count exceeds 500, cutting average query time from ~283s to ~63s with no crashes.

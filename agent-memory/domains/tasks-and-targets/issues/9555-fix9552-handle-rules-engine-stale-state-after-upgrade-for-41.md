@@ -1,10 +1,10 @@
 ---
-id: cht-core-9555
+id: cht-core-9552
 category: bug
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9555
-issueUrl: https://github.com/medic/cht-core/issues/9555
+issueNumber: 9552
+issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Handle stale rules-engine state (target-state / rules-state-store) after a CHT upgrade
 lastUpdated: '2026-06-22'
 summary: After upgrading CHT, the rules-engine's persisted state could be stale or incompatible with the new version, causing targets (and tasks) to be computed from outdated cached state. The fix detects the stale state and rebuilds it so targets are recomputed accurately.

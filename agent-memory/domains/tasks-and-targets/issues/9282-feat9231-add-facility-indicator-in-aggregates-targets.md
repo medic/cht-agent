@@ -1,10 +1,10 @@
 ---
-id: cht-core-9282
+id: cht-core-9231
 category: feature
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9282
-issueUrl: https://github.com/medic/cht-core/issues/9282
+issueNumber: 9231
+issueUrl: https://github.com/medic/cht-core/issues/9231
 title: Add selected-facility indicator to aggregate targets list/details and restore report sidebar filter colors
 lastUpdated: '2026-06-23'
 summary: The aggregate targets list and details gave no indication of which facility was selected, and the report sidebar filter colors had regressed from the 4.9 styling. This PR adds a facility indicator to the aggregate targets views and restores the sidebar filter colors.

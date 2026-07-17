@@ -1,10 +1,10 @@
 ---
-id: cht-core-9570
+id: cht-core-9552
 category: bug
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9570
-issueUrl: https://github.com/medic/cht-core/issues/9570
+issueNumber: 9552
+issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Migrate stale target state on reporting interval turnover in the rules engine
 lastUpdated: '2026-06-22'
 summary: After a target's reporting interval turned over (e.g. a new month), the rules engine reused stale target state persisted from the previous interval. The fix migrates/resets the stored target state on interval change so aggregated targets reflect only the current interval.

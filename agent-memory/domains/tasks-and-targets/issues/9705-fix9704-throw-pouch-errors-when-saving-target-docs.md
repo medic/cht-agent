@@ -1,10 +1,10 @@
 ---
-id: cht-core-9705
+id: cht-core-9704
 category: bug
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9705
-issueUrl: https://github.com/medic/cht-core/issues/9705
+issueNumber: 9704
+issueUrl: https://github.com/medic/cht-core/issues/9704
 title: Throw PouchDB errors when saving target documents in the rules-engine pouchdb-provider
 lastUpdated: '2026-06-22'
 summary: Errors returned by PouchDB while saving target documents were being silently swallowed, so callers could not detect failed writes. The provider now inspects write results and throws so the errors propagate.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-9553
+id: cht-core-9552
 category: bug
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9553
-issueUrl: https://github.com/medic/cht-core/issues/9553
+issueNumber: 9552
+issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Reconcile rules-engine persisted target state after an upgrade so newly configured target aggregates are not dropped
 lastUpdated: '2026-06-22'
 summary: After a CHT upgrade that changes target configuration, the rules engine's persisted target state became stale and omitted newly configured target aggregates, yielding inaccurate or missing targets. The fix reconciles stored target state against the current configuration so missing aggregates are backfilled rather than silently dropped.

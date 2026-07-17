@@ -1,10 +1,10 @@
 ---
-id: cht-core-9549
+id: cht-core-9431
 category: improvement
 domain: tasks-and-targets
 domainFit: strong
-issueNumber: 9549
-issueUrl: https://github.com/medic/cht-core/issues/9549
+issueNumber: 9431
+issueUrl: https://github.com/medic/cht-core/issues/9431
 title: Rework rules-engine task/target emission recalculation for the 4.13.x release line
 lastUpdated: '2026-06-22'
 summary: Task and target emissions computed by the client-side rules engine were not always recalculated correctly when underlying data changed in 4.13.x. This PR reworks emission recalculation across the rules-engine shared lib and the webapp sync/rules-engine services so tasks and targets stay accurate.
