@@ -2,7 +2,7 @@
 id: cht-core-10343
 category: feature
 domain: tasks-and-targets
-domainFit: strong
+domainFit: weak
 issueNumber: 10343
 issueUrl: https://github.com/medic/cht-core/issues/10343
 title: Add target intervals (target docs) to cht-datasource with local and remote implementations plus an API controller and route
@@ -89,6 +89,6 @@ Added mocha unit tests for the new datasource module (test/target-interval.spec.
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-Target intervals ARE target documents (the docs underpinning aggregate targets and analytics.getTargetDocs), which sit squarely in the tasks-and-targets domain per the targets/coverage classification; the PR adds data access for them rather than generic data-layer plumbing.
+All changed files are shared-libs/cht-datasource plus one API controller — data-access-layer work tied to tasks only because the docs fetched are targets; tasks-and-targets is the least-bad home rather than a principled fit.

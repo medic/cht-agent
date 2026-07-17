@@ -75,7 +75,7 @@ Rather than removing or shortening the debounces (which protects against excessi
 
 ## Testing
 
-Added/updated Karma unit tests for the tasks reducer (tasks.spec.ts) and the rules-engine service (rules-engine.service.spec.ts), and optimized the WebdriverIO tasks page object (tasks.wdio.page.js) to avoid reading not-rendered Angular elements. Reviewer (latin-panda) posted manual testing videos and approved (LGTM).
+Added/updated Karma unit tests for the tasks reducer (tasks.spec.ts) and the rules-engine service (rules-engine.service.spec.ts), and optimized the WebdriverIO tasks page object (tasks.wdio.page.js) to avoid reading not-rendered Angular elements. Manual testing videos are attached to the PR.
 
 ## Related Issues
 

@@ -66,7 +66,7 @@ Keeps the dropdown's selected state driven by navigation so the control stays co
 
 ## Testing
 
-Karma unit tests in analytics-filter.component.spec.ts were updated to cover setting the targets dropdown on navigation. The reviewer additionally verified the fix manually and confirmed it works (with a screen-recording attachment).
+Karma unit tests in analytics-filter.component.spec.ts were updated to cover setting the targets dropdown on navigation. The fix was additionally verified manually (screen recording attached to the PR).
 
 ## Related Issues
 

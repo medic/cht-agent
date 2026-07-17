@@ -2,7 +2,7 @@
 id: cht-core-10695
 category: feature
 domain: tasks-and-targets
-domainFit: strong
+domainFit: weak
 issueNumber: 10695
 issueUrl: https://github.com/medic/cht-core/issues/10695
 title: Add opt-in InteractionTrackingService to record CHW behavior on the tasks tab (list/task/group/filter events) for workflow analytics
@@ -92,7 +92,7 @@ Chose per-day local PouchDB plus deferred meta-DB aggregation over writing per-e
 
 ## Testing
 
-Added webapp/tests/karma/ts/services/interaction-tracking.service.spec.ts plus updated karma specs for app.component and the tasks, tasks-content, tasks-group, and tasks-sidebar-filter components; added sentinel replications.spec.js and mocha purger.spec.js coverage; added an end-to-end WebdriverIO spec (tests/e2e/default/tasks/interaction-tracking.wdio-spec.js) with supporting page-object and breadcrumbs-config updates. Reviewer sugat009 verified iteratively across three iterations: ran karma tests locally to reproduce must-fix issues, confirmed PII narrowing on task.title and the deployment gap on can_track_task_interactions, and drove the feature end-to-end on a local dev instance (logged in as a CHW, exercised the tasks tab, inspected the per-day IndexedDB and meta DB). Final review: CI green, all 47 checks pass.
+Added webapp/tests/karma/ts/services/interaction-tracking.service.spec.ts plus updated karma specs for app.component and the tasks, tasks-content, tasks-group, and tasks-sidebar-filter components; added sentinel replications.spec.js and mocha purger.spec.js coverage; added an end-to-end WebdriverIO spec (tests/e2e/default/tasks/interaction-tracking.wdio-spec.js) with supporting page-object and breadcrumbs-config updates. The feature was verified end-to-end on a local dev instance (logged in as a CHW, exercising the tasks tab and inspecting the per-day IndexedDB and meta DB), including PII narrowing on task.title and the deployment gap on can_track_task_interactions.
 
 ## Related Issues
 
@@ -100,6 +100,6 @@ Added webapp/tests/karma/ts/services/interaction-tracking.service.spec.ts plus u
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-Every tracked event and every instrumented component is scoped exclusively to the tasks tab (task opens/completes/cancels, list scrolls, group navigation, filter usage), and the feature exists to quantify task-list navigation per issue #10695. The underlying mechanism is an observability/telemetry pipeline (captured in relatedWorkflows), but its subject matter is squarely tasks behavior rather than app-wide observability.
+The work spans a webapp telemetry service plus the sentinel replications.js/purger.js pipeline; task interactions are the tracked subject, but the mechanism is cross-cutting telemetry, so tasks-and-targets is the least-bad home rather than a principled fit.

@@ -57,7 +57,7 @@ Rules-engine wireup/refresh cycle in provider-wireup.js: removing the boundary-s
 
 ## Design Choices
 
-Chose to remove interval turnover outright (the PR's 'option 1'), accepting that it reopens the gap documented in #6209 — though that gap should now be significantly smaller after #9486. Tradeoff: projects may miss one recalculation immediately after upgrade. Reviewer (dianabarsan) agreed with option 1 but was not fully convinced it would resolve the data-quality issue, since turnover previously preserved a snapshot of the last calculation.
+Chose to remove interval turnover outright (the PR's 'option 1'), accepting that it reopens the gap documented in #6209 — though that gap should now be significantly smaller after #9486. Tradeoff: projects may miss one recalculation immediately after upgrade. A residual concern: turnover previously preserved a snapshot of the last calculation, so this may not fully resolve the data-quality issue.
 
 ## Related Files
 

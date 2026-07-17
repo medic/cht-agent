@@ -66,7 +66,7 @@ New cht-datasource resource follows the established layered pattern: public entr
 
 ## Design Choices
 
-Target docs are typed 'target' (their true type) instead of 'target-interval' after reviewer (dianabarsan) feedback. The cht-datasource abstraction was used to unify online and offline target retrieval, which is what enabled online users to fetch aggregates. A generator-based approach was used; a reviewer noted a philosophical preference against generators but it was left as-is for this PR.
+Target docs are typed 'target' (their true type) instead of 'target-interval'. The cht-datasource abstraction was used to unify online and offline target retrieval, which is what enabled online users to fetch aggregates. A generator-based approach was used.
 
 ## Related Files
 

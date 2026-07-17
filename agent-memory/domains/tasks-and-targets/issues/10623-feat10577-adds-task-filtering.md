@@ -71,7 +71,7 @@ Reuse of the Reports filter components (overdue-filter, task-type-filter, area f
 
 ## Design Choices
 
-Reused existing Reports filter components rather than building task-specific filters from scratch, keeping UI and behavior consistent. The area filter was deliberately kept lazy-loaded — during review the human reverted an AI change that had switched it to eager loading (to count places), preserving performance. Lineage filtering was moved into the pipe (DRY) so the store of user facilities is the single source rather than per-component logic.
+Reused existing Reports filter components rather than building task-specific filters from scratch, keeping UI and behavior consistent. The area filter was deliberately kept lazy-loaded rather than eager-loading to count places, preserving performance. Lineage filtering was moved into the pipe (DRY) so the store of user facilities is the single source rather than per-component logic.
 
 ## Related Files
 

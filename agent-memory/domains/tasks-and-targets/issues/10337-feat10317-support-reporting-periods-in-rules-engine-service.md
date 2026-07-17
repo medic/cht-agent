@@ -56,7 +56,7 @@ Thread a reporting-period selector through the rules engine target retrieval so 
 
 ## Design Choices
 
-Reviewer (jkuester) flagged the handling of not-found targets, so the final implementation explicitly accounts for periods where no targets exist rather than assuming a result is always present.
+The final implementation explicitly accounts for periods where no targets exist rather than assuming a result is always present.
 
 ## Related Files
 

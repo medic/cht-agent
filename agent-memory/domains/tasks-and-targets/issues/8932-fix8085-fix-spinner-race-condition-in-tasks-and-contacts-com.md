@@ -2,7 +2,7 @@
 id: cht-core-8085
 category: bug
 domain: tasks-and-targets
-domainFit: strong
+domainFit: weak
 issueNumber: 8085
 issueUrl: https://github.com/medic/cht-core/issues/8085
 title: Fix spinner race condition that briefly flashed 'No more tasks'/'No more people' empty states in tasks and contacts components
@@ -67,7 +67,7 @@ Chose to add a separate readiness flag rather than reuse the existing `loading` 
 
 ## Testing
 
-Validated manually via before/after screen recordings demonstrating the race condition and its fix, reproduced by throttling CPU as an offline user with ~440 active tasks. Reviewer required an updated video showing the fix before approving. No automated unit/e2e tests are noted (the 'Tested' checklist item is left unchecked).
+Validated manually via before/after screen recordings demonstrating the race condition and its fix, reproduced by throttling CPU as an offline user with ~440 active tasks. No automated unit/e2e tests are noted.
 
 ## Related Issues
 
@@ -75,6 +75,6 @@ Validated manually via before/after screen recordings demonstrating the race con
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The originating issue #8085 is squarely about the tasks list briefly flashing 'No more tasks' before rendering, and the PR fixes that race in the tasks component; the same pattern is fixed in the contacts component as a parallel change, so tasks-and-targets is the lead domain with contacts co-touched (a reviewer could re-bin to contacts).
+The race-condition fix touches tasks.component.ts and contacts.component.ts equally; the originating issue is about the tasks list, so tasks-and-targets is the least-bad home for a cross-component UI fix.

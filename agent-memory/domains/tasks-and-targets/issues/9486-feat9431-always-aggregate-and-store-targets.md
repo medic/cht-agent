@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9431
 issueUrl: https://github.com/medic/cht-core/issues/9431
 title: Always aggregate and store targets and recalculate tasks automatically on state/document changes, with a 1s debounce
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: Targets and tasks were only computed lazily when visiting specific pages, leaving them stale and unstored. The rules engine now always aggregates and persists targets and recalculates tasks automatically whenever rules state or documents change, with a 1s debounce to batch bursts of changes.
 services:
   - webapp
@@ -27,6 +27,9 @@ tags:
 related_workflows:
   - task-scheduling
 source_pr: medic/cht-core#9486
+source_prs:
+  - "medic/cht-core#9486"
+  - "medic/cht-core#9549"
 source_sha: dc3ef42ab8320ef8c951a4fa0e85ce11e2339879
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -49,7 +52,9 @@ concepts:
   - debouncing of change bursts
   - rules state store
   - offline client-side computation
-related_issues: []
+related_issues:
+  - cht-core-9552
+  - cht-core-9714
 stale: false
 ---
 
@@ -69,9 +74,11 @@ Refactored the rules engine to always aggregate and store targets and to recalcu
 
 Debounced, change-driven recalculation: subscribe to the db-sync change feed and debounce (1s) before invoking the rules engine, then aggregate and persist target state. Key files: webapp/src/ts/services/db-sync.service.ts and webapp/src/ts/services/rules-engine.service.ts (change subscription + debounce), shared-libs/rules-engine/src/target-state.js and shared-libs/rules-engine/src/rules-state-store.js (aggregate + store targets), shared-libs/rules-engine/src/provider-wireup.js and pouchdb-provider.js (persistence wiring).
 
+Dirty-tracking gates recomputation: rules-state-store.js decides when cached task/target emissions are dirty so target-state.js only recomputes when needed rather than on every change; calendar-interval/src/index.js computes period boundaries that invalidate periodic-target emissions when an interval turns over, and recalculation is coordinated off sync completion rather than by polling (PR #9549).
+
 ## Design Choices
 
-Chose always-on automatic aggregation/storage and reactive recalculation over the prior lazy page-triggered approach so targets/tasks stay fresh and are available without navigating. Added a 1s debounce between receiving a change and triggering recalculation to coalesce bursts (sync downloads, bulk creation) and avoid repeated expensive recalculation cycles, trading a small latency for far less redundant computation.
+Chose always-on automatic aggregation/storage and reactive recalculation over the prior lazy page-triggered approach so targets/tasks stay fresh and are available without navigating. Added a 1s debounce between receiving a change and triggering recalculation to coalesce bursts (sync downloads, bulk creation) and avoid repeated expensive recalculation cycles, trading a small latency for far less redundant computation. Kept the recalculation logic in the shared rules-engine lib so all consumers share one correct implementation, and drove recalculation from sync/data-change signals instead of periodic polling. A companion emission-recalculation rework was scoped and backported to the 4.13.x release line (PR #9549).
 
 ## Related Files
 

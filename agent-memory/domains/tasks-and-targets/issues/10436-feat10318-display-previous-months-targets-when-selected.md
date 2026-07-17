@@ -69,7 +69,7 @@ Pass ReportingPeriod (CURRENT | PREVIOUS) from the analytics sidebar filter thro
 
 ## Design Choices
 
-Reused the existing shared analytics sidebar filter framework and ngrx global state (reducers/global.ts) instead of introducing new view-specific state, and centralized subtitle derivation in libs/config.ts so a single dynamic rule serves both current- and previous-month rendering across the targets and aggregates pages. Reviewers noted the targets/aggregates area is already a tangle of selectors and listeners; this change passes the period param through that existing wiring rather than refactoring it.
+Reused the existing shared analytics sidebar filter framework and ngrx global state (reducers/global.ts) instead of introducing new view-specific state, and centralized subtitle derivation in libs/config.ts so a single dynamic rule serves both current- and previous-month rendering across the targets and aggregates pages. The targets/aggregates area is already a tangle of selectors and listeners; this change passes the period param through that existing wiring rather than refactoring it.
 
 ## Related Files
 
