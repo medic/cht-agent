@@ -72,7 +72,7 @@ Login client logic is shared between the standard login and the new reset page v
 
 ## Design Choices
 
-Enabled by default to satisfy the issue's security-first requirement, with a permission to skip rather than a global on/off toggle so behavior can be scoped per role. An API escape hatch (password_change_required: false for a specific user) covers exceptions. Per reviewer (jkuester) feedback, the admin app surfaces an explicit hint when changing a password so admins know the user will be prompted, rather than silently flagging the account.
+Enabled by default to satisfy the issue's security-first requirement, with a permission to skip rather than a global on/off toggle so behavior can be scoped per role. An API escape hatch (password_change_required: false for a specific user) covers exceptions. The admin app surfaces an explicit hint when changing a password so admins know the user will be prompted, rather than silently flagging the account.
 
 ## Related Files
 

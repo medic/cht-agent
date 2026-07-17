@@ -47,7 +47,8 @@ concepts:
   - id_token validation
   - session establishment
   - external identity provider integration
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 
@@ -87,7 +88,7 @@ When SSO authentication succeeds but no CHT user is found, the flow redirects to
 
 ## Testing
 
-Added unit tests for the new SSO service (api/tests/mocha/services/sso-login.spec.js) and the login controller (api/tests/mocha/controllers/login.spec.js), plus integration tests against the login controller (tests/integration/api/controllers/login.spec.js) backed by a new mock OIDC provider (tests/utils/mock-oidc-provider.js). Reviewer (jkuester) explicitly requested the controller integration tests and that npm run lint pass on the branch.
+Added unit tests for the new SSO service (api/tests/mocha/services/sso-login.spec.js) and the login controller (api/tests/mocha/controllers/login.spec.js), plus integration tests against the login controller (tests/integration/api/controllers/login.spec.js) backed by a new mock OIDC provider (tests/utils/mock-oidc-provider.js).
 
 ## Related Issues
 

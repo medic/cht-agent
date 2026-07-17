@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8868
 issueUrl: https://github.com/medic/cht-core/issues/8868
 title: Stop forwarding content-length header on GET /_session authentication request to prevent HAProxy request truncation under keep-alive
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-16'
 summary: Authenticating a user forwarded all original request headers (including content-length from POSTs) to a GET /_session request, which under Node 19's default keep-alive caused HAProxy to truncate the next request on the reused connection and return 400 errors. The fix stops forwarding the content-length header on the session request.
 services:
   - api
@@ -30,6 +30,9 @@ tags:
   - request-truncation
 related_workflows: []
 source_pr: medic/cht-core#8924
+source_prs:
+  - "medic/cht-core#8924"
+  - "medic/cht-core#8933"
 source_sha: 831bd6e8a65900a95126a3224f9ebb5ef9968180
 distilled_at: '2026-06-23'
 reviewed_by: null
@@ -58,7 +61,7 @@ In api/src/auth.js, the code that builds the GET /_session authentication reques
 
 ## Solution
 
-Modified api/src/auth.js so the content-length header is no longer forwarded when constructing the GET /_session session request, while still passing through the auth-bearing headers (cookie, authorization, etc.).
+Modified api/src/auth.js so the content-length header is no longer forwarded when constructing the GET /_session session request, while still passing through the auth-bearing headers (cookie, authorization, etc.). Backported to the release branch via cherry-pick (PR #8933).
 
 ## Code Patterns
 
@@ -89,4 +92,4 @@ Unit tests updated in api/tests/mocha/auth.spec.js to assert the content-length 
 
 **Fit:** strong
 
-The fix lives in api/src/auth.js and changes how the user session-authentication request (GET /_session) forwards headers, so it squarely belongs to authentication. The haproxy/keep-alive symptom is only where the transport bug surfaces; per guidance, in-application auth code stays in its functional domain rather than being pushed into infrastructure just because HAProxy is involved.
+The fix lives in api/src/auth.js and changes how the user session-authentication request (GET /_session) forwards headers, so it squarely belongs to authentication. The haproxy/keep-alive symptom is only where the transport bug surfaces; in-application auth code stays in its functional domain rather than being pushed into infrastructure just because HAProxy is involved.

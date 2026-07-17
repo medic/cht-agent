@@ -40,7 +40,8 @@ concepts:
   - authentication-provider mutual exclusivity
   - fail-closed guard before session creation
   - async/await consistency
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 
@@ -62,7 +63,7 @@ Early guard-clause pattern: inspect user.oidc_provider near the start of the tok
 
 ## Design Choices
 
-The OIDC check is placed before session issuance (fail-closed) so no valid session is ever created for an OIDC user, rather than validating and revoking afterward. New code intentionally mirrors existing implementation and test conventions in the login controller and token-login lib (per reviewer feedback), keeping the guard consistent with surrounding patterns.
+The OIDC check is placed before session issuance (fail-closed) so no valid session is ever created for an OIDC user, rather than validating and revoking afterward. New code intentionally mirrors existing implementation and test conventions in the login controller and token-login lib, keeping the guard consistent with surrounding patterns.
 
 ## Related Files
 

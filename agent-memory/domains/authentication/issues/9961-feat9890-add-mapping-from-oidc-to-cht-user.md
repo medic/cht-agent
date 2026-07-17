@@ -50,7 +50,8 @@ concepts:
   - CouchDB user document model and replication boundary
   - email-as-identity mapping for SSO providers
   - offline-aware UI gating via replicated user-settings flags
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 

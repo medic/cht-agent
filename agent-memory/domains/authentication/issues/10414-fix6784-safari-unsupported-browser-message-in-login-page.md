@@ -63,7 +63,7 @@ User-agent based browser detection in api/src/public/login/script.js; conditiona
 
 ## Design Choices
 
-Surface an informational warning rather than hard-blocking Safari. Reviewer (dianabarsan) noted the browser-support check runs only after token/magic-link login, so logging in via a magic link on an unsupported browser remains possible — explicitly deferred to a follow-up PR. New text was internationalised across all bundled locales rather than English-only.
+Surface an informational warning rather than hard-blocking Safari. The browser-support check runs only after token/magic-link login, so logging in via a magic link on an unsupported browser remains possible — explicitly deferred to a follow-up PR. New text was internationalised across all bundled locales rather than English-only.
 
 ## Related Files
 

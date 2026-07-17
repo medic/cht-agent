@@ -39,7 +39,8 @@ concepts:
   - user-provisioning
   - identity-federation
   - mutually-exclusive-auth-methods
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 

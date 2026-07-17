@@ -62,7 +62,7 @@ Centralize cross-cutting role checks in `shared-libs/user-management/src/roles.j
 
 ## Design Choices
 
-Consolidated offline detection into a single source of truth in user-management roles instead of maintaining a separate purging-specific copy, eliminating divergence. Reviewer (jkuester) suggested moving the dbAdmin check to an even more central location, which was adopted before the LGTM.
+Consolidated offline detection into a single source of truth in user-management roles instead of maintaining a separate purging-specific copy, eliminating divergence. The dbAdmin check was moved to a central location.
 
 ## Related Files
 

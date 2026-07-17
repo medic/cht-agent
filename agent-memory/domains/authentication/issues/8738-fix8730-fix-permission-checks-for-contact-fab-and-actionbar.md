@@ -76,7 +76,7 @@ Used a distinct `con_create_people` check rather than reusing or conflating an e
 
 ## Testing
 
-Added/updated Karma unit tests in fast-action-button.service.spec.ts to cover the new permission check, plus e2e coverage in fab-actionbar.wdio-spec.js with supporting page-object updates in common.wdio.page.js. Reviewer (Benmuiruri) approved and noted a leftover console.log in the test.
+Added/updated Karma unit tests in fast-action-button.service.spec.ts to cover the new permission check, plus e2e coverage in fab-actionbar.wdio-spec.js with supporting page-object updates in common.wdio.page.js.
 
 ## Related Issues
 

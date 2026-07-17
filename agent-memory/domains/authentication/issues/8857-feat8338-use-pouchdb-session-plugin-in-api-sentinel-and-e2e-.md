@@ -66,7 +66,7 @@ Register the session plugin via PouchDB.plugin(...) and construct PouchDB instan
 
 ## Design Choices
 
-Cookie/session auth trades a small one-time login for much cheaper subsequent requests, versus basic auth that re-hashes credentials every request; using an off-the-shelf PouchDB session plugin avoids hand-rolling cookie handling. Reviewer (garethbowen) noted that even with CHT's low PBKDF2 iteration counts this should yield measurable api/sentinel performance gains, and suggested announcing the plugin in the PouchDB Slack channel for broader review.
+Cookie/session auth trades a small one-time login for much cheaper subsequent requests, versus basic auth that re-hashes credentials every request; using an off-the-shelf PouchDB session plugin avoids hand-rolling cookie handling. Even with CHT's low PBKDF2 iteration counts this yields measurable api/sentinel performance gains.
 
 ## Related Files
 

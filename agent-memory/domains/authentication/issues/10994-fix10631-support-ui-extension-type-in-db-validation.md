@@ -66,7 +66,7 @@ Enforcing the restriction in validate_doc_update.js (CouchDB's validation hook) 
 
 ## Testing
 
-Manual verification documented in the PR via curl: an admin POST of a {type:'ui-extension'} document to the medic database succeeds, while a non-admin POST is rejected with 'forbidden: You are not authorized to edit admin only docs'. No automated tests were included in the diff (single file changed). Reviewer (jkuester) confirmed it works as expected.
+Manual verification documented in the PR via curl: an admin POST of a {type:'ui-extension'} document to the medic database succeeds, while a non-admin POST is rejected with 'forbidden: You are not authorized to edit admin only docs'. No automated tests were included in the diff (single file changed).
 
 ## Related Issues
 

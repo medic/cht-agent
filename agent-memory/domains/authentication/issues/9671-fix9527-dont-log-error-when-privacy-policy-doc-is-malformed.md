@@ -84,4 +84,4 @@ Updated Mocha unit tests in api/tests/mocha/services/privacy-policy.spec.js to a
 
 **Fit:** strong
 
-The privacy policy is CHT's consent gate served during the login/access flow — users must accept it before using the app — so the API privacy-policy service lives in the authentication/access subsystem. The policy content is admin-configured (config-adjacent), but this PR changes the runtime serving/error path, not the configuration of the policy, so authentication is the principled home; a reviewer could re-bin to configuration if they weight the doc-as-config angle.
+The privacy policy is CHT's consent gate served during the login/access flow — users must accept it before using the app — so the API privacy-policy service lives in the authentication/access subsystem. The policy content is admin-configured (config-adjacent), but this PR changes the runtime serving/error path, not the configuration of the policy, so authentication is the principled home; configuration only supplies the policy content.

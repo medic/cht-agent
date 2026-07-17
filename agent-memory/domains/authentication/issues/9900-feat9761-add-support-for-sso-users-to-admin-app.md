@@ -43,7 +43,8 @@ concepts:
   - OIDC identity provider
   - mutually-exclusive login methods
   - user authentication configuration
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 

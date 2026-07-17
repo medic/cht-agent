@@ -38,7 +38,8 @@ concepts:
   - password-based login
   - credential validation
   - authentication gating
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 
@@ -60,7 +61,7 @@ Guard credential-based auth by checking the user document's oidc property before
 
 ## Design Choices
 
-The reviewer noted the login-controller logic became more involved than expected due to integration with changes from another (Bernard's) SSO branch, requiring careful sequencing so the default-login block and reset-password block work together. The issue scope shifted from checking the get handler/oidc_provider to the post handler and the oidc property.
+The login-controller logic became more involved than expected due to integration with a parallel SSO branch, requiring careful sequencing so the default-login block and reset-password block work together. The issue scope shifted from checking the get handler/oidc_provider to the post handler and the oidc property.
 
 ## Related Files
 

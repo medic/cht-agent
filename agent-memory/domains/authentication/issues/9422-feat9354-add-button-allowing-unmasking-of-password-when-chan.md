@@ -86,7 +86,7 @@ Reused the existing reveal-password UX from the login page (#8311) for consisten
 
 ## Testing
 
-Added/updated admin unit tests in admin/tests/unit/controllers/edit-user.spec.js for the toggle logic, and updated WebdriverIO e2e coverage in tests/e2e/default/users/add-user.wdio-spec.js with a supporting page object in tests/page-objects/default/users/user.wdio.page.js. The reviewer also manually verified the feature and recorded a demo video.
+Added/updated admin unit tests in admin/tests/unit/controllers/edit-user.spec.js for the toggle logic, and updated WebdriverIO e2e coverage in tests/e2e/default/users/add-user.wdio-spec.js with a supporting page object in tests/page-objects/default/users/user.wdio.page.js.
 
 ## Related Issues
 

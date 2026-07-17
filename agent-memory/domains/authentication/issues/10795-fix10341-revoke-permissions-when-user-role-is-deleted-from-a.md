@@ -61,7 +61,7 @@ All three permission-checking codepaths (shared-libs/cht-datasource/src/auth.js,
 
 ## Solution
 
-Before evaluating any permission, filter the user's effective roles to only those still present in app_settings.roles. Added filterRolesByConfigured() in cht-datasource and an optional chtRolesSettings param to hasPermissions()/hasAnyPermission(); user-management hasPermission() reads config.get('roles') and filters; api hasPermission() applies the same filtering; webapp cht-datasource.service.ts now extracts and forwards roles from app settings alongside permissions. An empty or absent roles config falls back to no filtering for backwards compatibility. Per reviewer feedback the duplicated logic was consolidated toward cht-datasource.
+Before evaluating any permission, filter the user's effective roles to only those still present in app_settings.roles. Added filterRolesByConfigured() in cht-datasource and an optional chtRolesSettings param to hasPermissions()/hasAnyPermission(); user-management hasPermission() reads config.get('roles') and filters; api hasPermission() applies the same filtering; webapp cht-datasource.service.ts now extracts and forwards roles from app settings alongside permissions. An empty or absent roles config falls back to no filtering for backwards compatibility. The duplicated logic was consolidated toward cht-datasource.
 
 ## Code Patterns
 
@@ -69,7 +69,7 @@ filterRolesByConfigured() helper in shared-libs/cht-datasource/src/auth.js filte
 
 ## Design Choices
 
-Reviewer (jkuester) pushed to centralize the logic in cht-datasource instead of maintaining three near-identical copies. Critically, the cht-datasource permission functions MUST remain passive (pure, no side effects / no internal config fetch) because they are reused in custom tasks/targets/contact-summary configurations — failing e2e tests revealed that fetching config inside them broke those consumers, so configured roles are injected as an optional argument. Empty/absent roles config means no filtering, preserving existing deployments.
+The logic was centralized in cht-datasource instead of maintaining three near-identical copies. Critically, the cht-datasource permission functions MUST remain passive (pure, no side effects / no internal config fetch) because they are reused in custom tasks/targets/contact-summary configurations — failing e2e tests revealed that fetching config inside them broke those consumers, so configured roles are injected as an optional argument. Empty/absent roles config means no filtering, preserving existing deployments.
 
 ## Related Files
 

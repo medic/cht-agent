@@ -64,7 +64,7 @@ CouchDB view `ddocs/users-db/users/views/users_by_field/map.js` emits user field
 
 ## Design Choices
 
-Reused the existing `GET /api/v2/users` route and `can_view_users` permission instead of adding a new endpoint, keeping the API surface and authorization model consistent. Backfilling `contact_id` via a migration (rather than computing it at read time) allows the lookup to be served by a single indexed view. Reviewer dianabarsan was specifically asked to validate the new migration and the new `_users` db views before merge.
+Reused the existing `GET /api/v2/users` route and `can_view_users` permission instead of adding a new endpoint, keeping the API surface and authorization model consistent. Backfilling `contact_id` via a migration (rather than computing it at read time) allows the lookup to be served by a single indexed view.
 
 ## Related Files
 
@@ -80,7 +80,7 @@ Reused the existing `GET /api/v2/users` route and `can_view_users` permission in
 
 ## Testing
 
-Added mocha unit tests for the controller (api/tests/mocha/controllers/users.spec.js), the migration (api/tests/mocha/migrations/add-contact-id-to-user-docs.spec.js), setup/databases and utils, and shared-libs/user-management (users.spec.js, libs/facility.spec.js). Added integration tests for the migration (api/tests/integration/migrations/add-contact-id-to-user-docs.js) and the users API route (tests/integration/api/controllers/users.spec.js). Reviewers requested additional test scenarios which the author added.
+Added mocha unit tests for the controller (api/tests/mocha/controllers/users.spec.js), the migration (api/tests/mocha/migrations/add-contact-id-to-user-docs.spec.js), setup/databases and utils, and shared-libs/user-management (users.spec.js, libs/facility.spec.js). Added integration tests for the migration (api/tests/integration/migrations/add-contact-id-to-user-docs.js) and the users API route (tests/integration/api/controllers/users.spec.js).
 
 ## Related Issues
 

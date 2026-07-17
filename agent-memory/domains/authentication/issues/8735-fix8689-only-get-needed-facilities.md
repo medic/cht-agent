@@ -68,7 +68,7 @@ The author deliberately shipped a simple, high-impact partial fix: it removes th
 
 ## Testing
 
-Unit tests added/updated for the facility lookup and users logic (facility.spec.js, users.spec.js). The reviewer (dianabarsan) added an e2e/integration test in tests/integration/api/controllers/users.spec.js to validate the users API response and confirmed reduced response times when many facilities exist on the server.
+Unit tests added/updated for the facility lookup and users logic (facility.spec.js, users.spec.js). An e2e/integration test in tests/integration/api/controllers/users.spec.js validates the users API response and confirmed reduced response times when many facilities exist on the server.
 
 ## Related Issues
 

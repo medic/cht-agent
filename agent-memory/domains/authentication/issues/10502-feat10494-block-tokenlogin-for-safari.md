@@ -70,7 +70,7 @@ Mirror the main login page's Safari-blocking UX and messaging rather than invent
 
 ## Testing
 
-No automated tests are evident in the changed files; verification appears manual — the reviewer spoofed the browser user-agent to Safari and loaded the token-login page, which surfaced an initial bug where the translation keys were missing from the rendered page (subsequently fixed and re-approved).
+No automated tests are evident in the changed files; verification was manual — spoofing the browser user-agent to Safari and loading the token-login page, which surfaced an initial bug where the translation keys were missing from the rendered page (subsequently fixed).
 
 ## Related Issues
 

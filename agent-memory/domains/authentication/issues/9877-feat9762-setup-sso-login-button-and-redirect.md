@@ -43,7 +43,8 @@ concepts:
   - login flow
   - openid-client integration
   - conditional UI rendering based on settings
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 
@@ -65,7 +66,7 @@ Conditionally render the SSO button based on whether an OIDC provider is configu
 
 ## Design Choices
 
-Per issue #9762, the redirect URL is obtained from openid-client (buildAuthorizationUrl) and the OIDC client_secret is intended to be stored/loaded as a CHT credential rather than plain config. The SSO button is gated on OIDC being configured so existing password login is unaffected (backwards compatible). Reviewer (jkuester) applied a simplification before merge.
+Per issue #9762, the redirect URL is obtained from openid-client (buildAuthorizationUrl) and the OIDC client_secret is intended to be stored/loaded as a CHT credential rather than plain config. The SSO button is gated on OIDC being configured so existing password login is unaffected (backwards compatible).
 
 ## Related Files
 

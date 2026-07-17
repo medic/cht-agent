@@ -38,7 +38,8 @@ concepts:
   - modal form model population
   - SSO user management
   - data binding ordering
-related_issues: []
+related_issues:
+  - cht-core-9735
 stale: false
 ---
 
@@ -69,7 +70,7 @@ Fixed the ordering of asynchronous model population in the controller rather tha
 
 ## Testing
 
-Added new e2e test cases in tests/e2e/default/users/user.wdio-spec.js covering the edit user modal field population, with supporting selectors/methods added to the user.wdio.page.js page object. Reviewer (jkuester) also verified the fix manually in a local environment; merge was held until the e2e file structure/naming was finalized per review feedback.
+Added new e2e test cases in tests/e2e/default/users/user.wdio-spec.js covering the edit user modal field population, with supporting selectors/methods added to the user.wdio.page.js page object. The fix was also verified manually in a local environment.
 
 ## Related Issues
 

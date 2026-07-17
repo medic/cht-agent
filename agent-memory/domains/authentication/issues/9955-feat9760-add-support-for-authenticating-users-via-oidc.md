@@ -54,7 +54,15 @@ concepts:
   - CouchDB session-cookie generation
   - external identity-provider integration
   - mutually-exclusive authentication methods
-related_issues: []
+related_issues:
+  - cht-core-9760
+  - cht-core-9761
+  - cht-core-9762
+  - cht-core-9763
+  - cht-core-9764
+  - cht-core-9765
+  - cht-core-9890
+  - cht-core-10062
 stale: false
 ---
 
@@ -97,7 +105,7 @@ The id_token email claim is the join key against the oidc_username user property
 
 ## Testing
 
-Added/updated mocha unit tests for the login controller, users controller, server-utils, and the api sso-login service; shared-libs/user-management unit tests for sso-login, token-login, and users; integration tests for the login and users controllers; and a new e2e wdio spec tests/e2e/default/login/sso-login.wdio-spec.js with supporting login/user page objects. Reviewer (witash) additionally verified the flow locally against Keycloak using allow_insecure_requests.
+Added/updated mocha unit tests for the login controller, users controller, server-utils, and the api sso-login service; shared-libs/user-management unit tests for sso-login, token-login, and users; integration tests for the login and users controllers; and a new e2e wdio spec tests/e2e/default/login/sso-login.wdio-spec.js with supporting login/user page objects. The flow was additionally verified locally against Keycloak using allow_insecure_requests.
 
 ## Related Issues
 

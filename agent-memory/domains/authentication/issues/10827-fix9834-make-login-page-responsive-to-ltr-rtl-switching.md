@@ -67,7 +67,7 @@ Server-to-client data handoff via encoded data attribute: the controller encodes
 
 ## Design Choices
 
-The RTL flag is sourced from the CouchDB translation documents themselves (single source of truth) rather than a hardcoded list, so adding or removing RTL locales needs no code change. Direction is switched client-side without a page reload by hooking baseTranslate, giving an instant layout flip on locale selection. A reviewer (dianabarsan) raised an alternative approach inline; the discussion resolved positively before merge.
+The RTL flag is sourced from the CouchDB translation documents themselves (single source of truth) rather than a hardcoded list, so adding or removing RTL locales needs no code change. Direction is switched client-side without a page reload by hooking baseTranslate, giving an instant layout flip on locale selection.
 
 ## Related Files
 
