@@ -32,6 +32,7 @@ related_workflows:
 source_pr: medic/cht-core#9126
 source_prs:
   - "medic/cht-core#9094"
+  - "medic/cht-core#9099"
   - "medic/cht-core#9126"
 source_sha: 2fdddd07194e104c3958646cc5db9251694c8353
 distilled_at: '2026-06-23'
@@ -71,7 +72,7 @@ The user-management shared library (users.js, roles.js, facility.js), the api us
 
 Introduced a new /v3/users API (create and update) that accepts an array of UUIDs of existing facilities, accepting the same payload shape as /v1/users. Updated the user-management shared library to model multiple facilities and the authorization service so a user's downloadable/uploadable doc set is the union across all their facilities. Updated the users_by_field view map to index multiple facilities and the recent-users search API to handle multi-facility users. Constraints: when creating a multi-facility user the contact must fall within one of the facilities; v3 does not create facilities or contacts, only links existing facility UUIDs.
 
-On the webapp side (PR #9094), the contacts UI branches on the user's facility count: multi-facility users see only their assigned homeplaces in the left-hand list (children surfaced via a 'places' card in the detail view, with the sort option and homeplace highlight hidden), while single-facility users keep the existing homeplace-plus-children behavior.
+On the webapp side (PR #9094), the contacts UI branches on the user's facility count: multi-facility users see only their assigned homeplaces in the left-hand list (children surfaced via a 'places' card in the detail view, with the sort option and homeplace highlight hidden), while single-facility users keep the existing homeplace-plus-children behavior. Aggregate targets were disabled for multi-facility users — the aggregate targets page is gated off in analytics-modules and target-aggregates services until multi-facility aggregation is supported (PR #9099).
 
 ## Code Patterns
 
