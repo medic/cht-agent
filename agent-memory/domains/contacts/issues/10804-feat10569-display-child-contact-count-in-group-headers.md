@@ -62,7 +62,7 @@ Piggyback a new aggregate on an existing pass: derive `activeCount` in the same 
 
 ## Design Choices
 
-Counts are computed from data already loaded in memory — no additional CouchDB queries — keeping the feature cheap and offline-safe. Display is purely additive (backwards compatible across hierarchy levels and RTL locales) and localized. Reviewer (jkuester) noted the bare parenthetical lacked visual distinction but ultimately approved (LGTM); the parenthetical-suffix approach was kept per the issue's design guidance.
+Counts are computed from data already loaded in memory — no additional CouchDB queries — keeping the feature cheap and offline-safe. Display is purely additive (backwards compatible across hierarchy levels and RTL locales) and localized. The bare parenthetical lacks strong visual distinction; the parenthetical-suffix approach was kept per the issue's design guidance.
 
 ## Related Files
 

@@ -99,4 +99,4 @@ Updated/added Karma unit specs across the touched layer: cht-datasource.service.
 
 **Fit:** strong
 
-The deliverable enhances the contact summary — a core contacts-domain feature — with the keystone change in contact-summary.service.ts and most integration work in the contacts module (contacts.component, contacts-content, contacts-report, contacts.effects). It overlaps tasks-and-targets because the data plumbed in is target docs via a new analytics datasource (target-aggregates.service, analytics components); tags/relatedWorkflows capture that dimension so a reviewer could re-bin to tasks-and-targets if they weight the payload over the feature destination.
+The deliverable enhances the contact summary — a core contacts-domain feature — with the keystone change in contact-summary.service.ts and most integration work in the contacts module (contacts.component, contacts-content, contacts-report, contacts.effects). It overlaps tasks-and-targets because the data plumbed in is target docs via a new analytics datasource (target-aggregates.service, analytics components); tags/relatedWorkflows capture that tasks-and-targets dimension.

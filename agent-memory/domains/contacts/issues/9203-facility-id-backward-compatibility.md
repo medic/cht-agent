@@ -6,7 +6,7 @@ subDomain: admin
 issueNumber: 9203
 issueUrl: https://github.com/medic/cht-core/issues/9203
 title: Backward compatibility of facility_id in Admin app
-lastUpdated: 2026-03-16
+lastUpdated: 2026-07-16
 summary: Fixed the Admin app's edit-user form crashing when facility_id was stored as a legacy string instead of an array, by adding defensive normalization at the point of consumption.
 services:
   - admin
@@ -15,6 +15,8 @@ techStack:
   - javascript
   - angular
   - couchdb
+source_prs:
+  - "medic/cht-core#9204"
 ---
 
 ## Problem

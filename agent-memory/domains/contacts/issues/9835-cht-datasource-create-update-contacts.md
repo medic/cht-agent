@@ -11,6 +11,7 @@ summary: Extended cht-datasource with create and update operations for Person, P
 source_prs:
   - "medic/cht-core#10081"
   - "medic/cht-core#10083"
+  - "medic/cht-core#10222"
 services:
   - api
 techStack:
@@ -38,7 +39,7 @@ PR #10522 implemented create/update APIs while deeply refactoring the internal a
 - Composable assertion functions in `parameter-validators.ts`
 - API controllers simplified with `auth.assertPermissions()` and fixed permission bug (removed spurious read permission requirement on write endpoints)
 
-The initial create/update surface added person/place/report create and update for both local (PouchDB) and remote (HTTP) data contexts, introduced the `input.ts` module plus parameter-validators for centralized write-input validation, and wired new endpoints through the api controllers (contact/person/place/report), `routing.js`, `auth.js`, and `server-utils.js` (PR #10083). A follow-up removed lineage validation checks from the person local data source and the qualifier that were deemed unnecessary during review of PR #10043, simplifying person retrieval (PR #10081).
+The initial create/update surface added person/place/report create and update for both local (PouchDB) and remote (HTTP) data contexts, introduced the `input.ts` module plus parameter-validators for centralized write-input validation, and wired new endpoints through the api controllers (contact/person/place/report), `routing.js`, `auth.js`, and `server-utils.js` (PR #10083). A follow-up removed lineage validation checks from the person local data source and the qualifier that were deemed unnecessary during review of PR #10043, simplifying person retrieval (PR #10081). A further follow-up updated the create/update permission checks in the person/place/report controllers to honor the general can_edit permission (PR #10222).
 
 ## Code Patterns
 

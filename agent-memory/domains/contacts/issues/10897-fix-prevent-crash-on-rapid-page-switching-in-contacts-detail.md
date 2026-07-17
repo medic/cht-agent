@@ -68,7 +68,7 @@ Chose minimal defensive null-checks (optional chaining + early returns) over res
 
 ## Testing
 
-Unit tests added/updated in the Karma spec (contacts-content.component.spec.ts) at reviewer dianabarsan's request, covering the cleared/null selectedContact scenarios to confirm the early returns and optional chaining prevent the crash.
+Unit tests added/updated in the Karma spec (contacts-content.component.spec.ts), covering the cleared/null selectedContact scenarios to confirm the early returns and optional chaining prevent the crash.
 
 ## Related Issues
 

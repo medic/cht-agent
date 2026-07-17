@@ -63,7 +63,7 @@ The correct workflow was followed: edit `.xlsx` source files, then regenerate XM
 ## Testing
 
 - Validated by running `cht-conf` form validation with zero deprecation warnings after migration
-- Reviewer verified the correct workflow (xlsx edit -> xml regeneration) was followed
+- The correct workflow (xlsx edit -> xml regeneration) was followed and verified
 
 ## Related Issues
 

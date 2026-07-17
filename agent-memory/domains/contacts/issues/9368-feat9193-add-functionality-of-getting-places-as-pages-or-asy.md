@@ -92,7 +92,7 @@ Offered both paginated pages and async generators so REST/stateless consumers ca
 
 ## Testing
 
-Added/updated unit tests (mocha) across cht-datasource — test/place.spec.ts, test/local/place.spec.ts, test/local/person.spec.ts, test/local/libs/doc.spec.ts, test/remote/place.spec.ts, test/remote/libs/data-context.spec.ts, test/index.spec.ts — plus api controller specs (api/tests/mocha/controllers/place.spec.js and person.spec.js) and integration tests (tests/integration/api/controllers/place.spec.js and person.spec.js) exercising the pagination API, async-generator API, and the new REST endpoints. Reviewer (jkuester) approved after reviewing implementation, unit, and integration tests.
+Added/updated unit tests (mocha) across cht-datasource — test/place.spec.ts, test/local/place.spec.ts, test/local/person.spec.ts, test/local/libs/doc.spec.ts, test/remote/place.spec.ts, test/remote/libs/data-context.spec.ts, test/index.spec.ts — plus api controller specs (api/tests/mocha/controllers/place.spec.js and person.spec.js) and integration tests (tests/integration/api/controllers/place.spec.js and person.spec.js) exercising the pagination API, async-generator API, and the new REST endpoints.
 
 ## Related Issues
 

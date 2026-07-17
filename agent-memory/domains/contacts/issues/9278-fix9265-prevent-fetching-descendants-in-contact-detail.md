@@ -73,7 +73,7 @@ Moving the facility-ID subscription into the effect constructor decouples the de
 
 ## Testing
 
-Updated Karma unit tests in contacts-content.component.spec.ts and contacts.component.spec.ts to cover the descendant-display logic and facility-ID handling. Manually verified via screen recordings attached to the PR; a reviewer initially reproduced the bug but had tested the wrong branch, and confirmed the fix once on the correct branch.
+Updated Karma unit tests in contacts-content.component.spec.ts and contacts.component.spec.ts to cover the descendant-display logic and facility-ID handling. Manually verified via screen recordings attached to the PR.
 
 ## Related Issues
 

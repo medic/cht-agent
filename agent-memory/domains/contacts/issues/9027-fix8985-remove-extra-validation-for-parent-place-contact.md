@@ -73,7 +73,7 @@ The fix removes the validation rather than patching it, since the type of a pare
 
 ## Testing
 
-Updated unit tests in shared-libs/contacts/test/unit/places.spec.js and integration tests in tests/integration/api/controllers/places.spec.js to cover creating a person under a parent place whose hierarchy lacks a primary contact. Reviewer noted more e2e tests could be added later to further assess behavior.
+Updated unit tests in shared-libs/contacts/test/unit/places.spec.js and integration tests in tests/integration/api/controllers/places.spec.js to cover creating a person under a parent place whose hierarchy lacks a primary contact. More e2e tests could be added later to further assess behavior.
 
 ## Related Issues
 

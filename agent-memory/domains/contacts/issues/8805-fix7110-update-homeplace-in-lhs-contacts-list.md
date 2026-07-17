@@ -52,7 +52,7 @@ The contacts list component (contacts.component.ts) did not re-resolve its userH
 
 ## Solution
 
-Updated contacts.component.ts to refresh/re-resolve userHomePlace when the relevant document changes on sync, extracting the home-place resolution logic into dedicated functions (per reviewer feedback) so the LHS list stays consistent with synced data. Added karma unit coverage and a new wdio e2e spec to guard the regression.
+Updated contacts.component.ts to refresh/re-resolve userHomePlace when the relevant document changes on sync, extracting the home-place resolution logic into dedicated functions so the LHS list stays consistent with synced data. Added karma unit coverage and a new wdio e2e spec to guard the regression.
 
 ## Code Patterns
 
@@ -60,7 +60,7 @@ Extract home-place resolution into reusable functions in webapp/src/ts/modules/c
 
 ## Design Choices
 
-Refresh the displayed home place reactively on change events instead of only at load time so the LHS list mirrors synced data; the resolution logic was factored into discrete functions to make the behavior unit-testable, addressing reviewers' explicit request for coverage.
+Refresh the displayed home place reactively on change events instead of only at load time so the LHS list mirrors synced data; the resolution logic was factored into discrete functions to make the behavior unit-testable.
 
 ## Related Files
 
@@ -72,7 +72,7 @@ Refresh the displayed home place reactively on change events instead of only at 
 
 ## Testing
 
-Added a new e2e wdio spec (edit-person-home-place.wdio-spec.js) plus updates to add-new-district.wdio-spec.js and the contacts page object, and added karma unit coverage in contacts.component.spec.ts to reproduce and guard the stale-home-place bug; reviewers explicitly requested both unit and e2e coverage.
+Added a new e2e wdio spec (edit-person-home-place.wdio-spec.js) plus updates to add-new-district.wdio-spec.js and the contacts page object, and added karma unit coverage in contacts.component.spec.ts to reproduce and guard the stale-home-place bug at both unit and e2e levels.
 
 ## Related Issues
 

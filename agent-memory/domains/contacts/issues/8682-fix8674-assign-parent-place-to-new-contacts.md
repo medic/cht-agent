@@ -70,7 +70,7 @@ The fix was applied in the shared contacts library (the common contact/place cre
 
 ## Testing
 
-Added/updated unit tests in shared-libs/contacts/test/unit/places.spec.js and integration tests in tests/integration/api/controllers/places.spec.js; updated the extract-person-contacts migration integration spec. Reviewer (dianabarsan) explicitly requested an e2e test for the places API endpoint and QA sign-off, addressed during review.
+Added/updated unit tests in shared-libs/contacts/test/unit/places.spec.js and integration tests in tests/integration/api/controllers/places.spec.js; updated the extract-person-contacts migration integration spec. An e2e test for the places API endpoint was added during review.
 
 ## Related Issues
 

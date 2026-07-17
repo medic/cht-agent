@@ -79,7 +79,7 @@ Per #10509 discussion and @jkuester's guidance, the implementation was deliberat
 
 ## Testing
 
-Added 8 Karma unit tests (contact-save.service.spec.ts) covering file-widget extraction, binary-field extraction with XPath naming, and mixed/multiple attachments all attaching to the main doc; 2 cht-form integration tests; and 5 WebdriverIO e2e tests (contact-attachments.wdio-spec.js) covering create with a single image, create with multiple attachments (image + document), and edit preserving existing attachments, plus new XML test forms. Manual testing verified CouchDB attachment naming and edit-form display. Reviewer (dianabarsan) flagged a bug during review that likely also affects report uploads.
+Added 8 Karma unit tests (contact-save.service.spec.ts) covering file-widget extraction, binary-field extraction with XPath naming, and mixed/multiple attachments all attaching to the main doc; 2 cht-form integration tests; and 5 WebdriverIO e2e tests (contact-attachments.wdio-spec.js) covering create with a single image, create with multiple attachments (image + document), and edit preserving existing attachments, plus new XML test forms. Manual testing verified CouchDB attachment naming and edit-form display. A related bug that likely also affects report uploads was identified for follow-up.
 
 ## Related Issues
 

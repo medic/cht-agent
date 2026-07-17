@@ -58,7 +58,7 @@ Inject the telemetry service into an Angular component and record events at form
 
 ## Design Choices
 
-Telemetry was recorded directly within the component at form lifecycle points and validated with unit tests only. Reviewers (garethbowen) raised whether end-to-end testing of the full stack was warranted, and the team (tatilepizs) discussed standardizing a rule that webapp file changes should always add tests; the PR was approved on unit-test coverage with e2e left as optional follow-up.
+Telemetry was recorded directly within the component at form lifecycle points and validated with unit tests only. End-to-end testing of the full stack was considered but left as an optional follow-up; coverage is unit-test based.
 
 ## Related Files
 
@@ -67,7 +67,7 @@ Telemetry was recorded directly within the component at form lifecycle points an
 
 ## Testing
 
-Added/updated Karma unit tests in contacts-edit.component.spec.ts to verify the new telemetry events are recorded. Reviewers discussed but did not require end-to-end testing for this instrumentation change; approved with unit-test coverage.
+Added/updated Karma unit tests in contacts-edit.component.spec.ts to verify the new telemetry events are recorded. End-to-end testing was not required for this instrumentation change; coverage is unit-test based.
 
 ## Related Issues
 

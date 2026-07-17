@@ -31,8 +31,9 @@ tags:
 related_workflows: []
 source_pr: medic/cht-core#9090
 source_prs:
-  - medic/cht-core#9090
-  - medic/cht-core#9176
+  - "medic/cht-core#9090"
+  - "medic/cht-core#9176"
+  - "medic/cht-core#9205"
 source_sha: 59b42e2fa3271a69c713b4720b9ee9fb7ea3dc61
 distilled_at: '2026-06-23'
 reviewed_by: null
@@ -79,7 +80,7 @@ Acquire a DataContext once, then inject it into data functions. Declarative curr
 
 ## Design Choices
 
-Provided both imperative and declarative APIs to serve different consumers — the imperative factory is convenient to pass into custom config functions (tasks/targets), while the declarative curried form is more composable for internal use. Split local vs remote data contexts so the same call sites work offline (client) and online (server) without branching logic. Reviewers (m5r, echoing Gareth) requested the local and remote functions implement the same interface and noted the lack of partial type-argument inference (microsoft/TypeScript#420) as a limitation. Versioned namespace (v1) chosen for forward compatibility; written in TypeScript for type safety in the new shared library.
+Provided both imperative and declarative APIs to serve different consumers — the imperative factory is convenient to pass into custom config functions (tasks/targets), while the declarative curried form is more composable for internal use. Split local vs remote data contexts so the same call sites work offline (client) and online (server) without branching logic. The local and remote functions implement the same interface; the lack of partial type-argument inference (microsoft/TypeScript#420) is a noted limitation. Versioned namespace (v1) chosen for forward compatibility; written in TypeScript for type safety in the new shared library.
 
 ## Related Files
 

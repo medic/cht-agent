@@ -69,7 +69,7 @@ Minimal, targeted operator swap (`??` → `||`) restores the originally intended
 
 ## Testing
 
-Added/updated Karma unit tests in webapp/tests/karma/ts/services/contact-change-filter.service.spec.ts to cover the previously dead isRelevantContact and isRelevantReport code paths, verifying isRelevantChange returns true when only those checks match. Reviewer acknowledged the additional test coverage.
+Added/updated Karma unit tests in webapp/tests/karma/ts/services/contact-change-filter.service.spec.ts to cover the previously dead isRelevantContact and isRelevantReport code paths, verifying isRelevantChange returns true when only those checks match.
 
 ## Related Issues
 

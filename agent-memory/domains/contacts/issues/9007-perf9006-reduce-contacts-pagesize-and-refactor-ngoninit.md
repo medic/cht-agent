@@ -75,7 +75,7 @@ Reducing page_size trades a smaller, faster initial render (improved Apdex) agai
 
 ## Testing
 
-Updated the Karma unit spec (contacts.component.spec.ts) to cover the refactored async ngOnInit and reduced page_size, and updated the WDIO e2e infinite-scrolling spec to reflect the new page_size and continued lazy-loading behavior. Reviewer (latin-panda) also ran a manual quick test and confirmed it works.
+Updated the Karma unit spec (contacts.component.spec.ts) to cover the refactored async ngOnInit and reduced page_size, and updated the WDIO e2e infinite-scrolling spec to reflect the new page_size and continued lazy-loading behavior. The change was also verified with a manual quick test.
 
 ## Related Issues
 

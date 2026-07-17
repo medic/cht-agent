@@ -63,7 +63,7 @@ AsyncGenerator-based pagination: a generic helper in shared-libs/cht-datasource/
 
 ## Design Choices
 
-The generator yields pages (arrays of docs) rather than individual docs, letting callers control memory and batch processing while iterating lazily with for-await-of. The curried `getAll(ctx)(qualifier)` shape mirrors the existing cht-datasource API style for consistency; reviewers (m5r, Josh) explicitly approved the API design.
+The generator yields pages (arrays of docs) rather than individual docs, letting callers control memory and batch processing while iterating lazily with for-await-of. The curried `getAll(ctx)(qualifier)` shape mirrors the existing cht-datasource API style for consistency.
 
 ## Related Files
 

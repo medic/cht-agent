@@ -69,7 +69,7 @@ Qualifier + dual local/remote implementation pattern: qualifier.ts defines the b
 
 ## Design Choices
 
-Search logic was centralized in cht-datasource so api (and other consumers) share one typed read interface rather than duplicating query code, reusing the established local/remote data-context split. Reviewers (jkuester) specifically pushed to align the new search with the existing CHT search code paths rather than reinventing query semantics.
+Search logic was centralized in cht-datasource so api (and other consumers) share one typed read interface rather than duplicating query code, reusing the established local/remote data-context split. The new search aligns with the existing CHT search code paths rather than reinventing query semantics.
 
 ## Related Files
 
@@ -97,4 +97,4 @@ Extensive unit tests were added/updated across cht-datasource (test/*.spec.ts fo
 
 **Fit:** strong
 
-The PR implements freetext search primarily over contacts (persons/places) in the cht-datasource library, matching the seed mapping of contact search to the contacts domain; report search is included as a secondary part of the same feature.
+The PR implements freetext search primarily over contacts (persons/places) in the cht-datasource library, so contact search anchors it in the contacts domain; report search is included as a secondary part of the same feature.

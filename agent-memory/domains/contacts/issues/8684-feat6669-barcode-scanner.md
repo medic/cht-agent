@@ -90,7 +90,7 @@ Chose the native Barcode Detection API plus a hidden file input over custom CHT 
 
 ## Testing
 
-Added/updated Karma unit tests for the search-bar component (search-bar.component.spec.ts) and the new browser-detector service (browser-detector.service.spec.ts), covering support detection and scan/search behavior. Reviewers acknowledged the unit test coverage; end-to-end automation coverage is deferred to a separate follow-up PR.
+Added/updated Karma unit tests for the search-bar component (search-bar.component.spec.ts) and the new browser-detector service (browser-detector.service.spec.ts), covering support detection and scan/search behavior. End-to-end automation coverage is deferred to a separate follow-up PR.
 
 ## Related Issues
 
@@ -100,4 +100,4 @@ Added/updated Karma unit tests for the search-bar component (search-bar.componen
 
 **Fit:** strong
 
-The PR adds barcode scanning to the search bar specifically to look up contacts (wired into contacts.component.html), making it contact lookup/search — directly analogous to the seed 'search contacts by phone number'. The app_settings permission and translation changes only gate/label the feature, so this is not a configuration or authentication PR.
+The PR adds barcode scanning to the search bar specifically to look up contacts (wired into contacts.component.html), making it contact lookup/search. The app_settings permission and translation changes only gate/label the feature, so this is not a configuration or authentication PR.
