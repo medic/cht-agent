@@ -9,9 +9,11 @@ title: Add cht-datasource APIs for creation and update of contacts and reports
 lastUpdated: 2026-07-16
 summary: Extended cht-datasource with create and update operations for Person, Place, and Report, exposed as both a TypeScript API and REST endpoints, with a major internal refactoring of validation, lineage handling, and auth.
 source_prs:
+  - "medic/cht-core#10022"
   - "medic/cht-core#10081"
   - "medic/cht-core#10083"
   - "medic/cht-core#10222"
+  - "medic/cht-core#10246"
 services:
   - api
 techStack:
@@ -39,7 +41,7 @@ PR #10522 implemented create/update APIs while deeply refactoring the internal a
 - Composable assertion functions in `parameter-validators.ts`
 - API controllers simplified with `auth.assertPermissions()` and fixed permission bug (removed spurious read permission requirement on write endpoints)
 
-The initial create/update surface added person/place/report create and update for both local (PouchDB) and remote (HTTP) data contexts, introduced the `input.ts` module plus parameter-validators for centralized write-input validation, and wired new endpoints through the api controllers (contact/person/place/report), `routing.js`, `auth.js`, and `server-utils.js` (PR #10083). A follow-up removed lineage validation checks from the person local data source and the qualifier that were deemed unnecessary during review of PR #10043, simplifying person retrieval (PR #10081). A further follow-up updated the create/update permission checks in the person/place/report controllers to honor the general can_edit permission (PR #10222).
+The initial create/update surface added person/place/report create and update for both local (PouchDB) and remote (HTTP) data contexts, introduced the `input.ts` module plus parameter-validators for centralized write-input validation, and wired new endpoints through the api controllers (contact/person/place/report), `routing.js`, `auth.js`, and `server-utils.js` (PR #10083). A follow-up removed lineage validation checks from the person local data source and the qualifier that were deemed unnecessary during review of PR #10043, simplifying person retrieval (PR #10081). A further follow-up updated the create/update permission checks in the person/place/report controllers to honor the general can_edit permission (PR #10222). On the report side of the issue, the ReportQualifier and a generalized hasField helper laid the groundwork for report create/update (PR #10022), and a fix restored the missing reported_date on created reports (PR #10246).
 
 ## Code Patterns
 
