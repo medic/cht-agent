@@ -1,10 +1,10 @@
 ---
-id: cht-core-9559
+id: cht-core-9467
 category: bug
 domain: messaging
 domainFit: strong
-issueNumber: 9559
-issueUrl: https://github.com/medic/cht-core/issues/9559
+issueNumber: 9467
+issueUrl: https://github.com/medic/cht-core/issues/9467
 title: Better handling of RapidPro broadcast error codes to stop message retries and prevent duplication
 lastUpdated: '2026-06-22'
 summary: Outgoing SMS to invalid phone numbers (RapidPro 400) were retried indefinitely and valid messages (RapidPro 200 without a status) were duplicated in TextIt/RapidPro. The fix maps a 400 broadcast response to a terminal 'failed' state and a 200-without-status response to 'queued'.

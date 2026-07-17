@@ -1,10 +1,10 @@
 ---
-id: cht-core-10243
+id: cht-core-10225
 category: feature
 domain: messaging
 domainFit: strong
-issueNumber: 10243
-issueUrl: https://github.com/medic/cht-core/issues/10243
+issueNumber: 10225
+issueUrl: https://github.com/medic/cht-core/issues/10225
 title: Add support for Nepal's centralized DoIT SMS gateway in the API messaging service
 lastUpdated: '2026-06-22'
 summary: CHT had no way to route outbound SMS through Nepal's mandated centralized government (DoIT) SMS gateway. This PR adds a dedicated nepal-doit-sms service and integrates it into the messaging service so messages can be delivered via that gateway.

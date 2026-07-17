@@ -1,10 +1,10 @@
 ---
-id: cht-core-10442
+id: cht-core-10428
 category: feature
 domain: messaging
 domainFit: strong
-issueNumber: 10442
-issueUrl: https://github.com/medic/cht-core/issues/10442
+issueNumber: 10428
+issueUrl: https://github.com/medic/cht-core/issues/10428
 title: Clear scheduled messages when their due_tasks schedule fails or becomes invalid
 lastUpdated: '2026-06-22'
 summary: Scheduled messages (scheduled_tasks) had no mechanism to be cleared when their schedule failed or became invalid, risking stale or erroneous delivery. The due_tasks Sentinel schedule now clears those messages instead of leaving them scheduled.

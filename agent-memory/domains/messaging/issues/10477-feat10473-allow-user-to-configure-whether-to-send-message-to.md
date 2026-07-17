@@ -1,10 +1,10 @@
 ---
-id: cht-core-10477
+id: cht-core-10473
 category: feature
 domain: messaging
 domainFit: strong
-issueNumber: 10477
-issueUrl: https://github.com/medic/cht-core/issues/10477
+issueNumber: 10473
+issueUrl: https://github.com/medic/cht-core/issues/10473
 title: Add `default_to_sender` app setting to control whether messages fall back to the original sender when no other recipient resolves
 lastUpdated: '2026-06-22'
 summary: CHT always fell back to sending an outgoing message to the original sender when no other recipient could be resolved. This adds a `default_to_sender` app setting so administrators can disable that fallback while keeping the existing behavior as the default.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10497
+id: cht-core-10459
 category: feature
 domain: messaging
 domainFit: strong
-issueNumber: 10497
-issueUrl: https://github.com/medic/cht-core/issues/10497
+issueNumber: 10459
+issueUrl: https://github.com/medic/cht-core/issues/10459
 title: Allow multiple SMS recipients to be specified and resolved in order in message-utils
 lastUpdated: '2026-06-22'
 summary: SMS message configurations could previously target only a single recipient. This PR lets multiple recipients be specified and resolves them in order, giving SMS deployments more flexibility.

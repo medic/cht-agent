@@ -1,10 +1,10 @@
 ---
-id: cht-core-10811
+id: cht-core-10802
 category: bug
 domain: messaging
 domainFit: strong
-issueNumber: 10811
-issueUrl: https://github.com/medic/cht-core/issues/10811
+issueNumber: 10802
+issueUrl: https://github.com/medic/cht-core/issues/10802
 title: Check a scheduled_task's status before the due_tasks schedule updates it to pending
 lastUpdated: '2026-06-23'
 summary: The due_tasks Sentinel schedule moved due scheduled messages to 'pending' without re-checking their current state, so tasks whose state had changed (e.g. muted, cleared, or already sent) could be wrongly reactivated. The fix guards the transition with an explicit state check before updating.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-10082
+id: cht-core-10068
 category: bug
 domain: messaging
 domainFit: strong
-issueNumber: 10082
-issueUrl: https://github.com/medic/cht-core/issues/10082
+issueNumber: 10068
+issueUrl: https://github.com/medic/cht-core/issues/10068
 title: Fix Africa's Talking SMS gateway request body double-parsing in API
 lastUpdated: '2026-06-22'
 summary: The Africa's Talking SMS gateway service attempted to parse an already-parsed request body, breaking inbound request handling. The redundant double-parse was removed and a CI-only e2e test against the Africa's Talking sandbox server was added.

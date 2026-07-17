@@ -1,10 +1,10 @@
 ---
-id: cht-core-8717
+id: cht-core-8660
 category: feature
 domain: messaging
 domainFit: strong
-issueNumber: 8717
-issueUrl: https://github.com/medic/cht-core/issues/8717
+issueNumber: 8660
+issueUrl: https://github.com/medic/cht-core/issues/8660
 title: Add link in SMS conversation to navigate to the sender's contact page
 lastUpdated: '2026-06-23'
 summary: The SMS conversation view displayed the sender's identity but offered no way to jump to their contact record. This adds a clickable link in the sender component that navigates to the sender's contact page.

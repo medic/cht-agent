@@ -1,10 +1,10 @@
 ---
-id: cht-core-8774
+id: cht-core-8118
 category: bug
 domain: messaging
 domainFit: strong
-issueNumber: 8774
-issueUrl: https://github.com/medic/cht-core/issues/8774
+issueNumber: 8118
+issueUrl: https://github.com/medic/cht-core/issues/8118
 title: Prevent the logged-in user from messaging themselves via the fast action button
 lastUpdated: '2026-06-23'
 summary: The fast action button exposed a send-message action that let a logged-in user select themselves as the recipient. The fix excludes the current user from the send-message fast action so self-messaging is no longer possible.

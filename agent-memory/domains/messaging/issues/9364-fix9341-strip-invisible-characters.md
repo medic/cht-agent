@@ -1,10 +1,10 @@
 ---
-id: cht-core-9364
+id: cht-core-9341
 category: bug
 domain: messaging
 domainFit: strong
-issueNumber: 9364
-issueUrl: https://github.com/medic/cht-core/issues/9364
+issueNumber: 9341
+issueUrl: https://github.com/medic/cht-core/issues/9341
 title: Strip invisible characters from SMS message content in the smsparser before parsing report fields
 lastUpdated: '2026-06-23'
 summary: SMS messages containing invisible/non-printing characters were parsed incorrectly by the smsparser, corrupting field values. The fix strips invisible characters from the SMS content before parsing and backfills unit tests for the previously-untested parser.
