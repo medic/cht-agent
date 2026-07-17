@@ -1,10 +1,10 @@
 ---
-id: cht-core-8722
+id: cht-core-8075
 category: feature
 domain: configuration
 domainFit: strong
-issueNumber: 8722
-issueUrl: https://github.com/medic/cht-core/issues/8722
+issueNumber: 8075
+issueUrl: https://github.com/medic/cht-core/issues/8075
 title: Update default app branding from legacy Medic to current CHT imagery (logos, favicon, login/about pages) plus a CHT branding doc migration
 lastUpdated: '2026-06-23'
 summary: The webapp shipped with outdated Medic Mobile branding; this PR refreshes the default look to current Community Health Toolkit (CHT) branding by swapping logo/favicon/icon assets, updating the branding service and login/about styling, adjusting English strings, and adding a migration that installs the CHT branding doc into CouchDB.
