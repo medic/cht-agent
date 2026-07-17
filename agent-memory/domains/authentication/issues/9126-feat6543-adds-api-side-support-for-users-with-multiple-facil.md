@@ -1,10 +1,10 @@
 ---
-id: cht-core-9126
+id: cht-core-6543
 category: feature
 domain: authentication
 domainFit: strong
-issueNumber: 9126
-issueUrl: https://github.com/medic/cht-core/issues/9126
+issueNumber: 6543
+issueUrl: https://github.com/medic/cht-core/issues/6543
 title: Add API-side support for users with multiple facilities via new v3 users API
 lastUpdated: '2026-06-23'
 summary: 'CHT users could previously be associated with only a single facility (place). This PR adds API-side multi-facility support: a new /v3/users API to create and update users with an array of existing facility UUIDs, plus user-management library and authorization changes so a user''s doc download/upload permissions span all of their facilities.'

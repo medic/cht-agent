@@ -1,10 +1,10 @@
 ---
-id: cht-core-8738
+id: cht-core-8730
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 8738
-issueUrl: https://github.com/medic/cht-core/issues/8738
+issueNumber: 8730
+issueUrl: https://github.com/medic/cht-core/issues/8730
 title: Fix permission checks for contact FAB and actionbar by adding a separate con_create_people check
 lastUpdated: '2026-06-23'
 summary: The contact page floating action button (FAB) and actionbar did not perform a dedicated `con_create_people` permission check, so the create-person action was not correctly gated. The fix adds separate `con_create_people` checks in both the FAB service and the actionbar template.

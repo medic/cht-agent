@@ -1,10 +1,10 @@
 ---
-id: cht-core-9107
+id: cht-core-8886
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 9107
-issueUrl: https://github.com/medic/cht-core/issues/9107
+issueNumber: 8886
+issueUrl: https://github.com/medic/cht-core/issues/8886
 title: Block non-admin users from editing protected fields in their own user-settings via validate_doc_update
 lastUpdated: '2026-06-23'
 summary: Users had write access to their own user-settings document and could modify security-sensitive fields (e.g. roles, facility), enabling privilege escalation. Added validate_doc_update checks in both the server (medic) and offline (medic-client) design docs to reject such edits by non-admin users.

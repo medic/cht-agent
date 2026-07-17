@@ -1,10 +1,10 @@
 ---
-id: cht-core-9671
+id: cht-core-9527
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 9671
-issueUrl: https://github.com/medic/cht-core/issues/9671
+issueNumber: 9527
+issueUrl: https://github.com/medic/cht-core/issues/9527
 title: Treat malformed privacy policy document as a 404 instead of logging a custom error
 lastUpdated: '2026-06-22'
 summary: When the privacy policy document was malformed, the API's privacy-policy service surfaced a custom error and logged it, producing noisy/misleading error logs. The fix treats a malformed privacy policy doc as a 404 (not found) so it degrades gracefully without erroneous logging.

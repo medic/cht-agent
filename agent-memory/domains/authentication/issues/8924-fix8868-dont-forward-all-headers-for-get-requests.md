@@ -1,10 +1,10 @@
 ---
-id: cht-core-8924
+id: cht-core-8868
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 8924
-issueUrl: https://github.com/medic/cht-core/issues/8924
+issueNumber: 8868
+issueUrl: https://github.com/medic/cht-core/issues/8868
 title: Stop forwarding content-length header on GET /_session authentication request to prevent HAProxy request truncation under keep-alive
 lastUpdated: '2026-06-23'
 summary: Authenticating a user forwarded all original request headers (including content-length from POSTs) to a GET /_session request, which under Node 19's default keep-alive caused HAProxy to truncate the next request on the reused connection and return 400 errors. The fix stops forwarding the content-length header on the session request.

@@ -1,10 +1,10 @@
 ---
-id: cht-core-9437
+id: cht-core-9433
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 9437
-issueUrl: https://github.com/medic/cht-core/issues/9437
+issueNumber: 9433
+issueUrl: https://github.com/medic/cht-core/issues/9433
 title: Use the user's existing facility when updating a user instead of requiring/re-deriving it
 lastUpdated: '2026-06-23'
 summary: Updating an existing user could fail or behave incorrectly because the update path did not fall back to the facility already stored on the user. The fix makes user updates reuse the existent facility when one is not explicitly supplied.

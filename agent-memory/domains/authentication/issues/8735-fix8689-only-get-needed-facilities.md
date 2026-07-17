@@ -1,10 +1,10 @@
 ---
-id: cht-core-8735
+id: cht-core-8689
 category: improvement
 domain: authentication
 domainFit: strong
-issueNumber: 8735
-issueUrl: https://github.com/medic/cht-core/issues/8735
+issueNumber: 8689
+issueUrl: https://github.com/medic/cht-core/issues/8689
 title: 'Users API: fetch only the needed facilities instead of all facilities to improve response time'
 lastUpdated: '2026-06-23'
 summary: The users API responded slowly on servers with many facilities because it loaded every facility document even though only those linked to the returned users were needed. The fix scopes the facility lookup to just the required facilities, significantly improving performance.

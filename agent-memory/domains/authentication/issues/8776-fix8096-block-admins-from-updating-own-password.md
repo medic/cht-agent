@@ -1,10 +1,10 @@
 ---
-id: cht-core-8776
+id: cht-core-8096
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 8776
-issueUrl: https://github.com/medic/cht-core/issues/8776
+issueNumber: 8096
+issueUrl: https://github.com/medic/cht-core/issues/8096
 title: Block admin (CouchDB server admin) users from updating their own password via user settings, in both API and webapp
 lastUpdated: '2026-06-23'
 summary: Admin users could attempt to change their own password through the user-settings flow even though admin credentials live in CouchDB server config rather than the _users database, leading to broken/inconsistent behavior. The fix detects when the requesting user is an admin updating their own password and blocks it server-side, while hiding the password field in the webapp.

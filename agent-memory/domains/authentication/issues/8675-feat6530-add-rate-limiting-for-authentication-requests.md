@@ -1,10 +1,10 @@
 ---
-id: cht-core-8675
+id: cht-core-6530
 category: feature
 domain: authentication
 domainFit: strong
-issueNumber: 8675
-issueUrl: https://github.com/medic/cht-core/issues/8675
+issueNumber: 6530
+issueUrl: https://github.com/medic/cht-core/issues/6530
 title: Add rate limiting for authentication requests
 lastUpdated: '2026-06-23'
 summary: Authentication endpoints had no throttling, leaving login open to brute-force and credential-stuffing attacks. A rate-limit service plus Express middleware were added to cap repeated auth attempts and reject excess requests.

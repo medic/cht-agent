@@ -1,10 +1,10 @@
 ---
-id: cht-core-8933
+id: cht-core-8868
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 8933
-issueUrl: https://github.com/medic/cht-core/issues/8933
+issueNumber: 8868
+issueUrl: https://github.com/medic/cht-core/issues/8868
 title: Stop forwarding the content-length header on the authentication GET /_session request to avoid haproxy truncating reused keep-alive connections
 lastUpdated: '2026-06-23'
 summary: When authenticating a user, API forwarded all original request headers — including content-length from POST requests — onto CouchDB's GET /_session, which made haproxy truncate the next request on reused keep-alive connections and return HTTP 400. The fix stops forwarding the content-length header on that session request.

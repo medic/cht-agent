@@ -1,10 +1,10 @@
 ---
-id: cht-core-10222
+id: cht-core-9835
 category: improvement
 domain: authentication
 domainFit: strong
-issueNumber: 10222
-issueUrl: https://github.com/medic/cht-core/issues/10222
+issueNumber: 9835
+issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Update create/update permission checks for person, place, and report API controllers to honor the general can_edit permission
 lastUpdated: '2026-06-22'
 summary: The API's create/update endpoints for people, places, and reports were checking for entity-specific permissions, but the intended model is that the general can_edit permission should govern those operations. This PR updates auth.js and the three controllers so create/update consistently authorize against can_edit.

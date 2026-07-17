@@ -1,10 +1,10 @@
 ---
-id: cht-core-9131
+id: cht-core-9122
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 9131
-issueUrl: https://github.com/medic/cht-core/issues/9131
+issueNumber: 9122
+issueUrl: https://github.com/medic/cht-core/issues/9122
 title: Detect and reject unsafe (double-slash / protocol-relative) redirect URLs on login
 lastUpdated: '2026-06-23'
 summary: The login controller accepted a redirect target without validating it was same-origin, allowing protocol-relative (double-slash) URLs to silently send users to external sites after login. The fix detects such unsafe redirections and blocks them.

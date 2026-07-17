@@ -1,10 +1,10 @@
 ---
-id: cht-core-9109
+id: cht-core-9108
 category: bug
 domain: authentication
 domainFit: strong
-issueNumber: 9109
-issueUrl: https://github.com/medic/cht-core/issues/9109
+issueNumber: 9108
+issueUrl: https://github.com/medic/cht-core/issues/9108
 title: Block non-admin users from updating admin-only (protected) documents in validate_doc_update
 lastUpdated: '2026-06-23'
 summary: Non-admin users could overwrite admin-only/protected documents because the medic database's validate_doc_update function had no guard for them; the fix rejects any create/update/delete of admin-only docs by non-admin users.

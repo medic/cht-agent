@@ -1,10 +1,10 @@
 ---
-id: cht-core-10994
+id: cht-core-10631
 category: improvement
 domain: authentication
 domainFit: strong
-issueNumber: 10994
-issueUrl: https://github.com/medic/cht-core/issues/10994
+issueNumber: 10631
+issueUrl: https://github.com/medic/cht-core/issues/10631
 title: Enforce admin-only write access for ui-extension doc type in validate_doc_update
 lastUpdated: '2026-06-22'
 summary: The validate_doc_update validation function did not treat ui-extension documents as admin-only, so non-admin users could create or edit them via the database/API. The fix adds the ui-extension type to the admin-only doc types so only admins can write these docs.

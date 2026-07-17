@@ -1,10 +1,10 @@
 ---
-id: cht-core-8857
+id: cht-core-8338
 category: improvement
 domain: authentication
 domainFit: strong
-issueNumber: 8857
-issueUrl: https://github.com/medic/cht-core/issues/8857
+issueNumber: 8338
+issueUrl: https://github.com/medic/cht-core/issues/8338
 title: Use PouchDB session plugin for cookie/session-based CouchDB authentication in api, sentinel, and e2e tests
 lastUpdated: '2026-06-23'
 summary: api and sentinel authenticated to CouchDB with basic auth, forcing CouchDB to re-hash credentials (PBKDF2) on every request; this switches them and the e2e/scalability/migration test utilities to cookie/session-based auth via a PouchDB session plugin so credentials are validated once per session and reused, cutting per-request auth overhead.
