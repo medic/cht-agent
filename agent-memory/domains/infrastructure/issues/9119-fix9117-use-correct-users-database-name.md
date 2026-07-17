@@ -44,7 +44,7 @@ stale: false
 
 ## Problem
 
-Upgrading a CHT instance (e.g. from 4.7.0) failed because the setup service used the wrong name for CouchDB's `_users` system database. The upgrade/ddoc-staging step therefore targeted an incorrect database, breaking the upgrade. Reviewer m5r reproduced the failure on a 4.7.0 instance.
+Upgrading a CHT instance (e.g. from 4.7.0) failed because the setup service used the wrong name for CouchDB's `_users` system database. The upgrade/ddoc-staging step therefore targeted an incorrect database, breaking the upgrade. The failure reproduces on a 4.7.0 instance.
 
 ## Root Cause
 
@@ -69,7 +69,7 @@ Fix the name centrally in the setup service's database definitions rather than s
 
 ## Testing
 
-Updated the mocha unit spec (databases.spec.js) to assert the correct `_users` database name. Manually verified by reviewer m5r using the cht docker helper: the bug was reproduced on a 4.7.0 instance, and a separate instance running this branch upgraded successfully.
+Updated the mocha unit spec (databases.spec.js) to assert the correct `_users` database name. Manually verified using the cht docker helper: the bug was reproduced on a 4.7.0 instance, and a separate instance running this branch upgraded successfully.
 
 ## Related Issues
 

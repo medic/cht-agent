@@ -79,4 +79,4 @@ Updated the existing integration test tests/integration/api/routing.spec.js ('sh
 
 **Fit:** strong
 
-The PR modifies release/build tooling (scripts/build/versions.js) that computes version strings during the build/deploy pipeline; per the seeds, CI/build/deploy and upgrade-lifecycle work is canonically infrastructure, not configuration.
+The PR modifies release/build tooling (scripts/build/versions.js) that computes version strings during the build/deploy pipeline; CI/build/deploy and upgrade-lifecycle work is canonically infrastructure, not configuration.

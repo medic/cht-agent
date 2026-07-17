@@ -65,7 +65,7 @@ Adapt the admin upgrade page's comparison to the new deploy-info API contract ra
 
 ## Testing
 
-Unit tests in admin/tests/unit/controllers/upgrade.spec.js were updated to exercise the corrected version-vs-build comparison. Reviewer jkuester also manually reproduced and verified the fix by spinning up a docker-helper instance, installing the 4.6.0-beta.4 build, upgrading to 4.6.0 via the admin app, and confirming the upgrade-completion behavior of the error card.
+Unit tests in admin/tests/unit/controllers/upgrade.spec.js were updated to exercise the corrected version-vs-build comparison. The fix was also manually reproduced and verified by spinning up a docker-helper instance, installing the 4.6.0-beta.4 build, upgrading to 4.6.0 via the admin app, and confirming the upgrade-completion behavior of the error card.
 
 ## Related Issues
 

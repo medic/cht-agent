@@ -48,7 +48,8 @@ concepts:
   - view indexing
   - stale index cleanup
   - indexing-progress tracking via _active_tasks
-related_issues: []
+related_issues:
+  - cht-core-9690
 stale: false
 ---
 

@@ -74,7 +74,7 @@ The new Helm chart in tests/helm/ (Chart.yaml, values.yaml.template, templates/*
 
 ## Design Choices
 
-Chose K3D (K3s-in-Docker) for a lightweight, disposable in-CI Kubernetes cluster and the local-path provisioner for simple node-local persistent volumes suited to ephemeral CI. Reused the existing integration specs via parallel mocharc configs instead of forking the test code. Reviewer (nydr) accepted the ~30-minute additional build step as a reasonable cost tradeoff and flagged flaky-test risk, with tagging/segregating flaky tests deferred as out of scope.
+Chose K3D (K3s-in-Docker) for a lightweight, disposable in-CI Kubernetes cluster and the local-path provisioner for simple node-local persistent volumes suited to ephemeral CI. Reused the existing integration specs via parallel mocharc configs instead of forking the test code. The ~30-minute additional build step was accepted as a reasonable cost tradeoff; tagging/segregating flaky tests was deferred as out of scope.
 
 ## Related Files
 
@@ -97,7 +97,7 @@ Chose K3D (K3s-in-Docker) for a lightweight, disposable in-CI Kubernetes cluster
 
 ## Testing
 
-The PR is itself test infrastructure: it runs the existing integration suite (couchdb chttpd, haproxy keep-alive, nginx, infodocs, sentinel outbound schedules and mark-for-outbound/error-log transitions) against a Helm-deployed K3D cluster as two new CI jobs. Existing specs and test utilities were adapted to run in both Docker Compose and K3D environments via shared base mocharc plus K3D-specific configs and hooks. Reviewer confirmed the suite ran locally with little effort; remaining failures attributed to pre-existing flaky tests.
+The PR is itself test infrastructure: it runs the existing integration suite (couchdb chttpd, haproxy keep-alive, nginx, infodocs, sentinel outbound schedules and mark-for-outbound/error-log transitions) against a Helm-deployed K3D cluster as two new CI jobs. Existing specs and test utilities were adapted to run in both Docker Compose and K3D environments via shared base mocharc plus K3D-specific configs and hooks. The suite runs locally with little effort; remaining failures were attributed to pre-existing flaky tests.
 
 ## Related Issues
 

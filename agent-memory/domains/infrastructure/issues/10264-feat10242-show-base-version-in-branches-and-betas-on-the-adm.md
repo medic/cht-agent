@@ -2,7 +2,7 @@
 id: cht-core-10242
 category: feature
 domain: infrastructure
-domainFit: strong
+domainFit: weak
 issueNumber: 10242
 issueUrl: https://github.com/medic/cht-core/issues/10242
 title: Show base version column for branches and betas on the admin upgrade page
@@ -84,6 +84,6 @@ The wdio page object (tests/page-objects/upgrade/upgrade.wdio.page.js) was updat
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The admin upgrade page is part of CHT's release/deploy/upgrade tooling (operational lifecycle), and the PR modifies the build-version filter and release templates — directly paralleling the 'fix build version computation for release branches → infrastructure' seed. The translation-file edits are incidental i18n for the new label, not a configuration change.
+The change is admin-app UI (version display on the upgrade page) adjacent to release/upgrade tooling; with no dedicated UI domain, infrastructure is the least-bad home rather than a principled fit.

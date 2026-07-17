@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10481
 issueUrl: https://github.com/medic/cht-core/issues/10481
 title: Run Nouveau as a sidecar container in the CouchDB pod and switch Helm deployment strategy to Recreate
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: Upgrading the demo-cht instance to 5.x was blocked by the Helm chart configuration. The fix co-locates Nouveau as a sidecar container in the CouchDB pod (sharing storage) and changes the deployment strategy to Recreate across the affected deployments.
 services:
   - api
@@ -29,6 +29,9 @@ tags:
 related_workflows:
   - nouveau-search
 source_pr: medic/cht-core#10482
+source_prs:
+  - medic/cht-core#10482
+  - medic/cht-core#10488
 source_sha: b6fea049f9dadd65753698291f5325c49eae1640
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -48,7 +51,8 @@ concepts:
   - Kubernetes deployment strategy (Recreate vs RollingUpdate)
   - Helm chart templates
   - container orchestration topology
-related_issues: []
+related_issues:
+  - cht-core-9707
 stale: false
 ---
 
@@ -62,7 +66,7 @@ Nouveau ran as a separate Kubernetes deployment rather than co-located with Couc
 
 ## Solution
 
-Reconfigured Nouveau to run as a sidecar container inside the CouchDB pod (on the first couchdb-1 pod) so it shares storage with CouchDB, and changed the deployment strategy to Recreate across the affected deployment templates to ensure clean recreation during upgrades.
+Reconfigured Nouveau to run as a sidecar container inside the CouchDB pod (on the first couchdb-1 pod) so it shares storage with CouchDB, and changed the deployment strategy to Recreate across the affected deployment templates to ensure clean recreation during upgrades. Backported to the 5.0.x release line (PR #10488).
 
 ## Code Patterns
 
@@ -70,7 +74,7 @@ Sidecar pattern in Helm: add the Nouveau container to the CouchDB pod spec (scri
 
 ## Design Choices
 
-Placing the Nouveau sidecar on the first CouchDB pod (couchdb-1) can leave a cluster unbalanced, but the reviewer (witash) deemed this acceptable as it likely won't matter in practice. Recreate strategy was chosen over RollingUpdate to avoid contention on read-write-once storage volumes during upgrades. Context references the original Nouveau Helm chart design in medic/helm-charts#42.
+Placing the Nouveau sidecar on the first CouchDB pod (couchdb-1) can leave a cluster unbalanced, but this was deemed acceptable as it likely won't matter in practice. Recreate strategy was chosen over RollingUpdate to avoid contention on read-write-once storage volumes during upgrades. Context references the original Nouveau Helm chart design in medic/helm-charts#42.
 
 ## Related Files
 

@@ -62,7 +62,7 @@ The upgrade services in api/src/services/setup did not expose any comparison bet
 
 ## Solution
 
-Added design-document comparison to the upgrade flow. New comparison logic in api/src/services/setup/upgrade.js and utils.js is exposed through a new upgrade compare controller endpoint (api/src/controllers/upgrade.js + api/src/routing.js, e.g. /api/v2/upgrade/compare). The admin upgrade controllers (upgrade.js, upgrade-confirm.js) and templates (upgrade.html, upgrade_confirm.html, release.html) were updated to render visual indicators of changed design documents, with a new bytes filter (admin/src/js/filters/bytes.js, registered in main.js) for human-readable sizes and styling in configuration.less. Per reviewer feedback, the blocking /upgrade/compare calls now show a spinner that disables buttons while the request is in flight. User-facing strings were internationalised across all locale .properties files and the webapp bootstrapper translator.
+Added design-document comparison to the upgrade flow. New comparison logic in api/src/services/setup/upgrade.js and utils.js is exposed through a new upgrade compare controller endpoint (api/src/controllers/upgrade.js + api/src/routing.js, e.g. /api/v2/upgrade/compare). The admin upgrade controllers (upgrade.js, upgrade-confirm.js) and templates (upgrade.html, upgrade_confirm.html, release.html) were updated to render visual indicators of changed design documents, with a new bytes filter (admin/src/js/filters/bytes.js, registered in main.js) for human-readable sizes and styling in configuration.less. The blocking /upgrade/compare calls show a spinner that disables buttons while the request is in flight. User-facing strings were internationalised across all locale .properties files and the webapp bootstrapper translator.
 
 ## Code Patterns
 
@@ -70,7 +70,7 @@ New AngularJS filter at admin/src/js/filters/bytes.js (registered in admin/src/j
 
 ## Design Choices
 
-Enabled by default in the new navigation design while remaining backwards compatible with old navigation (can_view_old_navigation) and RTL. Compare calls were intentionally kept blocking but paired with an explicit spinner so admins get clear, unambiguous feedback rather than silently unresponsive buttons (direct response to reviewer feedback). Changes are surfaced visually so operators can immediately tell a quick (no-indexing) upgrade from a slow (reindex-required) one.
+Enabled by default in the new navigation design while remaining backwards compatible with old navigation (can_view_old_navigation) and RTL. Compare calls were intentionally kept blocking but paired with an explicit spinner so admins get clear, unambiguous feedback rather than silently unresponsive buttons. Changes are surfaced visually so operators can immediately tell a quick (no-indexing) upgrade from a slow (reindex-required) one.
 
 ## Related Files
 
@@ -102,4 +102,4 @@ Unit tests added/updated across both services: admin/tests/unit/controllers/upgr
 
 **Fit:** strong
 
-This is upgrade-lifecycle tooling: it adds a design-document comparison step to the admin upgrade flow and API setup/upgrade services so operators know whether view reindexing is required. Per the seeds, upgrade tooling and CouchDB-related upgrade operations (e.g. 'Skip CouchDB compaction during API upgrade') are canonically infrastructure; it does not modify the ddocs or index design themselves, so the data-sync exception for storage-engine internals does not apply.
+This is upgrade-lifecycle tooling: it adds a design-document comparison step to the admin upgrade flow and API setup/upgrade services so operators know whether view reindexing is required. Upgrade tooling and CouchDB-related upgrade operations are canonically infrastructure; it does not modify the ddocs or index design themselves, so it is not data-sync territory.

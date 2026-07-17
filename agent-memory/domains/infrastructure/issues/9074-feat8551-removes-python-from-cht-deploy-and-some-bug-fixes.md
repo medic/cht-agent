@@ -68,7 +68,7 @@ The deploy script lived in Python (tasks.py), diverging from cht-core's Node.js 
 
 ## Solution
 
-Rewrote cht-deploy as a Node.js CLI (scripts/deploy/cht-deploy) delegating to modular sources (src/install.js, src/certificate.js, src/config.js, src/error.js) for feature parity with no major refactoring, and deleted tasks.py. Added .eslintrc, .gitignore, package.json wiring, and prepare.sh. Bundled fixes: validation that catches missing values (#8604), printing the instance URL on completion (#8605), and a new troubleshooting/get-all-logs script to collect deployment logs (#8608). Added test coverage per reviewer feedback.
+Rewrote cht-deploy as a Node.js CLI (scripts/deploy/cht-deploy) delegating to modular sources (src/install.js, src/certificate.js, src/config.js, src/error.js) for feature parity with no major refactoring, and deleted tasks.py. Added .eslintrc, .gitignore, package.json wiring, and prepare.sh. Bundled fixes: validation that catches missing values (#8604), printing the instance URL on completion (#8605), and a new troubleshooting/get-all-logs script to collect deployment logs (#8608). Added test coverage.
 
 ## Code Patterns
 
@@ -76,7 +76,7 @@ Node CLI entry point (scripts/deploy/cht-deploy) delegating to focused src/ modu
 
 ## Design Choices
 
-Chose Node.js to align cht-deploy with cht-core's existing Node.js toolchain and eliminate the Python dependency. Deliberately targeted feature parity over refactoring (#8551) to limit migration risk. Added tests in response to reviewer (nydr) request that even a basic import/function test be present to catch syntax errors and ease future test additions; reviewer (mrjones-plip) also requested security changes to the new get-all-logs script.
+Chose Node.js to align cht-deploy with cht-core's existing Node.js toolchain and eliminate the Python dependency. Deliberately targeted feature parity over refactoring (#8551) to limit migration risk. Basic import/function tests were added to catch syntax errors and ease future test additions; security hardening was applied to the new get-all-logs script.
 
 ## Related Files
 
@@ -98,7 +98,7 @@ Chose Node.js to align cht-deploy with cht-core's existing Node.js toolchain and
 
 ## Testing
 
-Added JS test suite under scripts/deploy/tests: helm.test.js, package-json-validate.test.js, and validate-arguments.test.js, introduced after reviewer (nydr) asked for at least a module-import/basic-function test to catch syntax errors and seed future tests. Reviewer (mrjones-plip) confirmed both sad-path and happy-path are well covered and verified that issue #9076 was fixed by the latest changes.
+Added JS test suite under scripts/deploy/tests: helm.test.js, package-json-validate.test.js, and validate-arguments.test.js. Both sad-path and happy-path are covered; issue #9076 was fixed by the latest changes.
 
 ## Related Issues
 

@@ -81,4 +81,4 @@ Updated the existing mocha unit test (api/tests/mocha/services/setup/view-indexe
 
 **Fit:** strong
 
-The change lives in the setup/upgrade tooling (api/src/services/setup/view-indexer.js) and concerns an HAProxy-level request timeout — both upgrade tooling and HAProxy are squarely operational-lifecycle (infrastructure) concerns. It is not index-document/B-tree design (which would be data-sync), so the data-layer-internals pitfall does not apply.
+The change lives in the setup/upgrade tooling (api/src/services/setup/view-indexer.js) and concerns an HAProxy-level request timeout — both upgrade tooling and HAProxy are squarely operational-lifecycle (infrastructure) concerns. It is not index-document/B-tree design (which would be data-sync).

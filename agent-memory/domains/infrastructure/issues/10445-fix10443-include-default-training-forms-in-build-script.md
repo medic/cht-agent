@@ -63,7 +63,7 @@ tests/utils/index.js setupUserDoc writes both the user-settings doc and the trai
 
 ## Design Choices
 
-Three options for handling the training form in e2e tests were weighed: (1) complete/cancel the training in cookieLogin after each login — rejected for poor performance (form loaded/unloaded every test); (2) write the training report once in setUserContactDoc and add it to PROTECTED_DOCS — rejected because it leaves a permanent extra report that also leaks into integration tests; (3) write the training doc in setupUserDoc alongside user-settings during login — chosen because it touches only the default-user webapp login, writes both docs in one round-trip, and lets tests delete the report (auto re-added next login). Reviewer dianabarsan proposed and validated an alternative during review.
+Three options for handling the training form in e2e tests were weighed: (1) complete/cancel the training in cookieLogin after each login — rejected for poor performance (form loaded/unloaded every test); (2) write the training report once in setUserContactDoc and add it to PROTECTED_DOCS — rejected because it leaves a permanent extra report that also leaks into integration tests; (3) write the training doc in setupUserDoc alongside user-settings during login — chosen because it touches only the default-user webapp login, writes both docs in one round-trip, and lets tests delete the report (auto re-added next login).
 
 ## Related Files
 

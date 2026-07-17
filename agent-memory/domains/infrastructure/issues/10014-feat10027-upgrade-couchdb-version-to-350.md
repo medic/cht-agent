@@ -36,7 +36,8 @@ concepts:
   - dependency-management
   - database-version-pinning
   - runtime-dependency-upgrade
-related_issues: []
+related_issues:
+  - cht-core-9882
 stale: false
 ---
 
@@ -58,7 +59,7 @@ Single-point version pinning: bump the CouchDB base image tag in couchdb/Dockerf
 
 ## Design Choices
 
-Track the latest released CouchDB/Nouveau line rather than lagging on 3.4.2. Reviewer (jkuester) suggested promoting the related issue #9882 to a standalone issue (removing the TCO parent) and assigning it to the 4.21.0 milestone.
+Track the latest released CouchDB/Nouveau line rather than lagging on 3.4.2. The related issue #9882 was promoted to a standalone issue and assigned to the 4.21.0 milestone.
 
 ## Related Files
 
@@ -71,7 +72,7 @@ No automated tests added (pure version bump). Build CI produced compose artifact
 ## Related Issues
 
 - #10027: request to upgrade Couch/Nouveau to the newly released 3.5.0 (dev was targeting 3.4.2)
-- #9882: related upgrade-tracking issue the reviewer proposed making standalone and adding to the 4.21.0 milestone
+- #9882: related upgrade-tracking issue, promoted to standalone and added to the 4.21.0 milestone
 
 ## Domain Rationale
 

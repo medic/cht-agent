@@ -66,7 +66,7 @@ Applied at the shared Docker-default config layer so every CHT CouchDB deploymen
 
 ## Testing
 
-Config-only change with no automated tests added. Reviewer mrjones-plip manually verified by checking out the branch and building dev Docker images (`npm ci; npm run build-dev; npm run local-images`), running on Docker 28 (Docker 27 hit an unrelated cht-upgrade-service issue #50).
+Config-only change with no automated tests added. Manually verified by checking out the branch and building dev Docker images (`npm ci; npm run build-dev; npm run local-images`), running on Docker 28 (Docker 27 hit an unrelated cht-upgrade-service issue #50).
 
 ## Related Issues
 

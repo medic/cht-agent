@@ -2,7 +2,7 @@
 id: cht-core-10559
 category: feature
 domain: infrastructure
-domainFit: strong
+domainFit: weak
 issueNumber: 10559
 issueUrl: https://github.com/medic/cht-core/issues/10559
 title: Add zizmor static analysis to GitHub Actions CI and harden all workflows (pin action SHAs, scope GITHUB_TOKEN permissions, fix script injection)
@@ -103,6 +103,6 @@ Validated locally pre-merge (no runtime unit tests, as this is CI configuration)
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-This is CI/CD security tooling — adding a GitHub Actions static analyzer and hardening all workflow files. CI/build/deploy/supply-chain work is canonically the infrastructure domain (not configuration, per the stated pitfalls).
+CI-security tooling (zizmor static analysis for GitHub Actions) lives entirely under .github/ and scripts/ci; there is no security or CI domain, so infrastructure is the least-bad home rather than a principled fit.

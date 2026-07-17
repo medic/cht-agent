@@ -40,7 +40,8 @@ concepts:
   - runtime dependency maintenance
   - Nouveau full-text search engine
   - CouchDB/Nouveau lockstep versioning
-related_issues: []
+related_issues:
+  - cht-core-10027
 stale: false
 ---
 

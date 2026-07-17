@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9992
 issueUrl: https://github.com/medic/cht-core/issues/9992
 title: Remove haproxy-healthcheck service from single-node deployments, relying on CouchDB's built-in _up endpoint instead
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: The haproxy-healthcheck container, only needed to monitor clustered CouchDB nodes, was being deployed even in single-node setups where it serves no purpose. The PR moves the service into the cluster-only compose template and reconfigures HAProxy to use CouchDB's native _up endpoint for single-node health checks.
 services:
   - api
@@ -27,6 +27,9 @@ tags:
 related_workflows:
   - observability
 source_pr: medic/cht-core#10006
+source_prs:
+  - "medic/cht-core#10006"
+  - "medic/cht-core#10267"
 source_sha: 18cd5403cd02baebd8dfcddfe748e0febc3958e7
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -60,6 +63,8 @@ The haproxy-healthcheck service was declared in the common scripts/build/cht-cor
 ## Solution
 
 Relocated the haproxy-healthcheck service definition from the shared cht-core.yml.template into the cluster-specific cht-couchdb-cluster.yml.template so it only deploys for clustered CouchDB. Updated haproxy/entrypoint.sh so single-node deployments perform health checks against CouchDB's built-in _up endpoint instead of the external healthcheck service, and added HAProxy integration tests covering both single-node and cluster topologies.
+
+A follow-up fixed a base64 line-wrapping bug in this health config: `base64` inserts newlines every 76 characters by default, which broke the HAProxy health config when the CouchDB username + password were long; adding the no-wrap flag allows long credentials (PR #10267).
 
 ## Code Patterns
 

@@ -2,7 +2,7 @@
 id: cht-core-6571
 category: feature
 domain: infrastructure
-domainFit: strong
+domainFit: weak
 issueNumber: 6571
 issueUrl: https://github.com/medic/cht-core/issues/6571
 title: Add secretlint-based credential scanner to CI that fails the build on credential leaks in test server logs
@@ -69,7 +69,7 @@ Declarative secret-detection config with custom regex rules in scripts/ci/.secre
 
 ## Design Choices
 
-Chose the established, maintained secretlint tool over the bespoke log-scanner.js per reviewer feedback to 'move forward with secretlint alone'. Custom secretlint-rule-pattern rules fill gaps in the recommended preset (notably localhost basicauth URLs the preset misses). Scope was deliberately narrowed to credential scanning, deferring the 'detect unexpected errors thrown' half of issue #6571 to later, more involved work.
+Chose the established, maintained secretlint tool over the bespoke log-scanner.js, moving forward with secretlint alone. Custom secretlint-rule-pattern rules fill gaps in the recommended preset (notably localhost basicauth URLs the preset misses). Scope was deliberately narrowed to credential scanning, deferring the 'detect unexpected errors thrown' half of issue #6571 to later, more involved work.
 
 ## Related Files
 
@@ -91,6 +91,6 @@ Added 18 mocha/chai unit tests in webapp/tests/mocha/unit/testingtests/secretlin
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The PR adds a CI security-scanning step to .github/workflows/build.yml plus supporting tooling under scripts/ci/; CI/build pipeline work is canonically infrastructure. Although it scans for leaked credentials, it touches no authentication logic, so infrastructure is the specific, strong fit rather than authentication or configuration.
+Credential-scanning CI tooling (secretlint over collected logs) lives in .github/ and scripts/ci; there is no security or CI domain, so infrastructure is the least-bad home rather than a principled fit.

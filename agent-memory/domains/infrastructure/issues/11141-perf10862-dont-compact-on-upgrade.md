@@ -84,4 +84,4 @@ Updated Mocha unit tests in api/tests/mocha/services/setup/upgrade-steps.spec.js
 
 **Fit:** strong
 
-This is upgrade-lifecycle work — skipping CouchDB compaction during the post-upgrade cleanup step in api/src/services/setup — which canonically belongs to infrastructure (deploy/upgrade tooling), matching the 'skip CouchDB compaction during API upgrade' seed example exactly.
+This is upgrade-lifecycle work — skipping CouchDB compaction during the post-upgrade cleanup step in api/src/services/setup — which canonically belongs to infrastructure (deploy/upgrade tooling).

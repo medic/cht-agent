@@ -39,7 +39,8 @@ concepts:
   - metrics collection
   - operational health monitoring
   - full-text search index health
-related_issues: []
+related_issues:
+  - cht-core-9691
 stale: false
 ---
 

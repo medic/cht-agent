@@ -60,7 +60,7 @@ Idempotent INI guard in shell: scope the existence check to the target section (
 
 ## Design Choices
 
-Reviewer (jkuester) confirmed the awk INI parser worked and was a clever handling of multi-phase output, but pushed to avoid full awk parsing in favor of a simpler check. The final approach trades the heavier parser for a leaner, more readable solution that still tolerates multiple admins and arbitrary ordering/whitespace.
+The initial awk INI parser worked, but full awk parsing was dropped in favor of a simpler check. The final approach trades the heavier parser for a leaner, more readable solution that still tolerates multiple admins and arbitrary ordering/whitespace.
 
 ## Related Files
 
@@ -68,7 +68,7 @@ Reviewer (jkuester) confirmed the awk INI parser worked and was a clever handlin
 
 ## Testing
 
-No automated tests were added (the 'Tested: Unit and/or e2e' checklist item was left unchecked). Verification was manual: the reviewer confirmed the functionality works, including the multi-admin edge case, before the simplification and again after ('LGTM!').
+No automated tests were added (the 'Tested: Unit and/or e2e' checklist item was left unchecked). Verification was manual: the functionality was confirmed, including the multi-admin edge case, before and after the simplification.
 
 ## Related Issues
 

@@ -83,7 +83,7 @@ Made NODE_ENV=production a secure-by-default baseline in the image instead of re
 
 ## Testing
 
-Ran the existing unit suite api/tests/mocha/services/cookie.spec.js (18/18 passing) to verify the Secure-flag logic; confirmed the test utilities correctly layer the override file during Docker orchestration so integration/E2E suites run in non-SSL environments; linted all modified files with eslint. No dedicated automated test was added for the new env-var behavior — the reviewer was awaiting a decision on whether to add one.
+Ran the existing unit suite api/tests/mocha/services/cookie.spec.js (18/18 passing) to verify the Secure-flag logic; confirmed the test utilities correctly layer the override file during Docker orchestration so integration/E2E suites run in non-SSL environments; linted all modified files with eslint. No dedicated automated test was added for the new env-var behavior.
 
 ## Related Issues
 
@@ -94,4 +94,4 @@ Ran the existing unit suite api/tests/mocha/services/cookie.spec.js (18/18 passi
 
 **Fit:** strong
 
-All seven changed files are Docker images (api/sentinel Dockerfiles), Helm deployment templates/values, and a docker-compose test override — the canonical infrastructure (build/deploy/image-config) domain per the seed guidance, and no authentication code was touched. The motivation is session-cookie security (an authentication concern), so a reviewer could re-bin to authentication if classifying by intent; classified here by the setup/deploy nature of the actual change, mirroring the 'setup issue → setup domain' pitfall.
+All seven changed files are Docker images (api/sentinel Dockerfiles), Helm deployment templates/values, and a docker-compose test override — the canonical infrastructure (build/deploy/image-config) domain; no authentication code was touched. The motivation is session-cookie security (an authentication concern), but the change is classified by the setup/deploy nature of the files it touches.

@@ -76,7 +76,7 @@ API and Sentinel thresholds were pinned to current measured coverage to lock in 
 
 ## Testing
 
-The PR is itself a coverage-improvement effort: it backfills unit tests across all shared-libs and updates existing specs, then enforces nyc coverage thresholds in CI for API, Sentinel, and shared-libs. Reviewer (jkuester) approved, paying special attention to the updated existing tests and confirming they look good (without a line-by-line review of every new test).
+The PR is itself a coverage-improvement effort: it backfills unit tests across all shared-libs and updates existing specs, then enforces nyc coverage thresholds in CI for API, Sentinel, and shared-libs.
 
 ## Related Issues
 
@@ -86,4 +86,4 @@ The PR is itself a coverage-improvement effort: it backfills unit tests across a
 
 **Fit:** strong
 
-This is CI/test-tooling work — it adds nyc (Istanbul) code-coverage thresholds ('coverage alerts') as CI quality gates and backfills unit tests to meet them. Per the seeds, CI/build/quality-gate tooling belongs to infrastructure, not configuration; the touched files are nyc.config.js coverage configs and test specs, not domain logic.
+This is CI/test-tooling work — it adds nyc (Istanbul) code-coverage thresholds ('coverage alerts') as CI quality gates and backfills unit tests to meet them. CI/build/quality-gate tooling belongs to infrastructure, not configuration; the touched files are nyc.config.js coverage configs and test specs, not domain logic.

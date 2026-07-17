@@ -41,7 +41,8 @@ concepts:
   - shared CouchDB persistent volume
   - single centralized nouveau instance for clustered CouchDB
   - freetext search backend deployment
-related_issues: []
+related_issues:
+  - cht-core-10481
 stale: false
 ---
 
@@ -74,7 +75,7 @@ Reuses CouchDB's volume rather than provisioning a separate nouveau volume becau
 
 ## Testing
 
-Updated the tests/utils/index.js test harness to account for the new nouveau pod and service; reviewer confirmed the nouveau Helm templates pass all validation tests across all deployment scenarios.
+Updated the tests/utils/index.js test harness to account for the new nouveau pod and service; the nouveau Helm templates pass all validation tests across all deployment scenarios.
 
 ## Related Issues
 

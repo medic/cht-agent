@@ -68,7 +68,7 @@ Appending a timestamp only for local builds keeps release version strings determ
 
 ## Testing
 
-No automated tests added; verified manually by reviewer jkuester following the reproduction steps in issue #9888, confirming local ddoc changes auto-deploy again.
+No automated tests added; verified manually following the reproduction steps in issue #9888, confirming local ddoc changes auto-deploy again.
 
 ## Related Issues
 
@@ -79,4 +79,4 @@ No automated tests added; verified manually by reviewer jkuester following the r
 
 **Fit:** strong
 
-The change is purely build-version computation inside the build script (scripts/build/index.js), part of the build/deploy operational lifecycle — directly matching the canonical 'Fix build version computation' infrastructure example. It is build tooling, not design-document internals, so the data-layer carve-out does not apply.
+The change is purely build-version computation inside the build script (scripts/build/index.js), part of the build/deploy operational lifecycle — squarely build tooling, not design-document internals.

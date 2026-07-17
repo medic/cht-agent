@@ -72,7 +72,7 @@ Freeze Python dependencies into version-pinned requirements files (requirements/
 
 ## Design Choices
 
-Kept the service in Python to reuse existing code rather than rewriting in another language. Pinned and bundled dependencies at build time for resilience against PyPI outages and incompatible releases. Test coverage was kept deliberately basic given the service's limited expected lifetime, with the author explicitly soliciting opinions on whether more tests were warranted. Reviewer (dianabarsan) recommended defaulting the log level to warning instead of info to reduce log noise.
+Kept the service in Python to reuse existing code rather than rewriting in another language. Pinned and bundled dependencies at build time for resilience against PyPI outages and incompatible releases. Test coverage was kept deliberately basic given the service's limited expected lifetime. The log level defaults to warning instead of info to reduce log noise.
 
 ## Related Files
 
@@ -93,7 +93,7 @@ Kept the service in Python to reuse existing code rather than rewriting in anoth
 
 ## Testing
 
-Added basic Python unit tests (haproxy-healthcheck/test/test_check.py, test/__init__.py) with test dependencies frozen in requirements/test-freeze.txt and a mock config (mock-config/initializerJson.json) for the test harness. The author acknowledged the coverage is basic with room for improvement and asked reviewers whether more tests were needed given the service's limited lifetime.
+Added basic Python unit tests (haproxy-healthcheck/test/test_check.py, test/__init__.py) with test dependencies frozen in requirements/test-freeze.txt and a mock config (mock-config/initializerJson.json) for the test harness.
 
 ## Related Issues
 

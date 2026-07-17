@@ -69,7 +69,7 @@ Default operational env vars at read time in the shared lib (e.g. `process.env.L
 
 ## Design Choices
 
-Hardcoding the safe default in application code guarantees production gets 'info' even if Helm/env config is incomplete. LOG_LEVEL=debug was centralized in the CI workflow env instead of duplicated across npm scripts for maintainability; reviewer (jkuester) suggested hardcoding the value in dev/test scripts rather than reading the host LOG_LEVEL envar to reduce future confusion, left optional. A companion cht-docs PR was requested to update the hosting log-level documentation.
+Hardcoding the safe default in application code guarantees production gets 'info' even if Helm/env config is incomplete. LOG_LEVEL=debug was centralized in the CI workflow env instead of duplicated across npm scripts for maintainability; hardcoding the value in dev/test scripts rather than reading the host LOG_LEVEL envar was suggested to reduce future confusion, left optional. A companion cht-docs PR was requested to update the hosting log-level documentation.
 
 ## Related Files
 

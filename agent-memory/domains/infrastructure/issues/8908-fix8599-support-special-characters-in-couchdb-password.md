@@ -91,7 +91,7 @@ Embedded the bats test_helper libraries directly rather than adding a dependency
 
 ## Testing
 
-Added a bats test suite under couchdb/tests/ (tests.bats, tests.sh) with a Makefile and compose.yml to run them in a container, plus embedded bats-support and bats-assert helper libraries. Added a dedicated .github/workflows/test_couchdb.yml CI workflow that executes the suite only when the couchdb/ folder changes. Reviewer noted that at review time the e2e tests were still failing due to the branch code, and that the special-character password also broke API's basic-auth CouchDB connection.
+Added a bats test suite under couchdb/tests/ (tests.bats, tests.sh) with a Makefile and compose.yml to run them in a container, plus embedded bats-support and bats-assert helper libraries. Added a dedicated .github/workflows/test_couchdb.yml CI workflow that executes the suite only when the couchdb/ folder changes. At review time the e2e tests were still failing on the branch, and the special-character password also broke API's basic-auth CouchDB connection.
 
 ## Related Issues
 

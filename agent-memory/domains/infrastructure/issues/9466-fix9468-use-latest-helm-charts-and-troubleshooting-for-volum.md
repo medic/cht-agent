@@ -74,7 +74,7 @@ Shipped a standalone JSON-emitting troubleshooting script rather than embedding 
 
 ## Testing
 
-No automated tests added; validated manually — reviewer mrjones-plip ran get-volume-binding against a production cluster and confirmed it surfaced the expected subPath deltas before approving the merge.
+No automated tests added; validated manually — get-volume-binding was run against a production cluster and surfaced the expected subPath deltas.
 
 ## Related Issues
 
