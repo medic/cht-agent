@@ -144,6 +144,14 @@ const classifyOneDoc = (
   return { bucket: 'places', contactType };
 };
 
+/** Once-per-type bookkeeping for the unknown-contact-type warning. */
+interface UnknownTypeTracker {
+  /** Contact type ids present in the discovered config. */
+  known: Set<string>;
+  /** Types already warned about, so each warns at most once. */
+  warned: Set<string>;
+}
+
 /**
  * Warn once per contact type that landed in `places` without being in the
  * discovered config (an unknown type counted as a place).
@@ -151,12 +159,11 @@ const classifyOneDoc = (
 const noteUnknownType = (
   bucket: DocBucket,
   contactType: string,
-  knownTypes: Set<string>,
-  warnedTypes: Set<string>,
+  tracker: UnknownTypeTracker,
   warnings: string[]
 ): void => {
-  if (bucket === 'places' && !knownTypes.has(contactType) && !warnedTypes.has(contactType)) {
-    warnedTypes.add(contactType);
+  if (bucket === 'places' && !tracker.known.has(contactType) && !tracker.warned.has(contactType)) {
+    tracker.warned.add(contactType);
     warnings.push(`contact type "${contactType}" is not in the discovered config; counted as a place`);
   }
 };
@@ -173,16 +180,18 @@ export const classifySeededDocs = (docs: SeededDoc[], config: DiscoveredConfig):
   const personTypes = new Set(
     config.contactTypes.filter((contactType) => contactType.person === true).map((contactType) => contactType.id)
   );
-  const knownTypes = new Set(config.contactTypes.map((contactType) => contactType.id));
+  const tracker: UnknownTypeTracker = {
+    known: new Set(config.contactTypes.map((contactType) => contactType.id)),
+    warned: new Set<string>(),
+  };
   const counts: SeededDocCounts = { places: 0, people: 0, reports: 0, warnings: [] };
-  const warnedTypes = new Set<string>();
 
   for (const doc of docs) {
     const { bucket, contactType } = classifyOneDoc(doc, personTypes);
     if (bucket === 'skip') {
       continue;
     }
-    noteUnknownType(bucket, contactType, knownTypes, warnedTypes, counts.warnings);
+    noteUnknownType(bucket, contactType, tracker, counts.warnings);
     counts[bucket] += 1;
   }
 

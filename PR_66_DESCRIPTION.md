@@ -186,6 +186,7 @@ $ echo $?
 - `feat(#66): provision env-seam parity — CHT_URL fallback, cred stripping, COUCHDB_* auth seam`
 - `chore(#66): review hygiene — dead doc refs, stale roadmap note, should-style agent spec titles`
 - `refactor(#66): sonar round — complexity ≤5 extractions, dedicated matchers, api polish`
+- `refactor(#66): sonar — noteUnknownType 5->4 params (S107 max-params)`
 
 (Phases 1–2 groundwork — provision/readiness/scripts/apply shape — is the branch's
 pre-existing history, replayed unchanged by the rebase.)
