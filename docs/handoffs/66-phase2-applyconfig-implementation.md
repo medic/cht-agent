@@ -1,5 +1,19 @@
 # #66 Phase 2 — real `applyConfig` implementation plan
 
+> **Status — 2026-07-18 (DONE, phases 2 + 3 landed).** This plan is fully
+> implemented, and Phase 3 (`discoverConfig` + `cht-api.ts`, `prepareTestData` +
+> `test-data.ts`, the couchdb-tier reset) has been ported alongside it from the
+> workbench lineage. The layer is at workbench parity **minus** the deferred
+> cht-conf-extension pieces (`verifyArtifact`/`fetchDeployedFormXml`/`fetchFormXml`,
+> the offline-convert block, `skipValidate`, `xform-inspect`) — see
+> `PR_66_DESCRIPTION.md` for the excision + per-function parity proofs and the
+> deferred-boundary map. `applyConfig`/`discoverConfig`/`prepareTestData`/
+> `reset('couchdb')` real paths are all live; `provision` stays at the Phase-1
+> shape. Gates green after every commit (Node 22): `build` + `test` (1104 passing,
+> 126 in the layer) + `lint`. All work is on local branch
+> `66-test-environment-layer-implementation` (rebased onto `origin/main` @
+> `fdf4af2`); the operator owns the push + `gh pr create`.
+>
 > Phase 1 (provision/reset/teardown real paths) + the Phase-2 *shape* (action selector,
 > `ConfigApplyResult`, `ConfigActionStatus`) already landed (`f954cb9`). This plan fills the
 > `applyConfig` `!useMockDocker` branch that currently throws `NOT_IMPLEMENTED`. Same
