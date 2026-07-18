@@ -7,8 +7,11 @@
  * over HTTP, so spawning it is allowed (and the sandbox allow-list sanctions
  * `Bash(cht:*)`).
  *
- * One invocation per upload bucket: the bucket's verbs are passed as ordered
- * actions in a single `cht` process (cht-conf runs named actions in sequence).
+ * Two layers: runChtConf spawns one `cht` process for an ordered verb list
+ * (cht-conf runs named actions in sequence) and reports the raw outcome;
+ * runBucket wraps it for the config upload buckets, classifying stdout into
+ * uploaded/skipped/failed. The test-data verbs (csv-to-docs, upload-docs,
+ * create-users) drive runChtConf directly.
  *
  * See: designs/layer_recommendations/test-environment-layer.md,
  *      designs/cht-conf-agent-extension.md §7.2,
@@ -16,7 +19,14 @@
  */
 
 import { spawn } from 'node:child_process';
-import { ChtConfRunOptions, ConfigActionResult, ConfigActionStatus, ConfigUploadAction } from '../types';
+import {
+  ChtConfExecOptions,
+  ChtConfExecResult,
+  ChtConfRunOptions,
+  ConfigActionResult,
+  ConfigActionStatus,
+  ConfigUploadAction,
+} from '../types';
 
 /**
  * The cht-conf verbs each upload bucket runs, in order. Single source of truth
@@ -24,6 +34,10 @@ import { ChtConfRunOptions, ConfigActionResult, ConfigActionStatus, ConfigUpload
  */
 export const CONFIG_ACTION_COMMANDS: Record<ConfigUploadAction, string[]> = {
   'app-settings': ['compile-app-settings', 'upload-app-settings'],
+  // Upload a pre-compiled app_settings.json verbatim, skipping compile — the
+  // path for a deployment recovered via `backup-app-settings` (recompiling from
+  // a source tree you do not have would clobber contact-summary/tasks/targets).
+  'app-settings-only': ['upload-app-settings'],
   'app-forms': ['convert-app-forms', 'upload-app-forms'],
   'contact-forms': ['convert-contact-forms', 'upload-contact-forms'],
   resources: ['upload-resources', 'upload-branding', 'upload-custom-translations'],
@@ -45,8 +59,16 @@ const AUTONOMOUS_FLAGS = [
   '--verbose',
 ];
 
-const DEFAULT_BIN = 'cht';
 const DEFAULT_TIMEOUT_MS = 180_000;
+
+/**
+ * The cht-conf binary to spawn. Overridable via CHT_CONF_BIN so the agent can run
+ * a deployment's OWN pinned cht-conf — e.g. a throwaway
+ * `<config>/node_modules/.bin/cht` that `npm ci` installed into the mounted
+ * config repo — instead of the image's global `cht`, matching the version the
+ * config was authored/compiled with. A per-call `options.bin` still wins.
+ */
+export const resolveChtConfBin = (): string => process.env.CHT_CONF_BIN || 'cht';
 
 /** Buckets whose verbs accept a positional single-form filter. */
 const FORM_BUCKETS: ConfigUploadAction[] = ['app-forms', 'contact-forms'];
@@ -72,17 +94,34 @@ const minimalEnv = (): NodeJS.ProcessEnv => {
 };
 
 /**
+ * The full cht-conf argv for a generic invocation (url, source, safe flags,
+ * verbs). Extra args ride AFTER a literal `--` separator: cht-conf's main.js
+ * treats every bare positional as an action name and throws
+ * "Unsupported action(s)" otherwise — only `cmdArgs['--']` reaches
+ * environment.extraArgs (which is what args-form-filter reads).
+ */
+const buildExecArgs = (options: ChtConfExecOptions): string[] => [
+  `--url=${options.instanceUrl}`,
+  `--source=${options.configPath}`,
+  ...AUTONOMOUS_FLAGS,
+  ...options.verbs,
+  ...(options.extraArgs?.length ? ['--', ...options.extraArgs] : []),
+];
+
+/**
  * Build the cht-conf argv for a bucket (no credentials are logged; the URL with
  * embedded creds lives only in the argv passed to spawn). Exported for testing.
  */
 export const buildChtConfArgs = (options: ChtConfRunOptions): string[] => {
-  const verbs = CONFIG_ACTION_COMMANDS[options.action];
-  const args = [`--url=${options.instanceUrl}`, `--source=${options.configPath}`, ...AUTONOMOUS_FLAGS, ...verbs];
-  // A single-form filter is a positional arg consumed by the form-upload verbs.
-  if (options.artifact && FORM_BUCKETS.includes(options.action)) {
-    args.push(options.artifact);
-  }
-  return args;
+  // A single-form filter is a `--`-separated extra arg consumed by the
+  // form verbs (cht-conf's args-form-filter reads environment.extraArgs).
+  const formFilter = options.artifact && FORM_BUCKETS.includes(options.action) ? [options.artifact] : [];
+  return buildExecArgs({
+    verbs: CONFIG_ACTION_COMMANDS[options.action],
+    instanceUrl: options.instanceUrl,
+    configPath: options.configPath,
+    extraArgs: formFilter,
+  });
 };
 
 // cht-conf logs a "no changes" line per artifact when its hash matches the
@@ -116,61 +155,95 @@ export const classifyChtConfOutput = (output: string, exitCode: number | null): 
 };
 
 /**
- * Run one cht-conf upload bucket against the instance. Resolves with the
- * per-bucket result (never rejects — a non-zero exit or spawn error becomes
- * `status: 'failed'` so the caller can aggregate without try/catch per bucket).
+ * Run one `cht` process for an ordered verb list. Resolves with the raw
+ * outcome (never rejects — spawn errors and timeouts are folded into the
+ * result so callers can aggregate without try/catch per invocation).
  */
-export const runBucket = (options: ChtConfRunOptions): Promise<ConfigActionResult> => {
-  const bin = options.bin ?? DEFAULT_BIN;
+export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResult> => {
+  const bin = options.bin ?? resolveChtConfBin();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const verbs = CONFIG_ACTION_COMMANDS[options.action];
-  const args = buildChtConfArgs(options);
-  const warnings: string[] = [];
-
-  if (options.artifact && !FORM_BUCKETS.includes(options.action)) {
-    warnings.push(`artifact targeting ignored for the ${options.action} bucket`);
-  }
+  const args = buildExecArgs(options);
 
   // Log the verbs, never the cred-embedded URL.
-  console.log(`[cht-conf] ${options.action}: ${verbs.join(' ')} (--source=${options.configPath})`);
+  const label = options.logLabel ?? options.verbs.join(' ');
+  console.log(`[cht-conf] ${label} (--source=${options.configPath})`);
 
   return new Promise((resolve) => {
-    const result = (status: ConfigActionStatus): ConfigActionResult => ({
-      action: options.action,
-      status,
-      commands: [...verbs],
-      warnings: [...warnings],
+    const proc = spawn(bin, args, {
+      env: minimalEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     });
-
-    const proc = spawn(bin, args, { env: minimalEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks: string[] = [];
     let settled = false;
 
-    const finish = (status: ConfigActionStatus): void => {
+    const finish = (result: Omit<ChtConfExecResult, 'output'>): void => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timeoutId);
-      resolve(result(status));
+      resolve({ ...result, output: chunks.join('') });
     };
 
     const timeoutId = setTimeout(() => {
       proc.kill('SIGTERM');
-      warnings.push(`cht-conf ${options.action} timed out after ${timeoutMs}ms`);
-      finish('failed');
+      finish({ exitCode: null, timedOut: true });
     }, timeoutMs);
 
     proc.stdout?.on('data', (data) => chunks.push(data.toString()));
     proc.stderr?.on('data', (data) => chunks.push(data.toString()));
 
     proc.on('error', (error) => {
-      warnings.push(`cht-conf ${options.action} failed to start: ${error.message}`);
-      finish('failed');
+      finish({ exitCode: null, timedOut: false, startError: error.message });
     });
 
     proc.on('close', (code) => {
-      finish(classifyChtConfOutput(chunks.join(''), code));
+      finish({ exitCode: code, timedOut: false });
     });
   });
+};
+
+/**
+ * Run one cht-conf upload bucket against the instance. Resolves with the
+ * per-bucket result (never rejects — a non-zero exit or spawn error becomes
+ * `status: 'failed'` so the caller can aggregate without try/catch per bucket).
+ */
+export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActionResult> => {
+  const verbs = CONFIG_ACTION_COMMANDS[options.action];
+  const warnings: string[] = [];
+
+  if (options.artifact && !FORM_BUCKETS.includes(options.action)) {
+    warnings.push(`artifact targeting ignored for the ${options.action} bucket`);
+  }
+  const formFilter = options.artifact && FORM_BUCKETS.includes(options.action) ? [options.artifact] : [];
+
+  const run = await runChtConf({
+    verbs,
+    instanceUrl: options.instanceUrl,
+    configPath: options.configPath,
+    extraArgs: formFilter,
+    logLabel: `${options.action}: ${verbs.join(' ')}`,
+    bin: options.bin,
+    timeoutMs: options.timeoutMs,
+  });
+
+  let status: ConfigActionStatus;
+  if (run.timedOut) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    warnings.push(`cht-conf ${options.action} timed out after ${timeoutMs}ms`);
+    status = 'failed';
+  } else if (run.startError !== undefined) {
+    warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
+    status = 'failed';
+  } else {
+    status = classifyChtConfOutput(run.output, run.exitCode);
+  }
+
+  return {
+    action: options.action,
+    status,
+    commands: [...verbs],
+    warnings,
+  };
 };

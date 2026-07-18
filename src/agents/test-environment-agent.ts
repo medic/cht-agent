@@ -4,9 +4,9 @@
  * Deterministic provisioning orchestrator for the Test Environment Layer
  * (QA Supervisor). It provisions a live CHT instance, applies a config,
  * discovers the deployed config, and seeds conforming test data. No LLM is
- * involved. provision()'s real path (human-gated bring-up + readiness polling)
- * is implemented; applyConfig/discoverConfig/prepareTestData/reset/teardown
- * real paths are not yet implemented (later #66 phases).
+ * involved. Real paths implemented: provision (human-gated bring-up + readiness
+ * polling) and applyConfig (cht-conf upload buckets). discoverConfig /
+ * prepareTestData / the couchdb-tier reset real paths land in #66 phase 3.
  *
  * See: designs/layer_recommendations/test-environment-layer.md
  */

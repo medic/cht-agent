@@ -778,12 +778,21 @@ export interface DiscoveredConfig {
  * A bucket of cht-conf upload work, mapping to the underlying cht-conf verbs
  * (see designs/cht-conf-agent-extension.md §7.2 step 4). The agent drives these
  * over HTTP against the instance; it never edits the config itself.
- * - `app-settings`   compile-app-settings + upload-app-settings
- * - `app-forms`      convert-app-forms + upload-app-forms
- * - `contact-forms`  convert-contact-forms + upload-contact-forms
- * - `resources`      upload-resources + upload-branding + upload-custom-translations
+ * - `app-settings`      compile-app-settings + upload-app-settings
+ * - `app-settings-only` upload-app-settings (NO compile) — for a deployment-
+ *                       recovered, pre-compiled app_settings.json where
+ *                       recompiling would clobber the minified contact-summary /
+ *                       tasks / targets
+ * - `app-forms`         convert-app-forms + upload-app-forms
+ * - `contact-forms`     convert-contact-forms + upload-contact-forms
+ * - `resources`         upload-resources + upload-branding + upload-custom-translations
  */
-export type ConfigUploadAction = 'app-settings' | 'app-forms' | 'contact-forms' | 'resources';
+export type ConfigUploadAction =
+  | 'app-settings'
+  | 'app-settings-only'
+  | 'app-forms'
+  | 'contact-forms'
+  | 'resources';
 
 /**
  * Inputs to applyConfig. `configPath` defaults to cht-core's in-repo
@@ -857,6 +866,51 @@ export interface ChtConfRunOptions {
   bin?: string;
   /** Per-bucket timeout in ms before the process is killed and marked failed. */
   timeoutMs?: number;
+}
+
+/**
+ * Inputs to a generic cht-conf invocation (the low-level runner under
+ * runBucket, also driving the test-data verbs csv-to-docs / upload-docs /
+ * create-users). Verbs run in order inside ONE `cht` process.
+ */
+export interface ChtConfExecOptions {
+  /** cht-conf actions to run, in order (e.g. ['csv-to-docs', 'upload-docs']). */
+  verbs: string[];
+  /** The instance URL WITH embedded credentials (https://user:pass@host). */
+  instanceUrl: string;
+  /** Project folder passed to cht-conf `--source`. */
+  configPath: string;
+  /** Positional args appended after the verbs (e.g. a form filter). */
+  extraArgs?: string[];
+  /**
+   * Working directory for the spawned process. cht-conf writes report files
+   * (upload-docs.<ts>.log.json) into its cwd, so data runs point this at the
+   * data project to keep droppings out of the repo. Defaults to the agent cwd.
+   */
+  cwd?: string;
+  /** Log label ("[cht-conf] <label> ..."); defaults to the joined verbs. */
+  logLabel?: string;
+  /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
+  bin?: string;
+  /** Timeout in ms before the process is killed. */
+  timeoutMs?: number;
+}
+
+/**
+ * Raw outcome of a generic cht-conf invocation. Never a rejection — spawn
+ * errors and timeouts are folded in so callers can aggregate without
+ * per-invocation try/catch. Callers interpret `output` (cht-conf logs
+ * everything to stdout) with the parsers in src/utils/test-data.ts.
+ */
+export interface ChtConfExecResult {
+  /** Process exit code; null when it never exited cleanly (killed / not started). */
+  exitCode: number | null;
+  /** Interleaved stdout+stderr of the run. */
+  output: string;
+  /** True when the run was killed by the timeout. */
+  timedOut: boolean;
+  /** Set when the process could not be spawned at all (e.g. binary missing). */
+  startError?: string;
 }
 
 /**
