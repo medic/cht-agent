@@ -151,7 +151,12 @@ Acceptance: spec where the corrected local form gates a child bind but the
 XML → GREEN; existing group-level demo-fixture specs unchanged; standalone
 QA (no dev result) behavior byte-identical.
 
-## F6 — IN PROGRESS: whole-document QA oracle
+## F6 — SHIPPED (2026-07-14): whole-document QA oracle
+
+> Implemented + adversarially reviewed (gates at ship: 1484→1521 passing with
+> F7); **proven live 2026-07-16**: both oracle lines fired in the sixth run
+> ("RED oracle: whole-document — deployed differs from local ONLY at the
+> target bind" / "GREEN oracle: whole-document — canonically identical").
 
 **Implementation contract (added when F6+F7 were greenlit):**
 - Comparator: reuse the dev phase's canonicalized comparison
@@ -196,7 +201,12 @@ for a closed loop; document a fallback to the targeted oracle with a
 warning). Converter parity is already pinned via CHT_CONF_BIN. Candidate for
 the next follow-up round after F5 proves out in the live loop.
 
-## F7 — IN PROGRESS: layer-aware test generation → partner harness specs + tier-2 QA hook
+## F7 — SHIPPED (2026-07-14): layer-aware test generation → partner harness specs + tier-2 QA hook
+
+> Implemented + adversarially reviewed (deterministic generator + `--qa-tier2`
+> runner; review fixup: balanced-paren house-pattern extraction); **proven
+> live 2026-07-16** — spec emitted into the partner suite, tier-2 executed
+> end-to-end (2 passing after the F9 sandbox-args + xsltproc addenda).
 
 Observed (third live run): for cht-conf tickets, test-gen emits generic JS
 unit tests of the fix DESCRIPTOR into `tests/unit/` (plural) — the partner

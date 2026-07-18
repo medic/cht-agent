@@ -52,6 +52,19 @@ npm run build && npm test && npm run lint
 cd /workspace/site-config-test && npm ci
 ```
 
+**OAuth staleness (recurring gotcha):** the agent container binds the host's
+`~/.claude/.credentials.json` as a single READ-ONLY file. Claude Code rotates
+OAuth tokens and rewrites that file via atomic rename (new inode), so a
+long-running container keeps the OLD file — and a reused rotated token gets
+the whole grant flagged: `401 OAuth access token has been revoked`. Remedy:
+verify login on the HOST (`claude -p 'say ok'`; re-login if needed), then
+`docker compose up -d --force-recreate` so the mount re-binds to the current
+file, re-copy the ticket into `/app/tickets`, and pre-flight in-container
+with `claude -p "say ok"`. Recreate the agent container at the START of any
+demo day for this reason. (Do not run interactive `claude` sessions inside
+the container with a stale file — token-reuse detection accelerates the
+revocation.)
+
 **Mission-05 prerequisites (blocking — the dev phase dies without them):**
 
 - **Branch + image**: the workbench checkout (and the image built from it,
