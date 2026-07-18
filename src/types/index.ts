@@ -772,6 +772,14 @@ export interface DiscoveredConfig {
   permissions: Record<string, string[]>;
   transitions: Record<string, TransitionConfig>;
   forms: string[];
+  /**
+   * Installed form id -> CouchDB revision of its `form:<id>` doc. The rev is
+   * the change-detection hash for the apply -> verify loop: re-discover after
+   * applyConfig and a changed rev proves the upload took (an unchanged rev
+   * matches cht-conf's `skipped` status). Populated by the real discovery
+   * path; optional so hand-built configs (tests, fixtures) stay lightweight.
+   */
+  formVersions?: Record<string, string>;
 }
 
 /**
@@ -914,6 +922,23 @@ export interface ChtConfExecResult {
 }
 
 /**
+ * Inputs to prepareTestData's real path. The data project is a cht-conf
+ * project folder: docs come from `<dataPath>/csv/*.csv` (csv-to-docs naming:
+ * place.<type>.csv, person.csv, report.<form>.csv, contact.csv, users.csv),
+ * and user accounts from `<dataPath>/users.csv` (hand-written, or generated
+ * by csv-to-docs from users.*.csv inputs). create-users only runs when that
+ * file exists — cht-conf throws on a missing users.csv.
+ */
+export interface PrepareTestDataOptions {
+  /** cht-conf project folder holding csv/ (required by the real path). */
+  dataPath?: string;
+  /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
+  bin?: string;
+  /** Per-invocation timeout in ms before the process is killed. */
+  timeoutMs?: number;
+}
+
+/**
  * Tuning for readiness polling (see src/utils/cht-readiness.ts)
  */
 export interface ReadinessOptions {
@@ -963,6 +988,14 @@ export interface TestDataResult {
   reportsCreated: number;
   usersCreated: number;
   warnings: string[];
+  /** True when every cht-conf seeding invocation exited cleanly. */
+  succeeded: boolean;
+  /**
+   * _ids of the docs seeded via csv-to-docs + upload-docs (evidence for the
+   * QA verify step; also what the couchdb-tier reset wipes and reseeds).
+   * User ACCOUNTS created by create-users are not docs and are not listed.
+   */
+  seededDocIds: string[];
 }
 
 /**

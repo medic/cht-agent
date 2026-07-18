@@ -335,23 +335,6 @@ describe('TestEnvironmentAgent', () => {
       expect(second.forms).to.deep.equal(['delivery', 'pregnancy', 'assessment']);
       expect(second.contactTypes).to.have.lengthOf(4);
     });
-
-    it('should throw not-implemented in real mode', async () => {
-      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
-      const handle: EnvironmentHandle = {
-        url: 'https://nginx',
-        auth: { user: 'medic', password: 'password' },
-        network: 'cht-agent-net',
-        source: 'docker',
-      };
-
-      try {
-        await realAgent.discoverConfig(handle);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('not yet implemented');
-      }
-    });
   });
 
   describe('prepareTestData', () => {
@@ -387,23 +370,6 @@ describe('TestEnvironmentAgent', () => {
       expect(second.warnings).to.deep.equal([]);
       expect(second.placesCreated).to.equal(3);
     });
-
-    it('should throw not-implemented in real mode', async () => {
-      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
-      const handle: EnvironmentHandle = {
-        url: 'https://nginx',
-        auth: { user: 'medic', password: 'password' },
-        network: 'cht-agent-net',
-        source: 'docker',
-      };
-
-      try {
-        await realAgent.prepareTestData(handle, sampleConfig);
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        expect((error as Error).message).to.include('not yet implemented');
-      }
-    });
   });
 
   describe('reset', () => {
@@ -433,15 +399,6 @@ describe('TestEnvironmentAgent', () => {
 
       it('resolves the full tier (human-gated, agent runs no Docker)', async () => {
         expect(await realAgent.reset(dockerHandle, 'full')).to.equal(undefined);
-      });
-
-      it('defers the couchdb tier to a later phase', async () => {
-        try {
-          await realAgent.reset(dockerHandle, 'couchdb');
-          expect.fail('expected reset to reject');
-        } catch (error) {
-          expect((error as Error).message).to.include('Phase 3');
-        }
       });
     });
   });
