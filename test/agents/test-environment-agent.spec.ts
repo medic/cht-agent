@@ -315,7 +315,7 @@ describe('TestEnvironmentAgent', () => {
 
       const result = await agent.applyConfig(handle, { actions: ['app-forms'] });
 
-      expect(result.artifact).to.equal(undefined);
+      expect(result.artifact).to.be.undefined;
     });
 
     it('should return an empty action list when actions is an empty array', async () => {
@@ -789,11 +789,11 @@ describe('TestEnvironmentAgent', () => {
       });
 
       it('should resolve the restart tier (human-gated, agent runs no Docker)', async () => {
-        expect(await realAgent.reset(dockerHandle, 'restart')).to.equal(undefined);
+        expect(await realAgent.reset(dockerHandle, 'restart')).to.be.undefined;
       });
 
       it('should resolve the full tier (human-gated, agent runs no Docker)', async () => {
-        expect(await realAgent.reset(dockerHandle, 'full')).to.equal(undefined);
+        expect(await realAgent.reset(dockerHandle, 'full')).to.be.undefined;
       });
 
       describe('couchdb tier (the agent-owned reset)', () => {
@@ -1010,7 +1010,7 @@ describe('TestEnvironmentAgent', () => {
         source: 'docker',
       };
 
-      expect(await realAgent.teardown(handle)).to.equal(undefined);
+      expect(await realAgent.teardown(handle)).to.be.undefined;
     });
   });
 });

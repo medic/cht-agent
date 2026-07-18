@@ -255,7 +255,7 @@ describe('cht-conf-runner', () => {
 
       expect(proc.kill.calledWith('SIGTERM')).to.equal(true);
       expect(result.timedOut).to.equal(true);
-      expect(result.exitCode).to.equal(null);
+      expect(result.exitCode).to.be.null;
     });
 
     it('folds a spawn failure into startError instead of rejecting', async () => {
@@ -267,7 +267,7 @@ describe('cht-conf-runner', () => {
 
       const result = await promise;
       expect(result.startError).to.equal('ENOENT');
-      expect(result.exitCode).to.equal(null);
+      expect(result.exitCode).to.be.null;
     });
   });
 

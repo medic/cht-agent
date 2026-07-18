@@ -34,7 +34,7 @@ describe('cht-readiness', () => {
 
       const result = await waitForReady('https://nginx', fast);
 
-      expect(result).to.equal(undefined);
+      expect(result).to.be.undefined;
       expect(fetchStub.callCount).to.equal(3);
     });
 
@@ -44,7 +44,7 @@ describe('cht-readiness', () => {
 
       const result = await waitForReady('https://nginx', fast);
 
-      expect(result).to.equal(undefined);
+      expect(result).to.be.undefined;
       expect(fetchStub.callCount).to.equal(2);
     });
 

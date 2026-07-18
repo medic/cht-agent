@@ -64,28 +64,30 @@ const basicAuth = (auth: ChtAuth): string => {
 /**
  * Bounded, authenticated request. Throws on a non-2xx status with the path
  * and status only (the base URL is the handle's cred-free URL, so the full
- * message stays safe to log).
+ * message stays safe to log). The single options object carries the per-request
+ * timeout plus the method and JSON body for the POST callers.
  */
 const request = async (
   url: string,
   auth: ChtAuth,
   path: string,
-  options: ChtRequestOptions,
-  init: { method?: string; body?: string } = {}
+  options: ChtRequestOptions & { method?: string; body?: string } = {}
 ): Promise<unknown> => {
+  const method = options.method ?? 'GET';
   const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const hasBody = options.body !== undefined;
   const response = await fetch(`${url}${path}`, {
-    method: init.method ?? 'GET',
+    method,
     headers: {
       Authorization: basicAuth(auth),
       Accept: 'application/json',
-      ...(init.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     },
-    ...(init.body !== undefined ? { body: init.body } : {}),
+    ...(hasBody ? { body: options.body } : {}),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    throw new Error(`CHT request failed: ${init.method ?? 'GET'} ${path} -> HTTP ${response.status}`);
+    throw new Error(`CHT request failed: ${method} ${path} -> HTTP ${response.status}`);
   }
   return response.json();
 };
@@ -145,7 +147,8 @@ export const fetchDocRevs = async (
   if (ids.length === 0) {
     return [];
   }
-  const body = (await request(url, auth, '/medic/_all_docs', options, {
+  const body = (await request(url, auth, '/medic/_all_docs', {
+    ...options,
     method: 'POST',
     body: JSON.stringify({ keys: ids }),
   })) as { rows?: AllDocsRow[] };
@@ -175,7 +178,8 @@ export const bulkDocs = async (
   if (docs.length === 0) {
     return [];
   }
-  const body = await request(url, auth, '/medic/_bulk_docs', options, {
+  const body = await request(url, auth, '/medic/_bulk_docs', {
+    ...options,
     method: 'POST',
     body: JSON.stringify({ docs }),
   });

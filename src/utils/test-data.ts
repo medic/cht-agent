@@ -115,6 +115,52 @@ export const readSeededDocs = (dataPath: string): SeededDoc[] => {
     });
 };
 
+/** Which TestDataResult bucket a single seeded doc counts toward. */
+type DocBucket = 'places' | 'people' | 'reports' | 'skip';
+
+/** Configurable hierarchies store the real type in contact_type. */
+const resolveContactType = (doc: SeededDoc): string =>
+  doc.type === 'contact' ? (doc.contactType ?? '') : doc.type;
+
+/**
+ * Decide the bucket for one seeded doc against the discovered config. `skip` is
+ * a `user` account artifact (create-users owns that count). The resolved
+ * contact type is returned for the unknown-type warning.
+ */
+const classifyOneDoc = (
+  doc: SeededDoc,
+  personTypes: Set<string>
+): { bucket: DocBucket; contactType: string } => {
+  if (doc.type === 'data_record') {
+    return { bucket: 'reports', contactType: doc.type };
+  }
+  if (doc.type === 'user') {
+    return { bucket: 'skip', contactType: doc.type };
+  }
+  const contactType = resolveContactType(doc);
+  if (contactType === 'person' || personTypes.has(contactType)) {
+    return { bucket: 'people', contactType };
+  }
+  return { bucket: 'places', contactType };
+};
+
+/**
+ * Warn once per contact type that landed in `places` without being in the
+ * discovered config (an unknown type counted as a place).
+ */
+const noteUnknownType = (
+  bucket: DocBucket,
+  contactType: string,
+  knownTypes: Set<string>,
+  warnedTypes: Set<string>,
+  warnings: string[]
+): void => {
+  if (bucket === 'places' && !knownTypes.has(contactType) && !warnedTypes.has(contactType)) {
+    warnedTypes.add(contactType);
+    warnings.push(`contact type "${contactType}" is not in the discovered config; counted as a place`);
+  }
+};
+
 /**
  * Classify seeded docs into TestDataResult buckets using the DISCOVERED
  * config (a `person: true` contact type counts as a person even under a
@@ -132,24 +178,12 @@ export const classifySeededDocs = (docs: SeededDoc[], config: DiscoveredConfig):
   const warnedTypes = new Set<string>();
 
   for (const doc of docs) {
-    if (doc.type === 'data_record') {
-      counts.reports += 1;
+    const { bucket, contactType } = classifyOneDoc(doc, personTypes);
+    if (bucket === 'skip') {
       continue;
     }
-    if (doc.type === 'user') {
-      continue;
-    }
-    // Configurable hierarchies store the real type in contact_type.
-    const contactType = doc.type === 'contact' ? (doc.contactType ?? '') : doc.type;
-    if (contactType === 'person' || personTypes.has(contactType)) {
-      counts.people += 1;
-      continue;
-    }
-    if (!knownTypes.has(contactType) && !warnedTypes.has(contactType)) {
-      warnedTypes.add(contactType);
-      counts.warnings.push(`contact type "${contactType}" is not in the discovered config; counted as a place`);
-    }
-    counts.places += 1;
+    noteUnknownType(bucket, contactType, knownTypes, warnedTypes, counts.warnings);
+    counts[bucket] += 1;
   }
 
   return counts;

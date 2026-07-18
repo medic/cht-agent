@@ -69,7 +69,7 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 export const resolveChtConfBin = (): string => process.env.CHT_CONF_BIN || 'cht';
 
 /** Buckets whose verbs accept a positional single-form filter. */
-const FORM_BUCKETS: ConfigUploadAction[] = ['app-forms', 'contact-forms'];
+const FORM_BUCKETS = new Set<ConfigUploadAction>(['app-forms', 'contact-forms']);
 
 /**
  * cht-conf executes code from the `--source` project (app-settings build,
@@ -113,7 +113,7 @@ const buildExecArgs = (options: ChtConfExecOptions): string[] => [
 export const buildChtConfArgs = (options: ChtConfRunOptions): string[] => {
   // A single-form filter is a `--`-separated extra arg consumed by the
   // form verbs (cht-conf's args-form-filter reads environment.extraArgs).
-  const formFilter = options.artifact && FORM_BUCKETS.includes(options.action) ? [options.artifact] : [];
+  const formFilter = options.artifact && FORM_BUCKETS.has(options.action) ? [options.artifact] : [];
   return buildExecArgs({
     verbs: CONFIG_ACTION_COMMANDS[options.action],
     instanceUrl: options.instanceUrl,
@@ -203,6 +203,28 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
 };
 
 /**
+ * Map a finished bucket run onto a ConfigActionStatus, appending any failure
+ * warning. A timeout or spawn error is `failed`; otherwise the status is parsed
+ * from stdout (classifyChtConfOutput).
+ */
+const deriveBucketStatus = (
+  run: ChtConfExecResult,
+  options: ChtConfRunOptions,
+  warnings: string[]
+): ConfigActionStatus => {
+  if (run.timedOut) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    warnings.push(`cht-conf ${options.action} timed out after ${timeoutMs}ms`);
+    return 'failed';
+  }
+  if (run.startError !== undefined) {
+    warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
+    return 'failed';
+  }
+  return classifyChtConfOutput(run.output, run.exitCode);
+};
+
+/**
  * Run one cht-conf upload bucket against the instance. Resolves with the
  * per-bucket result (never rejects — a non-zero exit or spawn error becomes
  * `status: 'failed'` so the caller can aggregate without try/catch per bucket).
@@ -210,11 +232,12 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
 export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActionResult> => {
   const verbs = CONFIG_ACTION_COMMANDS[options.action];
   const warnings: string[] = [];
+  const isFormBucket = FORM_BUCKETS.has(options.action);
 
-  if (options.artifact && !FORM_BUCKETS.includes(options.action)) {
+  if (options.artifact && !isFormBucket) {
     warnings.push(`artifact targeting ignored for the ${options.action} bucket`);
   }
-  const formFilter = options.artifact && FORM_BUCKETS.includes(options.action) ? [options.artifact] : [];
+  const formFilter = options.artifact && isFormBucket ? [options.artifact] : [];
 
   const run = await runChtConf({
     verbs,
@@ -226,21 +249,9 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     timeoutMs: options.timeoutMs,
   });
 
-  let status: ConfigActionStatus;
-  if (run.timedOut) {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    warnings.push(`cht-conf ${options.action} timed out after ${timeoutMs}ms`);
-    status = 'failed';
-  } else if (run.startError !== undefined) {
-    warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
-    status = 'failed';
-  } else {
-    status = classifyChtConfOutput(run.output, run.exitCode);
-  }
-
   return {
     action: options.action,
-    status,
+    status: deriveBucketStatus(run, options, warnings),
     commands: [...verbs],
     warnings,
   };

@@ -85,24 +85,71 @@ suite is green with **no instance and no Docker**.
   the real paths. This is what keeps CI Docker-free.
 - **`scripts/test-env-up.sh <cht-core>`** — the human-gated bring-up seam.
 
-## 5. Standalone guarantee + independent demo recipe
+## 5. Standalone guarantee + independent cht-core demo
 
 Zero imports from workflow / cht-conf-extension code. Real-path specs mock
-`fetch`/`child_process` → suite green with no instance, no Docker.
+`fetch`/`child_process` → the suite is green with no instance and no Docker.
 
-Independent cht-core demo (real mode, `new TestEnvironmentAgent({ useMockDocker: false })`):
+The demo below exercises the **whole layer in real mode**
+(`useMockDocker: false`) against a real dockerized CHT, entirely in Docker:
+the CHT stack comes up human-gated on `cht-agent-net`, and the layer runs in
+a disposable container on the same network, reaching the instance at the
+layer's native `https://nginx` default through the `CHT_URL` seam (§4).
 
+**1. Bring CHT up** (human-gated — the layer itself never runs Docker):
+
+```bash
+scripts/test-env-up.sh ~/src/cht-core    # local images + stack, joined to cht-agent-net
 ```
-scripts/test-env-up.sh <cht-core-checkout>     # human brings the env up
-provision({ chtCorePath: '<cht-core>' })       # waits until healthy
-discoverConfig(handle)                          # reads /api/v1/settings + form revs
-applyConfig(handle, 'config/default')          # cht-conf upload buckets
-prepareTestData(handle, config, { dataPath })  # csv-to-docs → upload-docs → create-users
-reset(handle, 'couchdb')                        # wipe + reseed the tracked docs
-teardown(handle)                                # prints the human down gate
+
+**2. Start a disposable runner on the same network** (from this repo's root):
+
+```bash
+docker run --rm -it --network cht-agent-net \
+  -v "$PWD":/app -w /app \
+  -v "$HOME/src/cht-core/config/default":/config/default:ro \
+  -e CHT_URL=https://nginx \
+  -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
+  node:22 bash
 ```
 
-Mock mode (`useMockDocker` default) mirrors the same call sequence CI-safe.
+(`NODE_TLS_REJECT_UNAUTHORIZED=0` covers the dev stack's self-signed cert for
+the layer's own `fetch`; the cht-conf child already runs with
+`--accept-self-signed-certs`.)
+
+**3. Inside the container — build, then drive every layer method:**
+
+```bash
+npm ci && npm run build && npm install -g cht-conf
+mkdir -p /tmp/demo-data/csv && printf 'name\nDemo CHW\n' > /tmp/demo-data/csv/person.csv
+
+node -e "
+const { TestEnvironmentAgent } = require('./dist/agents/test-environment-agent');
+(async () => {
+  const agent = new TestEnvironmentAgent({ useMockDocker: false });
+  const handle = await agent.provision({ chtCorePath: '~/src/cht-core' });
+  const config = await agent.discoverConfig(handle);
+  console.log('forms deployed:', Object.keys(config.formVersions ?? {}).length);
+  const apply = await agent.applyConfig(handle, '/config/default');
+  console.log('apply:', apply.actions.map(a => a.action + '=' + a.status).join(', '));
+  const seeded = await agent.prepareTestData(handle, config, { dataPath: '/tmp/demo-data' });
+  console.log('seeded:', JSON.stringify(seeded));
+  await agent.reset(handle, 'couchdb');                 // wipe + reseed the tracked docs
+  await agent.teardown(handle);                          // prints the human down-gate
+})();"
+```
+
+No URL or credentials are passed to any call: `provision()` resolves the
+instance from the `CHT_URL` env seam and the default auth, strips/canonicalizes
+it onto the handle, and every downstream method reads the handle — the §4
+seams doing their job. Expected: the readiness poll returns, discovery reports
+the deployed forms, all four upload buckets run, the demo person seeds, the
+couchdb-tier reset wipes and reseeds it, and teardown prints the human
+down-gate.
+
+Mock mode (`useMockDocker`, the default) mirrors the same call sequence
+CI-safe — it is what the spec suite drives. Ticket-driven invocation of this
+sequence is #64's scope; this PR ships the layer and the direct-use surface.
 
 ## 6. Excision proof (no cht-conf-extension code)
 
@@ -130,60 +177,7 @@ $ echo $?
 `xform-inspect.ts`, `config-type.ts`, `cht-conf-tier2.ts`, `cht-conf-test-spec.ts`,
 `qa-workflow.ts`, `orchestrator.ts` wiring, CLI flags.
 
-## 8. Per-function parity proof (identical modulo the excisions)
-
-Diffed against the workbench port source
-(`~/…/cht-agent-workbench`, demo-final).
-
-- **`src/utils/test-data.ts`** — **byte-identical** to the workbench (`diff` empty).
-- **`src/utils/cht-api.ts`** — differs **only** by the removed `fetchFormXml`
-  export (function + doc comment). Every other export (`request`, `basicAuth`,
-  `fetchSettings`, `fetchFormRevs`, `fetchDocRevs`, `bulkDocs`, the row types,
-  `FORM_RANGE_QUERY`) is identical.
-- **`src/utils/cht-conf-runner.ts`** — differs **only** by: the removed
-  `fs`/`os`/`path` imports and the whole offline-convert block
-  (`CONVERT_VERBS`, `SANDBOX_EXCLUDES`, `OfflineConvertOptions`,
-  `createConvertSandbox`, `runOfflineConvert`); the removed `skipValidate` line in
-  `buildExecArgs`; and `--url` made unconditional (`instanceUrl` REQUIRED). Every
-  kept export (`CONFIG_ACTION_COMMANDS` incl. `app-settings-only`,
-  `AUTONOMOUS_FLAGS`, `minimalEnv`, `resolveChtConfBin`, `buildChtConfArgs`,
-  `classifyChtConfOutput`, `runChtConf`, `runBucket`) is identical.
-- **`src/agents/test-environment-agent.ts`** — every ported method
-  (`provision`, `applyConfig`, `discoverConfig`, `prepareTestData`, `reset`,
-  `resetCouchdbTier`, `teardown`) and every helper (`decodeUserinfo`,
-  `credentialedUrl`, `toApplyResult`, `parseContactTypes`, `parseRoles`,
-  `parsePermissions`, `parseTransitions`, `parseDiscoveredConfig`,
-  `describeRunFailure`, `runSucceeded`) is identical to the workbench —
-  `provision()`'s env-seam resolver (CHT_URL fallback, embedded-cred stripping,
-  `COUCHDB_*` auth) is now at full parity. The **only** divergence is the excised
-  `verifyArtifact` / `fetchDeployedFormXml` methods and their imports
-  (`fetchFormXml`, `verifyFormBinds`, `VerifyArtifact*`, `mockVerifyArtifactResult`).
-- **Types / mock fixtures** — the layer type set + mock fixtures match the
-  workbench minus the `VerifyArtifact*`/`Qa*`/`XlsformBindDiff`/offline-convert
-  members.
-
-## 9. Sonar sweep
-
-Local static sweep against `.sonarcloud.properties` (the sandbox has no
-`sonar-scanner` and no SonarCloud network, so this is the local first pass; the
-authoritative scan runs on the PR CI). The four house rules are **zero** on the
-layer files:
-
-- **No `any` in `src/`** — `eslint --max-warnings 0` on the layer src is clean
-  (the `no-explicit-any` warning count is 0).
-- **≥1 assertion per test** — no assertion-less `it()` in the ported specs.
-- **No nested template literals** — none.
-- **`_`-prefixed unused params** — eslint-enforced, clean.
-
-**Cognitive complexity:** the ported functions are byte-identical to the
-sonar-sanctioned workbench parity source, so this PR introduces no new
-complexity relative to that baseline. `prepareTestData` is the longest method
-and may be flagged by the S3776 gate; it is left at parity here to preserve the
-per-function parity guarantee (§8) and avoid restructuring code that cannot be
-exercised against a live instance in-container. A behavior-preserving helper
-extraction is an available follow-up if the PR's SonarCloud run flags it.
-
-## 10. Commits (on `66-test-environment-layer-implementation`, rebased onto `origin/main` @ `fdf4af2`)
+## 8. Commits (on `66-test-environment-layer-implementation`, rebased onto `origin/main` @ `fdf4af2`)
 
 - `feat(#66): phase-2 parity uplift — cht-conf runner to workbench parity minus excisions`
 - `feat(#66): phase 3 — discoverConfig + cht-api, prepareTestData + test-data, couchdb-tier reset`
@@ -191,8 +185,7 @@ extraction is an available follow-up if the PR's SonarCloud run flags it.
 - `docs(#66): handoff status, PR description, deferred cht-conf-extension map`
 - `feat(#66): provision env-seam parity — CHT_URL fallback, cred stripping, COUCHDB_* auth seam`
 - `chore(#66): review hygiene — dead doc refs, stale roadmap note, should-style agent spec titles`
+- `refactor(#66): sonar round — complexity ≤5 extractions, dedicated matchers, api polish`
 
 (Phases 1–2 groundwork — provision/readiness/scripts/apply shape — is the branch's
 pre-existing history, replayed unchanged by the rebase.)
-
-All work stays on the local branch; the operator owns the push and `gh pr create`.

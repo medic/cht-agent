@@ -32,7 +32,7 @@ describe('test-data', () => {
     });
 
     it('returns undefined when no summary was printed (nothing to upload)', () => {
-      expect(parseUploadDocsSummary(ansiInfo('No docs directory found at /data/json_docs.'))).to.equal(undefined);
+      expect(parseUploadDocsSummary(ansiInfo('No docs directory found at /data/json_docs.'))).to.be.undefined;
     });
   });
 
@@ -113,7 +113,7 @@ describe('test-data', () => {
       it('throws on a malformed doc file rather than guessing the worklist', () => {
         writeFileSync(join(dataPath, 'json_docs', 'broken.doc.json'), '{not json');
 
-        expect(() => readSeededDocs(dataPath)).to.throw();
+        expect(() => readSeededDocs(dataPath)).to.throw(SyntaxError);
       });
     });
 
