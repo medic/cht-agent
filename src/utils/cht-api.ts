@@ -10,7 +10,7 @@
  * never in a URL, a log line, or an error message.
  *
  * See: designs/layer_recommendations/test-environment-layer.md (Config
- *      Discovery + reset tiers), docs/handoffs/66-phase2-applyconfig-implementation.md §5
+ *      Discovery + reset tiers)
  */
 
 import { EnvironmentHandle } from '../types';

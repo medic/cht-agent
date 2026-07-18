@@ -190,6 +190,7 @@ extraction is an available follow-up if the PR's SonarCloud run flags it.
 - `test(#66): layer spec suite ported (agent real paths, cht-api, test-data)`
 - `docs(#66): handoff status, PR description, deferred cht-conf-extension map`
 - `feat(#66): provision env-seam parity — CHT_URL fallback, cred stripping, COUCHDB_* auth seam`
+- `chore(#66): review hygiene — dead doc refs, stale roadmap note, should-style agent spec titles`
 
 (Phases 1–2 groundwork — provision/readiness/scripts/apply shape — is the branch's
 pre-existing history, replayed unchanged by the rebase.)

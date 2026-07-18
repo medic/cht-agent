@@ -783,8 +783,8 @@ export interface DiscoveredConfig {
 }
 
 /**
- * A bucket of cht-conf upload work, mapping to the underlying cht-conf verbs
- * (see designs/cht-conf-agent-extension.md §7.2 step 4). The agent drives these
+ * A bucket of cht-conf upload work, mapping to the underlying cht-conf verbs.
+ * The agent drives these
  * over HTTP against the instance; it never edits the config itself.
  * - `app-settings`      compile-app-settings + upload-app-settings
  * - `app-settings-only` upload-app-settings (NO compile) — for a deployment-

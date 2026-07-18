@@ -9,7 +9,7 @@
  * fetch), prepareTestData (cht-conf csv-to-docs/upload-docs/create-users),
  * and the couchdb-tier reset (tracked-doc wipe + reseed over the CouchDB HTTP
  * API — the one reset the agent does itself; restart/full stay human-gated).
- * The LangGraph node + CLI land in a later #66 phase.
+ * The pipeline wiring that invokes this layer lands with #64.
  *
  * See: designs/layer_recommendations/test-environment-layer.md
  */
@@ -249,9 +249,8 @@ export class TestEnvironmentAgent {
       // to it everywhere, and it keys the seeded-doc tracking map.
       const envUrl = process.env.CHT_URL?.trim() || undefined;
       const resolved = new URL(options.url ?? envUrl ?? DEFAULT_ENV_URL);
-      // Strip any embedded basic-auth creds: handle.url is logged everywhere,
-      // and undici's fetch() rejects credentialed URLs outright. They survive
-      // only as an auth fallback.
+      // Strip embedded creds from the logged/fetched URL — undici rejects credentialed URLs;
+      // they survive only as an auth fallback.
       const embeddedAuth = resolved.username
         ? { user: decodeUserinfo(resolved.username), password: decodeUserinfo(resolved.password) }
         : undefined;

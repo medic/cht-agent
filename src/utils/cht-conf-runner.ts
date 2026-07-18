@@ -13,9 +13,7 @@
  * uploaded/skipped/failed. The test-data verbs (csv-to-docs, upload-docs,
  * create-users) drive runChtConf directly.
  *
- * See: designs/layer_recommendations/test-environment-layer.md,
- *      designs/cht-conf-agent-extension.md §7.2,
- *      docs/handoffs/66-phase2-applyconfig-implementation.md
+ * See: designs/layer_recommendations/test-environment-layer.md
  */
 
 import { spawn } from 'node:child_process';

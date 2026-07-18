@@ -9,7 +9,7 @@
 # HUMAN-run only (the cht-agent never runs Docker):
 #   docker compose -f cht-couchdb.yml -f cht-core.yml -f cht-agent-net.override.yml up -d
 #
-# ⚠️ VALIDATE before relying on this: the service name (`nginx`) and the stack's
+# VALIDATE before relying on this: the service name (`nginx`) and the stack's
 # internal network name (`cht-net` below) must match what `npm run local-images`
 # generates in `local-build/` for your cht-core version. Confirm with:
 #   docker compose ... config            # see resolved service/network names
