@@ -85,13 +85,27 @@ describe('TestEnvironmentAgent', () => {
 
     describe('real mode (useMockDocker: false)', () => {
       let fetchStub: sinon.SinonStub;
+      // Provision reads these; isolate every test from the workbench env.
+      const PROVISION_ENV_KEYS = ['CHT_URL', 'COUCHDB_USER', 'COUCHDB_PASSWORD'];
+      const priorProvisionEnv: Record<string, string | undefined> = {};
 
       beforeEach(() => {
         fetchStub = sinon.stub(globalThis, 'fetch' as any);
+        for (const key of PROVISION_ENV_KEYS) {
+          priorProvisionEnv[key] = process.env[key];
+          delete process.env[key];
+        }
       });
 
       afterEach(() => {
         sinon.restore();
+        for (const key of PROVISION_ENV_KEYS) {
+          if (priorProvisionEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = priorProvisionEnv[key];
+          }
+        }
       });
 
       it('returns a docker handle once the environment is healthy', async () => {
@@ -131,6 +145,101 @@ describe('TestEnvironmentAgent', () => {
         } catch (error) {
           expect((error as Error).message).to.include('requires either chtCorePath or version');
         }
+      });
+
+      describe('CHT_URL fallback', () => {
+        // Env save/clear/restore is handled by the enclosing describe.
+
+        it('falls back to process.env.CHT_URL when no url option is given', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://cht.example';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.url).to.equal('https://cht.example');
+          expect(fetchStub.firstCall.args[0]).to.equal('https://cht.example/api/v2/monitoring');
+        });
+
+        it('prefers an explicit url option over CHT_URL', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://cht.example';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0', url: 'https://explicit.example' });
+
+          expect(handle.url).to.equal('https://explicit.example');
+        });
+
+        it('ignores a blank CHT_URL and uses the on-network default', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = '   ';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.url).to.equal('https://nginx');
+        });
+
+        it('canonicalizes a trailing slash so appended paths and tracking keys stay stable', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://cht.example/';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.url).to.equal('https://cht.example');
+          expect(fetchStub.firstCall.args[0]).to.equal('https://cht.example/api/v2/monitoring');
+        });
+
+        it('strips embedded credentials out of the URL (logged + fetch()ed) into the auth fallback', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          // undici's fetch() rejects credentialed URLs, and handle.url is logged.
+          process.env.CHT_URL = 'https://ops:p%40ss@cht.example';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.url).to.equal('https://cht.example');
+          expect(handle.auth).to.deep.equal({ user: 'ops', password: 'p@ss' });
+          expect(fetchStub.firstCall.args[0]).to.equal('https://cht.example/api/v2/monitoring');
+        });
+
+        it('tolerates a raw % in embedded credentials instead of crashing provision', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://ops:p%ss@cht.example';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.auth).to.deep.equal({ user: 'ops', password: 'p%ss' });
+          expect(handle.url).to.equal('https://cht.example');
+        });
+
+        it('honors the COUCHDB_USER/COUCHDB_PASSWORD env seam (test-env-up.sh parity)', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.COUCHDB_USER = 'admin';
+          process.env.COUCHDB_PASSWORD = 'not-the-default';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ version: '4.18.0' });
+
+          expect(handle.auth).to.deep.equal({ user: 'admin', password: 'not-the-default' });
+        });
+
+        it('prefers explicit auth over URL-embedded and env credentials', async () => {
+          fetchStub.resolves({ ok: true, status: 200 });
+          process.env.CHT_URL = 'https://ops:urlpass@cht.example';
+          process.env.COUCHDB_PASSWORD = 'envpass';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({
+            version: '4.18.0',
+            auth: { user: 'explicit', password: 'explicitpass' },
+          });
+
+          expect(handle.auth).to.deep.equal({ user: 'explicit', password: 'explicitpass' });
+        });
       });
     });
   });

@@ -53,7 +53,7 @@ this layer arrives with #64; this PR ships the layer + its direct-use surface.
 ## 3. Test surface
 
 `build` + `test` + `lint` are green after **every** commit (Node 22). Full suite:
-**1104 passing**. Real-path specs mock `fetch` / `child_process` / `fs`, so the
+**1112 passing**. Real-path specs mock `fetch` / `child_process` / `fs`, so the
 suite is green with **no instance and no Docker**.
 
 | Layer spec | `it`s |
@@ -61,30 +61,29 @@ suite is green with **no instance and no Docker**.
 | `test/utils/cht-conf-runner.spec.ts` | 26 |
 | `test/utils/cht-api.spec.ts` | 13 |
 | `test/utils/test-data.spec.ts` | 19 |
-| `test/agents/test-environment-agent.spec.ts` | 64 |
+| `test/agents/test-environment-agent.spec.ts` | 72 |
 | `test/utils/cht-readiness.spec.ts` | 4 |
-| **Layer total** | **126** |
+| **Layer total** | **134** |
 
 ## 4. Environment seams
 
 - **`CHT_CONF_BIN`** — override the cht-conf binary (default `cht`); lets the
   agent run a deployment-pinned cht-conf and lets specs stub a fake script.
-- **`ProvisionOptions.url` / `ProvisionOptions.auth`** (and the on-network
-  defaults `https://nginx`, `medic`/`password`) — the instance target + creds
-  the handle carries; every downstream call reads `handle.url`/`handle.auth`.
+- **`CHT_URL`** — `provision()` falls back to it for the instance URL
+  (`options.url` → `CHT_URL` (trimmed; blank ignored) → the on-network default
+  `https://nginx`). The resolved `handle.url` is canonicalized (trailing slash
+  stripped) and stripped of any embedded basic-auth creds (which survive only as
+  an auth fallback, `decodeUserinfo`-decoded, tolerating a raw `%`).
+- **`COUCHDB_USER` / `COUCHDB_PASSWORD`** — the instance-auth seam, the same one
+  `scripts/test-env-up.sh` uses for the bring-up, so a non-default password needs
+  no code change. Auth precedence: `options.auth` → URL-embedded creds →
+  `COUCHDB_*` env → the default `medic`/`password`.
+- **`ProvisionOptions.url` / `ProvisionOptions.auth`** — the highest-precedence
+  target + creds the handle carries; every downstream call reads
+  `handle.url`/`handle.auth`.
 - **`useMockDocker`** (constructor) — mock mode is the default; `false` selects
   the real paths. This is what keeps CI Docker-free.
-- **`scripts/test-env-up.sh <cht-core>`** — the human-gated bring-up seam
-  (`COUCHDB_USER`/`COUCHDB_PASSWORD` are the compose creds seam it already uses).
-
-> **Scope note on `provision` env resolution.** `provision()` is kept at its
-> Phase-1 shape (already on the branch). The workbench lineage later grew
-> `provision` an env-driven resolver (`CHT_URL` fallback, `COUCHDB_USER/PASSWORD`
-> auth, embedded-cred stripping, `decodeUserinfo`); that evolution is **not** in
-> this PR because `provision` is not in this PR's port scope (only
-> `discoverConfig`/`prepareTestData`/`reset('couchdb')` were ported). Callers set
-> the target via `ProvisionOptions.url`/`auth` today. Porting the `provision`
-> env-seam resolver is a clean, self-contained follow-up if wanted.
+- **`scripts/test-env-up.sh <cht-core>`** — the human-gated bring-up seam.
 
 ## 5. Standalone guarantee + independent demo recipe
 
@@ -150,15 +149,15 @@ Diffed against the workbench port source
   `AUTONOMOUS_FLAGS`, `minimalEnv`, `resolveChtConfBin`, `buildChtConfArgs`,
   `classifyChtConfOutput`, `runChtConf`, `runBucket`) is identical.
 - **`src/agents/test-environment-agent.ts`** — every ported method
-  (`applyConfig`, `discoverConfig`, `prepareTestData`, `reset`,
-  `resetCouchdbTier`, `teardown`) and every parse helper (`parseContactTypes`,
-  `parseRoles`, `parsePermissions`, `parseTransitions`, `parseDiscoveredConfig`,
-  `credentialedUrl`, `toApplyResult`, `describeRunFailure`, `runSucceeded`) is
-  identical to the workbench. Excised: `verifyArtifact`, `fetchDeployedFormXml`
-  and their imports. **One deliberate divergence:** `provision()` is kept at the
-  branch's Phase-1 shape rather than the workbench's later env-seam resolver (see
-  §4 scope note); its `decodeUserinfo` helper and `CHT_URL`/`COUCHDB_*` logic are
-  therefore not present.
+  (`provision`, `applyConfig`, `discoverConfig`, `prepareTestData`, `reset`,
+  `resetCouchdbTier`, `teardown`) and every helper (`decodeUserinfo`,
+  `credentialedUrl`, `toApplyResult`, `parseContactTypes`, `parseRoles`,
+  `parsePermissions`, `parseTransitions`, `parseDiscoveredConfig`,
+  `describeRunFailure`, `runSucceeded`) is identical to the workbench —
+  `provision()`'s env-seam resolver (CHT_URL fallback, embedded-cred stripping,
+  `COUCHDB_*` auth) is now at full parity. The **only** divergence is the excised
+  `verifyArtifact` / `fetchDeployedFormXml` methods and their imports
+  (`fetchFormXml`, `verifyFormBinds`, `VerifyArtifact*`, `mockVerifyArtifactResult`).
 - **Types / mock fixtures** — the layer type set + mock fixtures match the
   workbench minus the `VerifyArtifact*`/`Qa*`/`XlsformBindDiff`/offline-convert
   members.
@@ -190,6 +189,7 @@ extraction is an available follow-up if the PR's SonarCloud run flags it.
 - `feat(#66): phase 3 — discoverConfig + cht-api, prepareTestData + test-data, couchdb-tier reset`
 - `test(#66): layer spec suite ported (agent real paths, cht-api, test-data)`
 - `docs(#66): handoff status, PR description, deferred cht-conf-extension map`
+- `feat(#66): provision env-seam parity — CHT_URL fallback, cred stripping, COUCHDB_* auth seam`
 
 (Phases 1–2 groundwork — provision/readiness/scripts/apply shape — is the branch's
 pre-existing history, replayed unchanged by the rebase.)

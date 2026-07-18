@@ -64,6 +64,19 @@ const DEFAULT_CONFIG_ACTIONS: ConfigUploadAction[] = [
 const FORM_DOC_PREFIX = 'form:';
 
 /**
+ * Decode a URL userinfo component. Userinfo SHOULD be percent-encoded, but a
+ * raw '%' in a hand-typed CHT_URL password must not crash provision with an
+ * opaque URIError — fall back to the literal value.
+ */
+const decodeUserinfo = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+/**
  * Build the cht-conf instance URL with embedded credentials
  * (https://user:pass@host). Only the runner sees this; logs use handle.url.
  */
@@ -230,8 +243,27 @@ export class TestEnvironmentAgent {
     console.log(`[Test Environment Agent] Source: ${source}`);
 
     if (!this.useMockDocker) {
-      const url = options.url ?? DEFAULT_ENV_URL;
-      const auth = options.auth ?? DEFAULT_AUTH;
+      // Fallback order: explicit option, then the CHT_URL env override the
+      // operator's compose/scripts export, then the on-network default. The
+      // resolved URL is canonicalized (no trailing slash) — paths are appended
+      // to it everywhere, and it keys the seeded-doc tracking map.
+      const envUrl = process.env.CHT_URL?.trim() || undefined;
+      const resolved = new URL(options.url ?? envUrl ?? DEFAULT_ENV_URL);
+      // Strip any embedded basic-auth creds: handle.url is logged everywhere,
+      // and undici's fetch() rejects credentialed URLs outright. They survive
+      // only as an auth fallback.
+      const embeddedAuth = resolved.username
+        ? { user: decodeUserinfo(resolved.username), password: decodeUserinfo(resolved.password) }
+        : undefined;
+      resolved.username = '';
+      resolved.password = '';
+      const url = resolved.toString().replace(/\/+$/, '');
+      // COUCHDB_USER/COUCHDB_PASSWORD is the same seam scripts/test-env-up.sh
+      // uses for the bring-up, so a non-default password needs no code change.
+      const envAuth = process.env.COUCHDB_PASSWORD
+        ? { user: process.env.COUCHDB_USER ?? DEFAULT_AUTH.user, password: process.env.COUCHDB_PASSWORD }
+        : undefined;
+      const auth = options.auth ?? embeddedAuth ?? envAuth ?? DEFAULT_AUTH;
 
       // The agent runs no Docker — the human brings the environment up.
       const target = options.chtCorePath ?? '<cht-core>';
