@@ -2,7 +2,10 @@ import { expect } from 'chai';
 import * as sinon from 'sinon';
 import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
 import * as chtConfRunner from '../../src/utils/cht-conf-runner';
+import * as chtApi from '../../src/utils/cht-api';
+import * as testData from '../../src/utils/test-data';
 import {
+  ChtConfExecResult,
   ConfigActionResult,
   ConfigUploadAction,
   DiscoveredConfig,
@@ -335,6 +338,124 @@ describe('TestEnvironmentAgent', () => {
       expect(second.forms).to.deep.equal(['delivery', 'pregnancy', 'assessment']);
       expect(second.contactTypes).to.have.lengthOf(4);
     });
+
+    it('should carry mock form versions for the apply -> verify loop', async () => {
+      const handle = await provisionMock();
+
+      const config = await agent.discoverConfig(handle);
+
+      expect(Object.keys(config.formVersions ?? {})).to.have.members(config.forms);
+    });
+
+    describe('real mode (useMockDocker: false)', () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      const dockerHandle: EnvironmentHandle = {
+        url: 'https://nginx',
+        auth: { user: 'medic', password: 'password' },
+        network: 'cht-agent-net',
+        source: 'docker',
+      };
+
+      // Raw /api/v1/settings shape (extra fields included to prove they are dropped)
+      const rawSettings = {
+        contact_types: [
+          { id: 'clinic', parents: ['health_center'], icon: 'medic-clinic' },
+          { id: 'person', parents: ['clinic'], person: true },
+          { name: 'no-id-entry' },
+          'not-an-object',
+        ],
+        roles: {
+          chw: { name: 'CHW', offline: true, superfluous: 'x' },
+          broken: 'not-an-object',
+        },
+        permissions: {
+          can_edit: ['chw', 42, 'supervisor'],
+          not_a_list: true,
+        },
+        transitions: {
+          update_clinics: true,
+          death_reporting: { disable: true, extra: 'y' },
+          odd_value: 7,
+        },
+        locale: 'en',
+      };
+      const rawFormRevs = [
+        { id: 'form:delivery', rev: '1-def' },
+        { id: 'form:pregnancy', rev: '3-abc' },
+      ];
+
+      let settingsStub: sinon.SinonStub;
+      let formRevsStub: sinon.SinonStub;
+
+      beforeEach(() => {
+        settingsStub = sinon.stub(chtApi, 'fetchSettings').resolves(rawSettings);
+        formRevsStub = sinon.stub(chtApi, 'fetchFormRevs').resolves(rawFormRevs);
+      });
+
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      it('fetches settings and form revs with the handle url and auth', async () => {
+        await realAgent.discoverConfig(dockerHandle);
+
+        expect(settingsStub.calledOnceWith('https://nginx', dockerHandle.auth)).to.equal(true);
+        expect(formRevsStub.calledOnceWith('https://nginx', dockerHandle.auth)).to.equal(true);
+      });
+
+      it('parses contact types, keeping only id/parents/person and dropping junk entries', async () => {
+        const config = await realAgent.discoverConfig(dockerHandle);
+
+        expect(config.contactTypes).to.deep.equal([
+          { id: 'clinic', parents: ['health_center'] },
+          { id: 'person', parents: ['clinic'], person: true },
+        ]);
+      });
+
+      it('parses roles and permissions, dropping malformed entries', async () => {
+        const config = await realAgent.discoverConfig(dockerHandle);
+
+        expect(config.roles).to.deep.equal({ chw: { name: 'CHW', offline: true } });
+        expect(config.permissions).to.deep.equal({ can_edit: ['chw', 'supervisor'] });
+      });
+
+      it('normalizes transitions to booleans or {disable} objects', async () => {
+        const config = await realAgent.discoverConfig(dockerHandle);
+
+        expect(config.transitions).to.deep.equal({
+          update_clinics: true,
+          death_reporting: { disable: true },
+        });
+      });
+
+      it('lists installed forms with their revs as the verification hashes', async () => {
+        const config = await realAgent.discoverConfig(dockerHandle);
+
+        expect(config.forms).to.deep.equal(['delivery', 'pregnancy']);
+        expect(config.formVersions).to.deep.equal({ delivery: '1-def', pregnancy: '3-abc' });
+      });
+
+      it('propagates a settings fetch failure', async () => {
+        settingsStub.rejects(new Error('CHT request failed: GET /api/v1/settings -> HTTP 503'));
+
+        try {
+          await realAgent.discoverConfig(dockerHandle);
+          expect.fail('expected discoverConfig to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('HTTP 503');
+        }
+      });
+
+      it('keeps contactTypes empty but warns when the instance defines none (built-in default hierarchy)', async () => {
+        settingsStub.resolves({ roles: {} });
+        const warnSpy = sinon.spy(console, 'warn');
+
+        const config = await realAgent.discoverConfig(dockerHandle);
+
+        expect(config.contactTypes).to.deep.equal([]);
+        expect(warnSpy.args.flat().join(' ')).to.include('no contact_types');
+      });
+    });
   });
 
   describe('prepareTestData', () => {
@@ -370,6 +491,166 @@ describe('TestEnvironmentAgent', () => {
       expect(second.warnings).to.deep.equal([]);
       expect(second.placesCreated).to.equal(3);
     });
+
+    it('should report success and the seeded doc ids in mock mode', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.prepareTestData(handle, sampleConfig);
+
+      expect(result.succeeded).to.equal(true);
+      // One doc per mock place/person/report (users are accounts, not docs).
+      expect(result.seededDocIds).to.have.lengthOf(
+        result.placesCreated + result.peopleCreated + result.reportsCreated
+      );
+    });
+
+    describe('real mode (useMockDocker: false)', () => {
+      const dockerHandle: EnvironmentHandle = {
+        url: 'https://nginx',
+        auth: { user: 'medic', password: 'password' },
+        network: 'cht-agent-net',
+        source: 'docker',
+      };
+      const dataPath = '/mnt/test-data';
+      const ansiInfo = (message: string): string => `\x1b[32mINFO ${message} \x1b[0m`;
+      const okRun = (output: string): ChtConfExecResult => ({ exitCode: 0, output, timedOut: false });
+      // 2 places (one via contact_type), 1 person, 1 report, 1 user doc
+      const seededDocs: testData.SeededDoc[] = [
+        { id: 'place-1', type: 'clinic' },
+        { id: 'place-2', type: 'contact', contactType: 'clinic' },
+        { id: 'person-1', type: 'person' },
+        { id: 'report-1', type: 'data_record' },
+        { id: 'user-doc-1', type: 'user' },
+      ];
+
+      let realAgent: TestEnvironmentAgent;
+      let runChtConfStub: sinon.SinonStub;
+      let readSeededDocsStub: sinon.SinonStub;
+      let hasUsersCsvStub: sinon.SinonStub;
+      let cleanSeededDocsStub: sinon.SinonStub;
+
+      beforeEach(() => {
+        realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+        runChtConfStub = sinon.stub(chtConfRunner, 'runChtConf');
+        runChtConfStub.onCall(0).resolves(okRun(ansiInfo('Summary: 5 of 5 docs uploaded OK.')));
+        runChtConfStub.onCall(1).resolves(okRun(ansiInfo('Creating user alice')));
+        readSeededDocsStub = sinon.stub(testData, 'readSeededDocs').returns(seededDocs);
+        hasUsersCsvStub = sinon.stub(testData, 'hasUsersCsv').returns(true);
+        cleanSeededDocsStub = sinon.stub(testData, 'cleanSeededDocs').returns(0);
+      });
+
+      afterEach(() => {
+        sinon.restore();
+      });
+
+      it('requires a dataPath', async () => {
+        try {
+          await realAgent.prepareTestData(dockerHandle, sampleConfig, {});
+          expect.fail('expected prepareTestData to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('dataPath');
+        }
+      });
+
+      it('clears a previous run\'s stale json_docs before converting', async () => {
+        cleanSeededDocsStub.returns(3);
+
+        await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(cleanSeededDocsStub.calledOnceWith(dataPath)).to.equal(true);
+        expect(cleanSeededDocsStub.calledBefore(runChtConfStub)).to.equal(true);
+      });
+
+      it('runs csv-to-docs + upload-docs, then create-users, via the runner', async () => {
+        await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(runChtConfStub.callCount).to.equal(2);
+        const docsCall = runChtConfStub.firstCall.args[0];
+        expect(docsCall.verbs).to.deep.equal(['csv-to-docs', 'upload-docs']);
+        expect(docsCall.instanceUrl).to.equal('https://medic:password@nginx/');
+        expect(docsCall.configPath).to.equal(dataPath);
+        expect(docsCall.cwd).to.equal(dataPath);
+        const usersCall = runChtConfStub.secondCall.args[0];
+        expect(usersCall.verbs).to.deep.equal(['create-users']);
+        expect(usersCall.configPath).to.equal(dataPath);
+      });
+
+      it('classifies the seeded docs against the discovered config', async () => {
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(readSeededDocsStub.calledOnceWith(dataPath)).to.equal(true);
+        expect(result.placesCreated).to.equal(2);
+        expect(result.peopleCreated).to.equal(1);
+        expect(result.reportsCreated).to.equal(1);
+        expect(result.seededDocIds).to.deep.equal(['place-1', 'place-2', 'person-1', 'report-1', 'user-doc-1']);
+        expect(result.succeeded).to.equal(true);
+        expect(result.warnings).to.deep.equal([]);
+      });
+
+      it('counts created users from the create-users output', async () => {
+        runChtConfStub.onCall(1).resolves(okRun([ansiInfo('Creating user alice'), ansiInfo('Creating user bob')].join('\n')));
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(result.usersCreated).to.equal(2);
+      });
+
+      it('skips create-users when the data project has no users.csv', async () => {
+        hasUsersCsvStub.returns(false);
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(runChtConfStub.callCount).to.equal(1);
+        expect(result.usersCreated).to.equal(0);
+        expect(result.succeeded).to.equal(true);
+      });
+
+      it('warns on a partial upload without failing the seed', async () => {
+        runChtConfStub.onCall(0).resolves(okRun(ansiInfo('Summary: 3 of 5 docs uploaded OK.')));
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(result.succeeded).to.equal(true);
+        expect(result.warnings.join(' ')).to.include('only 3 of 5 docs uploaded');
+      });
+
+      it('warns when nothing was uploaded (no csv inputs)', async () => {
+        runChtConfStub.onCall(0).resolves(okRun(ansiInfo('No csv directory found at /mnt/test-data/csv.')));
+        readSeededDocsStub.returns([]);
+        hasUsersCsvStub.returns(false);
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(result.seededDocIds).to.deep.equal([]);
+        expect(result.warnings.join(' ')).to.include('no docs were uploaded');
+      });
+
+      it('reports succeeded:false when the docs run fails, still returning the disk evidence', async () => {
+        runChtConfStub.onCall(0).resolves({ exitCode: 1, output: 'ERROR boom', timedOut: false });
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(result.succeeded).to.equal(false);
+        expect(result.warnings.join(' ')).to.include('exited with code 1');
+        expect(result.seededDocIds).to.have.lengthOf(5);
+      });
+
+      it('does not count the create-users attempt that failed', async () => {
+        runChtConfStub
+          .onCall(1)
+          .resolves({
+            exitCode: 1,
+            output: [ansiInfo('Creating user alice'), ansiInfo('Creating user bob'), 'ERROR 400'].join('\n'),
+            timedOut: false,
+          });
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(result.usersCreated).to.equal(1);
+        expect(result.succeeded).to.equal(false);
+        expect(result.warnings.join(' ')).to.include('create-users');
+      });
+    });
   });
 
   describe('reset', () => {
@@ -399,6 +680,201 @@ describe('TestEnvironmentAgent', () => {
 
       it('resolves the full tier (human-gated, agent runs no Docker)', async () => {
         expect(await realAgent.reset(dockerHandle, 'full')).to.equal(undefined);
+      });
+
+      describe('couchdb tier (the agent-owned reset)', () => {
+        const dataPath = '/mnt/test-data';
+        const ansiInfo = (message: string): string => `\x1b[32mINFO ${message} \x1b[0m`;
+        const okRun = (output: string): ChtConfExecResult => ({ exitCode: 0, output, timedOut: false });
+        const seedConfig: DiscoveredConfig = {
+          contactTypes: [{ id: 'clinic' }, { id: 'person', person: true }],
+          roles: {},
+          permissions: {},
+          transitions: {},
+          forms: [],
+        };
+
+        let agentUnderTest: TestEnvironmentAgent;
+        let runChtConfStub: sinon.SinonStub;
+        let readSeededDocsStub: sinon.SinonStub;
+        let fetchDocRevsStub: sinon.SinonStub;
+        let bulkDocsStub: sinon.SinonStub;
+
+        beforeEach(() => {
+          agentUnderTest = new TestEnvironmentAgent({ useMockDocker: false });
+          runChtConfStub = sinon.stub(chtConfRunner, 'runChtConf');
+          readSeededDocsStub = sinon.stub(testData, 'readSeededDocs').returns([
+            { id: 'place-1', type: 'clinic' },
+            { id: 'person-1', type: 'person' },
+          ]);
+          sinon.stub(testData, 'hasUsersCsv').returns(false);
+          sinon.stub(testData, 'cleanSeededDocs').returns(0);
+          fetchDocRevsStub = sinon.stub(chtApi, 'fetchDocRevs').resolves([
+            { id: 'place-1', rev: '7-live' },
+            { id: 'person-1', rev: '2-live' },
+          ]);
+          bulkDocsStub = sinon.stub(chtApi, 'bulkDocs').resolves([
+            { id: 'place-1', ok: true },
+            { id: 'person-1', ok: true },
+          ]);
+        });
+
+        afterEach(() => {
+          sinon.restore();
+        });
+
+        // Seed the agent's per-env tracking the way real use would.
+        const seedTracking = async (): Promise<void> => {
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+          await agentUnderTest.prepareTestData(dockerHandle, seedConfig, { dataPath });
+          runChtConfStub.resetHistory();
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+        };
+
+        it('is a no-op when nothing was seeded for this environment', async () => {
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.called).to.equal(false);
+          expect(bulkDocsStub.called).to.equal(false);
+          expect(runChtConfStub.called).to.equal(false);
+        });
+
+        it('wipes the tracked docs at their CURRENT revs and reseeds from the tracked project', async () => {
+          await seedTracking();
+
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.calledOnceWith('https://nginx', dockerHandle.auth, ['place-1', 'person-1']))
+            .to.equal(true);
+          expect(bulkDocsStub.firstCall.args[2]).to.deep.equal([
+            { _id: 'place-1', _rev: '7-live', _deleted: true },
+            { _id: 'person-1', _rev: '2-live', _deleted: true },
+          ]);
+          const reseedCall = runChtConfStub.firstCall.args[0];
+          expect(reseedCall.verbs).to.deep.equal(['upload-docs']);
+          expect(reseedCall.configPath).to.equal(dataPath);
+          expect(reseedCall.cwd).to.equal(dataPath);
+        });
+
+        it('skips tombstoned and never-existed docs in the wipe', async () => {
+          await seedTracking();
+          fetchDocRevsStub.resolves([
+            { id: 'place-1', rev: '7-live' },
+            { id: 'person-1', rev: '2-tomb', deleted: true },
+          ]);
+
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(bulkDocsStub.firstCall.args[2]).to.deep.equal([
+            { _id: 'place-1', _rev: '7-live', _deleted: true },
+          ]);
+        });
+
+        it('throws when a deletion is rejected (half-reset must not pass as clean)', async () => {
+          await seedTracking();
+          bulkDocsStub.resolves([
+            { id: 'place-1', ok: true },
+            { id: 'person-1', error: 'conflict', reason: 'Document update conflict.' },
+          ]);
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('failed to delete 1 doc(s): person-1');
+          }
+        });
+
+        it('throws when the reseed upload fails', async () => {
+          await seedTracking();
+          runChtConfStub.resolves({ exitCode: 1, output: 'ERROR boom', timedOut: false });
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('reseed failed');
+          }
+        });
+
+        it('throws when the reseed only partially uploads', async () => {
+          await seedTracking();
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 1 of 2 docs uploaded OK.')));
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('reseed uploaded only 1 of 2');
+          }
+        });
+
+        it('fails closed BEFORE the wipe when the reseed source is gone', async () => {
+          await seedTracking();
+          readSeededDocsStub.returns([]); // json_docs vanished since seeding
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('no docs to reseed from');
+          }
+          expect(fetchDocRevsStub.called).to.equal(false);
+          expect(bulkDocsStub.called).to.equal(false);
+        });
+
+        it('throws when the reseed uploads nothing (upload-docs prints no summary)', async () => {
+          await seedTracking();
+          runChtConfStub.resolves(okRun(ansiInfo('No docs directory found at /mnt/test-data/json_docs.')));
+
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('reseed uploaded only 0 of 2');
+          }
+        });
+
+        it('refreshes the tracking to the reseeded docs when the dataset shrank', async () => {
+          await seedTracking();
+          readSeededDocsStub.returns([{ id: 'place-1', type: 'clinic' }]);
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 1 of 1 docs uploaded OK.')));
+          await agentUnderTest.reset(dockerHandle, 'couchdb'); // wipes 2, reseeds 1
+
+          fetchDocRevsStub.resetHistory();
+          fetchDocRevsStub.resolves([{ id: 'place-1', rev: '9-x' }]);
+          bulkDocsStub.resolves([{ id: 'place-1', ok: true }]);
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1']);
+        });
+
+        it('does not let a failed re-seed clobber the wipe worklist', async () => {
+          await seedTracking();
+          // A later seeding attempt fails after its json_docs were cleaned.
+          readSeededDocsStub.returns([]);
+          runChtConfStub.resolves({ exitCode: 1, output: 'ERROR boom', timedOut: false });
+          await agentUnderTest.prepareTestData(dockerHandle, seedConfig, { dataPath: '/mnt/other-data' });
+
+          // The original worklist must still drive the wipe.
+          readSeededDocsStub.returns([
+            { id: 'place-1', type: 'clinic' },
+            { id: 'person-1', type: 'person' },
+          ]);
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1', 'person-1']);
+        });
+
+        it('teardown clears the tracking, so a later couchdb reset is a no-op', async () => {
+          await seedTracking();
+
+          await agentUnderTest.teardown(dockerHandle);
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(fetchDocRevsStub.called).to.equal(false);
+        });
       });
     });
   });
