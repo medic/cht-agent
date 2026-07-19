@@ -54,3 +54,37 @@ export const resolveFormRelPaths = (
     xmlRelPath: `${formsDir}/${form}.xml`,
   };
 };
+
+/**
+ * The deployed form id cht-conf uploads a form under — the id the
+ * `/api/v1/forms/<id>.xml` endpoint serves it from AND (prefixed with `form:`)
+ * the `form:<id>` CouchDB doc id that `fetchFormRevs` keys the rev by.
+ *
+ * - `form` → the base name verbatim (`pregnancy_home_visit` →
+ *   `pregnancy_home_visit`).
+ * - `contact-form` → `contact:` + the base name with EVERY dash turned into a
+ *   colon and underscores preserved, mirroring cht-conf `upload-forms.js`
+ *   (`e_household-create.xlsx` → doc `_id = form:contact:e_household:create`).
+ *
+ * Deliberately distinct from the on-disk base name (`resolveFormRelPaths` keeps
+ * the dashed file name): the apply's per-form `-- <form>` filter matches the
+ * xlsx BASENAME, while the deployed-fetch and the rev lookup match this id.
+ * Throws for any other artifact — the same two-artifact boundary as the resolver.
+ */
+export const deployedFormId = (
+  configArtifact: string,
+  form: string
+): string => {
+  if (configArtifact === 'form') {
+    return form;
+  }
+  if (configArtifact === 'contact-form') {
+    return `contact:${form.replace(/-/g, ':')}`;
+  }
+  throw new Error(
+    `deployedFormId: unsupported configArtifact "${configArtifact}" ` +
+      `(the XLSForm apply path handles only ${Object.keys(FORMS_DIR_BY_ARTIFACT)
+        .map((a) => `"${a}"`)
+        .join(' and ')})`
+  );
+};

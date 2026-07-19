@@ -701,8 +701,14 @@ export interface FormBindCheck {
   note?: string;
 }
 
-/** Config-artifact kinds the QA verify step can content-assert (tier 1: form only). */
-export type VerifyArtifactType = 'form';
+/**
+ * Config-artifact kinds the QA verify step can content-assert (tier 1: the two
+ * XLSForm artifacts — app `form`s and `contact-form`s). Both are served as XForm
+ * XML by `/api/v1/forms/<id>.xml`, so the same bind oracle covers both; they
+ * differ only in the deployed id derivation (`deployedFormId`) and the local
+ * `forms/app` vs `forms/contact` path (`resolveFormRelPaths`).
+ */
+export type VerifyArtifactType = 'form' | 'contact-form';
 
 /**
  * Inputs to TestEnvironmentAgent.verifyArtifact — real content verification of

@@ -4,6 +4,7 @@ import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
 import * as chtConfRunner from '../../src/utils/cht-conf-runner';
 import * as chtApi from '../../src/utils/cht-api';
 import * as testData from '../../src/utils/test-data';
+import { deployedFormId } from '../../src/utils/form-paths';
 import {
   ChtConfExecResult,
   ConfigActionResult,
@@ -1082,16 +1083,114 @@ describe('TestEnvironmentAgent', () => {
         expect(result.checks.every((c) => c.passed)).to.equal(true);
       });
 
-      it('throws for a non-form artifact (tier 1 supports form only)', async () => {
+      it('still REJECTS a non-form/contact-form artifact (task stays out of QA scope)', async () => {
+        // P3 widened the type wall to form + contact-form ONLY — task/target/
+        // contact-summary must still be refused by verifyArtifact (P4 territory).
         const badOptions = { ...verifyOptions, configArtifact: 'task' } as unknown as VerifyArtifactOptions;
 
         try {
           await realAgent.verifyArtifact(dockerHandle, badOptions);
-          expect.fail('expected verifyArtifact to reject a non-form artifact');
+          expect.fail('expected verifyArtifact to reject a non-form/contact-form artifact');
         } catch (error) {
-          expect((error as Error).message).to.include('configArtifact: form only');
+          expect((error as Error).message).to.include('form and contact-form only');
         }
       });
+
+      // P3: a contact-form is served under its `contact:<type>:<action>` id, so
+      // verifyArtifact must fetch that id (dashes → colons) — assert the exact
+      // percent-encoded URL the raw fetch receives, not just the base name.
+      describe('contact-form (P3 — deployed id derivation)', () => {
+        const CONTACT_YES = "selected(../is_orphan, 'yes')";
+        const contactXml =
+          '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+          `<bind nodeset="/data/e_household/is_orphan" relevant="${CONTACT_YES}"/>` +
+          '</model></h:head></h:html>';
+        const contactOptions: VerifyArtifactOptions = {
+          configArtifact: 'contact-form',
+          artifactName: 'e_household-create',
+          expectedBinds: [{ nodeset: '/data/e_household/is_orphan', attrs: { relevant: CONTACT_YES } }],
+        };
+
+        let fetchStub: sinon.SinonStub;
+        beforeEach(() => {
+          fetchStub = sinon.stub(globalThis, 'fetch' as any);
+          fetchStub.resolves({ ok: true, status: 200, text: async () => contactXml });
+        });
+        afterEach(() => sinon.restore());
+
+        it('fetches /api/v1/forms/contact%3Ae_household%3Acreate.xml (dashes → colons, then encoded)', async () => {
+          const result = await realAgent.verifyArtifact(dockerHandle, contactOptions);
+
+          expect(result.passed).to.equal(true);
+          expect(result.configArtifact).to.equal('contact-form');
+          // The raw fetch URL: base name e_household-create → deployed id
+          // contact:e_household:create → percent-encoded in the endpoint path.
+          expect(fetchStub.firstCall.args[0]).to.equal(
+            'https://nginx/api/v1/forms/contact%3Ae_household%3Acreate.xml'
+          );
+        });
+
+        it('runs the SAME bind oracle — a mismatching deployed bind reads RED', async () => {
+          fetchStub.resolves({
+            ok: true,
+            status: 200,
+            text: async () =>
+              '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+              `<bind nodeset="/data/e_household/is_orphan" relevant="selected(../age, 'child')"/>` +
+              '</model></h:head></h:html>',
+          });
+
+          const result = await realAgent.verifyArtifact(dockerHandle, contactOptions);
+
+          expect(result.passed).to.equal(false);
+        });
+
+        it('fetchDeployedFormXml (F6 source) also fetches the contact: deployed id', async () => {
+          const xml = await realAgent.fetchDeployedFormXml(
+            dockerHandle,
+            'e_household-create',
+            'contact-form'
+          );
+
+          expect(xml).to.equal(contactXml);
+          expect(fetchStub.firstCall.args[0]).to.equal(
+            'https://nginx/api/v1/forms/contact%3Ae_household%3Acreate.xml'
+          );
+        });
+      });
+    });
+  });
+
+  // P3: DiscoveredConfig.formVersions is keyed by the deployed doc id minus the
+  // `form:` prefix — so a contact form's rev is keyed contact:<type>:<action>,
+  // which is exactly what deployedFormId('contact-form', <base>) derives. This
+  // pins the discovery-side of the rev-key contract the QA workflow relies on.
+  describe('discoverConfig rev-key for contact forms (P3)', () => {
+    const dockerHandle: EnvironmentHandle = {
+      url: 'https://nginx',
+      auth: { user: 'medic', password: 'password' },
+      network: 'cht-agent-net',
+      source: 'docker',
+    };
+
+    afterEach(() => sinon.restore());
+
+    it('keys a contact form rev by contact:<type>:<action> (form: stripped, dashes already colons)', async () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      sinon.stub(chtApi, 'fetchSettings').resolves({ contact_types: [] });
+      sinon.stub(chtApi, 'fetchFormRevs').resolves([
+        { id: 'form:pregnancy_home_visit', rev: '2-app' },
+        { id: 'form:contact:e_household:create', rev: '5-contact' },
+      ]);
+
+      const config = await realAgent.discoverConfig(dockerHandle);
+
+      expect(config.formVersions?.['contact:e_household:create']).to.equal('5-contact');
+      // The QA workflow looks the rev up under deployedFormId('contact-form', base):
+      expect(config.formVersions?.[deployedFormId('contact-form', 'e_household-create')]).to.equal(
+        '5-contact'
+      );
+      expect(config.formVersions?.pregnancy_home_visit).to.equal('2-app');
     });
   });
 });

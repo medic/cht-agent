@@ -45,15 +45,22 @@ import {
 } from '../types';
 import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import { extractTopLevelGroupBinds } from '../utils/xform-inspect';
+import { deployedFormId, resolveFormRelPaths } from '../utils/form-paths';
 import { guardConfigFix } from '../utils/config-type';
 import { resolveDeploymentConfigRoot } from '../utils/canonical-diff';
 import { canonicalDiffLines } from '../utils/xlsform-apply';
 import { runTier2, tier2PassLine, tier2TailExcerpt } from '../utils/cht-conf-tier2';
 import { askYesNo } from '../utils/prompt';
 
-/** cht-conf upload buckets to apply for each verifiable artifact kind. */
+/**
+ * cht-conf upload buckets to apply for each verifiable artifact kind. Both
+ * XLSForm artifacts apply per-form filtered (the `-- <form>` filter carries the
+ * xlsx BASENAME — `runBucket` matches cht-conf's args-form-filter on the file
+ * name, not the deployed doc id).
+ */
 const APPLY_ACTIONS_BY_ARTIFACT: Record<VerifyArtifactType, ConfigUploadAction[]> = {
   form: ['app-forms'],
+  'contact-form': ['contact-forms'],
 };
 
 export const defaultApplyActions = (artifact: VerifyArtifactType): ConfigUploadAction[] =>
@@ -89,10 +96,14 @@ export const deriveVerifyOptions = (
   bindDiff?: XlsformBindDiff
 ): VerifyArtifactOptions | null => {
   const tc = issue.issue.technical_context;
-  if (tc.configArtifact !== 'form' || !tc.artifactName) {
+  // Both XLSForm artifacts verify identically (XForm-bind oracle); they differ
+  // only in the local path — `form` → forms/app, `contact-form` → forms/contact.
+  if ((tc.configArtifact !== 'form' && tc.configArtifact !== 'contact-form') || !tc.artifactName) {
     return null;
   }
-  const formPath = path.join(configPath, 'forms', 'app', `${tc.artifactName}.xml`);
+  const configArtifact: VerifyArtifactType = tc.configArtifact;
+  const { xmlRelPath } = resolveFormRelPaths(configArtifact, tc.artifactName);
+  const formPath = path.join(configPath, xmlRelPath);
   if (!fs.existsSync(formPath)) {
     return null;
   }
@@ -104,13 +115,13 @@ export const deriveVerifyOptions = (
       { nodeset: bindDiff.nodeset, attrs: bindDiff.attrs },
       ...groupBinds.filter((b) => b.nodeset !== bindDiff.nodeset),
     ];
-    return { configArtifact: 'form', artifactName: tc.artifactName, expectedBinds };
+    return { configArtifact, artifactName: tc.artifactName, expectedBinds };
   }
   // Fallback (no dev result): group-bind set only — unchanged behavior.
   if (groupBinds.length === 0) {
     return null;
   }
-  return { configArtifact: 'form', artifactName: tc.artifactName, expectedBinds: groupBinds };
+  return { configArtifact, artifactName: tc.artifactName, expectedBinds: groupBinds };
 };
 
 const buildProvisionFromEnv = (): ProvisionOptions => ({
@@ -150,8 +161,9 @@ export const createQaInput = (args: CreateQaInputArgs): QaInput | null => {
   const verify = deriveVerifyOptions(configPath, args.issue, args.bindDiff);
   if (!verify) {
     console.error(
-      '❌ QA: could not derive form verification — needs configArtifact: form, an artifactName, ' +
-        'and the corrected form on disk at forms/app/<artifactName>.xml'
+      '❌ QA: could not derive form verification — needs configArtifact: form (at ' +
+        'forms/app/<artifactName>.xml) or contact-form (at forms/contact/<artifactName>.xml), ' +
+        'an artifactName, and the corrected form on disk'
     );
     return null;
   }
@@ -229,13 +241,19 @@ const DRIFT_SAMPLE_LINES = 5;
 const driftAllowed = (): boolean => process.env.QA_ALLOW_DRIFT === '1';
 
 /**
- * Read the corrected local form the QA phase applies
- * (`<configPath>/forms/app/<form>.xml`) — the whole-document reference the F6
- * oracle diffs the deployed XML against. Returns undefined (with no throw) when
- * the file is absent so the oracle self-skips rather than crashing QA.
+ * Read the corrected local form the QA phase applies (`<configPath>/` +
+ * `forms/app/<form>.xml` for a `form`, `forms/contact/<form>.xml` for a
+ * `contact-form`) — the whole-document reference the F6 oracle diffs the deployed
+ * XML against. Returns undefined (with no throw) when the file is absent so the
+ * oracle self-skips rather than crashing QA.
  */
-const readCorrectedLocalForm = (configPath: string, form: string): string | undefined => {
-  const formPath = path.join(configPath, 'forms', 'app', `${form}.xml`);
+const readCorrectedLocalForm = (
+  configPath: string,
+  form: string,
+  configArtifact: VerifyArtifactType
+): string | undefined => {
+  const { xmlRelPath } = resolveFormRelPaths(configArtifact, form);
+  const formPath = path.join(configPath, xmlRelPath);
   if (!fs.existsSync(formPath)) {
     return undefined;
   }
@@ -266,15 +284,17 @@ const runWholeDocOracle = async (
   configPath: string,
   bindDiff: XlsformBindDiff,
   form: string,
+  configArtifact: VerifyArtifactType,
   excludeTarget: boolean
 ): Promise<WholeDocOracle> => {
-  const deployedXml = await agent.fetchDeployedFormXml(handle, form);
+  const deployedXml = await agent.fetchDeployedFormXml(handle, form, configArtifact);
   if (deployedXml === undefined) {
     return { level: 'targeted', ok: true, reason: 'deployed XML unavailable (mock mode)' };
   }
-  const localXml = readCorrectedLocalForm(configPath, form);
+  const localXml = readCorrectedLocalForm(configPath, form, configArtifact);
   if (localXml === undefined) {
-    return { level: 'targeted', ok: true, reason: `corrected local form not found at forms/app/${form}.xml` };
+    const { xmlRelPath } = resolveFormRelPaths(configArtifact, form);
+    return { level: 'targeted', ok: true, reason: `corrected local form not found at ${xmlRelPath}` };
   }
   const extraLines = canonicalDiffLines(
     deployedXml,
@@ -306,9 +326,15 @@ export const executeQaWorkflow = async (
   if (!guard.ok) {
     return abort(messages, `config-type guard: ${guard.message}`);
   }
-  if (input.verify.configArtifact !== 'form') {
-    return abort(messages, `QA verify supports configArtifact: form only (got ${input.verify.configArtifact})`);
+  if (input.verify.configArtifact !== 'form' && input.verify.configArtifact !== 'contact-form') {
+    return abort(
+      messages,
+      `QA verify supports configArtifact: form and contact-form only (got ${input.verify.configArtifact})`
+    );
   }
+  // The narrowed artifact type drives both the deployed-id derivation (rev lookup
+  // + whole-doc fetch) and the local forms/app-vs-forms/contact path.
+  const verifyArtifactType: VerifyArtifactType = input.verify.configArtifact;
 
   console.log('\n🧪 QA WORKFLOW — reproduce → fix → verify');
 
@@ -317,7 +343,10 @@ export const executeQaWorkflow = async (
 
   // 2. discoverConfig (pre) — before prepareTestData (needs a config) and for the rev diff
   const preConfig: DiscoveredConfig = await agent.discoverConfig(handle);
-  const preFormRev = preConfig.formVersions?.[artifact];
+  // formVersions is keyed by the deployed doc id (minus the `form:` prefix), so a
+  // contact form is keyed `contact:<type>:<action>`, NOT its dashed base name.
+  const revKey = deployedFormId(verifyArtifactType, artifact);
+  const preFormRev = preConfig.formVersions?.[revKey];
 
   // 3. reproduce (RED) — read-only content assertion against the as-deployed form
   const redEvidence = await agent.verifyArtifact(handle, input.verify);
@@ -346,6 +375,7 @@ export const executeQaWorkflow = async (
       input.configPath,
       input.bindDiff,
       artifact,
+      verifyArtifactType,
       /* excludeTarget */ true
     );
     if (redDoc.level === 'targeted') {
@@ -402,7 +432,7 @@ export const executeQaWorkflow = async (
 
   // 7. discoverConfig (post) + verifyArtifact (GREEN)
   const postConfig = await agent.discoverConfig(handle);
-  const postFormRev = postConfig.formVersions?.[artifact];
+  const postFormRev = postConfig.formVersions?.[revKey];
   const revChanged =
     preFormRev !== undefined && postFormRev !== undefined ? preFormRev !== postFormRev : undefined;
   const greenEvidence = await agent.verifyArtifact(handle, input.verify);
@@ -425,6 +455,7 @@ export const executeQaWorkflow = async (
       input.configPath,
       input.bindDiff,
       artifact,
+      verifyArtifactType,
       /* excludeTarget */ false
     );
     if (greenDoc.level === 'targeted') {

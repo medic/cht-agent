@@ -31,6 +31,7 @@ import {
   TransitionConfig,
   VerifyArtifactOptions,
   VerifyArtifactResult,
+  VerifyArtifactType,
 } from '../types';
 import {
   MOCK_TEST_ENV_DATA,
@@ -41,6 +42,7 @@ import { waitForReady } from '../utils/cht-readiness';
 import { runBucket, runChtConf } from '../utils/cht-conf-runner';
 import { BulkDoc, bulkDocs, fetchDocRevs, fetchFormRevs, fetchFormXml, fetchSettings } from '../utils/cht-api';
 import { verifyFormBinds } from '../utils/xform-inspect';
+import { deployedFormId } from '../utils/form-paths';
 import {
   classifySeededDocs,
   cleanSeededDocs,
@@ -375,22 +377,25 @@ export class TestEnvironmentAgent {
 
   /**
    * Content-verify a deployed artifact against the ticket's acceptance criterion
-   * (mission 04 A2, closes G3). For `configArtifact: form` it fetches the
-   * uploaded XForm (GET /api/v1/forms/<form>.xml) and asserts each expected
-   * bind's `relevant` — the target bind now carries the corrected expression AND
-   * the sibling binds are unchanged. This is a real content assertion, run BOTH
-   * as the red reproduction baseline (against the buggy deployed form, expected
-   * to fail) and the green fix proof (against the corrected form, expected to
-   * pass). The pre/post `formVersions` rev diff (discoverConfig before/after
-   * applyConfig) is captured by the QA workflow as corroboration.
+   * (mission 04 A2, closes G3). For `configArtifact: form` / `contact-form` it
+   * fetches the uploaded XForm (GET /api/v1/forms/<id>.xml — a contact form is
+   * served under its `contact:<type>:<action>` id, resolved via `deployedFormId`)
+   * and asserts each expected bind's compiled attrs — the target bind now carries
+   * the corrected expression AND the sibling binds are unchanged. This is a real
+   * content assertion, run BOTH as the red reproduction baseline (against the
+   * buggy deployed form, expected to fail) and the green fix proof (against the
+   * corrected form, expected to pass). The pre/post `formVersions` rev diff
+   * (discoverConfig before/after applyConfig) is captured by the QA workflow as
+   * corroboration.
    */
   async verifyArtifact(
     handle: EnvironmentHandle,
     options: VerifyArtifactOptions
   ): Promise<VerifyArtifactResult> {
-    if (options.configArtifact !== 'form') {
+    if (options.configArtifact !== 'form' && options.configArtifact !== 'contact-form') {
       throw new Error(
-        `verifyArtifact currently supports configArtifact: form only (got ${options.configArtifact})`
+        `verifyArtifact supports configArtifact: form and contact-form only ` +
+          `(got ${options.configArtifact})`
       );
     }
     console.log(
@@ -404,7 +409,10 @@ export class TestEnvironmentAgent {
       return mock;
     }
 
-    const xml = await fetchFormXml(handle.url, handle.auth, options.artifactName);
+    // Contact forms deploy under a `contact:<type>:<action>` id (the file's
+    // dashes become colons) — fetch by the deployed id, not the base name.
+    const formId = deployedFormId(options.configArtifact, options.artifactName);
+    const xml = await fetchFormXml(handle.url, handle.auth, formId);
     const { passed, checks } = verifyFormBinds(xml, options.expectedBinds);
     const failed = checks.filter((check) => !check.passed);
     const summary = passed
@@ -412,25 +420,28 @@ export class TestEnvironmentAgent {
       : `${options.artifactName}: ${failed.length} of ${checks.length} bind assertion(s) failed ` +
         `(${failed.map((check) => check.nodeset).join(', ')})`;
     console.log(`[Test Environment Agent] ${summary}`);
-    return { artifact: options.artifactName, configArtifact: 'form', passed, checks, summary };
+    return { artifact: options.artifactName, configArtifact: options.configArtifact, passed, checks, summary };
   }
 
   /**
-   * Fetch the raw deployed XForm for a single form (GET /api/v1/forms/<form>.xml)
+   * Fetch the raw deployed XForm for a single form (GET /api/v1/forms/<id>.xml)
    * — the whole-document source the QA F6 oracle diffs against the corrected
-   * local `.xml`. Returns `undefined` in mock mode (no live instance to fetch
-   * from), which makes the whole-document oracle self-skip rather than fabricate
-   * a document to compare. The real path reads back exactly what
-   * `upload-app-forms` pushed.
+   * local `.xml`. `configArtifact` selects the deployed id derivation: an app
+   * `form` fetches under its base name, a `contact-form` under its
+   * `contact:<type>:<action>` id (`deployedFormId`). Returns `undefined` in mock
+   * mode (no live instance to fetch from), which makes the whole-document oracle
+   * self-skip rather than fabricate a document to compare. The real path reads
+   * back exactly what `upload-{app,contact}-forms` pushed.
    */
   async fetchDeployedFormXml(
     handle: EnvironmentHandle,
-    formId: string
+    form: string,
+    configArtifact: VerifyArtifactType = 'form'
   ): Promise<string | undefined> {
     if (this.useMockDocker) {
       return undefined;
     }
-    return fetchFormXml(handle.url, handle.auth, formId);
+    return fetchFormXml(handle.url, handle.auth, deployedFormId(configArtifact, form));
   }
 
   /**

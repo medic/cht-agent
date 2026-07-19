@@ -724,6 +724,176 @@ describe('qa-workflow', () => {
     });
   });
 
+  // P3: contact-form parity in QA. The verify oracle is identical (XForm binds);
+  // contact forms differ only in the LOCAL path (forms/contact/) and the DEPLOYED
+  // id (contact:<type>:<action>). These pin: deriveVerifyOptions reads
+  // forms/contact/, createQaInput builds a non-null QaInput and the contact-forms
+  // bucket, the F6 corrected-form read follows the contact path, AND task/
+  // contact-summary stay rejected.
+  describe('contact-form QA (P3)', () => {
+    const CONTACT_GATE = "selected(../is_orphan, 'yes')";
+    // Contact forms compile with the contact TYPE as the primary-instance root
+    // (/e_household/…), so /e_household/is_orphan is a top-level group bind the
+    // group-bind snapshot picks up (two-segment nodeset).
+    const CONTACT_NODESET = '/e_household/is_orphan';
+    const contactIssue = (): IssueTemplate =>
+      formIssue({ configArtifact: 'contact-form', artifactName: 'e_household-create' });
+
+    let dir: string;
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-contact-'));
+      fs.mkdirSync(path.join(dir, 'forms', 'contact'), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, 'forms', 'contact', 'e_household-create.xml'),
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+          `<bind nodeset="${CONTACT_NODESET}" relevant="${CONTACT_GATE}"/>` +
+          `<bind nodeset="/e_household/summary" relevant="${CONTACT_GATE}"/>` +
+          '</model></h:head></h:html>'
+      );
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    it('deriveVerifyOptions reads forms/contact/<name>.xml and tags the contact-form artifact', () => {
+      const verify = deriveVerifyOptions(dir, contactIssue());
+      expect(verify).to.not.equal(null);
+      expect(verify!.configArtifact).to.equal('contact-form');
+      expect(verify!.artifactName).to.equal('e_household-create');
+      const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
+      expect(nodesets).to.include(CONTACT_NODESET);
+      expect(nodesets).to.include('/e_household/summary');
+    });
+
+    it('does NOT read forms/app/ for a contact-form (null when only forms/contact/ exists)', () => {
+      // The file lives only under forms/contact/. A resolver still pointing at
+      // forms/app/ would find nothing → null. Non-null proves the path switched.
+      const verify = deriveVerifyOptions(dir, contactIssue());
+      expect(verify).to.not.equal(null);
+    });
+
+    it('threads a bindDiff target bind FIRST for a contact-form', () => {
+      const bindDiff: XlsformBindDiff = {
+        nodeset: CONTACT_NODESET,
+        before: "selected(../age, 'child')",
+        after: CONTACT_GATE,
+        attrs: { relevant: CONTACT_GATE },
+        attrsBefore: { relevant: "selected(../age, 'child')" },
+        siblingsUnchanged: 1,
+      };
+      const verify = deriveVerifyOptions(dir, contactIssue(), bindDiff);
+      expect(verify).to.not.equal(null);
+      expect(verify!.expectedBinds[0]).to.deep.equal({
+        nodeset: CONTACT_NODESET,
+        attrs: { relevant: CONTACT_GATE },
+      });
+    });
+
+    it('createQaInput returns a non-null QaInput with the contact-forms bucket', () => {
+      const input = createQaInput({
+        issue: contactIssue(),
+        configPath: dir,
+        provision: { chtCorePath: '/x' },
+        autoApprove: true,
+      });
+      expect(input).to.not.equal(null);
+      expect(input!.verify.configArtifact).to.equal('contact-form');
+      expect(input!.applyActions).to.deep.equal(['contact-forms']);
+    });
+
+    it('executeQaWorkflow applies the contact-forms bucket filtered by the FILE base name', async () => {
+      const { agent, stubs } = stubbedAgent();
+      // Re-key the stubbed discovery revs so the contact form has a pre/post rev.
+      stubs.discoverConfig.reset();
+      stubs.discoverConfig
+        .onFirstCall()
+        .resolves({
+          contactTypes: [], roles: {}, permissions: {}, transitions: {},
+          forms: ['contact:e_household:create'], formVersions: { 'contact:e_household:create': '1-pre' },
+        })
+        .onSecondCall()
+        .resolves({
+          contactTypes: [], roles: {}, permissions: {}, transitions: {},
+          forms: ['contact:e_household:create'], formVersions: { 'contact:e_household:create': '2-post' },
+        });
+      stubs.verifyArtifact.reset();
+      stubs.verifyArtifact
+        .onFirstCall().resolves({ artifact: 'e_household-create', configArtifact: 'contact-form', passed: false, checks: [], summary: 'red' })
+        .onSecondCall().resolves({ artifact: 'e_household-create', configArtifact: 'contact-form', passed: true, checks: [], summary: 'green' });
+
+      const input = createQaInput({ issue: contactIssue(), configPath: dir, provision: { chtCorePath: '/x' }, autoApprove: true })!;
+      const result = await executeQaWorkflow(agent, input);
+
+      const applyArgs = stubs.applyConfig.firstCall.args[1] as { actions: string[]; artifact: string };
+      // Bucket = contact-forms; the -- <form> filter keeps the dashed FILE name
+      // (cht-conf args-form-filter matches the xlsx basename, NOT the doc id).
+      expect(applyArgs.actions).to.deep.equal(['contact-forms']);
+      expect(applyArgs.artifact).to.equal('e_household-create');
+      // Rev diff resolves through the deployed contact: key (not the base name).
+      expect(result.preFormRev).to.equal('1-pre');
+      expect(result.postFormRev).to.equal('2-post');
+      expect(result.revChanged).to.equal(true);
+      expect(result.succeeded).to.equal(true);
+    });
+
+    it('F6 whole-doc oracle reads the corrected form from forms/contact/', async () => {
+      const bindDiff: XlsformBindDiff = {
+        nodeset: CONTACT_NODESET,
+        before: "selected(../age, 'child')",
+        after: CONTACT_GATE,
+        attrs: { relevant: CONTACT_GATE },
+        attrsBefore: { relevant: "selected(../age, 'child')" },
+        siblingsUnchanged: 1,
+      };
+      const model = (orphanRelevant: string): string =>
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>\n' +
+        `<bind nodeset="${CONTACT_NODESET}" relevant="${orphanRelevant}"/>\n` +
+        `<bind nodeset="/e_household/summary" relevant="${CONTACT_GATE}"/>\n` +
+        '</model></h:head></h:html>';
+      // Overwrite the local corrected form so it equals the "deployed fixed" doc.
+      fs.writeFileSync(path.join(dir, 'forms', 'contact', 'e_household-create.xml'), model(CONTACT_GATE));
+      const DEPLOYED_BUGGY = model("selected(../age, 'child')");
+      const DEPLOYED_FIXED = model(CONTACT_GATE);
+
+      const { agent } = stubbedAgent();
+      const fetchStub = sinon.stub(agent, 'fetchDeployedFormXml');
+      fetchStub.onFirstCall().resolves(DEPLOYED_BUGGY).onSecondCall().resolves(DEPLOYED_FIXED);
+
+      const input: QaInput = {
+        issue: contactIssue(),
+        configPath: dir,
+        verify: { configArtifact: 'contact-form', artifactName: 'e_household-create', expectedBinds: [{ nodeset: CONTACT_NODESET, attrs: { relevant: CONTACT_GATE } }] },
+        applyActions: ['contact-forms'],
+        provision: { chtCorePath: '/x' },
+        autoApprove: true,
+        bindDiff,
+      };
+      const result = await executeQaWorkflow(agent, input);
+
+      // The oracle located forms/contact/e_household-create.xml (whole-document
+      // level, not the "corrected local form not found" targeted self-skip).
+      const log = result.messages.join('\n');
+      expect(log).to.contain('RED oracle: whole-document');
+      expect(log).to.contain('GREEN oracle: whole-document');
+      // And fetchDeployedFormXml was asked for the contact-form artifact type.
+      expect(fetchStub.firstCall.args[2]).to.equal('contact-form');
+      expect(result.succeeded).to.equal(true);
+    });
+
+    it('APPLY_ACTIONS maps contact-form → contact-forms (and form → app-forms is untouched)', () => {
+      expect(defaultApplyActions('contact-form')).to.deep.equal(['contact-forms']);
+      expect(CONFIG_ACTION_COMMANDS['contact-forms']).to.deep.equal(['convert-contact-forms', 'upload-contact-forms']);
+      // Regression: the app-forms mapping is unchanged by P3.
+      expect(defaultApplyActions('form')).to.deep.equal(['app-forms']);
+    });
+
+    it('task / contact-summary tickets are STILL rejected by QA (P4 territory, not P3)', () => {
+      // deriveVerifyOptions returns null → createQaInput returns null → no QA loop.
+      expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }))).to.equal(null);
+      expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'contact-summary' }))).to.equal(null);
+      expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.equal(null);
+      expect(createQaInput({ issue: formIssue({ configArtifact: 'contact-summary' }), configPath: dir })).to.equal(null);
+    });
+  });
+
   describe('mission-05 QA seam (bucket untouched + node→verify loop closure)', () => {
     it('leaves the QA app-forms bucket at convert+upload (non-goal: no bucket change)', () => {
       expect(defaultApplyActions('form')).to.deep.equal(['app-forms']);
