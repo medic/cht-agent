@@ -2,3 +2,6 @@ dist/
 node_modules/
 coverage/
 commitlint.config.js
+# Self-contained Remotion sub-project (own package.json/tsconfig) — not part of
+# the workbench lint surface.
+video/
