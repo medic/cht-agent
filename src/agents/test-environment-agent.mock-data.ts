@@ -38,12 +38,18 @@ export const mockConfigActionResult = (action: ConfigUploadAction): ConfigAction
  * fetch from, so it echoes each expected bind as satisfied).
  */
 export const mockVerifyArtifactResult = (options: VerifyArtifactOptions): VerifyArtifactResult => {
-  const checks = options.expectedBinds.map((bind) => ({
-    nodeset: bind.nodeset,
-    expected: bind.relevant,
-    actual: bind.relevant,
-    passed: true,
-  }));
+  // One passing check per asserted attribute (mock mode has no live instance to
+  // fetch from, so it echoes each expected attr as satisfied). For an absence
+  // assertion (expected null) the mock reports it as satisfied without an actual.
+  const checks = options.expectedBinds.flatMap((bind) =>
+    Object.entries(bind.attrs).map(([attr, expected]) => ({
+      nodeset: bind.nodeset,
+      attr,
+      expected,
+      ...(expected !== null ? { actual: expected } : {}),
+      passed: true,
+    })),
+  );
   return {
     artifact: options.artifactName,
     configArtifact: options.configArtifact,

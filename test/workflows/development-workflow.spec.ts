@@ -420,7 +420,13 @@ describe('displayDevelopmentCompletion Target banner (mission 05 F4 cosmetic)', 
     xmlPath: '/tmp/x.xml',
     xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
     xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
-    bindDiff: { nodeset: '/data/danger_signs', after: "selected(../x, 'y')", siblingsUnchanged: 9 },
+    bindDiff: {
+      nodeset: '/data/danger_signs',
+      after: "selected(../x, 'y')",
+      attrs: { relevant: "selected(../x, 'y')" },
+      attrsBefore: { relevant: "selected(../x, 'y') or z" },
+      siblingsUnchanged: 9,
+    },
     sandboxDir: '/tmp/sandbox',
   });
 

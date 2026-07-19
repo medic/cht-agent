@@ -72,7 +72,7 @@ const verifyResult = (passed: boolean): VerifyArtifactResult => ({
   artifact: 'pregnancy_home_visit',
   configArtifact: 'form',
   passed,
-  checks: [{ nodeset: '/data/danger_signs', expected: YES_GATE, actual: passed ? YES_GATE : PLANTED_GATE, passed }],
+  checks: [{ nodeset: '/data/danger_signs', attr: 'relevant', expected: YES_GATE, actual: passed ? YES_GATE : PLANTED_GATE, passed }],
   summary: passed ? 'all bind assertion(s) passed' : '1 bind assertion(s) failed (/data/danger_signs)',
 });
 
@@ -95,7 +95,7 @@ const makeQaInput = (overrides: Partial<QaInput> = {}): QaInput => ({
   verify: {
     configArtifact: 'form',
     artifactName: 'pregnancy_home_visit',
-    expectedBinds: [{ nodeset: '/data/danger_signs', relevant: YES_GATE }],
+    expectedBinds: [{ nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE } }],
   },
   applyActions: ['app-forms'],
   provision: { chtCorePath: '/workspace/cht-core' },
@@ -215,7 +215,7 @@ describe('qa-workflow', () => {
       expect(verify).to.not.equal(null);
       expect(verify!.artifactName).to.equal('pregnancy_home_visit');
       const danger = verify!.expectedBinds.find((b) => b.nodeset === '/data/danger_signs');
-      expect(danger?.relevant).to.equal(YES_GATE);
+      expect(danger?.attrs.relevant).to.equal(YES_GATE);
       expect(verify!.expectedBinds).to.have.lengthOf(2);
     });
 
@@ -409,6 +409,8 @@ describe('qa-workflow', () => {
       nodeset: CHILD_NODESET,
       before: undefined, // deployed form has no relevant on this bind
       after: YES_GATE,
+      attrs: { relevant: YES_GATE },
+      attrsBefore: { relevant: null },
       siblingsUnchanged: 2,
     };
 
@@ -428,11 +430,30 @@ describe('qa-workflow', () => {
     });
     afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+    // P2 (review): an absence expectation (null) threads through untouched — the
+    // M8 lingering-calculate case must read RED at reproduce time.
+    it('threads a null (absence) attr from bindDiff.attrs into the target expectation', () => {
+      const absenceDiff: XlsformBindDiff = {
+        ...childBindDiff,
+        attrs: { calculate: null, relevant: YES_GATE },
+        attrsBefore: { calculate: 'member_filter = 2', relevant: YES_GATE },
+      };
+      const verify = deriveVerifyOptions(dir, formIssue(), absenceDiff);
+      expect(verify).to.not.equal(null);
+      expect(verify!.expectedBinds[0]).to.deep.equal({
+        nodeset: CHILD_NODESET,
+        attrs: { calculate: null, relevant: YES_GATE },
+      });
+    });
+
     it('asserts the target child bind FIRST, then the group binds as siblings', () => {
       const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
       expect(verify).to.not.equal(null);
-      // Target bind first — its `relevant` is bindDiff.after (the corrected gate).
-      expect(verify!.expectedBinds[0]).to.deep.equal({ nodeset: CHILD_NODESET, relevant: YES_GATE });
+      // Target bind first — its attrs come from bindDiff.attrs (the corrected gate).
+      expect(verify!.expectedBinds[0]).to.deep.equal({
+        nodeset: CHILD_NODESET,
+        attrs: { relevant: YES_GATE },
+      });
       // Group binds retained AFTER it as sibling invariance.
       const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
       expect(nodesets).to.include('/data/danger_signs');
@@ -442,11 +463,20 @@ describe('qa-workflow', () => {
     });
 
     it('de-duplicates the target when the bindDiff nodeset is itself a group bind', () => {
-      const groupDiff: XlsformBindDiff = { nodeset: '/data/danger_signs', after: YES_GATE, siblingsUnchanged: 2 };
+      const groupDiff: XlsformBindDiff = {
+        nodeset: '/data/danger_signs',
+        after: YES_GATE,
+        attrs: { relevant: YES_GATE },
+        attrsBefore: { relevant: PLANTED_GATE },
+        siblingsUnchanged: 2,
+      };
       const verify = deriveVerifyOptions(dir, formIssue(), groupDiff);
       expect(verify).to.not.equal(null);
       // target first (from the diff), and NOT repeated in the sibling set
-      expect(verify!.expectedBinds[0]).to.deep.equal({ nodeset: '/data/danger_signs', relevant: YES_GATE });
+      expect(verify!.expectedBinds[0]).to.deep.equal({
+        nodeset: '/data/danger_signs',
+        attrs: { relevant: YES_GATE },
+      });
       const occurrences = verify!.expectedBinds.filter((b) => b.nodeset === '/data/danger_signs');
       expect(occurrences).to.have.lengthOf(1);
       // /data/danger_signs (target) + /data/summary (sibling) = 2
@@ -538,7 +568,14 @@ describe('qa-workflow', () => {
   describe('executeQaWorkflow — F6 whole-document oracle', () => {
     let dir: string;
     const TARGET = '/data/danger_signs/next_pnc_visit_date';
-    const bindDiff: XlsformBindDiff = { nodeset: TARGET, before: undefined, after: YES_GATE, siblingsUnchanged: 2 };
+    const bindDiff: XlsformBindDiff = {
+      nodeset: TARGET,
+      before: undefined,
+      after: YES_GATE,
+      attrs: { relevant: YES_GATE },
+      attrsBefore: { relevant: null },
+      siblingsUnchanged: 2,
+    };
 
     // A form model; `targetRelevant` undefined renders the target bind WITHOUT a
     // relevant (the buggy deployed state); `summary` lets a spec perturb a
@@ -581,7 +618,7 @@ describe('qa-workflow', () => {
       makeQaInput({
         configPath: dir,
         bindDiff,
-        verify: { configArtifact: 'form', artifactName: 'pregnancy_home_visit', expectedBinds: [{ nodeset: TARGET, relevant: YES_GATE }] },
+        verify: { configArtifact: 'form', artifactName: 'pregnancy_home_visit', expectedBinds: [{ nodeset: TARGET, attrs: { relevant: YES_GATE } }] },
         ...overrides,
       });
 
@@ -702,7 +739,7 @@ describe('qa-workflow', () => {
         edits: [
           { sheet: 'survey', match: { column: 'name', value: 'danger_signs' }, set: { column: 'relevant', value: YES_GATE } },
         ],
-        expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: true },
+        expect: { nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE }, siblingsUnchanged: true },
         rationale: 'restore the yes-only gate',
       };
       const outcome = await applyXlsformFixToProject(descriptor, path.resolve('demo/config-pnc-demo'));
@@ -717,8 +754,8 @@ describe('qa-workflow', () => {
         const verify = deriveVerifyOptions(outcome.result.sandboxDir, formIssue());
         expect(verify).to.not.equal(null);
         const danger = verify!.expectedBinds.find((b) => b.nodeset === '/data/danger_signs');
-        expect(danger?.relevant).to.equal(YES_GATE);
-        expect(danger?.relevant).to.not.equal(PLANTED_GATE);
+        expect(danger?.attrs.relevant).to.equal(YES_GATE);
+        expect(danger?.attrs.relevant).to.not.equal(PLANTED_GATE);
       } finally {
         fs.rmSync(outcome.result.sandboxDir, { recursive: true, force: true });
       }

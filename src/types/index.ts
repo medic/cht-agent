@@ -656,21 +656,46 @@ export interface ConfigApplyResult {
 // ============================================================================
 
 /**
- * One XForm bind whose `relevant` expression the QA verify step asserts against
+ * One XForm bind whose compiled attributes the QA verify step asserts against
  * the deployed form (target bind + the siblings that must stay unchanged).
+ *
+ * P2: generalized from a single `relevant` to an `attrs` map so any bind
+ * attribute (`relevant`, `calculate`, `constraint`, `required`, …) can be
+ * asserted, in either direction:
+ *   - `attrs[name] = "<expr>"` → the compiled bind MUST carry `name="<expr>"`.
+ *   - `attrs[name] = null`     → the compiled bind must NOT carry `name` at all
+ *     (absence assertion — the M8 "a spurious `calculate` was removed" case).
+ * The legacy single-`relevant` shape lives only at the descriptor-parse
+ * boundary (`xlsform-fix.ts`), where it is normalized to `attrs: {relevant: …}`.
  */
 export interface FormBindExpectation {
   /** The bind nodeset, e.g. '/data/danger_signs'. */
   nodeset: string;
-  /** The exact `relevant` expression the deployed bind must carry. */
-  relevant: string;
+  /** Per-attribute expectation: string = required value, null = must be absent. */
+  attrs: Record<string, string | null>;
 }
 
-/** Per-bind outcome of verifying a deployed form's binds. */
+/**
+ * Per-(bind, attribute) outcome of verifying a deployed form's binds. One check
+ * is emitted per asserted attribute, so a single nodeset with two asserted
+ * attrs yields two checks (both carrying the same `nodeset`, distinguished by
+ * `attr`). This keeps `checks.filter(c => c.nodeset === …)` and the roll-up
+ * `checks.every(c => c.passed)` working as before while carrying attr detail.
+ */
 export interface FormBindCheck {
   nodeset: string;
-  expected: string;
-  /** The `relevant` actually found on the deployed bind (absent if the bind is missing). */
+  /** The bind attribute this check asserts (e.g. 'relevant', 'calculate'). */
+  attr: string;
+  /**
+   * The expected value: a string when a value is required, or null when the
+   * attribute is expected to be ABSENT from the compiled bind.
+   */
+  expected: string | null;
+  /**
+   * The value actually found on the deployed bind: the attribute string when
+   * present, '(none)' when the bind is present but lacks the attribute, or
+   * absent (undefined) when the bind itself is missing.
+   */
   actual?: string;
   passed: boolean;
   note?: string;
@@ -1335,14 +1360,32 @@ export interface XlsformApplyExhausted {
 /**
  * The one-bind delta an XLSForm fix produced, verified against the OFFLINE
  * conversion (mission 05). Drives the HC2 bind-level diff and the report.
+ *
+ * P2: `before`/`after` remain the `relevant` before/after so the existing
+ * relevant-centric consumers (HC2 banner, the deterministic harness-spec
+ * generator's `deriveScenario`) keep working unchanged; both may be undefined
+ * for an attrs-only fix (e.g. removing a spurious `calculate` — no `relevant`
+ * change). `attrs` is the FULL per-attribute before/after the fix asserted
+ * (string = value, null = expected absent), the generalized oracle the QA verify
+ * set is derived from.
  */
 export interface XlsformBindDiff {
   /** Target bind nodeset (e.g. /data/danger_signs). */
   nodeset: string;
-  /** The relevant expression before the fix (from the pre-edit conversion). */
+  /** The relevant expression before the fix (undefined when unchanged/absent). */
   before?: string;
-  /** The relevant expression after the fix (matches descriptor.expect.relevant). */
-  after: string;
+  /** The relevant expression after the fix (undefined for an attrs-only fix). */
+  after?: string;
+  /**
+   * P2: the full per-attribute expectation the fix asserted on the regenerated
+   * bind. Value = the attribute the compiled bind must carry; null = the
+   * attribute the compiled bind must NOT carry (absence assertion). This is what
+   * the QA verify set generalizes from — `before`/`after` above stay for the
+   * relevant-centric display/spec-gen consumers.
+   */
+  attrs: Record<string, string | null>;
+  /** The per-attribute values BEFORE the fix (from the pre-edit conversion). */
+  attrsBefore: Record<string, string | null>;
   /** How many sibling top-level group binds were verified byte-unchanged. */
   siblingsUnchanged: number;
 }

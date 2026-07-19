@@ -43,7 +43,7 @@ const discovered = (rev: string): DiscoveredConfig => ({
 });
 const verifyResult = (passed: boolean): VerifyArtifactResult => ({
   artifact: 'pregnancy_home_visit', configArtifact: 'form', passed,
-  checks: [{ nodeset: '/data/danger_signs', expected: YES_GATE, passed }], summary: passed ? 'passed' : 'failed',
+  checks: [{ nodeset: '/data/danger_signs', attr: 'relevant', expected: YES_GATE, passed }], summary: passed ? 'passed' : 'failed',
 });
 const applyOk: ConfigApplyResult = { configPath: '/mnt/conf', actions: [], succeeded: true, warnings: [] };
 
@@ -121,7 +121,14 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
   // QA asserts the fix's OWN bind (incl. a child bind the group snapshot misses).
   describe('F5 — bindDiff from the dev result threads into the verify set', () => {
     const CHILD_NODESET = '/data/danger_signs/next_pnc_visit_date';
-    const bindDiff = { nodeset: CHILD_NODESET, before: undefined, after: YES_GATE, siblingsUnchanged: 1 };
+    const bindDiff = {
+      nodeset: CHILD_NODESET,
+      before: undefined,
+      after: YES_GATE,
+      attrs: { relevant: YES_GATE },
+      attrsBefore: { relevant: null },
+      siblingsUnchanged: 1,
+    };
 
     it('asserts the target child bind FIRST when a bindDiff is threaded in', async () => {
       const { agent, verifyArtifact } = stubbedAgent();
@@ -132,7 +139,10 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
       expect(result).to.not.equal(undefined);
       // reproduce (call 0) received the child target bind first, then the group bind as sibling
       const passedOptions = verifyArtifact.firstCall.args[1];
-      expect(passedOptions.expectedBinds[0]).to.deep.equal({ nodeset: CHILD_NODESET, relevant: YES_GATE });
+      expect(passedOptions.expectedBinds[0]).to.deep.equal({
+        nodeset: CHILD_NODESET,
+        attrs: { relevant: YES_GATE },
+      });
       const nodesets = passedOptions.expectedBinds.map((b) => b.nodeset);
       expect(nodesets).to.include('/data/danger_signs'); // group bind retained as sibling invariance
     });

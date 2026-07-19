@@ -640,7 +640,11 @@ export class DevelopmentSupervisor {
       return this.xlsformFail(state, 'no config-project path (options.chtCorePath) to convert against');
     }
 
-    const outcome = await applyXlsformFixToProject(parsed.descriptor, configPath);
+    const configArtifact =
+      state.issue?.issue.technical_context.configArtifact === 'contact-form'
+        ? 'contact-form'
+        : 'form';
+    const outcome = await applyXlsformFixToProject(parsed.descriptor, configPath, { configArtifact });
     if (!outcome.ok) {
       return this.xlsformFail(state, outcome.error);
     }
@@ -731,6 +735,20 @@ export class DevelopmentSupervisor {
       return this.finishTestGeneration(todoId, emptyResult);
     }
 
+    // P1 guard: the deterministic harness-spec generator is app-form-hardcoded
+    // (test/forms/, harness.loadForm, a forms/app/ XML read — cht-conf-test-spec.ts).
+    // For a contact-form fix that converted it would emit a BROKEN spec, and
+    // falling through to the LLM test-gen agent would produce junk. Deterministic
+    // contact-form spec generation lands with P5; until then, SKIP test
+    // generation for a converted contact-form fix rather than emit either.
+    if (state.xlsformApply && state.issue?.issue.technical_context.configArtifact === 'contact-form') {
+      console.log(
+        '[Development Supervisor] P1: contact-form XLSForm fix converted — SKIPPING test generation ' +
+          '(deterministic contact-form spec gen lands with P5; app-form generator would emit a broken spec).',
+      );
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+
     // F7: layer-aware test generation. For a cht-conf form ticket whose XLSForm
     // fix converted (xlsformApply set), emit ONE deterministic
     // cht-conf-test-harness spec at <configRoot>/test/forms/<form>.spec.js (or
@@ -785,6 +803,22 @@ export class DevelopmentSupervisor {
     const configRoot = state.options?.chtCorePath;
     if (!configRoot) {
       return undefined;
+    }
+    // P2: the deterministic harness spec is relevant-centric (its oracle asserts
+    // the target bind's `relevant`). It only proves a regression when the fix
+    // actually CHANGED the relevant — so skip both the attrs-only case (after is
+    // undefined) and the unchanged-relevant case (e.g. a removed `calculate` on
+    // a bind that keeps its relevant: after === before, and a spec asserting it
+    // would pass on the buggy config too — a false-green regression spec). The
+    // fix is still fully verified by the dev-phase attrs assert and the QA attrs
+    // oracle; a generalized attrs-aware template is a later phase.
+    if (apply.bindDiff.after === undefined || apply.bindDiff.after === apply.bindDiff.before) {
+      console.log(
+        '[Development Supervisor] P2: XLSForm fix has no `relevant` change (attrs-only or unchanged ' +
+          'relevant) — SKIPPING deterministic harness spec generation (the relevant-centric template ' +
+          'would not distinguish buggy from fixed).',
+      );
+      return { files: [], explanation: '', requirementsChecklist: [] };
     }
     const spec = generateHarnessSpec(parsed.descriptor, apply.bindDiff, configRoot);
     const file: GeneratedFile = {

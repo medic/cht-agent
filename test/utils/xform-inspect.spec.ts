@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import {
   bindExists,
   decodeXmlAttr,
+  extractBindAttr,
   extractBindRelevant,
   extractTopLevelGroupBinds,
   verifyFormBinds,
@@ -29,9 +30,9 @@ const PLANTED_XML = modelXml(PLANTED_GATE);
 const CORRECTED_XML = modelXml(YES_GATE);
 
 const EXPECTATIONS: FormBindExpectation[] = [
-  { nodeset: '/data/danger_signs', relevant: YES_GATE },
-  { nodeset: '/data/safe_pregnancy_practices', relevant: YES_GATE },
-  { nodeset: '/data/summary', relevant: YES_GATE },
+  { nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE } },
+  { nodeset: '/data/safe_pregnancy_practices', attrs: { relevant: YES_GATE } },
+  { nodeset: '/data/summary', attrs: { relevant: YES_GATE } },
 ];
 
 describe('xform-inspect', () => {
@@ -113,7 +114,7 @@ describe('xform-inspect', () => {
           '<model><bind nodeset="/postnatal_care_service/group_x" relevant="a &gt; b"/></model>';
         const binds = extractTopLevelGroupBinds(xml);
         expect(binds).to.have.length(1);
-        expect(binds[0].relevant).to.equal('a > b');
+        expect(binds[0].attrs.relevant).to.equal('a > b');
       });
     });
 
@@ -146,7 +147,9 @@ describe('xform-inspect', () => {
     });
 
     it('fails a check when an expected bind is missing from the XML', () => {
-      const result = verifyFormBinds(CORRECTED_XML, [{ nodeset: '/data/ghost', relevant: YES_GATE }]);
+      const result = verifyFormBinds(CORRECTED_XML, [
+        { nodeset: '/data/ghost', attrs: { relevant: YES_GATE } },
+      ]);
 
       expect(result.passed).to.equal(false);
       expect(result.checks[0].note).to.match(/not found/);
@@ -169,7 +172,7 @@ describe('xform-inspect', () => {
 
       it('registers a present-but-unrelevant bind as a MISMATCH with actual "(none)"', () => {
         const result = verifyFormBinds(PRESENT_NO_RELEVANT, [
-          { nodeset: '/data/danger_signs/next_pnc_visit_date', relevant: YES_GATE },
+          { nodeset: '/data/danger_signs/next_pnc_visit_date', attrs: { relevant: YES_GATE } },
         ]);
 
         expect(result.passed).to.equal(false);
@@ -184,7 +187,7 @@ describe('xform-inspect', () => {
 
       it('a genuinely absent bind keeps the distinct "bind not found" note (no actual)', () => {
         const result = verifyFormBinds(PRESENT_NO_RELEVANT, [
-          { nodeset: '/data/does_not_exist', relevant: YES_GATE },
+          { nodeset: '/data/does_not_exist', attrs: { relevant: YES_GATE } },
         ]);
 
         expect(result.passed).to.equal(false);
@@ -192,6 +195,85 @@ describe('xform-inspect', () => {
         expect(check.actual).to.equal(undefined);
         expect(check.note).to.match(/bind not found/);
       });
+    });
+
+    // P2: arbitrary attributes + absence assertions, honest in both directions.
+    describe('P2 — arbitrary attrs and absence (null) assertions', () => {
+      // A select1 bind carrying required + relevant + a (spurious) calculate — the
+      // M8 shape: the fix removes calculate, keeps required + relevant.
+      const CALC_PRESENT =
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+        '<bind nodeset="/data/f_client/edu" type="select1" required="true()" ' +
+        'calculate="member_filter = 2" relevant="../hh = \'at_school\'"/>' +
+        '</model></h:head></h:html>';
+      const CALC_ABSENT =
+        '<h:html xmlns:h="http://www.w3.org/1999/xhtml" xmlns="http://www.w3.org/2002/xforms"><h:head><model>' +
+        '<bind nodeset="/data/f_client/edu" type="select1" required="true()" ' +
+        'relevant="../hh = \'at_school\'"/>' +
+        '</model></h:head></h:html>';
+      const EDU = '/data/f_client/edu';
+      const REL = "../hh = 'at_school'";
+
+      it('asserts multiple attrs on one bind (relevant + required) — all pass', () => {
+        const result = verifyFormBinds(CALC_ABSENT, [
+          { nodeset: EDU, attrs: { relevant: REL, required: 'true()' } },
+        ]);
+        expect(result.passed).to.equal(true);
+        // one check PER attribute, both carrying the same nodeset
+        expect(result.checks).to.have.lengthOf(2);
+        expect(result.checks.map((c) => c.attr).sort()).to.deep.equal(['relevant', 'required']);
+      });
+
+      it('ABSENCE (null): a lingering deployed calculate reads RED', () => {
+        // corrected form lacks calculate → assert calculate:null; deployed still has it.
+        const result = verifyFormBinds(CALC_PRESENT, [
+          { nodeset: EDU, attrs: { calculate: null, relevant: REL, required: 'true()' } },
+        ]);
+        expect(result.passed).to.equal(false);
+        const calc = result.checks.find((c) => c.attr === 'calculate');
+        expect(calc?.passed).to.equal(false);
+        expect(calc?.expected).to.equal(null);
+        expect(calc?.actual).to.equal('member_filter = 2');
+        expect(calc?.note).to.match(/should be absent/);
+        // the value attrs still pass — the failure is isolated to the extra calculate
+        expect(result.checks.filter((c) => c.attr !== 'calculate').every((c) => c.passed)).to.equal(true);
+      });
+
+      it('ABSENCE (null): the removed calculate reads GREEN once absent', () => {
+        const result = verifyFormBinds(CALC_ABSENT, [
+          { nodeset: EDU, attrs: { calculate: null, relevant: REL, required: 'true()' } },
+        ]);
+        expect(result.passed).to.equal(true);
+        const calc = result.checks.find((c) => c.attr === 'calculate');
+        expect(calc?.passed).to.equal(true);
+        expect(calc?.actual).to.equal(undefined); // absent → no actual recorded
+      });
+
+      it('an absence assertion on a MISSING bind is still "bind not found" (wiring guard)', () => {
+        const result = verifyFormBinds(CALC_ABSENT, [
+          { nodeset: '/data/f_client/ghost', attrs: { calculate: null } },
+        ]);
+        expect(result.passed).to.equal(false);
+        expect(result.checks[0].note).to.match(/bind not found/);
+      });
+    });
+  });
+
+  describe('extractBindAttr', () => {
+    const XML =
+      '<model><bind nodeset="/data/x" type="select1" required="true()" ' +
+      'calculate="a + b" relevant="c = 1"/></model>';
+    it('reads an arbitrary attribute by name', () => {
+      expect(extractBindAttr(XML, '/data/x', 'calculate')).to.equal('a + b');
+      expect(extractBindAttr(XML, '/data/x', 'required')).to.equal('true()');
+      expect(extractBindAttr(XML, '/data/x', 'relevant')).to.equal('c = 1');
+    });
+    it('returns undefined for an attr the bind lacks, and for a missing bind', () => {
+      expect(extractBindAttr(XML, '/data/x', 'constraint')).to.equal(undefined);
+      expect(extractBindAttr(XML, '/data/nope', 'calculate')).to.equal(undefined);
+    });
+    it('extractBindRelevant is a thin wrapper over extractBindAttr(…, "relevant")', () => {
+      expect(extractBindRelevant(XML, '/data/x')).to.equal(extractBindAttr(XML, '/data/x', 'relevant'));
     });
   });
 

@@ -673,7 +673,14 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     xmlPath: '/tmp/sandbox/forms/app/pregnancy_home_visit.xml',
     xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
     xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
-    bindDiff: { nodeset: '/data/danger_signs', before: undefined, after: F7_YES_GATE, siblingsUnchanged: 9 },
+    bindDiff: {
+      nodeset: '/data/danger_signs',
+      before: undefined,
+      after: F7_YES_GATE,
+      attrs: { relevant: F7_YES_GATE },
+      attrsBefore: { relevant: F7_YES_GATE },
+      siblingsUnchanged: 9,
+    },
     sandboxDir: configRoot,
   });
   const f7State = (configRoot: string) => mkDevState({
@@ -757,6 +764,84 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
 
     expect(testGen.calledOnce).to.equal(true);
     expect(out.testGeneration).to.deep.equal(cannedTestGen);
+  });
+
+  // P1: the deterministic harness generator is app-form-hardcoded, so a
+  // converted contact-form fix must SKIP test generation entirely (no broken
+  // deterministic spec, no LLM junk) until P5 lands the contact-form template.
+  const contactFormState = (configRoot: string) => mkDevState({
+    ...baseValidInputFragment,
+    issue: {
+      issue: {
+        ...baseValidInputFragment.issue.issue,
+        technical_context: {
+          domain: 'contacts',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'contact-form',
+          artifactName: 'person-create',
+        },
+      },
+    } as DevelopmentState['issue'],
+    options: { chtCorePath: configRoot, previewMode: true },
+    codeGeneration: mkCodeGenResult([mkFile(F7_DESCRIPTOR_PATH, f7DescriptorJson, 'config')]),
+    xlsformApply: f7ApplyResult(configRoot) as unknown as DevelopmentState['xlsformApply'],
+  });
+
+  it('P1: a converted contact-form fix SKIPS test generation (no harness spec, no LLM agent)', async () => {
+    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-p1-'));
+    try {
+      const testGen = sinon.stub().resolves(cannedTestGen);
+      const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+      const out = await supervisor.testGenerationNode(contactFormState(configRoot));
+
+      // Neither the LLM agent nor the app-form harness generator ran.
+      expect(testGen.called).to.equal(false);
+      expect(out.currentPhase).to.equal('complete');
+      const result = out.testGeneration as { files: GeneratedFile[] };
+      expect(result.files).to.have.length(0);
+    } finally {
+      await fs.rm(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  // P2 (review hardening): the relevant-centric deterministic spec only proves a
+  // regression when the fix CHANGED the relevant. An app-form fix whose bindDiff
+  // keeps relevant identical (e.g. a removed calculate on a bind that keeps its
+  // gate) must SKIP spec-gen — the generated spec would pass on the buggy config
+  // too (a false-green regression spec).
+  it('P2: an app-form fix with an UNCHANGED relevant SKIPS deterministic spec-gen', async () => {
+    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-p2-'));
+    try {
+      const testGen = sinon.stub().resolves(cannedTestGen);
+      const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+      const attrsOnlyApply = {
+        ...f7ApplyResult(configRoot),
+        bindDiff: {
+          nodeset: '/data/f_client/edu',
+          before: F7_YES_GATE,
+          after: F7_YES_GATE, // unchanged — the fix removed a calculate instead
+          attrs: { calculate: null, relevant: F7_YES_GATE },
+          attrsBefore: { calculate: 'member_filter = 2', relevant: F7_YES_GATE },
+          siblingsUnchanged: 3,
+        },
+      };
+      const state = mkDevState({
+        ...baseValidInputFragment,
+        options: { chtCorePath: configRoot, previewMode: true },
+        codeGeneration: mkCodeGenResult([mkFile(F7_DESCRIPTOR_PATH, f7DescriptorJson, 'config')]),
+        xlsformApply: attrsOnlyApply as unknown as DevelopmentState['xlsformApply'],
+      });
+
+      const out = await supervisor.testGenerationNode(state);
+
+      expect(testGen.called).to.equal(false);
+      const result = out.testGeneration as { files: GeneratedFile[] };
+      expect(result.files).to.have.length(0);
+    } finally {
+      await fs.rm(configRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -931,7 +1016,14 @@ describe('DevelopmentSupervisor iteration economics (F8, graph integration)', ()
       xmlPath: '/tmp/sandbox/forms/app/pregnancy_home_visit.xml',
       xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
       xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
-      bindDiff: { nodeset: '/data/danger_signs', before: undefined, after: YES_GATE, siblingsUnchanged: 9 },
+      bindDiff: {
+        nodeset: '/data/danger_signs',
+        before: undefined,
+        after: YES_GATE,
+        attrs: { relevant: YES_GATE },
+        attrsBefore: { relevant: YES_GATE },
+        siblingsUnchanged: 9,
+      },
       sandboxDir: '/tmp/sandbox',
     },
   };
@@ -1000,7 +1092,13 @@ describe('DevelopmentSupervisor xlsform staging (mission 05)', () => {
       xmlPath: path.join(srcDir, 'regenerated.xml'),
       xlsxRelPath: 'forms/app/pregnancy_home_visit.xlsx',
       xmlRelPath: 'forms/app/pregnancy_home_visit.xml',
-      bindDiff: { nodeset: '/data/danger_signs', after: YES_GATE, siblingsUnchanged: 2 },
+      bindDiff: {
+        nodeset: '/data/danger_signs',
+        after: YES_GATE,
+        attrs: { relevant: YES_GATE },
+        attrsBefore: { relevant: YES_GATE },
+        siblingsUnchanged: 2,
+      },
       sandboxDir: srcDir,
     },
   });

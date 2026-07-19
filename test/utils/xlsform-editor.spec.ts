@@ -10,7 +10,12 @@ import {
   XlsformEdit,
   XlsformEditError,
 } from '../../src/utils/xlsform-editor';
-import { extractBindRelevant, extractTopLevelGroupBinds } from '../../src/utils/xform-inspect';
+import {
+  extractBindAttr,
+  extractBindRelevant,
+  extractTopLevelGroupBinds,
+  verifyFormBinds,
+} from '../../src/utils/xform-inspect';
 import { canOfflineConvert, offlineConvertForm, stageProject } from '../helpers/offline-convert';
 
 const REPO_FIXTURE = path.resolve('demo/config-pnc-demo');
@@ -184,6 +189,109 @@ describe('applyXlsformEdits — matcher semantics', () => {
     expect(applied[0].groupPath).to.deep.equal(['g']);
   });
 
+  // --- P2: clear semantics + the calculate-type guardrail --------------------
+
+  it('clear:true removes the cell (value = null) — the attribute-dropping primitive', async () => {
+    const file = await writeSurvey([
+      ['type', 'name', 'relevant', 'calculation'],
+      ['select_one x', 'edu', "../hh = 'at_school'", 'member_filter = 2'],
+    ]);
+    const applied = await applyXlsformEdits(file, [
+      { sheet: 'survey', match: { column: 'name', value: 'edu' }, set: { column: 'calculation', clear: true } },
+    ]);
+    expect(applied).to.have.length(1);
+    expect(applied[0].setColumn).to.equal('calculation');
+    expect(applied[0].previousValue).to.equal('member_filter = 2');
+    expect(applied[0].newValue).to.equal(''); // reported empty
+    // The cell is a TRUE removal — reopened it reads back empty (null).
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(file);
+    const cell = wb.getWorksheet('survey')!.getRow(2).getCell(4);
+    expect(cellText(cell.value)).to.equal('');
+    // relevant (untouched) survives.
+    expect(await readCell(file, 'survey', 2, 3)).to.equal("../hh = 'at_school'");
+  });
+
+  it('GUARDRAIL: clearing the calculation column on a calculate-type row fails BEFORE writing', async () => {
+    const file = await writeSurvey([
+      ['type', 'name', 'calculation'],
+      ['calculate', 'computed', 'today()'],
+    ]);
+    const before = await snapshotSurvey(file);
+    try {
+      await applyXlsformEdits(file, [
+        { sheet: 'survey', match: { column: 'name', value: 'computed' }, set: { column: 'calculation', clear: true } },
+      ]);
+      expect.fail('expected a calculate-required guardrail error');
+    } catch (err) {
+      expect(err).to.be.instanceOf(XlsformEditError);
+      expect((err as XlsformEditError).code).to.equal('calculate-required');
+      expect((err as XlsformEditError).message).to.match(/type is "calculate"/);
+      expect((err as XlsformEditError).message).to.match(/computed/); // names the row's match value
+    }
+    // fail-fast: the workbook was never written.
+    expect(await snapshotSurvey(file)).to.deep.equal(before);
+  });
+
+  it('GUARDRAIL also fires for an EMPTY-STRING value on a calculate-type calculation cell', async () => {
+    const file = await writeSurvey([
+      ['type', 'name', 'calculation'],
+      ['calculate', 'computed', 'today()'],
+    ]);
+    try {
+      await applyXlsformEdits(file, [
+        { sheet: 'survey', match: { column: 'name', value: 'computed' }, set: { column: 'calculation', value: '' } },
+      ]);
+      expect.fail('expected a calculate-required guardrail error for value: ""');
+    } catch (err) {
+      expect((err as XlsformEditError).code).to.equal('calculate-required');
+    }
+  });
+
+  it('GUARDRAIL does NOT fire when clearing a NON-calculation column on a calculate row', async () => {
+    // Clearing `relevant` (not `calculation`) on a calculate row is fine.
+    const file = await writeSurvey([
+      ['type', 'name', 'relevant', 'calculation'],
+      ['calculate', 'computed', "x = 'y'", 'today()'],
+    ]);
+    const applied = await applyXlsformEdits(file, [
+      { sheet: 'survey', match: { column: 'name', value: 'computed' }, set: { column: 'relevant', clear: true } },
+    ]);
+    expect(applied).to.have.length(1);
+    expect(await readCell(file, 'survey', 2, 3)).to.equal(''); // relevant cleared
+    expect(await readCell(file, 'survey', 2, 4)).to.equal('today()'); // calculation intact
+  });
+
+  it('GUARDRAIL does NOT fire when clearing calculation on a NON-calculate row (a select_one)', async () => {
+    // The M8 shape: a select_one carrying a spurious calculate — clearing it is allowed.
+    const file = await writeSurvey([
+      ['type', 'name', 'calculation'],
+      ['select_one edu', 'edu', 'member_filter = 2'],
+    ]);
+    const applied = await applyXlsformEdits(file, [
+      { sheet: 'survey', match: { column: 'name', value: 'edu' }, set: { column: 'calculation', clear: true } },
+    ]);
+    expect(applied).to.have.length(1);
+    expect(await readCell(file, 'survey', 2, 3)).to.equal('');
+  });
+
+  it('rejects a set with BOTH value and clear, and one with NEITHER (invalid-set)', async () => {
+    const file = await writeSurvey([
+      ['type', 'name', 'relevant'],
+      ['text', 'x', 'OLD'],
+    ]);
+    const both = { sheet: 'survey', match: { column: 'name', value: 'x' }, set: { column: 'relevant', value: 'A', clear: true } } as unknown as XlsformEdit;
+    const neither = { sheet: 'survey', match: { column: 'name', value: 'x' }, set: { column: 'relevant' } } as unknown as XlsformEdit;
+    for (const edit of [both, neither]) {
+      try {
+        await applyXlsformEdits(file, [edit]);
+        expect.fail('expected invalid-set');
+      } catch (err) {
+        expect((err as XlsformEditError).code).to.equal('invalid-set');
+      }
+    }
+  });
+
   it('errors on a missing sheet, match column, and set column', async () => {
     const file = await writeSurvey([
       ['type', 'name', 'relevant'],
@@ -311,5 +419,100 @@ withConvert('P1 fidelity — convert oracle (planted pregnancy_home_visit.xlsx)'
     expect(line).to.contain(`nodeset="${DANGER_NODESET}"`);
     expect(line).to.contain(YES_GATE);
     expect(line).to.not.contain('miscarriage');
+  });
+});
+
+// --- P2 M8-shaped end-to-end: remove a spurious `calculate` via clear ---------
+//
+// The M8 bug: a required, user-answerable select ALSO carries a `calculate` that
+// overwrites the user's selection. The fix removes ONLY the calculate, keeping
+// `relevant` + `required`. There is no select_one-with-calculate in the CI
+// fixture, so this plants one (via the editor — the same primitive the applier
+// uses) on a real select_one row (g_age_correct: required + relevant), converts
+// to reproduce the buggy compiled bind (RED via the P2 attrs oracle), then
+// applies `set.clear:true` on `calculation` and re-converts to prove the
+// calculate is GONE while relevant/required are byte-unchanged (GREEN). This is
+// the editor+real-convert+inspector path the M8 descriptor drives end to end.
+const EDU_NODESET = '/data/pregnancy_summary/g_age_correct';
+const EDU_ROW_NAME = 'g_age_correct';
+const EDU_RELEVANT = "selected(../visit_option, 'yes')";
+const SPURIOUS_CALC = 'concat("x", "y")';
+
+withConvert('P2 M8 e2e — remove a spurious calculate (clear) via convert', function () {
+  this.timeout(240000);
+  let buggyXml: string;
+  let fixedXml: string;
+  let buggyDir: string;
+  let fixedDir: string;
+
+  before(async function () {
+    this.timeout(240000);
+    // 1. Plant the M8 bug: write a spurious calculate onto a select_one row.
+    buggyDir = stageProject(REPO_FIXTURE);
+    const buggyXlsx = path.join(buggyDir, 'forms', 'app', `${FORM}.xlsx`);
+    await applyXlsformEdits(buggyXlsx, [
+      { sheet: 'survey', match: { column: 'name', value: EDU_ROW_NAME }, set: { column: 'calculation', value: SPURIOUS_CALC } },
+    ]);
+    const buggyRun = offlineConvertForm(buggyDir, FORM);
+    if (buggyRun.status !== 0) {
+      throw new Error(`buggy convert failed (${buggyRun.status}): ${buggyRun.stderr}`);
+    }
+    buggyXml = fs.readFileSync(path.join(buggyDir, FORM_XML_REL), 'utf-8');
+
+    // 2. Apply the M8 fix on top of the buggy workbook: clear the calculate.
+    fixedDir = stageProject(buggyDir); // copy the BUGGY project (calculate present)
+    const fixedXlsx = path.join(fixedDir, 'forms', 'app', `${FORM}.xlsx`);
+    await applyXlsformEdits(fixedXlsx, [
+      { sheet: 'survey', match: { column: 'name', value: EDU_ROW_NAME }, set: { column: 'calculation', clear: true } },
+    ]);
+    const fixedRun = offlineConvertForm(fixedDir, FORM);
+    if (fixedRun.status !== 0) {
+      throw new Error(`fixed convert failed (${fixedRun.status}): ${fixedRun.stderr}`);
+    }
+    fixedXml = fs.readFileSync(path.join(fixedDir, FORM_XML_REL), 'utf-8');
+  });
+
+  after(() => {
+    for (const dir of [buggyDir, fixedDir]) {
+      if (dir) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('planting the calculate produces the buggy compiled bind (calculate present)', () => {
+    expect(extractBindAttr(buggyXml, EDU_NODESET, 'calculate')).to.equal(SPURIOUS_CALC);
+    // relevant + required are on the bind too (the M8 shape).
+    expect(extractBindAttr(buggyXml, EDU_NODESET, 'relevant')).to.equal(EDU_RELEVANT);
+    expect(extractBindAttr(buggyXml, EDU_NODESET, 'required')).to.equal('true()');
+  });
+
+  it('the M8 attrs oracle reads RED against the buggy bind (calculate must be absent)', () => {
+    const red = verifyFormBinds(buggyXml, [
+      { nodeset: EDU_NODESET, attrs: { calculate: null, relevant: EDU_RELEVANT, required: 'true()' } },
+    ]);
+    expect(red.passed).to.equal(false);
+    const calc = red.checks.find((c) => c.attr === 'calculate');
+    expect(calc?.passed).to.equal(false);
+    expect(calc?.actual).to.equal(SPURIOUS_CALC);
+    expect(calc?.note).to.match(/should be absent/);
+    // relevant + required already correct — the failure is isolated to calculate.
+    expect(red.checks.filter((c) => c.attr !== 'calculate').every((c) => c.passed)).to.equal(true);
+  });
+
+  it('clearing the calculate drops the attribute from the compiled bind', () => {
+    expect(extractBindAttr(fixedXml, EDU_NODESET, 'calculate')).to.equal(undefined);
+    // No empty-attribute residue — the cleared cell leaves calculate="" nowhere.
+    const bindTag = /<bind\b[^>]*nodeset="\/data\/pregnancy_summary\/g_age_correct"[^>]*>/.exec(fixedXml);
+    expect(bindTag).to.not.equal(null);
+    expect(bindTag![0]).to.not.contain('calculate=');
+  });
+
+  it('the M8 attrs oracle reads GREEN once the calculate is removed (relevant/required intact)', () => {
+    const green = verifyFormBinds(fixedXml, [
+      { nodeset: EDU_NODESET, attrs: { calculate: null, relevant: EDU_RELEVANT, required: 'true()' } },
+    ]);
+    expect(green.passed).to.equal(true);
+    expect(green.checks.every((c) => c.passed)).to.equal(true);
   });
 });

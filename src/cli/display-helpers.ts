@@ -55,15 +55,21 @@ export const renderCrossFileIssueBanner = (issues: CrossFileIssue[] | undefined)
  */
 export const renderXlsformBindDiffBanner = (apply: XlsformApplyResult | undefined): string => {
   if (!apply) return '';
-  const { bindDiff, form } = apply;
+  const { bindDiff, form, xlsxRelPath } = apply;
+  // P2: render the full per-attribute before→after (value / '(absent)') so an
+  // attrs-only fix (no `relevant` change, e.g. a removed `calculate`) shows its
+  // real delta rather than an empty relevant line.
+  const show = (v: string | null | undefined): string => (v === null || v === undefined ? '(absent)' : v);
+  const attrLines = Object.keys(bindDiff.attrs).map(
+    (attr) => `  ${attr}: ${show(bindDiff.attrsBefore[attr])} → ${show(bindDiff.attrs[attr])}`,
+  );
   return [
     '',
     '🔧 XLSFORM FIX — verified against the OFFLINE conversion',
     '─'.repeat(70),
-    `form:   ${form}  (source of truth: forms/app/${form}.xlsx)`,
+    `form:   ${form}  (source of truth: ${xlsxRelPath})`,
     `bind:   ${bindDiff.nodeset}`,
-    `  before: ${bindDiff.before ?? '(none)'}`,
-    `  after:  ${bindDiff.after}`,
+    ...attrLines,
     `${bindDiff.siblingsUnchanged} sibling top-level group bind(s) unchanged.`,
     'Trust this bind diff over the positional file diff below (the XML is a full rewrite).',
     '─'.repeat(70),

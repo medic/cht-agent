@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { buildPlanPrompt } from '../../../../src/layers/code-gen/lib/prompts';
+import { buildPlanPrompt, buildXlsformFixBrief } from '../../../../src/layers/code-gen/lib/prompts';
 import { CodeGenModuleInput } from '../../../../src/layers/code-gen/interface';
 import { FileManifest } from '../../../../src/layers/code-gen/lib/file-manifest';
 import { CodeContextFindings } from '../../../../src/types';
@@ -176,5 +176,65 @@ describe('buildPlanPrompt — cht-conf FORM fix variant (mission 05)', () => {
 
   it('omits the FEEDBACK section from the plan prompt on a first attempt', () => {
     expect(buildPlanPrompt(formInput(), emptyManifest)).to.not.include('=== FEEDBACK');
+  });
+});
+
+describe('buildXlsformFixBrief — artifact-aware paths (P1)', () => {
+  const briefInput = (configArtifact: string, artifactName: string): CodeGenModuleInput =>
+    baseInput({
+      ticket: {
+        issue: {
+          title: 'Form bug',
+          type: 'bug',
+          priority: 'high',
+          description: 'A form bind is wrong.',
+          technical_context: {
+            domain: 'forms-and-reports',
+            components: [],
+            layer: 'cht-conf',
+            configArtifact: configArtifact as never,
+            artifactName,
+          },
+          requirements: ['fix it'],
+          acceptance_criteria: ['fixed'],
+          constraints: [],
+        },
+      },
+    });
+
+  it('uses the forms/app layout and convert-app-forms for a `form` ticket', () => {
+    const brief = buildXlsformFixBrief(briefInput('form', 'pregnancy_home_visit'));
+    expect(brief).to.include('forms/app/pregnancy_home_visit.xlsx');
+    expect(brief).to.include('forms/app/pregnancy_home_visit.xml');
+    expect(brief).to.include('convert-app-forms');
+    expect(brief).to.not.include('forms/contact/');
+    expect(brief).to.not.include('convert-contact-forms');
+  });
+
+  it('uses the forms/contact layout and convert-contact-forms for a `contact-form` ticket', () => {
+    const brief = buildXlsformFixBrief(briefInput('contact-form', 'e_household-create'));
+    expect(brief).to.include('forms/contact/e_household-create.xlsx');
+    expect(brief).to.include('forms/contact/e_household-create.xml');
+    expect(brief).to.include('convert-contact-forms');
+    expect(brief).to.not.include('forms/app/');
+    // the "form" field in the descriptor example still carries the base name
+    expect(brief).to.include('"form": "e_household-create"');
+  });
+
+  // P2: the brief must teach the generalized descriptor contract to the code-gen CLI.
+  it('documents the P2 descriptor contract (attrs incl. null, set.clear, guardrail, legacy)', () => {
+    const brief = buildXlsformFixBrief(briefInput('form', 'pregnancy_home_visit'));
+    // attrs oracle with null-means-absent
+    expect(brief).to.include('expect.attrs');
+    expect(brief).to.match(/null.*must NOT carry|ABSENCE assertion/);
+    expect(brief).to.include('"calculate": null');
+    // set.clear:true
+    expect(brief).to.match(/"clear": true/);
+    expect(brief).to.match(/EXACTLY one of.*value.*clear/);
+    // the calculate-type guardrail warning
+    expect(brief).to.match(/GUARDRAIL/);
+    expect(brief).to.match(/calculate-type row|type is `calculate`|calculation.*calculate/);
+    // legacy relevant still accepted
+    expect(brief).to.match(/[Ll]egacy.*relevant|relevant.*normalize/);
   });
 });

@@ -37,12 +37,23 @@ export interface XlsformEditMatch {
   groupPath?: string[];
 }
 
-/** The cell mutation a descriptor edit performs. */
+/**
+ * The cell mutation a descriptor edit performs. EXACTLY one of `value` / `clear`
+ * is set (the schema enforces this; the applier defends it):
+ *   - `value` → write the string verbatim (XLSForm expression syntax);
+ *   - `clear: true` → true cell removal (`cell.value = null`), which cleanly
+ *     drops the corresponding bind attribute from the compiled XForm (empirically
+ *     byte-identical to setting the cell to '' against cht-conf 3.21.5 +
+ *     pyxform-medic — no `attr=""` residue). This is the M8 "remove a spurious
+ *     `calculate`" primitive.
+ */
 export interface XlsformCellSet {
   /** Header name of the column to write (e.g. `relevant`). */
   column: string;
-  /** New cell value (XLSForm expression syntax). Written verbatim. */
-  value: string;
+  /** New cell value (XLSForm expression syntax). Written verbatim. Omit when clearing. */
+  value?: string;
+  /** When true, remove the cell (drops the bind attribute). Mutually exclusive with `value`. */
+  clear?: boolean;
 }
 
 /** A single surgical edit: locate one row on a sheet, set one cell. */
@@ -74,7 +85,9 @@ export type XlsformEditErrorCode =
   | 'match-column-not-found'
   | 'set-column-not-found'
   | 'no-match'
-  | 'ambiguous-match';
+  | 'ambiguous-match'
+  | 'invalid-set'
+  | 'calculate-required';
 
 /** Typed failure so the orchestrator can key refinement feedback precisely. */
 export class XlsformEditError extends Error {
@@ -255,10 +268,48 @@ export const applyXlsformEdits = async (
       );
     }
 
+    // Exactly one of value/clear must be present (the schema enforces this; the
+    // applier defends it so a malformed in-memory descriptor cannot slip through).
+    const clearing = edit.set.clear === true;
+    if (clearing === (edit.set.value !== undefined)) {
+      throw new XlsformEditError(
+        'invalid-set',
+        `Edit on "${edit.sheet}" for ${edit.match.column}="${edit.match.value}" must set exactly one of ` +
+          `set.value or set.clear:true (got value=${JSON.stringify(edit.set.value)}, clear=${edit.set.clear})`
+      );
+    }
+
     const { rowNumber, groupPath } = candidates[0];
-    const cell = sheet.getRow(rowNumber).getCell(setCol);
+    const row = sheet.getRow(rowNumber);
+
+    // GUARDRAIL: emptying the `calculation` column on a `calculate`-type row makes
+    // pyxform hard-fail the ENTIRE convert (`PyXFormError: Missing calculation`),
+    // for both '' and a removed cell. Detect it BEFORE writing and fail fast with
+    // a descriptive error, so a bad LLM descriptor costs one informative retry
+    // instead of a cryptic converter error. Applies to a clear AND to an empty-
+    // string value on that column.
+    const emptying = clearing || edit.set.value === '';
+    if (emptying && typeCol !== undefined) {
+      const rowType = normalizeType(cellText(row.getCell(typeCol).value));
+      if (rowType === 'calculate' && edit.set.column === 'calculation') {
+        throw new XlsformEditError(
+          'calculate-required',
+          `Refusing to empty the "calculation" column on row ${rowNumber} ` +
+            `(${edit.match.column}="${edit.match.value}"): its type is "calculate", so pyxform requires a ` +
+            `calculation and would hard-fail the whole convert ("Missing calculation"). To remove the ` +
+            `computed value, change the row's type away from "calculate" (e.g. to a select/text) as part ` +
+            `of the fix, or set a valid calculation — do not clear it on a calculate row.`
+        );
+      }
+    }
+
+    const cell = row.getCell(setCol);
     const previousValue = cellText(cell.value);
-    cell.value = edit.set.value;
+    // A cleared cell is a TRUE removal (cell.value = null) — empirically byte-
+    // identical to '' through the converter but with no residue. A value edit
+    // writes the string verbatim.
+    cell.value = clearing ? null : (edit.set.value as string);
+    const newValue = clearing ? '' : (edit.set.value as string);
     applied.push({
       sheet: edit.sheet,
       rowNumber,
@@ -268,7 +319,7 @@ export const applyXlsformEdits = async (
       groupPath,
       setColumn: edit.set.column,
       previousValue,
-      newValue: edit.set.value,
+      newValue,
     });
   }
 

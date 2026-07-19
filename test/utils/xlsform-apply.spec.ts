@@ -16,7 +16,7 @@ const descriptor = (overrides: Partial<XlsformFixDescriptor> = {}): XlsformFixDe
   edits: [
     { sheet: 'survey', match: { column: 'name', value: 'danger_signs' }, set: { column: 'relevant', value: YES_GATE } },
   ],
-  expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: true },
+  expect: { nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE }, siblingsUnchanged: true },
   rationale: 'Restore the yes-only gate.',
   ...overrides,
 });
@@ -211,6 +211,10 @@ withConvert('applyXlsformFixToProject (mission 05, self-skips without cht)', fun
     cleanups.push(outcome.result.sandboxDir);
     expect(outcome.result.bindDiff.before).to.equal(PLANTED_GATE);
     expect(outcome.result.bindDiff.after).to.equal(YES_GATE);
+    // P2 (review): the per-attribute maps are populated on a passing apply —
+    // attrs carries the asserted post-fix values, attrsBefore the baseline's.
+    expect(outcome.result.bindDiff.attrs).to.deep.equal({ relevant: YES_GATE });
+    expect(outcome.result.bindDiff.attrsBefore).to.deep.equal({ relevant: PLANTED_GATE });
     expect(outcome.result.bindDiff.siblingsUnchanged).to.be.greaterThan(0);
     expect(outcome.appliedEdits).to.have.length(1);
     expect(outcome.appliedEdits[0].cellAddress).to.equal('K153');
@@ -224,12 +228,13 @@ withConvert('applyXlsformFixToProject (mission 05, self-skips without cht)', fun
     expect(outcome.result.sandboxDir).to.not.equal(CONFIG);
   });
 
-  it('fails (and cleans up) when the converted bind does not match expect.relevant', async () => {
-    const d = descriptor({ expect: { nodeset: '/data/danger_signs', relevant: 'WRONG()', siblingsUnchanged: true } });
+  it('fails (and cleans up) when the converted bind does not match expect.attrs (P2)', async () => {
+    const d = descriptor({ expect: { nodeset: '/data/danger_signs', attrs: { relevant: 'WRONG()' }, siblingsUnchanged: true } });
     const outcome = await applyXlsformFixToProject(d, CONFIG);
     expect(outcome.ok).to.equal(false);
     if (!outcome.ok) {
-      expect(outcome.error).to.match(/converted to .* but expect\.relevant/);
+      // P2: the assertion is per-attribute now — the message names the attr.
+      expect(outcome.error).to.match(/converted relevant=.* but expect\.attrs\.relevant/);
     }
   });
 
@@ -245,22 +250,23 @@ withConvert('applyXlsformFixToProject (mission 05, self-skips without cht)', fun
   });
 
   it('fails when the expected bind nodeset is absent from the converted XML', async () => {
-    const d = descriptor({ expect: { nodeset: '/data/does_not_exist', relevant: YES_GATE } });
+    const d = descriptor({ expect: { nodeset: '/data/does_not_exist', attrs: { relevant: YES_GATE } } });
     const outcome = await applyXlsformFixToProject(d, CONFIG);
     expect(outcome.ok).to.equal(false);
     if (!outcome.ok) {
-      expect(outcome.error).to.match(/not present in the regenerated XML/);
+      // P2: a value expectation on a missing bind reads '(none)' for that attr.
+      expect(outcome.error).to.match(/no relevant attribute \(actual "\(none\)"\) but expect\.attrs\.relevant/);
     }
   });
 
-  it('passes step-5a when expect.relevant differs from the converted value only in whitespace', async () => {
+  it('passes step-5a when expect.attrs.relevant differs from the converted value only in whitespace', async () => {
     // The converter trims/normalizes whitespace, so a leading space and internal
-    // double-spaces written into expect.relevant must not fail the byte-exact
-    // check (F1). The edit still writes the clean YES_GATE into the cell.
+    // double-spaces written into expect.attrs.relevant must not fail the check
+    // (F1). The edit still writes the clean YES_GATE into the cell.
     const spacedExpect = `  ${YES_GATE.replace(/ /g, '  ')}  `;
     expect(spacedExpect).to.not.equal(YES_GATE); // proves the values differ byte-for-byte
     const d = descriptor({
-      expect: { nodeset: '/data/danger_signs', relevant: spacedExpect, siblingsUnchanged: true },
+      expect: { nodeset: '/data/danger_signs', attrs: { relevant: spacedExpect }, siblingsUnchanged: true },
     });
     const outcome = await applyXlsformFixToProject(d, CONFIG);
     expect(outcome.ok, outcome.ok ? '' : outcome.error).to.equal(true);
@@ -272,12 +278,102 @@ withConvert('applyXlsformFixToProject (mission 05, self-skips without cht)', fun
   });
 
   it('reports siblingsUnchanged: 0 when the invariance check is disabled (honest count)', async () => {
-    const d = descriptor({ expect: { nodeset: '/data/danger_signs', relevant: YES_GATE, siblingsUnchanged: false } });
+    const d = descriptor({ expect: { nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE }, siblingsUnchanged: false } });
     const outcome = await applyXlsformFixToProject(d, CONFIG);
     expect(outcome.ok, outcome.ok ? '' : outcome.error).to.equal(true);
     if (outcome.ok) {
       cleanups.push(outcome.result.sandboxDir);
       expect(outcome.result.bindDiff.siblingsUnchanged).to.equal(0);
+    }
+  });
+
+  // P2 GUARDRAIL (apply level): clearing the calculation on a real calculate-type
+  // row (patient_age_in_years) fails fast with the descriptive guardrail error;
+  // the post-edit convert is never reached (the edit step throws before it), so a
+  // bad descriptor costs one informative retry, not a cryptic PyXFormError.
+  it('GUARDRAIL: clearing calculation on a calculate-type row fails before the edit-convert', async () => {
+    const d = descriptor({
+      edits: [
+        { sheet: 'survey', match: { column: 'name', value: 'patient_age_in_years' }, set: { column: 'calculation', clear: true } },
+      ],
+      expect: { nodeset: '/data/patient_age_in_years', attrs: { calculate: null } },
+    });
+    const outcome = await applyXlsformFixToProject(d, CONFIG);
+    expect(outcome.ok).to.equal(false);
+    if (!outcome.ok) {
+      // Wrapped editor error — code + the descriptive reason, naming the row.
+      expect(outcome.error).to.match(/workbook edit failed \(calculate-required\)/);
+      expect(outcome.error).to.match(/type is "calculate"/);
+      expect(outcome.error).to.match(/patient_age_in_years/);
+      // it never got to the assert step (no "converted" / "expect.attrs" wording).
+      expect(outcome.error).to.not.match(/expect\.attrs/);
+    }
+  });
+});
+
+// P1: the same deterministic apply→convert→assert core over a CONTACT form,
+// exercising the forms/contact layout (resolver) and the contact-forms convert
+// bucket end to end against the planted person-create contact-form fixture.
+const CONTACT_FORM = 'person-create';
+const CONTACT_NODESET = '/data/person/role_other';
+// The unedited fixture bind converts to this (baseline).
+const CONTACT_BASE = "selected(  /data/person/role ,'other')";
+
+const contactDescriptor = (overrides: Partial<XlsformFixDescriptor> = {}): XlsformFixDescriptor => ({
+  version: 1,
+  form: CONTACT_FORM,
+  edits: [
+    { sheet: 'survey', match: { column: 'name', value: 'role_other' }, set: { column: 'relevant', value: 'false()' } },
+  ],
+  expect: { nodeset: CONTACT_NODESET, attrs: { relevant: 'false()' }, siblingsUnchanged: true },
+  rationale: 'Gate the role_other free-text field off (contact-form apply path test).',
+  ...overrides,
+});
+
+withConvert('applyXlsformFixToProject — contact-form path (P1)', function () {
+  this.timeout(180000);
+  const cleanups: string[] = [];
+
+  after(() => {
+    for (const dir of cleanups) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('applies + converts (contact-forms bucket) + asserts, staging forms/contact paths', async () => {
+    const outcome = await applyXlsformFixToProject(contactDescriptor(), CONFIG, {
+      configArtifact: 'contact-form',
+    });
+    expect(outcome.ok, outcome.ok ? '' : outcome.error).to.equal(true);
+    if (!outcome.ok) {
+      return;
+    }
+    cleanups.push(outcome.result.sandboxDir);
+    // The resolver put both artifacts under forms/contact, not forms/app.
+    expect(outcome.result.xlsxRelPath).to.equal(`forms/contact/${CONTACT_FORM}.xlsx`);
+    expect(outcome.result.xmlRelPath).to.equal(`forms/contact/${CONTACT_FORM}.xml`);
+    expect(outcome.result.xlsxPath).to.contain(`/forms/contact/${CONTACT_FORM}.xlsx`);
+    expect(outcome.result.xmlPath).to.contain(`/forms/contact/${CONTACT_FORM}.xml`);
+    // The contact-forms convert bucket produced the corrected bind (read-back).
+    expect(outcome.result.bindDiff.nodeset).to.equal(CONTACT_NODESET);
+    expect(outcome.result.bindDiff.before).to.equal(CONTACT_BASE);
+    expect(outcome.result.bindDiff.after).to.equal('false()');
+    expect(outcome.result.bindDiff.siblingsUnchanged).to.be.greaterThan(0);
+    expect(outcome.appliedEdits).to.have.length(1);
+    const xml = fs.readFileSync(outcome.result.xmlPath, 'utf-8');
+    expect(xml).to.contain(`nodeset="${CONTACT_NODESET}"`);
+    expect(xml).to.contain('relevant="false()"');
+    // the real fixture was never touched
+    expect(outcome.result.sandboxDir).to.not.equal(CONFIG);
+  });
+
+  it('defaults to the forms/app layout when configArtifact is omitted (back-compat)', async () => {
+    // Omitting the opt must NOT reach the contact form — it looks under forms/app
+    // and fails to find the workbook there, proving the default is `form`.
+    const outcome = await applyXlsformFixToProject(contactDescriptor(), CONFIG);
+    expect(outcome.ok).to.equal(false);
+    if (!outcome.ok) {
+      expect(outcome.error).to.match(/workbook not found at forms\/app\/person-create\.xlsx/);
     }
   });
 });

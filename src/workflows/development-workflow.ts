@@ -445,8 +445,17 @@ function displayDevelopmentSuccess(
   // (report payload) — the descriptor itself never reaches the partner repo.
   const apply = workflowResult.result?.xlsformApply;
   if (apply) {
-    console.log(`\n🔧 XLSForm fix applied to forms/app/${apply.form}.xlsx + regenerated .xml`);
-    console.log(`   ${apply.bindDiff.nodeset}: ${apply.bindDiff.before ?? '(none)'} → ${apply.bindDiff.after}`);
+    // P1: the workbook may live under forms/app or forms/contact — the apply
+    // result carries the resolved path. P2: render every asserted attribute
+    // (an attrs-only fix, e.g. a removed calculate, has no `relevant` delta).
+    const show = (v: string | null | undefined): string =>
+      v === null || v === undefined ? '(absent)' : v;
+    console.log(`\n🔧 XLSForm fix applied to ${apply.xlsxRelPath} + regenerated .xml`);
+    for (const attr of Object.keys(apply.bindDiff.attrs)) {
+      console.log(
+        `   ${apply.bindDiff.nodeset} ${attr}: ${show(apply.bindDiff.attrsBefore[attr])} → ${show(apply.bindDiff.attrs[attr])}`,
+      );
+    }
     console.log(`   ${apply.bindDiff.siblingsUnchanged} sibling bind(s) unchanged.`);
   }
   console.log('\n💡 Next Steps:');

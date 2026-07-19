@@ -165,6 +165,11 @@ describe('renderXlsformBindDiffBanner (mission 05)', () => {
       nodeset: '/data/danger_signs',
       before: "selected(../pregnancy_summary/visit_option, 'yes') or selected(../pregnancy_summary/visit_option, 'miscarriage')",
       after: "selected(../pregnancy_summary/visit_option, 'yes')",
+      attrs: { relevant: "selected(../pregnancy_summary/visit_option, 'yes')" },
+      attrsBefore: {
+        relevant:
+          "selected(../pregnancy_summary/visit_option, 'yes') or selected(../pregnancy_summary/visit_option, 'miscarriage')",
+      },
       siblingsUnchanged: 2,
     },
     sandboxDir: '/tmp/s',
@@ -177,6 +182,43 @@ describe('renderXlsformBindDiffBanner (mission 05)', () => {
     expect(banner).to.include("or selected(../pregnancy_summary/visit_option, 'miscarriage')"); // before
     expect(banner).to.include('2 sibling top-level group bind(s) unchanged');
     expect(banner).to.match(/OFFLINE conversion/i);
+  });
+
+  // P2: an attrs-only fix (removed calculate, no relevant change) renders its
+  // real per-attribute delta including the (absent) marker.
+  it('renders a per-attribute delta for an attrs-only (calculate removal) fix', () => {
+    const attrsOnly: XlsformApplyResult = {
+      ...apply,
+      bindDiff: {
+        nodeset: '/data/f_client/edu',
+        before: undefined,
+        after: undefined,
+        attrs: { calculate: null, relevant: "../hh = 'at_school'" },
+        attrsBefore: { calculate: 'member_filter = 2', relevant: "../hh = 'at_school'" },
+        siblingsUnchanged: 3,
+      },
+    };
+    const banner = renderXlsformBindDiffBanner(attrsOnly);
+    expect(banner).to.include('/data/f_client/edu');
+    // calculate: member_filter = 2 → (absent)
+    expect(banner).to.match(/calculate: member_filter = 2 → \(absent\)/);
+    // relevant unchanged, shown value → value
+    expect(banner).to.include("relevant: ../hh = 'at_school' → ../hh = 'at_school'");
+    expect(banner).to.include('3 sibling top-level group bind(s) unchanged');
+  });
+
+  // P1 (review): the source-of-truth line must follow the artifact's directory —
+  // a contact-form fix lives under forms/contact/, not forms/app/.
+  it('renders the contact-form source-of-truth path from the apply result', () => {
+    const contact: XlsformApplyResult = {
+      ...apply,
+      form: 'e_household-create',
+      xlsxRelPath: 'forms/contact/e_household-create.xlsx',
+      xmlRelPath: 'forms/contact/e_household-create.xml',
+    };
+    const banner = renderXlsformBindDiffBanner(contact);
+    expect(banner).to.include('source of truth: forms/contact/e_household-create.xlsx');
+    expect(banner).to.not.include('forms/app/');
   });
 
   it('returns an empty string when there is no XLSForm apply', () => {

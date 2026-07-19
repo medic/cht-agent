@@ -55,7 +55,8 @@
           "set": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["column", "value"],
+            "description": "The cell mutation. Provide EXACTLY one of value or clear.",
+            "oneOf": [{ "required": ["column", "value"] }, { "required": ["column", "clear"] }],
             "properties": {
               "column": {
                 "type": "string",
@@ -64,7 +65,11 @@
               },
               "value": {
                 "type": "string",
-                "description": "New cell value in XLSForm syntax. Written verbatim."
+                "description": "New cell value in XLSForm syntax. Written verbatim. Mutually exclusive with clear."
+              },
+              "clear": {
+                "const": true,
+                "description": "Remove the cell (drops the compiled bind attribute). Mutually exclusive with value. Do NOT clear the calculation column on a calculate-type row — the convert would hard-fail."
               }
             }
           }
@@ -74,17 +79,24 @@
     "expect": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nodeset", "relevant"],
-      "description": "The dev-phase oracle: what the OFFLINE-CONVERTED XML must show. Compared against the real converted output, not the LLM's own edit.",
+      "required": ["nodeset"],
+      "description": "The dev-phase oracle: what the OFFLINE-CONVERTED XML must show. Compared against the real converted output, not the LLM's own edit. Provide `attrs` (preferred) OR the legacy `relevant` shorthand; at least one is required.",
+      "anyOf": [{ "required": ["attrs"] }, { "required": ["relevant"] }],
       "properties": {
         "nodeset": {
           "type": "string",
           "pattern": "^/",
           "description": "Absolute XForm nodeset of the target bind (e.g. /data/danger_signs)."
         },
+        "attrs": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "Per-attribute expectation on the converted bind. Value string = the attribute the compiled bind MUST carry; null = the attribute the compiled bind must NOT carry (absence assertion, e.g. a removed calculate).",
+          "additionalProperties": { "type": ["string", "null"] }
+        },
         "relevant": {
           "type": "string",
-          "description": "The relevant expression the converted bind must carry after the fix."
+          "description": "Legacy shorthand for attrs: {relevant: <expr>}. Still accepted; normalized to attrs internally. Prefer attrs for new descriptors."
         },
         "siblingsUnchanged": {
           "type": "boolean",

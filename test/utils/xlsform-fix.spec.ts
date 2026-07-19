@@ -20,7 +20,7 @@ const VALID: XlsformFixDescriptor = {
   ],
   expect: {
     nodeset: '/data/danger_signs',
-    relevant: "selected(../pregnancy_summary/visit_option, 'yes')",
+    attrs: { relevant: "selected(../pregnancy_summary/visit_option, 'yes')" },
     siblingsUnchanged: true,
   },
   rationale: 'Restore the yes-only gate so danger signs are hidden after a miscarriage.',
@@ -69,6 +69,73 @@ describe('xlsform-fix descriptor schema', () => {
       const result = validateXlsformFixDescriptor(d);
       expect(result.valid).to.equal(false);
       expect(result.errors.length).to.be.greaterThan(0);
+    });
+  });
+
+  // P2: attrs oracle (values + absence), set.clear, and legacy back-compat.
+  describe('P2 — attrs oracle, set.clear, legacy relevant back-compat', () => {
+    it('accepts expect.attrs with a value and a null (absence) assertion', () => {
+      const d = clone();
+      (d.expect as Record<string, unknown>).attrs = { relevant: "x = 'y'", calculate: null };
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.expect.attrs).to.deep.equal({ relevant: "x = 'y'", calculate: null });
+    });
+
+    it('BACK-COMPAT: a legacy expect.relevant is normalized to attrs: {relevant}', () => {
+      const d = clone();
+      delete (d.expect as Record<string, unknown>).attrs;
+      (d.expect as Record<string, unknown>).relevant = "selected(../a, 'b')";
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      // relevant folded into attrs; the bare relevant key is stripped.
+      expect(result.descriptor?.expect.attrs).to.deep.equal({ relevant: "selected(../a, 'b')" });
+      expect((result.descriptor?.expect as unknown as Record<string, unknown>).relevant).to.equal(undefined);
+    });
+
+    it('BACK-COMPAT: legacy relevant normalizes via the text parser path too', () => {
+      const d = clone();
+      delete (d.expect as Record<string, unknown>).attrs;
+      (d.expect as Record<string, unknown>).relevant = 'true()';
+      const result = parseXlsformFixDescriptor(JSON.stringify(d));
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.expect.attrs).to.deep.equal({ relevant: 'true()' });
+    });
+
+    it('when both attrs and legacy relevant are present, the explicit attrs.relevant wins', () => {
+      const d = clone();
+      (d.expect as Record<string, unknown>).attrs = { relevant: 'KEEP()' };
+      (d.expect as Record<string, unknown>).relevant = 'CLOBBER()';
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect(result.descriptor?.expect.attrs.relevant).to.equal('KEEP()');
+    });
+
+    it('rejects expect with neither attrs nor relevant', () => {
+      const d = clone();
+      delete (d.expect as Record<string, unknown>).attrs;
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid).to.equal(false);
+    });
+
+    it('accepts set.clear:true as an alternative to value', () => {
+      const d = clone();
+      (d.edits as Record<string, unknown>[])[0].set = { column: 'calculation', clear: true };
+      const result = validateXlsformFixDescriptor(d);
+      expect(result.valid, JSON.stringify(result.errors)).to.equal(true);
+      expect((result.descriptor?.edits[0].set as unknown as Record<string, unknown>).clear).to.equal(true);
+    });
+
+    it('rejects a set that carries BOTH value and clear', () => {
+      const d = clone();
+      (d.edits as Record<string, unknown>[])[0].set = { column: 'calculation', value: 'x', clear: true };
+      expect(validateXlsformFixDescriptor(d).valid).to.equal(false);
+    });
+
+    it('rejects a set with neither value nor clear', () => {
+      const d = clone();
+      (d.edits as Record<string, unknown>[])[0].set = { column: 'calculation' };
+      expect(validateXlsformFixDescriptor(d).valid).to.equal(false);
     });
   });
 });
@@ -198,12 +265,20 @@ describe('isXlsformFixTicket', () => {
       },
     }) as unknown as IssueTemplate;
 
-  it('is true only for a cht-conf FORM ticket', () => {
+  it('is true for a cht-conf FORM ticket', () => {
     expect(isXlsformFixTicket(ticket('cht-conf', 'form'))).to.equal(true);
+  });
+
+  it('is true for a cht-conf CONTACT-FORM ticket (P1)', () => {
+    expect(isXlsformFixTicket(ticket('cht-conf', 'contact-form'))).to.equal(true);
   });
 
   it('is false for a cht-conf non-form artifact', () => {
     expect(isXlsformFixTicket(ticket('cht-conf', 'app-settings'))).to.equal(false);
+  });
+
+  it('is false for a cht-core CONTACT-FORM ticket (layer must be cht-conf)', () => {
+    expect(isXlsformFixTicket(ticket('cht-core', 'contact-form'))).to.equal(false);
   });
 
   it('is false for a cht-core ticket (even with a form artifact)', () => {

@@ -24,10 +24,21 @@ import { XlsformEdit } from './xlsform-editor';
 /** Repo-relative path the descriptor is written to (config-project root). */
 export const XLSFORM_FIX_DESCRIPTOR_PATH = '.cht-agent/xlsform-fix.json';
 
-/** The dev-phase oracle block: what the offline-converted XML must show. */
+/**
+ * The dev-phase oracle block: what the offline-converted XML must show (P2).
+ *
+ * The internal, normalized form is ATTRS-ONLY: `attrs[name] = "<expr>"` means
+ * the compiled bind must carry `name="<expr>"`; `attrs[name] = null` means the
+ * compiled bind must NOT carry `name` at all (absence assertion — the M8
+ * "removed a spurious `calculate`" case). A legacy descriptor with a bare
+ * `expect.relevant: "<expr>"` still parses (back-compat, the F8 tolerance layer)
+ * and is normalized to `attrs: {relevant: "<expr>"}` before this shape is
+ * exposed; `relevant` never survives into the internal descriptor.
+ */
 export interface XlsformFixExpectation {
   nodeset: string;
-  relevant: string;
+  /** Per-attribute expectation: value string = required, null = must be absent. */
+  attrs: Record<string, string | null>;
   /** Default true: every other top-level group bind must stay byte-invariant. */
   siblingsUnchanged?: boolean;
 }
@@ -89,11 +100,39 @@ const normalizeGroupPaths = (data: unknown): void => {
   }
 };
 
-/** Validate already-parsed data against the descriptor schema. */
+/**
+ * Normalize the legacy `expect.relevant: "<expr>"` shorthand to the attrs-only
+ * internal form `expect.attrs: {relevant: "<expr>"}` (P2 back-compat, F8). Runs
+ * AFTER schema validation (the schema accepts either shape) so the exposed
+ * descriptor is always attrs-only. When a descriptor carries BOTH `relevant` and
+ * an `attrs` map, the explicit `attrs` wins and any `relevant` key already in
+ * `attrs` is preserved (the bare `relevant` shorthand does not clobber it);
+ * `relevant` is only folded in when `attrs.relevant` is absent. The bare
+ * `relevant` key is always stripped so it never survives into the descriptor.
+ */
+const normalizeExpectAttrs = (data: unknown): void => {
+  if (typeof data !== 'object' || data === null) return;
+  const expect = (data as Record<string, unknown>).expect;
+  if (typeof expect !== 'object' || expect === null) return;
+  const exp = expect as Record<string, unknown>;
+  const attrs =
+    typeof exp.attrs === 'object' && exp.attrs !== null
+      ? (exp.attrs as Record<string, string | null>)
+      : {};
+  if (typeof exp.relevant === 'string' && !(('relevant' in attrs))) {
+    attrs.relevant = exp.relevant;
+  }
+  delete exp.relevant;
+  exp.attrs = attrs;
+};
+
+/** Validate already-parsed data against the descriptor schema, then normalize. */
 export const validateXlsformFixDescriptor = (data: unknown): XlsformFixValidation => {
   normalizeGroupPaths(data);
   const validate = getValidator();
   if (validate(data)) {
+    // Fold the legacy `relevant` shorthand into the attrs-only internal form.
+    normalizeExpectAttrs(data);
     return { valid: true, errors: [], descriptor: data as XlsformFixDescriptor };
   }
   return { valid: false, errors: (validate.errors ?? []).map(formatError) };
@@ -180,11 +219,17 @@ const tryParseJson = (text: string): { ok: true; data: unknown } | { ok: false; 
 
 /**
  * True when a ticket routes to the XLSForm-fix path: a cht-conf deployment
- * config ticket whose artifact is a form. Everything else (all cht-core
+ * config ticket whose artifact is an app form (`form`) or a contact form
+ * (`contact-form`) — both are XLSForm workbooks the deterministic
+ * apply→convert→assert core handles, differing only in the `forms/app` vs
+ * `forms/contact` layout and the convert bucket. Everything else (all cht-core
  * tickets, non-form config artifacts) is unaffected — the prompts and the
  * supervisor node stay byte-identical for them.
  */
 export const isXlsformFixTicket = (ticket: IssueTemplate): boolean => {
   const ctx = ticket.issue.technical_context;
-  return ctx.layer === 'cht-conf' && ctx.configArtifact === 'form';
+  return (
+    ctx.layer === 'cht-conf' &&
+    (ctx.configArtifact === 'form' || ctx.configArtifact === 'contact-form')
+  );
 };

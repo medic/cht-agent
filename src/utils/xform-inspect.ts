@@ -2,15 +2,16 @@
  * XForm bind inspection for the QA verify step (mission 04 A2, closes G3).
  *
  * The QA Supervisor fetches a deployed form's XML (cht-api.fetchFormXml) and
- * asserts specific binds' `relevant` expressions against the ticket's
- * acceptance criterion — real content verification, not "the CouchDB rev
- * changed". These helpers are pure so the agent path and the unit tests
- * exercise the exact same parsing.
+ * asserts specific binds' compiled attributes against the ticket's acceptance
+ * criterion — real content verification, not "the CouchDB rev changed". These
+ * helpers are pure so the agent path and the unit tests exercise the exact same
+ * parsing.
  *
  * The XForm the CHT API serves is `xls2xform`-generated: every field/group has
- * a single self-closing `<bind nodeset="/data/..." relevant="..."/>` in
+ * a single self-closing `<bind nodeset="/data/..." relevant="..." .../>` in
  * <h:head>/<model>. We match a bind by its EXACT nodeset (attribute-order
- * agnostic) and read its `relevant`.
+ * agnostic) and read arbitrary attributes off it (P2 — `relevant`, `calculate`,
+ * `constraint`, `required`, …), asserting either a value or its ABSENCE.
  */
 
 import { FormBindCheck, FormBindExpectation } from '../types';
@@ -44,21 +45,37 @@ export const decodeXmlAttr = (value: string): string =>
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Extract the `relevant` attribute of the <bind> whose nodeset EQUALS `nodeset`.
- * Matches the whole `<bind ...>` tag first so attribute order does not matter,
- * then reads its `relevant`. Returns undefined when the bind is absent or has no
- * `relevant`. The exact-quote match means `/data/danger_signs` never matches a
- * longer `/data/danger_signs/child` bind.
+ * Extract an arbitrary attribute of the <bind> whose nodeset EQUALS `nodeset`
+ * (P2 — generalizes the former `relevant`-only reader). Matches the whole
+ * `<bind ...>` tag first so attribute order does not matter, then reads `attr`.
+ * Returns undefined when the bind is absent OR present but lacking `attr` — the
+ * caller distinguishes the two with {@link bindExists}. The exact-quote match
+ * means `/data/danger_signs` never matches a longer `/data/danger_signs/child`
+ * bind, and the `\b`-anchored attr name means `calculate` never matches inside
+ * another attribute name.
  */
-export const extractBindRelevant = (xml: string, nodeset: string): string | undefined => {
+export const extractBindAttr = (
+  xml: string,
+  nodeset: string,
+  attr: string
+): string | undefined => {
   const tagRe = new RegExp(`<bind\\b[^>]*\\bnodeset="${escapeRegExp(nodeset)}"[^>]*>`);
   const tag = tagRe.exec(xml);
   if (!tag) {
     return undefined;
   }
-  const relMatch = /\brelevant="([^"]*)"/.exec(tag[0]);
-  return relMatch ? decodeXmlAttr(relMatch[1]) : undefined;
+  const attrMatch = new RegExp(`\\b${escapeRegExp(attr)}="([^"]*)"`).exec(tag[0]);
+  return attrMatch ? decodeXmlAttr(attrMatch[1]) : undefined;
 };
+
+/**
+ * Thin back-compat wrapper: the `relevant` attribute of the target bind. Kept so
+ * the untouched relevant-centric callers (the dev-phase apply's before/after
+ * read-back) work unchanged while the generalized {@link extractBindAttr} backs
+ * the attrs oracle.
+ */
+export const extractBindRelevant = (xml: string, nodeset: string): string | undefined =>
+  extractBindAttr(xml, nodeset, 'relevant');
 
 /**
  * True when a `<bind>` with EXACTLY this nodeset is present in the XML, regardless
@@ -123,61 +140,96 @@ export const extractTopLevelGroupBinds = (xml: string): FormBindExpectation[] =>
     const relevant = RELEVANT_ATTR_RE.exec(tag)?.[1];
     if (nodeset && relevant !== undefined && topLevelGroupRe.test(nodeset) && !seen.has(nodeset)) {
       seen.add(nodeset);
-      binds.push({ nodeset, relevant: decodeXmlAttr(relevant) });
+      // A top-level group bind qualifies on carrying a `relevant` gate; the
+      // snapshot asserts exactly that attribute (P2 attrs shape).
+      binds.push({ nodeset, attrs: { relevant: decodeXmlAttr(relevant) } });
     }
   }
   return binds;
 };
 
 /**
- * Verify a deployed form's binds against their expected `relevant` expressions.
- * A mismatched expression, a bind present WITHOUT the expected `relevant`, or a
- * genuinely absent bind all fail the check; the roll-up passes only when every
- * expectation holds.
+ * Verify a deployed form's binds against their expected `attrs` map (P2 —
+ * generalized from the single-`relevant` oracle). Each asserted attribute yields
+ * one {@link FormBindCheck}; the roll-up passes only when EVERY attribute check
+ * holds. Three-way per attribute, honest in BOTH directions:
  *
- * The two undefined-`relevant` cases are reported differently because they mean
- * different things for the red/green oracle (F5):
- *   - bind PRESENT but no `relevant` → a real MISMATCH (`actual: '(none)'`): the
- *     deployed form still lacks the fix. This is the child-bind reproduce case —
- *     the deployed bind exists (the group renders) but was never gated, so it
- *     must fire RED, not silently pass and not read as a wiring error.
- *   - bind ABSENT → the expectation references a nodeset the deployed form does
- *     not have at all (kept as a distinct "not found" note so a genuine
- *     wiring/nodeset mistake is not disguised as a missing-fix mismatch).
+ *   - expected VALUE (`attrs[a] = "<expr>"`):
+ *       · deployed value matches           → pass;
+ *       · deployed bind present, attr absent → MISMATCH, `actual: '(none)'`
+ *         (the fix was not deployed — the child-bind reproduce case, must fire
+ *         RED, not silently pass and not read as a wiring error);
+ *       · deployed value differs           → MISMATCH, `actual: <deployed>`.
+ *   - expected ABSENT (`attrs[a] = null`):
+ *       · deployed bind present, attr absent → pass;
+ *       · deployed value present            → MISMATCH, `actual: <deployed>`,
+ *         note "attribute should be absent" (the M8 case: a lingering deployed
+ *         `calculate` reads RED).
+ *   - bind ABSENT entirely (no `<bind>` tag): every attr check on that nodeset
+ *     is a distinct "bind not found" failure (no `actual`), so a genuine
+ *     wiring/nodeset mistake is not disguised as a missing/extra-attribute
+ *     mismatch. An expected-absent attr on a missing bind is still reported as
+ *     "bind not found" rather than a silent pass — the caller asked to assert on
+ *     a bind that does not exist, which is a wiring problem to surface.
  */
 export const verifyFormBinds = (
   xml: string,
   expectations: FormBindExpectation[]
 ): FormBindVerifyResult => {
-  const checks: FormBindCheck[] = expectations.map((exp) => {
-    const actual = extractBindRelevant(xml, exp.nodeset);
-    if (actual === undefined) {
-      if (bindExists(xml, exp.nodeset)) {
-        return {
+  const checks: FormBindCheck[] = [];
+  for (const exp of expectations) {
+    const present = bindExists(xml, exp.nodeset);
+    for (const [attr, expected] of Object.entries(exp.attrs)) {
+      const actual = present ? extractBindAttr(xml, exp.nodeset, attr) : undefined;
+      if (!present) {
+        checks.push({
           nodeset: exp.nodeset,
-          expected: exp.relevant,
+          attr,
+          expected,
+          passed: false,
+          note: 'bind not found in the deployed XML',
+        });
+        continue;
+      }
+      if (expected === null) {
+        // Absence assertion: the attribute must NOT be on the bind.
+        if (actual === undefined) {
+          checks.push({ nodeset: exp.nodeset, attr, expected, passed: true });
+        } else {
+          checks.push({
+            nodeset: exp.nodeset,
+            attr,
+            expected,
+            actual,
+            passed: false,
+            note: `attribute should be absent but the deployed bind carries ${attr}="${actual}"`,
+          });
+        }
+        continue;
+      }
+      // Value assertion.
+      if (actual === undefined) {
+        checks.push({
+          nodeset: exp.nodeset,
+          attr,
+          expected,
           actual: '(none)',
           passed: false,
-          note: 'deployed bind is present but carries no relevant attribute (fix not deployed)',
-        };
+          note: `deployed bind is present but carries no ${attr} attribute (fix not deployed)`,
+        });
+      } else if (actual === expected) {
+        checks.push({ nodeset: exp.nodeset, attr, expected, actual, passed: true });
+      } else {
+        checks.push({
+          nodeset: exp.nodeset,
+          attr,
+          expected,
+          actual,
+          passed: false,
+          note: `${attr} does not match the expected value`,
+        });
       }
-      return {
-        nodeset: exp.nodeset,
-        expected: exp.relevant,
-        passed: false,
-        note: 'bind not found in the deployed XML',
-      };
     }
-    if (actual === exp.relevant) {
-      return { nodeset: exp.nodeset, expected: exp.relevant, actual, passed: true };
-    }
-    return {
-      nodeset: exp.nodeset,
-      expected: exp.relevant,
-      actual,
-      passed: false,
-      note: 'relevant does not match the expected expression',
-    };
-  });
+  }
   return { passed: checks.every((check) => check.passed), checks };
 };

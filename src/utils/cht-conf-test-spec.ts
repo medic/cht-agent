@@ -286,6 +286,13 @@ export interface SpecScenario {
  * Derive the spec scenario from the descriptor + the verified bindDiff. The
  * bindDiff is authoritative for the compiled expressions (it is what the offline
  * conversion actually produced); the descriptor supplies the rationale.
+ *
+ * P2: this template is relevant-centric (its emitted oracle asserts the target
+ * bind's `relevant`). It must only be called for a fix that HAS a `relevant`
+ * outcome — the caller (development-supervisor) skips deterministic spec-gen for
+ * an attrs-only fix (bindDiff.after undefined). `after` is the authoritative
+ * compiled relevant; `attrs.relevant` is its equal (both come from the same
+ * regenerated bind) and backstops the type when `after` is momentarily absent.
  */
 export const deriveScenario = (
   descriptor: XlsformFixDescriptor,
@@ -293,7 +300,7 @@ export const deriveScenario = (
 ): SpecScenario => ({
   form: descriptor.form,
   nodeset: bindDiff.nodeset,
-  expectedRelevant: bindDiff.after,
+  expectedRelevant: bindDiff.after ?? String(bindDiff.attrs.relevant ?? ''),
   ...(bindDiff.before !== undefined ? { previousRelevant: bindDiff.before } : {}),
   ...(descriptor.rationale ? { rationale: descriptor.rationale } : {}),
 });

@@ -9,8 +9,8 @@
  *      the honest sibling-invariance reference (R11: churn cancels)
  *   3. apply the descriptor's cell edit(s) to the sandbox workbook (exceljs)
  *   4. offline convert again (convert-only, never upload — R6)
- *   5. assert the target bind equals expect.relevant and every sibling
- *      top-level group bind is unchanged vs the baseline conversion
+ *   5. assert the target bind matches expect.attrs (value AND absence, P2) and
+ *      every sibling top-level group bind is unchanged vs the baseline conversion
  *
  * On any failure the sandbox is removed and a typed error string is returned so
  * the supervisor can key refinement feedback to the descriptor. On success the
@@ -22,7 +22,8 @@ import { XlsformApplyResult, XlsformBindDiff, FormBindExpectation } from '../typ
 import { AppliedEdit, applyXlsformEdits, XlsformEditError } from './xlsform-editor';
 import { XlsformFixDescriptor } from './xlsform-fix';
 import { createConvertSandbox, runOfflineConvert } from './cht-conf-runner';
-import { extractBindRelevant, extractTopLevelGroupBinds } from './xform-inspect';
+import { extractBindAttr, extractBindRelevant, extractTopLevelGroupBinds } from './xform-inspect';
+import { FormConfigArtifact, resolveFormRelPaths } from './form-paths';
 
 export type XlsformApplyOutcome =
   | { ok: true; result: XlsformApplyResult; appliedEdits: AppliedEdit[] }
@@ -31,6 +32,13 @@ export type XlsformApplyOutcome =
 export interface XlsformApplyOptions {
   bin?: string;
   timeoutMs?: number;
+  /**
+   * Which XLSForm artifact this fix targets. Selects both the repo layout
+   * (`forms/app` vs `forms/contact`) and the convert bucket
+   * (`app-forms`/`contact-forms`). Defaults to `form` for back-compat with the
+   * app-form-only mission-05 callers.
+   */
+  configArtifact?: FormConfigArtifact;
 }
 
 const tail = (text: string, n = 400): string => (text.length > n ? `…${text.slice(-n)}` : text);
@@ -179,13 +187,16 @@ const describeSiblingChanges = (
   before: FormBindExpectation[],
   after: FormBindExpectation[]
 ): string[] => {
-  const beforeMap = new Map(before.map((b) => [b.nodeset, normalizeWhitespace(b.relevant)]));
-  const afterMap = new Map(after.map((b) => [b.nodeset, normalizeWhitespace(b.relevant)]));
+  // Top-level group binds are snapshotted with a single `relevant` attr; compare
+  // that (whitespace-normalized) so pure converter whitespace churn is not a change.
+  const rel = (b: FormBindExpectation): string => normalizeWhitespace(String(b.attrs.relevant ?? ''));
+  const beforeMap = new Map(before.map((b) => [b.nodeset, rel(b)]));
+  const afterMap = new Map(after.map((b) => [b.nodeset, rel(b)]));
   const changes: string[] = [];
   for (const b of before) {
     if (!afterMap.has(b.nodeset)) {
       changes.push(`${b.nodeset} disappeared`);
-    } else if (afterMap.get(b.nodeset) !== normalizeWhitespace(b.relevant)) {
+    } else if (afterMap.get(b.nodeset) !== rel(b)) {
       changes.push(`${b.nodeset} relevant changed`);
     }
   }
@@ -278,8 +289,9 @@ export const applyXlsformFixToProject = async (
   configPath: string,
   opts: XlsformApplyOptions = {}
 ): Promise<XlsformApplyOutcome> => {
-  const xlsxRelPath = `forms/app/${descriptor.form}.xlsx`;
-  const xmlRelPath = `forms/app/${descriptor.form}.xml`;
+  const configArtifact: FormConfigArtifact = opts.configArtifact ?? 'form';
+  const bucket = configArtifact === 'contact-form' ? 'contact-forms' : 'app-forms';
+  const { xlsxRelPath, xmlRelPath } = resolveFormRelPaths(configArtifact, descriptor.form);
   let sandboxDir: string | undefined;
   const fail = (error: string): XlsformApplyOutcome => {
     cleanup(sandboxDir);
@@ -299,6 +311,7 @@ export const applyXlsformFixToProject = async (
     const baseRun = await runOfflineConvert({
       configPath: sandboxDir,
       form: descriptor.form,
+      bucket,
       bin: opts.bin,
       timeoutMs: opts.timeoutMs,
     });
@@ -306,6 +319,13 @@ export const applyXlsformFixToProject = async (
       return fail(`baseline convert failed (exit ${baseRun.exitCode}): ${tail(baseRun.output)}`);
     }
     const baselineXml = fs.readFileSync(xmlPath, 'utf-8');
+    const expectedAttrs = descriptor.expect.attrs;
+    // Snapshot the pre-fix value of every attribute the fix asserts (string when
+    // present, null when already absent) — the honest before-image for the diff.
+    const attrsBefore: Record<string, string | null> = {};
+    for (const attr of Object.keys(expectedAttrs)) {
+      attrsBefore[attr] = extractBindAttr(baselineXml, targetNodeset, attr) ?? null;
+    }
     const beforeRelevant = extractBindRelevant(baselineXml, targetNodeset);
     const baselineSiblings = extractTopLevelGroupBinds(baselineXml).filter(
       (b) => b.nodeset !== targetNodeset
@@ -326,6 +346,7 @@ export const applyXlsformFixToProject = async (
     const editRun = await runOfflineConvert({
       configPath: sandboxDir,
       form: descriptor.form,
+      bucket,
       bin: opts.bin,
       timeoutMs: opts.timeoutMs,
     });
@@ -334,20 +355,40 @@ export const applyXlsformFixToProject = async (
     }
     const regenXml = fs.readFileSync(xmlPath, 'utf-8');
 
-    // 5a. assert the target bind.
+    // 5a. assert the target bind's full attrs map (P2). A value expectation
+    // requires the attribute to be present and equal (whitespace-normalized — the
+    // converter trims/collapses, so a leading space in the cell is absent from
+    // the emitted attribute); an absence expectation (null) requires the
+    // attribute to be MISSING from the compiled bind. Report honestly in both
+    // directions: a value expectation on a missing attribute reads '(none)'.
+    const attrsAfter: Record<string, string | null> = {};
+    for (const [attr, expected] of Object.entries(expectedAttrs)) {
+      const actual = extractBindAttr(regenXml, targetNodeset, attr);
+      attrsAfter[attr] = actual ?? null;
+      if (expected === null) {
+        if (actual !== undefined) {
+          return fail(
+            `bind ${targetNodeset} still carries ${attr}="${actual}" but expect.attrs.${attr} was null ` +
+              `(the attribute should be ABSENT after the fix)`
+          );
+        }
+        continue;
+      }
+      if (actual === undefined) {
+        return fail(
+          `bind ${targetNodeset} converted with no ${attr} attribute (actual "(none)") but ` +
+            `expect.attrs.${attr} was "${expected}"`
+        );
+      }
+      if (normalizeWhitespace(actual) !== normalizeWhitespace(expected)) {
+        return fail(
+          `bind ${targetNodeset} converted ${attr}="${actual}" but expect.attrs.${attr} was "${expected}"`
+        );
+      }
+    }
+    // The relevant delta (undefined for an attrs-only fix) — kept for the
+    // relevant-centric display/spec-gen consumers.
     const afterRelevant = extractBindRelevant(regenXml, targetNodeset);
-    if (afterRelevant === undefined) {
-      return fail(`expected bind ${targetNodeset} is not present in the regenerated XML`);
-    }
-    // The converter trims/normalizes whitespace, so a leading space written to
-    // the cell is absent from the emitted attribute; compare whitespace-
-    // normalized on both sides (see `normalizeWhitespace`).
-    if (normalizeWhitespace(afterRelevant) !== normalizeWhitespace(descriptor.expect.relevant)) {
-      return fail(
-        `bind ${targetNodeset} converted to "${afterRelevant}" but expect.relevant was ` +
-          `"${descriptor.expect.relevant}"`
-      );
-    }
 
     // 5b. assert sibling invariance (default on).
     const checkSiblings = descriptor.expect.siblingsUnchanged !== false;
@@ -374,6 +415,8 @@ export const applyXlsformFixToProject = async (
       nodeset: targetNodeset,
       before: beforeRelevant,
       after: afterRelevant,
+      attrs: attrsAfter,
+      attrsBefore,
       // Honest count: 0 when the invariance check was disabled (nothing verified).
       siblingsUnchanged: checkSiblings ? baselineSiblings.length : 0,
     };

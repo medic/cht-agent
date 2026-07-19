@@ -24,7 +24,7 @@ const descriptor = (overrides: Partial<XlsformFixDescriptor> = {}): XlsformFixDe
   edits: [
     { sheet: 'survey', match: { column: 'name', value: 'next_pnc_visit_date' }, set: { column: 'relevant', value: YES_GATE } },
   ],
-  expect: { nodeset: NODESET, relevant: YES_GATE, siblingsUnchanged: true },
+  expect: { nodeset: NODESET, attrs: { relevant: YES_GATE }, siblingsUnchanged: true },
   rationale: 'restore the delivered-only gate',
   ...overrides,
 });
@@ -33,6 +33,8 @@ const bindDiff = (overrides: Partial<XlsformBindDiff> = {}): XlsformBindDiff => 
   nodeset: NODESET,
   before: PLANTED_GATE,
   after: YES_GATE,
+  attrs: { relevant: YES_GATE },
+  attrsBefore: { relevant: PLANTED_GATE },
   siblingsUnchanged: 9,
   ...overrides,
 });

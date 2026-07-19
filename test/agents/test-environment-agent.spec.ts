@@ -1031,9 +1031,9 @@ describe('TestEnvironmentAgent', () => {
       configArtifact: 'form',
       artifactName: 'pregnancy_home_visit',
       expectedBinds: [
-        { nodeset: '/data/danger_signs', relevant: YES_GATE },
-        { nodeset: '/data/safe_pregnancy_practices', relevant: YES_GATE },
-        { nodeset: '/data/summary', relevant: YES_GATE },
+        { nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE } },
+        { nodeset: '/data/safe_pregnancy_practices', attrs: { relevant: YES_GATE } },
+        { nodeset: '/data/summary', attrs: { relevant: YES_GATE } },
       ],
     };
 

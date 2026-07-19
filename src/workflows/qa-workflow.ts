@@ -64,15 +64,24 @@ export const defaultApplyActions = (artifact: VerifyArtifactType): ConfigUploadA
  * the ticket is not a form fix, names no artifact, or the corrected form is not
  * on disk (so QA fails closed rather than verifying nothing).
  *
- * F5: `bindDiff` is the target-bind delta the development phase's deterministic
- * XLSForm apply produced (nodeset + the corrected `after` relevant). When it is
- * present the target bind is asserted FIRST — so the red/green oracle fires on
- * the fix's OWN bind, even a three-segment child bind that
- * `extractTopLevelGroupBinds` (two-segment groups only) never snapshots. The
- * group-bind set is retained AFTER it as the sibling-invariance oracle (the
- * target nodeset is de-duplicated out so it is not asserted twice). When
- * `bindDiff` is undefined (standalone QA, cht-core tickets, dev-phase-skipped
- * runs) the behavior is byte-identical to before: the group-bind set only.
+ * F5/P2: `bindDiff` is the target-bind delta the development phase's
+ * deterministic XLSForm apply produced (nodeset + the full `attrs` map the fix
+ * asserted). When it is present the target bind is asserted FIRST — so the
+ * red/green oracle fires on the fix's OWN bind, even a three-segment child bind
+ * that `extractTopLevelGroupBinds` (two-segment groups only) never snapshots —
+ * carrying the WHOLE attrs map (P2): value attrs the corrected bind carries AND
+ * absence assertions (null) for attrs the corrected bind lacks but the fix cares
+ * about (the M8 case: a lingering deployed `calculate` reads RED against
+ * `attrs: {calculate: null}`). The group-bind set is retained AFTER it as the
+ * sibling-invariance oracle (target nodeset de-duplicated out, asserted once).
+ * When `bindDiff` is undefined (standalone QA, cht-core tickets, dev-phase-
+ * skipped runs) the behavior is byte-identical to before: the group-bind set
+ * (each asserting its `relevant`) only.
+ *
+ * Shape note (P3/P4 extension seam): the returned expectation set is entirely
+ * `{nodeset, attrs}` — no relevant-special path — so contact-form QA (P3) and
+ * the settings oracle (P4) extend the target/section derivation without
+ * re-touching this snapshot logic.
  */
 export const deriveVerifyOptions = (
   configPath: string,
@@ -89,10 +98,10 @@ export const deriveVerifyOptions = (
   }
   const groupBinds = extractTopLevelGroupBinds(fs.readFileSync(formPath, 'utf8'));
   if (bindDiff) {
-    // Target bind FIRST, then group binds as sibling invariance (drop the target
-    // nodeset from the group set so it is asserted exactly once).
+    // Target bind FIRST (full attrs map — value + absence), then group binds as
+    // sibling invariance (drop the target nodeset so it is asserted exactly once).
     const expectedBinds = [
-      { nodeset: bindDiff.nodeset, relevant: bindDiff.after },
+      { nodeset: bindDiff.nodeset, attrs: bindDiff.attrs },
       ...groupBinds.filter((b) => b.nodeset !== bindDiff.nodeset),
     ];
     return { configArtifact: 'form', artifactName: tc.artifactName, expectedBinds };

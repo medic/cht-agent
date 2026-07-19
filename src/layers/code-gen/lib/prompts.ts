@@ -6,6 +6,7 @@ import { isLargeFile } from './large-file';
 import { extractPublicSurface } from './public-surface';
 import { getArchPatternsSection } from './arch-patterns';
 import { isXlsformFixTicket, XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../utils/xlsform-fix';
+import { FormConfigArtifact, resolveFormRelPaths } from '../../../utils/form-paths';
 
 /**
  * Render the architecture-insights section from the research phase's DeepWiki /
@@ -187,13 +188,22 @@ function truncationNote(count: number): string {
 export function buildXlsformFixBrief(input: CodeGenModuleInput): string {
   const ctx = input.ticket.issue.technical_context;
   const form = ctx.artifactName ?? '<form>';
+  // The orchestrator handles two XLSForm artifacts; a contact form lives under
+  // forms/contact and reconverts with convert-contact-forms. Anything else on a
+  // cht-conf ticket is not an XLSForm fix, so treat only 'contact-form' as the
+  // contact layout and default the rest to the app-form layout.
+  const configArtifact: FormConfigArtifact =
+    ctx.configArtifact === 'contact-form' ? 'contact-form' : 'form';
+  const { xlsxRelPath, xmlRelPath } = resolveFormRelPaths(configArtifact, form);
+  const convertVerb =
+    configArtifact === 'contact-form' ? 'convert-contact-forms' : 'convert-app-forms';
   return `## CHT config project — XLSForm fix (do NOT edit the form files)
-This is a cht-conf DEPLOYMENT CONFIG project, not cht-core. The bug lives in an XLSForm whose source of truth is the BINARY workbook \`forms/app/${form}.xlsx\`. You must NOT edit any \`.xlsx\` (binary) or \`.xml\` (generated) file — a text edit to them is clobbered the moment cht-conf reconverts the workbook.
+This is a cht-conf DEPLOYMENT CONFIG project, not cht-core. The bug lives in an XLSForm whose source of truth is the BINARY workbook \`${xlsxRelPath}\`. You must NOT edit any \`.xlsx\` (binary) or \`.xml\` (generated) file — a text edit to them is clobbered the moment cht-conf reconverts the workbook (\`${convertVerb}\`).
 
 Instead, express the fix as a structured descriptor at \`${XLSFORM_FIX_DESCRIPTOR_PATH}\` (relative to the project root) and write NOTHING else. A deterministic orchestrator step applies it to a sandbox copy of the workbook, converts it offline, and asserts the result before any human review.
 
 ### How to find the fix
-- Use \`Read\`/\`Grep\` on \`forms/app/${form}.xml\` to locate the target question's \`<bind nodeset="/data/..." relevant="..."/>\` and read its CURRENT \`relevant\`.
+- Use \`Read\`/\`Grep\` on \`${xmlRelPath}\` to locate the target question's \`<bind nodeset="/data/..." relevant="..."/>\` and read its CURRENT \`relevant\`.
 - The workbook is binary — you cannot open it. Derive, from the ticket and the compiled \`.xml\`, the survey-row \`name\` of the question/group to fix and the CORRECTED \`relevant\` expression.
 
 ### Descriptor schema (${XLSFORM_FIX_DESCRIPTOR_PATH})
@@ -204,11 +214,11 @@ Instead, express the fix as a structured descriptor at \`${XLSFORM_FIX_DESCRIPTO
   "edits": [{
     "sheet": "survey",
     "match": { "column": "name", "value": "<survey-row name of the question/group>" },
-    "set": { "column": "relevant", "value": "<corrected XLSForm expression>" }
+    "set": { "column": "<column to write>", "value": "<corrected XLSForm expression>" }
   }],
   "expect": {
     "nodeset": "/data/<target bind nodeset>",
-    "relevant": "<what the CONVERTED bind must read — identical to set.value unless it uses \${...} references>",
+    "attrs": { "relevant": "<what the CONVERTED bind must read — identical to set.value unless it uses \${...} references>" },
     "siblingsUnchanged": true
   },
   "rationale": "One paragraph explaining the bug and the fix for the reviewer."
@@ -216,7 +226,10 @@ Instead, express the fix as a structured descriptor at \`${XLSFORM_FIX_DESCRIPTO
 \`\`\`
 - If the target \`name\` appears in more than one group, add \`match.groupPath\` (outermost group name first) to disambiguate.
 - \`edits\` may hold more than one cell edit; keep it minimal.
-- \`expect\` is REQUIRED and is the oracle: the orchestrator converts the edited workbook and checks the target bind equals \`expect.relevant\` with siblings unchanged. Commit to the true outcome.`;
+- Removing a value (e.g. deleting a spurious \`calculate\`): use \`"set": { "column": "calculation", "clear": true }\` instead of \`value\` — \`clear: true\` removes the cell so the converted bind loses that attribute. Provide EXACTLY one of \`value\` / \`clear\` per edit.
+- GUARDRAIL — never clear the \`calculation\` column on a row whose survey \`type\` is \`calculate\`: pyxform then hard-fails the WHOLE convert (\`Missing calculation\`). To stop a computed field overwriting user input, change the row's \`type\` away from \`calculate\` as part of the fix (or supply a valid calculation) — do not clear the calculation on a calculate-type row.
+- \`expect.attrs\` is the oracle (REQUIRED): a map of bind attribute → expectation on the CONVERTED bind. A string = the attribute the compiled bind MUST carry; \`null\` = the attribute it must NOT carry (an ABSENCE assertion — use \`"calculate": null\` to prove a spurious calculate was removed). Assert every attribute your fix touches. The orchestrator converts the edited workbook and checks each, with siblings unchanged. Commit to the true outcome.
+- Legacy shorthand still accepted: \`"expect": { "nodeset": "…", "relevant": "<expr>" }\` normalizes to \`attrs: {relevant: "<expr>"}\`. Prefer \`attrs\` for new descriptors.`;
 }
 
 function buildXlsformFixPlanPrompt(input: CodeGenModuleInput): string {
