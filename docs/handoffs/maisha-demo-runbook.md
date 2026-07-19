@@ -20,49 +20,41 @@ on the `maisha-baseline` state defined in §3.
 
 ## 1. What the pipeline automates per ticket — the honest matrix
 
-Only `configArtifact: form` gets the Mission-05 closed loop. These four
-tickets are `task`, `contact-summary`, and `contact-form` ×2, so
-(verified in code, this branch):
+> **Updated 2026-07-18 — the P1–P4 phases LANDED** (branches
+> `feat/all-artifacts-p1p2-bind-oracle` `8d52006`, `…-p3-contact-form-qa`
+> `607ce63`, `…-p4-compiled-settings-oracle` `95d871d`; plan:
+> `all-config-artifacts-pipeline-plan.md`; ledger:
+> `cht-conf-extension-pr-ledger.md`). **All four tickets now run the full
+> closed loop with `--qa`.** The per-ticket `[OPERATOR] Apply` steps in §5
+> are retained as the no-QA FALLBACK path only.
 
 | | M8 education `calculate` | M7 orphan `relevant` | M4 defaulter flag | M3 task duplication |
 |---|---|---|---|---|
 | `configArtifact` | contact-form | contact-form | contact-summary | task |
 | Files fixed | `forms/contact/f_client-create.*` | `forms/contact/e_household-create.*` (+2 siblings, see §5.2) | `contact-summary.templated.js` + `tasks.js` | `tasks.js` |
-| Research → HC1 | ✅ frontmatter routing, no LLM (`layer: cht-conf` deterministic) | ✅ | ✅ | ✅ |
-| Dev phase | **generic LLM code-gen** into the mount (git-snapshotted, compile-gated) — NOT the XLSForm orchestrator (`isXlsformFixTicket` = `configArtifact: form` only, `src/utils/xlsform-fix.ts:187-190`) | same | same | same |
-| HC2 shows | plain git diff (no bind-diff, no `.cht-agent/xlsform-fix.json`) | same | same | same |
-| Test-gen | generic LLM test-gen (deterministic harness spec gates on `xlsformApply`, `development-supervisor.ts:769`) | same | same | same |
-| `--qa` | **❌ ABORTS** — verify oracle is `form`-only (`qa-workflow.ts:83`, `:300-302`; `test-environment-agent.ts:391`) | ❌ | ❌ (config-type guard also demands `contact-summary.templated.js` in the mount — it is) | ❌ (demands `tasks.js` in the mount — it is) |
-| Apply to instance | **[OPERATOR]** `upload-contact-forms -- f_client-create` | **[OPERATOR]** `upload-contact-forms` / `upload-app-forms` | **[OPERATOR]** `compile-app-settings upload-app-settings` | **[OPERATOR]** `compile-app-settings upload-app-settings` |
-| Red→green proof | operator curl + browser (§5.1) | operator curl + browser (§5.2) | browser + partner suite (§5.3) | settings-grep + browser + partner suite (§5.4) |
+| Research → HC1 | ✅ frontmatter routing, no LLM | ✅ | ✅ | ✅ |
+| Dev phase | **XLSForm orchestrator** (P1): descriptor → exceljs edit (`set.clear` drops the spurious `calculate`; calculate-type guardrail) → offline `convert-contact-forms` → attrs assert incl. ABSENCE (P2) | **XLSForm orchestrator** (P1): `relevant` edit in the `.xlsx`, offline convert + attrs assert | generic LLM code-gen (compile-gated) — correct tool for JS | same as M4 |
+| HC2 shows | bind-level per-attr diff (`calculate: <expr> → (absent)`) | bind-level diff (before → after `relevant`) | plain git diff | plain git diff |
+| Test-gen | skipped with a loud note (contact fill-based template = P5) | same | generic LLM test-gen; partner suite is the oracle | same |
+| `--qa` | ✅ full red→green: deployed contact-form fetched via `deployedFormId` (`contact:f_client:create`), attrs oracle incl. lingering-`calculate` RED, `contact-forms` apply bucket, F6 whole-doc, rev corroboration (P3) | ✅ same (P3) — live-smoked: M7 RED reads honestly against the running instance | ✅ compiled-settings byte-oracle (P4): offline compile vs deployed settings, `app-settings` bucket, settings-doc rev — live-smoked GREEN (byte-parity) and RED (perturbed at the M3 typo) | ✅ same (P4) |
+| Red→green proof | automated tier-1 (QA) + browser walkthrough (§5.1) | automated tier-1 (QA) + browser (§5.2) | automated settings oracle + browser + partner suite (§5.3) | automated settings oracle + settings-grep + browser + partner suite (§5.4) |
 
-> **Status note:** the gaps in this matrix are being closed —
-> `docs/handoffs/all-config-artifacts-pipeline-plan.md` details the P1–P6
-> implementation that makes all four tickets full `--qa` closed-loop runs
-> (M7 after P1+P3, M8 after P1+P2+P3, M3/M4 after P4). Until those phases
-> land, the manual procedures below stand; each landed phase deletes the
-> corresponding manual step.
+**Consequences for the demo (updated):**
 
-**Consequences you must design the demo around:**
-
-- **Run WITHOUT `--qa`.** `npm run full -- tickets/maisha-m*.md` (no `--qa`
-  flag) runs research → HC1 → development → HC2 and stops. Passing `--qa`
-  produces `❌ QA: could not derive form verification — needs
-  configArtifact: form` and an abort — not a good look mid-demo. The
-  red→green is yours to drive (§5). Narrate this honestly: *"the QA closed
-  loop is form-scoped today; extending it to contact forms and app-settings
-  artifacts is the next PR"* (`134-cht-conf-extension-spec.md` §suggested
-  sequencing, items 2–3).
-- **M7/M8 fixes will land in the `.xml`, not the `.xlsx`.** The generic
-  code-gen CLI has file tools only — it cannot edit a binary workbook. Expect
-  a direct XML bind edit. Therefore the manual apply must **upload without
-  converting** (convert would regenerate from the still-buggy workbook and
-  clobber the fix). The workbook remains the partner-handback gap — the
-  operator ports the same one-attribute change into the `.xlsx` after the
-  demo (§7), or it waits for the contact-form extension of the orchestrator.
-- **M3/M4 are plain-JS edits** — exactly what the generic path is good at.
-  The dev-phase compile gate (`compile-app-settings` via `CHT_CONF_BIN`)
-  catches syntax errors before HC2.
+- **Run WITH `--qa`:** `npm run full -- tickets/maisha-mX-….md --qa` for all
+  four tickets (the `--` is still load-bearing). Do NOT pass `--qa-tier2`
+  for these: tier-2 spec selection is per-artifact only with P5 (form
+  artifacts only today).
+- **M7/M8 fixes land in the `.xlsx` source** (P1 orchestrator) and QA's
+  `contact-forms` bucket convert+upload keeps source and instance in
+  lockstep — no upload-without-convert workaround, no post-demo workbook
+  porting (§7 updated).
+- **M3/M4 QA prerequisites:** the mounted config repo must have its
+  `node_modules` installed (`npm ci` — the offline compile's webpack needs
+  the config's runtime deps) and `CHT_CONF_BIN` pointed at the repo-pinned
+  cht-conf, both already standard in §3d. The QA reproduce step compiles
+  the corrected source and byte-compares against deployed settings — RED
+  before apply, GREEN after.
 
 ## 2. The reset model — three state layers, none reset automatically
 
@@ -218,15 +210,23 @@ Order rationale: ascending risk, descending amount of manual apply, ending
 on the highest-impact story (ten duplicate tasks collapsing). Resets make
 the order freely swappable.
 
-Common agent step for every ticket (no `--qa` — see §1):
+Common agent step for every ticket (P1–P4 landed — full closed loop, §1):
 
 ```bash
-docker exec -it cht-agent npm run full -- tickets/maisha-mX-<name>.md
+docker exec -it cht-agent npm run full -- tickets/maisha-mX-<name>.md --qa
 #                                      ^^ the -- is LOAD-BEARING (npm swallows flags)
 # HC1: approve research (frontmatter-routed, cht-conf corpus).
-# HC2: review the plain git diff against the mount. Approve ⇒ files land on
-#      the fix/maisha-mX branch in the working copy. NOTHING is uploaded yet.
+# HC2: M7/M8 → bind-level per-attr diff from the verified offline convert
+#      (M8 shows `calculate: <expr> → (absent)`); M3/M4 → plain git diff.
+#      Approve ⇒ files land in the working copy. Nothing is uploaded yet.
+# QA:  reproduce RED on the deployed instance → HC3 gate → apply (contact-forms
+#      bucket for M7/M8, app-settings for M3/M4) → rev change → verify GREEN.
+#      No --qa-tier2 here (per-artifact tier-2 selection is P5).
 ```
+
+The per-ticket `[OPERATOR] Apply` blocks below are the **no-QA fallback**
+(e.g. demoing against an instance the agent can't reach); with `--qa` the
+apply happens inside the loop at HC3 and these steps are skipped.
 
 ### 5.1 M8 — education select corrupted by a `calculate` (contact-form, opener)
 
@@ -409,16 +409,14 @@ narration beats ("everything you just saw is now provably gone").
 
 ## 7. After the demo — deliverables + gaps to narrate
 
-- **Handback:** four `fix/maisha-m*` branches. For M7/M8, port the XML bind
-  change into the `.xlsx` survey sheets (one attribute each) before the
-  partner PR — the workbook is the source of truth and the demo fix landed
-  at XML level (§1). M3/M4 need no porting (JS sources are the truth).
-- **Gaps this demo intentionally exposes** (each maps to a planned PR in
-  `134-cht-conf-extension-spec.md`): contact-form support in the XLSForm
-  orchestrator (paths + descriptor for `forms/contact/`), the
-  `contact-form → contact-forms` QA apply mapping + verify oracle
-  (`fetchFormXml` `form:contact:` ids), and an app-settings-artifact QA
-  oracle for task/contact-summary tickets (today the guard demands the
-  source repo and the verify guard rejects non-form outright).
+- **Handback:** four `fix/maisha-m*` branches. Since P1, M7/M8 fixes land
+  in the `.xlsx` source (corrected workbook + regenerated `.xml`, in
+  lockstep) — no post-demo porting. M3/M4 are JS-source fixes as before.
+- **Remaining gap to narrate** (tracked in the PR ledger): P5 — per-artifact
+  tier-2 spec selection (partner `test/tasks/` / `test/contact-summary`
+  suites wired into `--qa-tier2`) and the contact-form fill-based generated
+  spec; plus the deferred settings drift guard (git-baseline compile at
+  RED time). Everything else this runbook originally listed as a gap
+  (contact-form orchestrator/QA, app-settings oracle) LANDED 2026-07-18.
 - Teardown when done: `docker compose down -v` (+ delete `~/maisha-volsnap`
   when the engagement closes).

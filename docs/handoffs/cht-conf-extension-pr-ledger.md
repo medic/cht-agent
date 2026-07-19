@@ -32,7 +32,7 @@ QA wiring → orchestrator → test-gen → memory pipeline.
 |---|---|---|---|
 | B1 | `feat/all-artifacts-p1p2-bind-oracle` | **P1** contact-form parity in the XLSForm orchestrator (routing gate, `form-paths` resolver, contact-forms offline convert bucket, prompts, deterministic-test-gen guard for contact forms) + **P2** generalized bind oracle (`expect.attrs` incl. absence, editor `clear` + calculate-type guardrail, inspector `extractBindAttr`/attrs-aware `verifyFormBinds`, schema + tolerant-parse update) + review hardening (resolver-driven HC2/summary display, unchanged-relevant spec-gen skip) | **LANDED** `8d52006` (2026-07-18) — 1630 tests |
 | B2 | `feat/all-artifacts-p3-contact-form-qa` | **P3** QA closed loop for contact-form: `VerifyArtifactType` union, `deriveVerifyOptions`/guards, `deployedFormId` mapping (`e_household-create` → `contact:e_household:create`), `contact-forms` apply bucket, F6 oracle path, formVersions rev-key fix; live-smoked against the running 4.21.1 (M7 RED honest) | **LANDED** `607ce63` (2026-07-18) — 1646 tests |
-| B3 | `feat/all-artifacts-p4-compiled-settings-oracle` | **P4** compiled-settings byte-oracle for task/target/contact-summary/app-settings: COMPILE verb (`NODE_OPTIONS=--openssl-legacy-provider`, sandbox node_modules symlink), `compiled-settings` util + comparator (compiled-keys-only scope, permissions rule — from the normalization spike), `app-settings` apply bucket mapping, settings-doc rev corroboration. Deferred within P4: git-baseline drift guard (RED = differs-from-corrected suffices for reproduce) | in progress (2026-07-18 run) |
+| B3 | `feat/all-artifacts-p4-compiled-settings-oracle` | **P4** compiled-settings byte-oracle for task/target/contact-summary/app-settings: COMPILE verb (`NODE_OPTIONS=--openssl-legacy-provider`, sandbox node_modules symlink, **cwd = sandbox** — eslint-loader resolves `.eslintrc` plugins cwd-relative, found live), `compiled-settings` util + comparator (compiled-keys-only scope, permissions rule — from the normalization spike), `app-settings` apply bucket mapping, settings-doc rev corroboration. Live-smoked: GREEN byte-parity (task/contact-summary/whole-doc 24 checks) + RED at the perturbed M3 typo. Deferred within P4: git-baseline drift guard | **LANDED** `95d871d` (2026-07-18) — 1680 tests |
 | B4 | `feat/all-artifacts-p5-tier2-testgen` | **P5** tier-2 spec selection per artifact (`qaSpecs` frontmatter), contact-form fill-based generated spec, house-pattern LLM test-gen for JS artifacts | NOT this run (demo-optional) — do after demo |
 | B5 | (docs, rolling) | P6: fixtures land with B1–B3; runbook updates (`maisha-demo-runbook.md` manual steps collapse to `--qa`); cht-conf version-pin note (installed 3.21.5 vs frontmatter 3.21.4) | rolling |
 
@@ -51,6 +51,12 @@ QA wiring → orchestrator → test-gen → memory pipeline.
 ## Run log
 
 - **2026-07-18**: step-0 baseline commits on
-  `feat/mission-05-xlsform-orchestrator` (hygiene sweep; Maisha docs +
-  tickets + this ledger). B1–B3 implemented this run — statuses updated
-  in place as they land.
+  `feat/mission-05-xlsform-orchestrator` (hygiene sweep `8f527a4`; Maisha
+  docs + tickets + this ledger `db537ec`). B1 `8d52006`, B2 `607ce63`,
+  B3 `95d871d` all landed this run on stacked branches (final gates
+  1680 passing / 0 failing); two spikes (pyxform clear semantics,
+  settings normalization) and three live smokes against the reconstructed
+  4.21.1 deployment de-risked/verified the oracles. All four Maisha
+  tickets are now full `--qa` closed-loop runs (`maisha-demo-runbook.md`
+  §1 updated). Next up: P5 (B4) after the demo; carve-outs A1–A9
+  unchanged. Commits are local-only — nothing pushed.
