@@ -702,33 +702,111 @@ export interface FormBindCheck {
 }
 
 /**
- * Config-artifact kinds the QA verify step can content-assert (tier 1: the two
- * XLSForm artifacts — app `form`s and `contact-form`s). Both are served as XForm
- * XML by `/api/v1/forms/<id>.xml`, so the same bind oracle covers both; they
- * differ only in the deployed id derivation (`deployedFormId`) and the local
- * `forms/app` vs `forms/contact` path (`resolveFormRelPaths`).
+ * Config-artifact kinds the QA verify step can content-assert via the XForm-bind
+ * oracle (tier 1: the two XLSForm artifacts — app `form`s and `contact-form`s).
+ * Both are served as XForm XML by `/api/v1/forms/<id>.xml`, so the same bind
+ * oracle covers both; they differ only in the deployed id derivation
+ * (`deployedFormId`) and the local `forms/app` vs `forms/contact` path
+ * (`resolveFormRelPaths`).
  */
 export type VerifyArtifactType = 'form' | 'contact-form';
 
 /**
- * Inputs to TestEnvironmentAgent.verifyArtifact — real content verification of
- * a deployed artifact (not "the CouchDB rev changed"). For a form: fetch the
- * uploaded XForm and assert each expected bind's `relevant`.
+ * P4: the config artifacts verified by the compiled-settings byte-exact oracle.
+ * Their fix lives in JS/JSON source that `compile-app-settings` bundles into
+ * `app_settings.json`; QA compiles the corrected source offline and compares the
+ * artifact-owned sections against `GET /api/v1/settings`. `task`/`target` own the
+ * `tasks` section (rules + targets + isDeclarative), `contact-summary` owns
+ * `contact_summary`, `app-settings` owns every compiled top-level key.
  */
-export interface VerifyArtifactOptions {
+export type SettingsArtifactType = 'task' | 'target' | 'contact-summary' | 'app-settings';
+
+/**
+ * P4: the compiled-settings section a single verify check covers. `tasks.rules`
+ * and `contact_summary` are minified JS bundle strings (compared strict `===`);
+ * `tasks.targets` / `tasks.isDeclarative` and every other compiled top-level key
+ * are objects/scalars (deep-equal / `===`); `permissions` compares only the keys
+ * present in the compiled document (deployed-only permission keys ignored).
+ */
+export type SettingsSection = string;
+
+/**
+ * P4: the XForm-bind (tier-1) verify options — the pre-P4 `VerifyArtifactOptions`
+ * shape, now the `kind: 'form-xml'` member of the discriminated union. For a
+ * form: fetch the uploaded XForm and assert each expected bind's compiled attrs.
+ */
+export interface FormXmlVerifyOptions {
+  kind: 'form-xml';
   configArtifact: VerifyArtifactType;
   /** The artifact id (a form id like `pregnancy_home_visit`). */
   artifactName: string;
-  /** The target bind + sibling binds, each with the `relevant` it must carry. */
+  /** The target bind + sibling binds, each with the attrs it must carry. */
   expectedBinds: FormBindExpectation[];
 }
 
-/** Outcome of verifyArtifact: the per-bind checks plus a rolled-up pass/fail. */
-export interface VerifyArtifactResult {
+/**
+ * P4: the compiled-settings (whole-document) verify options. QA compiles the
+ * corrected source under `configPath` offline and compares the artifact-owned
+ * `sections` against the deployed `GET /api/v1/settings` document.
+ */
+export interface CompiledSettingsVerifyOptions {
+  kind: 'compiled-settings';
+  /** Which settings artifact this fix owns (drives the section derivation). */
+  configArtifact: SettingsArtifactType;
+  /** The artifact name from the ticket (a task/target id or 'app-settings'). */
+  artifactName: string;
+  /** The compiled-document sections/paths to compare byte-exact. */
+  sections: SettingsSection[];
+}
+
+/**
+ * Inputs to TestEnvironmentAgent.verifyArtifact — real content verification of a
+ * deployed artifact (not "the CouchDB rev changed"). Discriminated on `kind`:
+ * `form-xml` fetches the uploaded XForm and asserts bind attrs (tier 1);
+ * `compiled-settings` compiles the corrected source offline and compares the
+ * owned settings sections against the deployed settings document (P4).
+ */
+export type VerifyArtifactOptions = FormXmlVerifyOptions | CompiledSettingsVerifyOptions;
+
+/**
+ * P4: per-section outcome of the compiled-settings oracle. One check per compared
+ * section/path (`tasks.rules`, `tasks.targets`, `contact_summary`, `permissions`,
+ * a top-level key, …), with an honest `note` naming which side differs and, for
+ * long bundle strings, a first-difference hint (length + first divergent index).
+ */
+export interface SettingsSectionCheck {
+  /** The compiled-document section/path this check compared. */
+  path: string;
+  passed: boolean;
+  /** Which side differs / a first-difference hint (never a full string dump). */
+  note?: string;
+}
+
+/**
+ * Outcome of verifyArtifact. Discriminated on `kind` mirroring the options:
+ * `form-xml` carries the per-bind `checks` (FormBindCheck[]); `compiled-settings`
+ * carries the per-section `checks` (SettingsSectionCheck[]). Form consumers read
+ * `kind: 'form-xml'` results exactly as before (checks are FormBindCheck[] there).
+ */
+export type VerifyArtifactResult = FormXmlVerifyResult | CompiledSettingsVerifyResult;
+
+/** The tier-1 XForm-bind verify result (pre-P4 shape, now the `form-xml` member). */
+export interface FormXmlVerifyResult {
+  kind: 'form-xml';
   artifact: string;
   configArtifact: VerifyArtifactType;
   passed: boolean;
   checks: FormBindCheck[];
+  summary: string;
+}
+
+/** P4: the compiled-settings verify result (per-section checks). */
+export interface CompiledSettingsVerifyResult {
+  kind: 'compiled-settings';
+  artifact: string;
+  configArtifact: SettingsArtifactType;
+  passed: boolean;
+  checks: SettingsSectionCheck[];
   summary: string;
 }
 
@@ -884,6 +962,13 @@ export interface ChtConfExecOptions {
   bin?: string;
   /** Timeout in ms before the process is killed. */
   timeoutMs?: number;
+  /**
+   * P4: explicit env overrides layered on top of the minimal allow-list for THIS
+   * invocation only (the offline COMPILE path sets
+   * NODE_OPTIONS=--openssl-legacy-provider so webpack-4's md4 hash runs under
+   * Node>=17). Kept narrow — never a blanket inherit of process.env.
+   */
+  extraEnv?: NodeJS.ProcessEnv;
 }
 
 /**

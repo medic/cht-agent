@@ -36,6 +36,7 @@ import {
 import {
   MOCK_TEST_ENV_DATA,
   mockConfigActionResult,
+  mockCompiledSettingsVerifyResult,
   mockVerifyArtifactResult,
 } from './test-environment-agent.mock-data';
 import { waitForReady } from '../utils/cht-readiness';
@@ -43,6 +44,8 @@ import { runBucket, runChtConf } from '../utils/cht-conf-runner';
 import { BulkDoc, bulkDocs, fetchDocRevs, fetchFormRevs, fetchFormXml, fetchSettings } from '../utils/cht-api';
 import { verifyFormBinds } from '../utils/xform-inspect';
 import { deployedFormId } from '../utils/form-paths';
+import { compareCompiledSettings, compileSettingsOffline, deriveSettingsSections } from '../utils/compiled-settings';
+import * as fs from 'node:fs';
 import {
   classifySeededDocs,
   cleanSeededDocs,
@@ -71,6 +74,9 @@ const DEFAULT_CONFIG_ACTIONS: ConfigUploadAction[] = [
 
 // CouchDB id prefix of installed form docs (form:pregnancy -> pregnancy).
 const FORM_DOC_PREFIX = 'form:';
+
+// CouchDB doc id of the app settings — the rev the P4 settings tickets corroborate on.
+const SETTINGS_DOC_ID = 'settings';
 
 /**
  * Decode a URL userinfo component. Userinfo SHOULD be percent-encoded, but a
@@ -377,21 +383,32 @@ export class TestEnvironmentAgent {
 
   /**
    * Content-verify a deployed artifact against the ticket's acceptance criterion
-   * (mission 04 A2, closes G3). For `configArtifact: form` / `contact-form` it
-   * fetches the uploaded XForm (GET /api/v1/forms/<id>.xml — a contact form is
-   * served under its `contact:<type>:<action>` id, resolved via `deployedFormId`)
-   * and asserts each expected bind's compiled attrs — the target bind now carries
-   * the corrected expression AND the sibling binds are unchanged. This is a real
-   * content assertion, run BOTH as the red reproduction baseline (against the
-   * buggy deployed form, expected to fail) and the green fix proof (against the
-   * corrected form, expected to pass). The pre/post `formVersions` rev diff
-   * (discoverConfig before/after applyConfig) is captured by the QA workflow as
-   * corroboration.
+   * (mission 04 A2, closes G3). Discriminated on `options.kind`:
+   *
+   * `form-xml` (form / contact-form): fetch the uploaded XForm (GET
+   * /api/v1/forms/<id>.xml — a contact form is served under its
+   * `contact:<type>:<action>` id, resolved via `deployedFormId`) and assert each
+   * expected bind's compiled attrs (target corrected + siblings unchanged).
+   *
+   * `compiled-settings` (task / target / contact-summary / app-settings, P4):
+   * compile the corrected source under `configPath` OFFLINE and compare the
+   * artifact-owned settings sections against the deployed `GET /api/v1/settings`
+   * document (byte-exact, per compiled-settings.ts).
+   *
+   * Both run BOTH as the red reproduction baseline (against the buggy deployed
+   * artifact, expected to fail) and the green fix proof (against the corrected
+   * one, expected to pass). `configPath` is required for the compiled-settings
+   * kind (the corrected source to compile) and unused for form-xml.
    */
   async verifyArtifact(
     handle: EnvironmentHandle,
-    options: VerifyArtifactOptions
+    options: VerifyArtifactOptions,
+    configPath?: string
   ): Promise<VerifyArtifactResult> {
+    if (options.kind === 'compiled-settings') {
+      return this.verifyCompiledSettings(handle, options, configPath);
+    }
+
     if (options.configArtifact !== 'form' && options.configArtifact !== 'contact-form') {
       throw new Error(
         `verifyArtifact supports configArtifact: form and contact-form only ` +
@@ -420,7 +437,75 @@ export class TestEnvironmentAgent {
       : `${options.artifactName}: ${failed.length} of ${checks.length} bind assertion(s) failed ` +
         `(${failed.map((check) => check.nodeset).join(', ')})`;
     console.log(`[Test Environment Agent] ${summary}`);
-    return { artifact: options.artifactName, configArtifact: options.configArtifact, passed, checks, summary };
+    return {
+      kind: 'form-xml',
+      artifact: options.artifactName,
+      configArtifact: options.configArtifact,
+      passed,
+      checks,
+      summary,
+    };
+  }
+
+  /**
+   * P4: the compiled-settings verify path. Compiles the corrected source under
+   * `configPath` offline (byte-deterministic, minified — matching the deployed
+   * document) and compares the artifact-owned sections against the deployed
+   * settings. RED runs it against the buggy deployed settings (expected to fail);
+   * GREEN runs it after the corrected apply (expected to pass). The sandbox the
+   * offline compile creates is removed before returning.
+   */
+  private async verifyCompiledSettings(
+    handle: EnvironmentHandle,
+    options: Extract<VerifyArtifactOptions, { kind: 'compiled-settings' }>,
+    configPath?: string
+  ): Promise<VerifyArtifactResult> {
+    console.log(
+      `[Test Environment Agent] Verifying ${options.artifactName} ` +
+        `(${options.sections.length} settings section(s)) <- ${handle.url}`
+    );
+
+    if (this.useMockDocker) {
+      const mock = mockCompiledSettingsVerifyResult(options);
+      console.log(`[Test Environment Agent] (mock) ${mock.summary}`);
+      return mock;
+    }
+
+    if (!configPath) {
+      throw new Error(
+        'verifyArtifact (compiled-settings): configPath is required — the corrected ' +
+          'source to compile offline (thread CHT_CONF_PATH via the QA input, not env)'
+      );
+    }
+
+    const deployed = await fetchSettings(handle.url, handle.auth);
+    const { settings: compiled, sandboxDir } = await compileSettingsOffline(configPath);
+    try {
+      // app-settings is whole-document: an empty section list is resolved from the
+      // compiled doc's top-level keys now that the compile has run. task/target/
+      // contact-summary carry their static section list from deriveVerifyOptions.
+      const sections =
+        options.sections.length > 0
+          ? options.sections
+          : deriveSettingsSections(options.configArtifact, compiled);
+      const { passed, checks } = compareCompiledSettings(compiled, deployed, sections);
+      const failed = checks.filter((check) => !check.passed);
+      const summary = passed
+        ? `${options.artifactName}: all ${checks.length} settings section(s) match`
+        : `${options.artifactName}: ${failed.length} of ${checks.length} settings section(s) differ ` +
+          `(${failed.map((check) => check.path).join(', ')})`;
+      console.log(`[Test Environment Agent] ${summary}`);
+      return {
+        kind: 'compiled-settings',
+        artifact: options.artifactName,
+        configArtifact: options.configArtifact,
+        passed,
+        checks,
+        summary,
+      };
+    } finally {
+      fs.rmSync(sandboxDir, { recursive: true, force: true });
+    }
   }
 
   /**
@@ -442,6 +527,21 @@ export class TestEnvironmentAgent {
       return undefined;
     }
     return fetchFormXml(handle.url, handle.auth, deployedFormId(configArtifact, form));
+  }
+
+  /**
+   * P4: the CouchDB rev of the `settings` doc — the settings tickets' change-
+   * detection corroboration (the settings analogue of a form's `formVersions`
+   * rev). Returns undefined in mock mode (no live instance) so the QA workflow's
+   * rev diff self-skips rather than fabricating a rev. The real path reads the
+   * live rev via `POST /medic/_all_docs` (key `settings`).
+   */
+  async fetchSettingsRev(handle: EnvironmentHandle): Promise<string | undefined> {
+    if (this.useMockDocker) {
+      return undefined;
+    }
+    const rows = await fetchDocRevs(handle.url, handle.auth, [SETTINGS_DOC_ID]);
+    return rows[0]?.rev;
   }
 
   /**

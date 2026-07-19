@@ -1,9 +1,10 @@
 import {
+  CompiledSettingsVerifyOptions,
   ConfigActionResult,
   ConfigUploadAction,
   DiscoveredConfig,
+  FormXmlVerifyOptions,
   TestDataResult,
-  VerifyArtifactOptions,
   VerifyArtifactResult,
 } from '../types';
 import { CONFIG_ACTION_COMMANDS } from '../utils/cht-conf-runner';
@@ -34,10 +35,10 @@ export const mockConfigActionResult = (action: ConfigUploadAction): ConfigAction
 });
 
 /**
- * Build a passing mock verifyArtifact result (mock mode has no live instance to
- * fetch from, so it echoes each expected bind as satisfied).
+ * Build a passing mock form-xml verifyArtifact result (mock mode has no live
+ * instance to fetch from, so it echoes each expected bind as satisfied).
  */
-export const mockVerifyArtifactResult = (options: VerifyArtifactOptions): VerifyArtifactResult => {
+export const mockVerifyArtifactResult = (options: FormXmlVerifyOptions): VerifyArtifactResult => {
   // One passing check per asserted attribute (mock mode has no live instance to
   // fetch from, so it echoes each expected attr as satisfied). For an absence
   // assertion (expected null) the mock reports it as satisfied without an actual.
@@ -51,11 +52,30 @@ export const mockVerifyArtifactResult = (options: VerifyArtifactOptions): Verify
     })),
   );
   return {
+    kind: 'form-xml',
     artifact: options.artifactName,
     configArtifact: options.configArtifact,
     passed: true,
     checks,
     summary: `${options.artifactName}: all ${checks.length} bind assertion(s) passed (mock)`,
+  };
+};
+
+/**
+ * P4: build a passing mock compiled-settings verifyArtifact result (mock mode has
+ * no live instance to fetch from, so it echoes each requested section as matched).
+ */
+export const mockCompiledSettingsVerifyResult = (
+  options: CompiledSettingsVerifyOptions
+): VerifyArtifactResult => {
+  const checks = options.sections.map((path) => ({ path, passed: true }));
+  return {
+    kind: 'compiled-settings',
+    artifact: options.artifactName,
+    configArtifact: options.configArtifact,
+    passed: true,
+    checks,
+    summary: `${options.artifactName}: all ${checks.length} settings section(s) match (mock)`,
   };
 };
 

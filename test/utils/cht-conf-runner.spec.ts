@@ -7,8 +7,11 @@ import * as path from 'node:path';
 import {
   buildChtConfArgs,
   classifyChtConfOutput,
+  COMPILE_NODE_OPTIONS,
+  COMPILE_VERB,
   CONFIG_ACTION_COMMANDS,
   createConvertSandbox,
+  OfflineCompileOptions,
   OfflineConvertOptions,
   resolveChtConfBin,
 } from '../../src/utils/cht-conf-runner';
@@ -55,6 +58,7 @@ const loadRunner = (proc: EventEmitter) => {
     runBucket: mod.runBucket as (o: ChtConfRunOptions) => Promise<ConfigActionResult>,
     runChtConf: mod.runChtConf as (o: ChtConfExecOptions) => Promise<ChtConfExecResult>,
     runOfflineConvert: mod.runOfflineConvert as (o: OfflineConvertOptions) => Promise<ChtConfExecResult>,
+    runOfflineCompile: mod.runOfflineCompile as (o: OfflineCompileOptions) => Promise<ChtConfExecResult>,
     spawnLog,
   };
 };
@@ -415,6 +419,74 @@ describe('cht-conf-runner', () => {
       const proc = makeFakeProc();
       const { runOfflineConvert } = loadRunner(proc);
       const promise = runOfflineConvert({ configPath: '/s', form: 'x' });
+      proc.emit('error', new Error('cht not found'));
+      const result = await promise;
+      expect(result.startError).to.include('cht not found');
+    });
+  });
+
+  describe('runOfflineCompile (P4 — compiled-settings oracle)', () => {
+    it('runs compile-app-settings ONLY, URL-less, --no-check, no upload verb', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineCompile, spawnLog } = loadRunner(proc);
+      const promise = runOfflineCompile({ configPath: '/sandbox' });
+      proc.emit('close', 0);
+      await promise;
+
+      const { args } = spawnLog[0];
+      expect(args.some((a) => a.startsWith('--url=')), 'no --url offline').to.equal(false);
+      expect(args).to.include('--source=/sandbox');
+      expect(args).to.include(COMPILE_VERB);
+      expect(args).to.not.include('upload-app-settings');
+      // --no-check rides after the -- separator (cht-conf's extraArgs).
+      const sep = args.indexOf('--');
+      expect(sep, 'has a -- separator').to.be.greaterThan(-1);
+      expect(args.slice(sep + 1)).to.deep.equal(['--no-check']);
+      expect(args.indexOf(COMPILE_VERB)).to.be.lessThan(sep);
+    });
+
+    // Live-run regression (2026-07-18): cht-conf's eslint-loader resolves the
+    // config's .eslintrc plugins relative to the child CWD, not --source — from
+    // any other cwd the plugins fail to load and the resulting webpack warnings
+    // hard-fail the compile. The compile must run IN the sandbox dir.
+    it('spawns with cwd = the sandbox project dir (eslint-loader plugin resolution)', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineCompile, spawnLog } = loadRunner(proc);
+      const promise = runOfflineCompile({ configPath: '/sandbox' });
+      proc.emit('close', 0);
+      await promise;
+
+      expect(spawnLog[0].opts.cwd).to.equal('/sandbox');
+    });
+
+    it('sets NODE_OPTIONS=--openssl-legacy-provider in the child env (webpack-4 md4 under Node>=17)', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineCompile, spawnLog } = loadRunner(proc);
+      const promise = runOfflineCompile({ configPath: '/sandbox' });
+      proc.emit('close', 0);
+      await promise;
+
+      const childEnv = spawnLog[0].opts.env as NodeJS.ProcessEnv;
+      expect(childEnv.NODE_OPTIONS).to.equal(COMPILE_NODE_OPTIONS);
+      // Still least-privilege: the allow-list keys ride, secrets do not.
+      expect(childEnv).to.have.property('PATH');
+    });
+
+    it('does NOT leak NODE_OPTIONS to a normal (non-compile) invocation', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf, spawnLog } = loadRunner(proc);
+      const promise = runChtConf({ verbs: ['upload-docs'], configPath: '/mnt/data' });
+      proc.emit('close', 0);
+      await promise;
+
+      const childEnv = spawnLog[0].opts.env as NodeJS.ProcessEnv;
+      expect(childEnv).to.not.have.property('NODE_OPTIONS');
+    });
+
+    it('never rejects on a spawn error (folds into startError)', async () => {
+      const proc = makeFakeProc();
+      const { runOfflineCompile } = loadRunner(proc);
+      const promise = runOfflineCompile({ configPath: '/s' });
       proc.emit('error', new Error('cht not found'));
       const result = await promise;
       expect(result.startError).to.include('cht not found');

@@ -29,6 +29,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+  CompiledSettingsVerifyOptions,
   ConfigArtifact,
   ConfigUploadAction,
   DiscoveredConfig,
@@ -38,6 +39,7 @@ import {
   ProvisionOptions,
   QaInput,
   QaResult,
+  SettingsArtifactType,
   VerifyArtifactOptions,
   VerifyArtifactResult,
   VerifyArtifactType,
@@ -46,25 +48,39 @@ import {
 import { TestEnvironmentAgent } from '../agents/test-environment-agent';
 import { extractTopLevelGroupBinds } from '../utils/xform-inspect';
 import { deployedFormId, resolveFormRelPaths } from '../utils/form-paths';
+import { deriveSettingsSections } from '../utils/compiled-settings';
 import { guardConfigFix } from '../utils/config-type';
 import { resolveDeploymentConfigRoot } from '../utils/canonical-diff';
 import { canonicalDiffLines } from '../utils/xlsform-apply';
 import { runTier2, tier2PassLine, tier2TailExcerpt } from '../utils/cht-conf-tier2';
 import { askYesNo } from '../utils/prompt';
 
+/** The four settings artifacts the compiled-settings oracle verifies. */
+const SETTINGS_ARTIFACTS: readonly string[] = ['task', 'target', 'contact-summary', 'app-settings'];
+
+const isSettingsArtifact = (artifact: string | undefined): artifact is SettingsArtifactType =>
+  artifact !== undefined && SETTINGS_ARTIFACTS.includes(artifact);
+
 /**
  * cht-conf upload buckets to apply for each verifiable artifact kind. Both
  * XLSForm artifacts apply per-form filtered (the `-- <form>` filter carries the
  * xlsx BASENAME — `runBucket` matches cht-conf's args-form-filter on the file
- * name, not the deployed doc id).
+ * name, not the deployed doc id). The four settings artifacts apply the
+ * `app-settings` bucket (compile + upload); there is NO per-artifact filter for
+ * the settings bucket (runBucket warns/ignores a form filter there).
  */
-const APPLY_ACTIONS_BY_ARTIFACT: Record<VerifyArtifactType, ConfigUploadAction[]> = {
+const APPLY_ACTIONS_BY_ARTIFACT: Record<VerifyArtifactType | SettingsArtifactType, ConfigUploadAction[]> = {
   form: ['app-forms'],
   'contact-form': ['contact-forms'],
+  task: ['app-settings'],
+  target: ['app-settings'],
+  'contact-summary': ['app-settings'],
+  'app-settings': ['app-settings'],
 };
 
-export const defaultApplyActions = (artifact: VerifyArtifactType): ConfigUploadAction[] =>
-  APPLY_ACTIONS_BY_ARTIFACT[artifact] ?? ['app-forms'];
+export const defaultApplyActions = (
+  artifact: VerifyArtifactType | SettingsArtifactType
+): ConfigUploadAction[] => APPLY_ACTIONS_BY_ARTIFACT[artifact] ?? ['app-forms'];
 
 /**
  * Snapshot the verification set from the CORRECTED local form. Returns null when
@@ -96,6 +112,16 @@ export const deriveVerifyOptions = (
   bindDiff?: XlsformBindDiff
 ): VerifyArtifactOptions | null => {
   const tc = issue.issue.technical_context;
+
+  // P4: the four settings artifacts verify via the compiled-settings oracle
+  // (compile the corrected source offline, compare owned sections vs deployed).
+  // Sections are static for task/target/contact-summary; app-settings is
+  // whole-document, resolved from the compiled doc's keys at verify time (the
+  // agent expands an empty `sections` for it) — the compile has not run here.
+  if (isSettingsArtifact(tc.configArtifact) && tc.artifactName) {
+    return deriveSettingsVerifyOptions(tc.configArtifact, tc.artifactName);
+  }
+
   // Both XLSForm artifacts verify identically (XForm-bind oracle); they differ
   // only in the local path — `form` → forms/app, `contact-form` → forms/contact.
   if ((tc.configArtifact !== 'form' && tc.configArtifact !== 'contact-form') || !tc.artifactName) {
@@ -115,14 +141,34 @@ export const deriveVerifyOptions = (
       { nodeset: bindDiff.nodeset, attrs: bindDiff.attrs },
       ...groupBinds.filter((b) => b.nodeset !== bindDiff.nodeset),
     ];
-    return { configArtifact, artifactName: tc.artifactName, expectedBinds };
+    return { kind: 'form-xml', configArtifact, artifactName: tc.artifactName, expectedBinds };
   }
   // Fallback (no dev result): group-bind set only — unchanged behavior.
   if (groupBinds.length === 0) {
     return null;
   }
-  return { configArtifact, artifactName: tc.artifactName, expectedBinds: groupBinds };
+  return { kind: 'form-xml', configArtifact, artifactName: tc.artifactName, expectedBinds: groupBinds };
 };
+
+/**
+ * P4: build the compiled-settings verify options for a settings artifact. The
+ * corrected JS/JSON source's PRESENCE is enforced by the config-type guard (it
+ * demands tasks.js / targets.js / contact-summary*.js in the mount), not here —
+ * this derivation is a pure section-list mapping and never touches disk. For
+ * `app-settings` (whole-document) `sections` is left empty and resolved from the
+ * compiled document's top-level keys at verify time.
+ */
+const deriveSettingsVerifyOptions = (
+  configArtifact: SettingsArtifactType,
+  artifactName: string
+): CompiledSettingsVerifyOptions => ({
+  kind: 'compiled-settings',
+  configArtifact,
+  artifactName,
+  // Empty compiled doc: static list for task/target/contact-summary, [] for
+  // app-settings (Object.keys({}) — the agent re-derives its whole-doc scope).
+  sections: deriveSettingsSections(configArtifact, {}),
+});
 
 const buildProvisionFromEnv = (): ProvisionOptions => ({
   chtCorePath: process.env.CHT_CORE_PATH || undefined,
@@ -161,9 +207,11 @@ export const createQaInput = (args: CreateQaInputArgs): QaInput | null => {
   const verify = deriveVerifyOptions(configPath, args.issue, args.bindDiff);
   if (!verify) {
     console.error(
-      '❌ QA: could not derive form verification — needs configArtifact: form (at ' +
-        'forms/app/<artifactName>.xml) or contact-form (at forms/contact/<artifactName>.xml), ' +
-        'an artifactName, and the corrected form on disk'
+      '❌ QA: could not derive verification. Each artifact needs:\n' +
+        '   • form → an artifactName + the corrected form at forms/app/<artifactName>.xml\n' +
+        '   • contact-form → an artifactName + the corrected form at forms/contact/<artifactName>.xml\n' +
+        '   • task / target / contact-summary / app-settings → an artifactName + the corrected\n' +
+        '     JS/JSON source in the mount (compiled offline for the settings oracle)'
     );
     return null;
   }
@@ -326,15 +374,22 @@ export const executeQaWorkflow = async (
   if (!guard.ok) {
     return abort(messages, `config-type guard: ${guard.message}`);
   }
-  if (input.verify.configArtifact !== 'form' && input.verify.configArtifact !== 'contact-form') {
+  if (
+    input.verify.kind !== 'form-xml' &&
+    input.verify.kind !== 'compiled-settings'
+  ) {
     return abort(
       messages,
-      `QA verify supports configArtifact: form and contact-form only (got ${input.verify.configArtifact})`
+      `QA verify supports kind: form-xml and compiled-settings only (got ${JSON.stringify(input.verify)})`
     );
   }
-  // The narrowed artifact type drives both the deployed-id derivation (rev lookup
-  // + whole-doc fetch) and the local forms/app-vs-forms/contact path.
-  const verifyArtifactType: VerifyArtifactType = input.verify.configArtifact;
+  // P4: settings tickets take the compiled-settings oracle (no XForm, no bindDiff,
+  // no whole-document XML oracle); form tickets keep the XForm-bind oracle. The
+  // narrowed form type drives the deployed-id derivation (form-rev lookup +
+  // whole-doc fetch) and the forms/app-vs-forms/contact path.
+  const isSettings = input.verify.kind === 'compiled-settings';
+  const verifyArtifactType: VerifyArtifactType =
+    input.verify.kind === 'form-xml' ? input.verify.configArtifact : 'form';
 
   console.log('\n🧪 QA WORKFLOW — reproduce → fix → verify');
 
@@ -343,13 +398,16 @@ export const executeQaWorkflow = async (
 
   // 2. discoverConfig (pre) — before prepareTestData (needs a config) and for the rev diff
   const preConfig: DiscoveredConfig = await agent.discoverConfig(handle);
-  // formVersions is keyed by the deployed doc id (minus the `form:` prefix), so a
-  // contact form is keyed `contact:<type>:<action>`, NOT its dashed base name.
-  const revKey = deployedFormId(verifyArtifactType, artifact);
-  const preFormRev = preConfig.formVersions?.[revKey];
+  // Rev corroboration: settings tickets track the `settings` doc rev (P4), form
+  // tickets track the form doc rev. formVersions is keyed by the deployed doc id
+  // (minus the `form:` prefix), so a contact form is keyed `contact:<type>:<action>`.
+  const preFormRev = isSettings
+    ? await agent.fetchSettingsRev(handle)
+    : preConfig.formVersions?.[deployedFormId(verifyArtifactType, artifact)];
 
-  // 3. reproduce (RED) — read-only content assertion against the as-deployed form
-  const redEvidence = await agent.verifyArtifact(handle, input.verify);
+  // 3. reproduce (RED) — read-only content assertion against the as-deployed
+  // artifact (settings: compile the corrected source + compare owned sections).
+  const redEvidence = await agent.verifyArtifact(handle, input.verify, input.configPath);
   const reproduced = !redEvidence.passed;
   messages.push(reproduced ? `RED reproduced — ${redEvidence.summary}` : `no reproduction — ${redEvidence.summary}`);
   if (!reproduced) {
@@ -368,7 +426,9 @@ export const executeQaWorkflow = async (
   // ENVIRONMENT DRIFT: abort loudly (sample lines) BEFORE the destructive
   // seed/apply, unless QA_ALLOW_DRIFT=1 downgrades it to a warning + the targeted
   // oracle. No bindDiff ⇒ this whole block is skipped (targeted-oracle behavior).
-  if (input.bindDiff) {
+  // P4: settings tickets never carry a bindDiff and take no XML whole-doc oracle —
+  // the compiled-settings comparator (RED above) IS their whole-document oracle.
+  if (input.bindDiff && !isSettings) {
     const redDoc = await runWholeDocOracle(
       agent,
       handle,
@@ -432,10 +492,12 @@ export const executeQaWorkflow = async (
 
   // 7. discoverConfig (post) + verifyArtifact (GREEN)
   const postConfig = await agent.discoverConfig(handle);
-  const postFormRev = postConfig.formVersions?.[revKey];
+  const postFormRev = isSettings
+    ? await agent.fetchSettingsRev(handle)
+    : postConfig.formVersions?.[deployedFormId(verifyArtifactType, artifact)];
   const revChanged =
     preFormRev !== undefined && postFormRev !== undefined ? preFormRev !== postFormRev : undefined;
-  const greenEvidence = await agent.verifyArtifact(handle, input.verify);
+  const greenEvidence = await agent.verifyArtifact(handle, input.verify, input.configPath);
   const bindsVerified = greenEvidence.passed;
   messages.push(
     bindsVerified ? `GREEN verified — ${greenEvidence.summary}` : `verify FAILED — ${greenEvidence.summary}`
@@ -448,7 +510,7 @@ export const executeQaWorkflow = async (
   // collateral lines. No bindDiff ⇒ the bind assertions alone decide verify
   // (targeted-oracle behavior, unchanged).
   let verified = bindsVerified;
-  if (input.bindDiff && bindsVerified) {
+  if (input.bindDiff && bindsVerified && !isSettings) {
     const greenDoc = await runWholeDocOracle(
       agent,
       handle,

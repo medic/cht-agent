@@ -22,12 +22,21 @@ import {
   ConfigApplyResult,
   DiscoveredConfig,
   EnvironmentHandle,
+  FormBindExpectation,
   IssueTemplate,
   QaInput,
   TestDataResult,
+  VerifyArtifactOptions,
   VerifyArtifactResult,
   XlsformBindDiff,
 } from '../../src/types';
+
+/** Narrow a (nullable) union verify options to the form-xml expectedBinds (P4). */
+const formExpectedBinds = (options: VerifyArtifactOptions | null): FormBindExpectation[] => {
+  expect(options, 'verify options present').to.not.equal(null);
+  expect(options!.kind).to.equal('form-xml');
+  return (options as Extract<VerifyArtifactOptions, { kind: 'form-xml' }>).expectedBinds;
+};
 
 const YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";
 const PLANTED_GATE = `${YES_GATE} or selected(../pregnancy_summary/visit_option, 'miscarriage')`;
@@ -69,6 +78,7 @@ const discovered = (rev: string): DiscoveredConfig => ({
 });
 
 const verifyResult = (passed: boolean): VerifyArtifactResult => ({
+  kind: 'form-xml',
   artifact: 'pregnancy_home_visit',
   configArtifact: 'form',
   passed,
@@ -93,6 +103,7 @@ const makeQaInput = (overrides: Partial<QaInput> = {}): QaInput => ({
   issue: formIssue(),
   configPath: '/mnt/conf',
   verify: {
+    kind: 'form-xml',
     configArtifact: 'form',
     artifactName: 'pregnancy_home_visit',
     expectedBinds: [{ nodeset: '/data/danger_signs', attrs: { relevant: YES_GATE } }],
@@ -214,9 +225,9 @@ describe('qa-workflow', () => {
       const verify = deriveVerifyOptions(dir, formIssue());
       expect(verify).to.not.equal(null);
       expect(verify!.artifactName).to.equal('pregnancy_home_visit');
-      const danger = verify!.expectedBinds.find((b) => b.nodeset === '/data/danger_signs');
+      const danger = formExpectedBinds(verify).find((b) => b.nodeset === '/data/danger_signs');
       expect(danger?.attrs.relevant).to.equal(YES_GATE);
-      expect(verify!.expectedBinds).to.have.lengthOf(2);
+      expect(formExpectedBinds(verify)).to.have.lengthOf(2);
     });
 
     it('createQaInput builds a QaInput from the mounted config', () => {
@@ -226,9 +237,22 @@ describe('qa-workflow', () => {
       expect(input!.applyActions).to.deep.equal(['app-forms']);
     });
 
-    it('returns null for a non-form ticket', () => {
-      expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }))).to.equal(null);
-      expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.equal(null);
+    // P4: a settings artifact (task/target/contact-summary/app-settings) with an
+    // artifactName now derives compiled-settings verify options — no longer null.
+    // Only an artifact NEITHER form/contact-form NOR settings (e.g. translations)
+    // still returns null.
+    it('derives compiled-settings options for a task ticket (P4)', () => {
+      const verify = deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }));
+      expect(verify).to.not.equal(null);
+      expect(verify!.kind).to.equal('compiled-settings');
+      expect(verify!.configArtifact).to.equal('task');
+    });
+
+    it('returns null for an artifact that is neither a form nor a settings artifact', () => {
+      expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'translations' }))).to.equal(null);
+      expect(
+        createQaInput({ issue: formIssue({ configArtifact: 'translations' }), configPath: dir })
+      ).to.equal(null);
     });
 
     it('createQaInput threads the F7 tier-2 opt-in onto the QaInput', () => {
@@ -440,7 +464,7 @@ describe('qa-workflow', () => {
       };
       const verify = deriveVerifyOptions(dir, formIssue(), absenceDiff);
       expect(verify).to.not.equal(null);
-      expect(verify!.expectedBinds[0]).to.deep.equal({
+      expect(formExpectedBinds(verify)[0]).to.deep.equal({
         nodeset: CHILD_NODESET,
         attrs: { calculate: null, relevant: YES_GATE },
       });
@@ -450,16 +474,16 @@ describe('qa-workflow', () => {
       const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
       expect(verify).to.not.equal(null);
       // Target bind first — its attrs come from bindDiff.attrs (the corrected gate).
-      expect(verify!.expectedBinds[0]).to.deep.equal({
+      expect(formExpectedBinds(verify)[0]).to.deep.equal({
         nodeset: CHILD_NODESET,
         attrs: { relevant: YES_GATE },
       });
       // Group binds retained AFTER it as sibling invariance.
-      const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
+      const nodesets = formExpectedBinds(verify).map((b) => b.nodeset);
       expect(nodesets).to.include('/data/danger_signs');
       expect(nodesets).to.include('/data/summary');
       // target(child) + 2 group binds = 3, asserted exactly once each
-      expect(verify!.expectedBinds).to.have.lengthOf(3);
+      expect(formExpectedBinds(verify)).to.have.lengthOf(3);
     });
 
     it('de-duplicates the target when the bindDiff nodeset is itself a group bind', () => {
@@ -473,14 +497,14 @@ describe('qa-workflow', () => {
       const verify = deriveVerifyOptions(dir, formIssue(), groupDiff);
       expect(verify).to.not.equal(null);
       // target first (from the diff), and NOT repeated in the sibling set
-      expect(verify!.expectedBinds[0]).to.deep.equal({
+      expect(formExpectedBinds(verify)[0]).to.deep.equal({
         nodeset: '/data/danger_signs',
         attrs: { relevant: YES_GATE },
       });
-      const occurrences = verify!.expectedBinds.filter((b) => b.nodeset === '/data/danger_signs');
+      const occurrences = formExpectedBinds(verify).filter((b) => b.nodeset === '/data/danger_signs');
       expect(occurrences).to.have.lengthOf(1);
       // /data/danger_signs (target) + /data/summary (sibling) = 2
-      expect(verify!.expectedBinds).to.have.lengthOf(2);
+      expect(formExpectedBinds(verify)).to.have.lengthOf(2);
     });
 
     it('createQaInput threads args.bindDiff into the verify set (target present)', () => {
@@ -492,14 +516,14 @@ describe('qa-workflow', () => {
         bindDiff: childBindDiff,
       });
       expect(input).to.not.equal(null);
-      expect(input!.verify.expectedBinds[0].nodeset).to.equal(CHILD_NODESET);
+      expect(formExpectedBinds(input!.verify)[0].nodeset).to.equal(CHILD_NODESET);
     });
 
     // Fallback: no dev result → byte-identical current behavior (group set only).
     it('FALLBACK — without a bindDiff the verify set is the group binds only (unchanged)', () => {
       const verify = deriveVerifyOptions(dir, formIssue());
       expect(verify).to.not.equal(null);
-      const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
+      const nodesets = formExpectedBinds(verify).map((b) => b.nodeset);
       // group binds only — the child bind is NOT in the set
       expect(nodesets).to.not.include(CHILD_NODESET);
       expect(nodesets).to.deep.equal(['/data/danger_signs', '/data/summary']);
@@ -532,7 +556,7 @@ describe('qa-workflow', () => {
 
       it('reproduce is RED against the buggy deployed form (child bind lacks relevant)', () => {
         const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
-        const red = verifyFormBinds(DEPLOYED_BUGGY, verify!.expectedBinds);
+        const red = verifyFormBinds(DEPLOYED_BUGGY, formExpectedBinds(verify));
         expect(red.passed).to.equal(false); // reproduced = !passed → RED fires
         const target = red.checks.find((c) => c.nodeset === CHILD_NODESET);
         expect(target?.passed).to.equal(false);
@@ -544,7 +568,7 @@ describe('qa-workflow', () => {
 
       it('verify is GREEN once the corrected XML is deployed', () => {
         const verify = deriveVerifyOptions(dir, formIssue(), childBindDiff);
-        const green = verifyFormBinds(DEPLOYED_FIXED, verify!.expectedBinds);
+        const green = verifyFormBinds(DEPLOYED_FIXED, formExpectedBinds(verify));
         expect(green.passed).to.equal(true);
         expect(green.checks.every((c) => c.passed)).to.equal(true);
       });
@@ -552,7 +576,7 @@ describe('qa-workflow', () => {
       it('a GROUP-ONLY set (the old fallback) would NOT reproduce this — proves the threading is load-bearing', () => {
         // No bindDiff → group binds only → the buggy deployed form falsely PASSES.
         const groupOnly = deriveVerifyOptions(dir, formIssue());
-        const wouldBeRed = verifyFormBinds(DEPLOYED_BUGGY, groupOnly!.expectedBinds);
+        const wouldBeRed = verifyFormBinds(DEPLOYED_BUGGY, formExpectedBinds(groupOnly));
         expect(wouldBeRed.passed).to.equal(true); // no RED — the exact live-run miss
       });
     });
@@ -618,7 +642,7 @@ describe('qa-workflow', () => {
       makeQaInput({
         configPath: dir,
         bindDiff,
-        verify: { configArtifact: 'form', artifactName: 'pregnancy_home_visit', expectedBinds: [{ nodeset: TARGET, attrs: { relevant: YES_GATE } }] },
+        verify: { kind: 'form-xml', configArtifact: 'form', artifactName: 'pregnancy_home_visit', expectedBinds: [{ nodeset: TARGET, attrs: { relevant: YES_GATE } }] },
         ...overrides,
       });
 
@@ -758,7 +782,7 @@ describe('qa-workflow', () => {
       expect(verify).to.not.equal(null);
       expect(verify!.configArtifact).to.equal('contact-form');
       expect(verify!.artifactName).to.equal('e_household-create');
-      const nodesets = verify!.expectedBinds.map((b) => b.nodeset);
+      const nodesets = formExpectedBinds(verify).map((b) => b.nodeset);
       expect(nodesets).to.include(CONTACT_NODESET);
       expect(nodesets).to.include('/e_household/summary');
     });
@@ -781,7 +805,7 @@ describe('qa-workflow', () => {
       };
       const verify = deriveVerifyOptions(dir, contactIssue(), bindDiff);
       expect(verify).to.not.equal(null);
-      expect(verify!.expectedBinds[0]).to.deep.equal({
+      expect(formExpectedBinds(verify)[0]).to.deep.equal({
         nodeset: CONTACT_NODESET,
         attrs: { relevant: CONTACT_GATE },
       });
@@ -816,8 +840,8 @@ describe('qa-workflow', () => {
         });
       stubs.verifyArtifact.reset();
       stubs.verifyArtifact
-        .onFirstCall().resolves({ artifact: 'e_household-create', configArtifact: 'contact-form', passed: false, checks: [], summary: 'red' })
-        .onSecondCall().resolves({ artifact: 'e_household-create', configArtifact: 'contact-form', passed: true, checks: [], summary: 'green' });
+        .onFirstCall().resolves({ kind: 'form-xml', artifact: 'e_household-create', configArtifact: 'contact-form', passed: false, checks: [], summary: 'red' })
+        .onSecondCall().resolves({ kind: 'form-xml', artifact: 'e_household-create', configArtifact: 'contact-form', passed: true, checks: [], summary: 'green' });
 
       const input = createQaInput({ issue: contactIssue(), configPath: dir, provision: { chtCorePath: '/x' }, autoApprove: true })!;
       const result = await executeQaWorkflow(agent, input);
@@ -860,7 +884,7 @@ describe('qa-workflow', () => {
       const input: QaInput = {
         issue: contactIssue(),
         configPath: dir,
-        verify: { configArtifact: 'contact-form', artifactName: 'e_household-create', expectedBinds: [{ nodeset: CONTACT_NODESET, attrs: { relevant: CONTACT_GATE } }] },
+        verify: { kind: 'form-xml', configArtifact: 'contact-form', artifactName: 'e_household-create', expectedBinds: [{ nodeset: CONTACT_NODESET, attrs: { relevant: CONTACT_GATE } }] },
         applyActions: ['contact-forms'],
         provision: { chtCorePath: '/x' },
         autoApprove: true,
@@ -885,12 +909,129 @@ describe('qa-workflow', () => {
       expect(defaultApplyActions('form')).to.deep.equal(['app-forms']);
     });
 
-    it('task / contact-summary tickets are STILL rejected by QA (P4 territory, not P3)', () => {
-      // deriveVerifyOptions returns null → createQaInput returns null → no QA loop.
-      expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }))).to.equal(null);
-      expect(deriveVerifyOptions(dir, formIssue({ configArtifact: 'contact-summary' }))).to.equal(null);
-      expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.equal(null);
-      expect(createQaInput({ issue: formIssue({ configArtifact: 'contact-summary' }), configPath: dir })).to.equal(null);
+    it('task / contact-summary tickets now derive compiled-settings QA (P4 landed)', () => {
+      // P4 flips the P3-era rejection: these settings artifacts derive the
+      // compiled-settings oracle (deriveVerifyOptions no longer returns null).
+      const task = deriveVerifyOptions(dir, formIssue({ configArtifact: 'task' }));
+      expect(task!.kind).to.equal('compiled-settings');
+      const cs = deriveVerifyOptions(dir, formIssue({ configArtifact: 'contact-summary' }));
+      expect(cs!.kind).to.equal('compiled-settings');
+      // createQaInput builds a QaInput for them (the config-type source guard runs
+      // later, inside executeQaWorkflow, not here).
+      expect(createQaInput({ issue: formIssue({ configArtifact: 'task' }), configPath: dir })).to.not.equal(null);
+    });
+  });
+
+  // P4: compiled-settings QA for task/target/contact-summary/app-settings.
+  describe('compiled-settings QA (P4)', () => {
+    let dir: string;
+
+    const settingsIssue = (artifact: string): IssueTemplate =>
+      formIssue({ configArtifact: artifact as never, artifactName: artifact === 'app-settings' ? 'app-settings' : 'pnc-followup' });
+
+    const settingsVerifyResult = (passed: boolean): VerifyArtifactResult => ({
+      kind: 'compiled-settings',
+      artifact: 'pnc-followup',
+      configArtifact: 'task',
+      passed,
+      checks: [{ path: 'tasks.rules', passed }],
+      summary: passed ? 'all sections match' : '1 section differs (tasks.rules)',
+    });
+
+    /** A stubbed agent whose settings-rev changes pre→post and verify goes red→green. */
+    const stubbedSettingsAgent = () => {
+      const agent = new TestEnvironmentAgent({ useMockDocker: true });
+      const stubs = {
+        provision: sinon.stub(agent, 'provision').resolves(HANDLE),
+        discoverConfig: sinon.stub(agent, 'discoverConfig').resolves(discovered('n/a')),
+        verifyArtifact: sinon.stub(agent, 'verifyArtifact'),
+        applyConfig: sinon.stub(agent, 'applyConfig').resolves(applyOk),
+        fetchSettingsRev: sinon.stub(agent, 'fetchSettingsRev'),
+      };
+      stubs.verifyArtifact.onFirstCall().resolves(settingsVerifyResult(false)).onSecondCall().resolves(settingsVerifyResult(true));
+      stubs.fetchSettingsRev.onFirstCall().resolves('1-pre').onSecondCall().resolves('2-post');
+      return { agent, stubs };
+    };
+
+    beforeEach(() => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-settings-'));
+      // The config-type guard demands the JS source in the mount for a task fix.
+      fs.writeFileSync(path.join(dir, 'tasks.js'), 'module.exports = [];\n');
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    it('deriveVerifyOptions maps each settings artifact to compiled-settings with the right sections', () => {
+      const task = deriveVerifyOptions(dir, settingsIssue('task'));
+      expect(task!.kind).to.equal('compiled-settings');
+      expect((task as Extract<VerifyArtifactOptions, { kind: 'compiled-settings' }>).sections).to.deep.equal([
+        'tasks.rules', 'tasks.targets', 'tasks.isDeclarative',
+      ]);
+      const cs = deriveVerifyOptions(dir, settingsIssue('contact-summary'));
+      expect((cs as Extract<VerifyArtifactOptions, { kind: 'compiled-settings' }>).sections).to.deep.equal(['contact_summary']);
+      // app-settings is whole-document: sections are empty at derive time (resolved
+      // from the compiled doc keys by the agent at verify time).
+      const app = deriveVerifyOptions(dir, settingsIssue('app-settings'));
+      expect((app as Extract<VerifyArtifactOptions, { kind: 'compiled-settings' }>).sections).to.deep.equal([]);
+    });
+
+    it('threads artifactName from the ticket onto the verify options', () => {
+      const verify = deriveVerifyOptions(dir, settingsIssue('target'));
+      expect(verify!.artifactName).to.equal('pnc-followup');
+      expect(verify!.configArtifact).to.equal('target');
+    });
+
+    it('APPLY_ACTIONS maps every settings artifact to the app-settings bucket', () => {
+      expect(defaultApplyActions('task')).to.deep.equal(['app-settings']);
+      expect(defaultApplyActions('target')).to.deep.equal(['app-settings']);
+      expect(defaultApplyActions('contact-summary')).to.deep.equal(['app-settings']);
+      expect(defaultApplyActions('app-settings')).to.deep.equal(['app-settings']);
+      expect(CONFIG_ACTION_COMMANDS['app-settings']).to.deep.equal(['compile-app-settings', 'upload-app-settings']);
+    });
+
+    it('createQaInput builds the app-settings apply bucket for a task ticket', () => {
+      const input = createQaInput({ issue: settingsIssue('task'), configPath: dir, autoApprove: true });
+      expect(input!.applyActions).to.deep.equal(['app-settings']);
+      expect(input!.verify.kind).to.equal('compiled-settings');
+    });
+
+    it('executeQaWorkflow runs red→green and corroborates the settings-doc rev change', async () => {
+      const { agent, stubs } = stubbedSettingsAgent();
+      const input = createQaInput({ issue: settingsIssue('task'), configPath: dir, autoApprove: true })!;
+
+      const result = await executeQaWorkflow(agent, input);
+
+      expect(result.reproduced).to.equal(true);
+      expect(result.verified).to.equal(true);
+      expect(result.succeeded).to.equal(true);
+      // Rev corroboration came from fetchSettingsRev (NOT formVersions).
+      expect(stubs.fetchSettingsRev.callCount).to.equal(2);
+      expect(result.preFormRev).to.equal('1-pre');
+      expect(result.postFormRev).to.equal('2-post');
+      expect(result.revChanged).to.equal(true);
+      // The corrected configPath was threaded into verifyArtifact (compile source).
+      expect(stubs.verifyArtifact.firstCall.args[2]).to.equal(dir);
+      // Applied via the app-settings bucket.
+      const applyArgs = stubs.applyConfig.firstCall.args[1] as { actions: string[] };
+      expect(applyArgs.actions).to.deep.equal(['app-settings']);
+    });
+
+    it('aborts via the config-type guard when the JS source is absent from the mount', async () => {
+      fs.rmSync(path.join(dir, 'tasks.js'));
+      const { agent } = stubbedSettingsAgent();
+      // Build the input by hand (createQaInput does not run the guard).
+      const input: QaInput = {
+        issue: settingsIssue('task'),
+        configPath: dir,
+        verify: { kind: 'compiled-settings', configArtifact: 'task', artifactName: 'pnc-followup', sections: ['tasks.rules'] },
+        applyActions: ['app-settings'],
+        provision: { chtCorePath: '/x' },
+        autoApprove: true,
+      };
+
+      const result = await executeQaWorkflow(agent, input);
+
+      expect(result.succeeded).to.equal(false);
+      expect(result.abortReason).to.match(/config-type guard/);
     });
   });
 
@@ -923,7 +1064,7 @@ describe('qa-workflow', () => {
         // corrected gate, not the planted one.
         const verify = deriveVerifyOptions(outcome.result.sandboxDir, formIssue());
         expect(verify).to.not.equal(null);
-        const danger = verify!.expectedBinds.find((b) => b.nodeset === '/data/danger_signs');
+        const danger = formExpectedBinds(verify).find((b) => b.nodeset === '/data/danger_signs');
         expect(danger?.attrs.relevant).to.equal(YES_GATE);
         expect(danger?.attrs.relevant).to.not.equal(PLANTED_GATE);
       } finally {

@@ -84,11 +84,25 @@ const FORM_BUCKETS: ConfigUploadAction[] = ['app-forms', 'contact-forms'];
  */
 const CHT_CONF_ENV_ALLOWLIST = ['PATH', 'HOME', 'NODE_PATH', 'TMPDIR', 'LANG', 'LC_ALL'];
 
-const minimalEnv = (): NodeJS.ProcessEnv => {
+/**
+ * Build the minimal child env from the allow-list, then layer any explicit
+ * overrides on top. `extraEnv` is how the offline COMPILE path injects
+ * `NODE_OPTIONS=--openssl-legacy-provider` (webpack-4's md4 hash aborts under
+ * Node>=17 without it) WITHOUT widening the allow-list to inherit the agent's
+ * whole environment — the override is set explicitly for the compile invocation.
+ */
+const minimalEnv = (extraEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = {};
   for (const key of CHT_CONF_ENV_ALLOWLIST) {
     if (process.env[key] !== undefined) {
       env[key] = process.env[key];
+    }
+  }
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value !== undefined) {
+        env[key] = value;
+      }
     }
   }
   return env;
@@ -172,7 +186,7 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
 
   return new Promise((resolve) => {
     const proc = spawn(bin, args, {
-      env: minimalEnv(),
+      env: minimalEnv(options.extraEnv),
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     });
@@ -308,4 +322,63 @@ export const runOfflineConvert = (options: OfflineConvertOptions): Promise<ChtCo
     bin: options.bin,
     timeoutMs: options.timeoutMs,
     // instanceUrl omitted -> URL-less convert, no upload verb.
+  });
+
+// --- Offline compile (P4, compiled-settings oracle) -------------------------
+//
+// The QA compiled-settings oracle compiles the corrected config's app_settings
+// OFFLINE (no --url, never uploads) and diffs the artifact-owned sections against
+// the deployed settings. The compile runs `compile-app-settings --no-check` in a
+// SANDBOX copy (like the convert path) so the mount is never mutated.
+
+/** The compile-only verb (never the paired upload-app-settings). */
+export const COMPILE_VERB = 'compile-app-settings';
+
+/**
+ * webpack-4 (cht-conf's app-settings bundler) uses an md4 hash that OpenSSL 3
+ * (Node >= 17) refuses; the legacy provider re-enables it. Set explicitly on the
+ * compile child env — NOT inherited — so the compile does not abort with
+ * `error:0308010C digital envelope routines::unsupported`.
+ */
+export const COMPILE_NODE_OPTIONS = '--openssl-legacy-provider';
+
+export interface OfflineCompileOptions {
+  /** The project dir to compile in (should be a sandbox copy, never the mount). */
+  configPath: string;
+  bin?: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Run an OFFLINE `compile-app-settings --no-check` (no --url, no upload verb).
+ *
+ * NODE_OPTIONS=--openssl-legacy-provider is set on the child env for webpack-4
+ * under Node>=17. `--no-check` rides after the `--` separator as an extraArg: in
+ * cht-conf 3.21.5 `compile-app-settings` only reads `--debug` from its extraArgs
+ * (`--no-check` is parsed by minimist but ignored), so it is a no-op that keeps
+ * the documented invocation stable across versions WITHOUT unminifying the
+ * bundles (passing `--debug` WOULD disable minification and break byte-parity
+ * with the deployed, minified settings — so we never do). Output is
+ * byte-deterministic and minified, matching the deployed document.
+ *
+ * Never rejects (folds spawn/timeout into the result, like runChtConf). The
+ * caller reads `<configPath>/app_settings.json` afterwards.
+ */
+export const runOfflineCompile = (options: OfflineCompileOptions): Promise<ChtConfExecResult> =>
+  runChtConf({
+    verbs: [COMPILE_VERB],
+    configPath: options.configPath,
+    extraArgs: ['--no-check'],
+    logLabel: `offline ${COMPILE_VERB}`,
+    bin: options.bin,
+    timeoutMs: options.timeoutMs,
+    extraEnv: { NODE_OPTIONS: COMPILE_NODE_OPTIONS },
+    // cht-conf's eslint-loader resolves the config's .eslintrc PLUGINS relative
+    // to the child process cwd, not --source — from any other cwd the plugins
+    // (e.g. eslint-plugin-json, installed in the config's node_modules) fail to
+    // load, the loader emits webpack warnings, and cht-conf turns those into a
+    // hard compile failure. Run IN the (sandboxed) project dir. Verified live
+    // against the partner config, 2026-07-18.
+    cwd: options.configPath,
+    // instanceUrl omitted -> URL-less compile, no upload verb.
   });

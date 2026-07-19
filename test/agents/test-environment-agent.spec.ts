@@ -4,6 +4,7 @@ import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
 import * as chtConfRunner from '../../src/utils/cht-conf-runner';
 import * as chtApi from '../../src/utils/cht-api';
 import * as testData from '../../src/utils/test-data';
+import * as compiledSettings from '../../src/utils/compiled-settings';
 import { deployedFormId } from '../../src/utils/form-paths';
 import {
   ChtConfExecResult,
@@ -11,10 +12,18 @@ import {
   ConfigUploadAction,
   DiscoveredConfig,
   EnvironmentHandle,
+  FormBindCheck,
   ProvisionOptions,
   ResetTier,
   VerifyArtifactOptions,
+  VerifyArtifactResult,
 } from '../../src/types';
+
+/** Narrow a union verifyArtifact result to its form-xml bind checks (P4). */
+const formChecks = (result: VerifyArtifactResult): FormBindCheck[] => {
+  expect(result.kind).to.equal('form-xml');
+  return (result as Extract<VerifyArtifactResult, { kind: 'form-xml' }>).checks;
+};
 
 describe('TestEnvironmentAgent', () => {
   let agent: TestEnvironmentAgent;
@@ -1029,6 +1038,7 @@ describe('TestEnvironmentAgent', () => {
     const PLANTED_XML = modelXml(PLANTED_GATE);
     const CORRECTED_XML = modelXml(YES_GATE);
     const verifyOptions: VerifyArtifactOptions = {
+      kind: 'form-xml',
       configArtifact: 'form',
       artifactName: 'pregnancy_home_visit',
       expectedBinds: [
@@ -1067,10 +1077,11 @@ describe('TestEnvironmentAgent', () => {
 
         expect(result.passed).to.equal(false);
         expect(stub.calledOnceWith('https://nginx', dockerHandle.auth, 'pregnancy_home_visit')).to.equal(true);
-        const danger = result.checks.find((c) => c.nodeset === '/data/danger_signs');
+        const checks = formChecks(result);
+        const danger = checks.find((c) => c.nodeset === '/data/danger_signs');
         expect(danger?.passed).to.equal(false);
         expect(danger?.actual).to.equal(PLANTED_GATE);
-        const siblings = result.checks.filter((c) => c.nodeset !== '/data/danger_signs');
+        const siblings = checks.filter((c) => c.nodeset !== '/data/danger_signs');
         expect(siblings.every((c) => c.passed)).to.equal(true);
       });
 
@@ -1080,7 +1091,7 @@ describe('TestEnvironmentAgent', () => {
         const result = await realAgent.verifyArtifact(dockerHandle, verifyOptions);
 
         expect(result.passed).to.equal(true);
-        expect(result.checks.every((c) => c.passed)).to.equal(true);
+        expect(formChecks(result).every((c) => c.passed)).to.equal(true);
       });
 
       it('still REJECTS a non-form/contact-form artifact (task stays out of QA scope)', async () => {
@@ -1106,6 +1117,7 @@ describe('TestEnvironmentAgent', () => {
           `<bind nodeset="/data/e_household/is_orphan" relevant="${CONTACT_YES}"/>` +
           '</model></h:head></h:html>';
         const contactOptions: VerifyArtifactOptions = {
+          kind: 'form-xml',
           configArtifact: 'contact-form',
           artifactName: 'e_household-create',
           expectedBinds: [{ nodeset: '/data/e_household/is_orphan', attrs: { relevant: CONTACT_YES } }],
@@ -1158,6 +1170,137 @@ describe('TestEnvironmentAgent', () => {
           );
         });
       });
+    });
+  });
+
+  // P4: verifyArtifact's compiled-settings dispatch — compile the corrected source
+  // offline (stubbed) + fetch deployed settings (stubbed) + compare owned sections.
+  describe('verifyArtifact (P4 — compiled-settings oracle)', () => {
+    const dockerHandle: EnvironmentHandle = {
+      url: 'https://nginx',
+      auth: { user: 'medic', password: 'password' },
+      network: 'cht-agent-net',
+      source: 'docker',
+    };
+    const RULES = 'var t=function(){return[1]};';
+    const settingsOptions: VerifyArtifactOptions = {
+      kind: 'compiled-settings',
+      configArtifact: 'task',
+      artifactName: 'pnc-followup',
+      sections: ['tasks.rules', 'tasks.targets', 'tasks.isDeclarative'],
+    };
+    const compiledDoc = (rules: string): Record<string, unknown> => ({
+      tasks: { rules, isDeclarative: false, targets: { items: [] } },
+    });
+
+    afterEach(() => sinon.restore());
+
+    it('returns a passing mock result in mock mode (no live instance / no compile)', async () => {
+      const handle = await provisionMock();
+
+      const result = await agent.verifyArtifact(handle, settingsOptions, '/mnt/conf');
+
+      expect(result.kind).to.equal('compiled-settings');
+      expect(result.passed).to.equal(true);
+      expect(result.checks).to.have.lengthOf(3);
+    });
+
+    it('RED — deployed settings differ from the corrected-compiled sections (reproduce fails)', async () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      // Corrected source compiles to the FIXED rules; the deployed (buggy) settings
+      // still carry the OLD rules → the owned section differs → RED.
+      sinon.stub(chtApi, 'fetchSettings').resolves(compiledDoc('var t=function(){return[]};'));
+      const compileStub = sinon
+        .stub(compiledSettings, 'compileSettingsOffline')
+        .resolves({ settings: compiledDoc(RULES), sandboxDir: '/tmp/does-not-exist-p4' });
+
+      const result = await realAgent.verifyArtifact(dockerHandle, settingsOptions, '/mnt/conf');
+
+      expect(result.passed).to.equal(false);
+      expect(compileStub.calledOnceWith('/mnt/conf')).to.equal(true);
+      const rulesCheck = (result as Extract<VerifyArtifactResult, { kind: 'compiled-settings' }>).checks.find(
+        (c) => c.path === 'tasks.rules'
+      );
+      expect(rulesCheck?.passed).to.equal(false);
+    });
+
+    it('GREEN — deployed settings equal the corrected-compiled sections (verify passes)', async () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      sinon.stub(chtApi, 'fetchSettings').resolves(compiledDoc(RULES));
+      sinon
+        .stub(compiledSettings, 'compileSettingsOffline')
+        .resolves({ settings: compiledDoc(RULES), sandboxDir: '/tmp/does-not-exist-p4' });
+
+      const result = await realAgent.verifyArtifact(dockerHandle, settingsOptions, '/mnt/conf');
+
+      expect(result.passed).to.equal(true);
+      expect(
+        (result as Extract<VerifyArtifactResult, { kind: 'compiled-settings' }>).checks.every((c) => c.passed)
+      ).to.equal(true);
+    });
+
+    it('app-settings re-derives whole-doc sections from the compiled keys when options.sections is empty', async () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      const compiled = { tasks: { rules: RULES, isDeclarative: false, targets: {} }, schedules: [] };
+      sinon.stub(chtApi, 'fetchSettings').resolves({ ...compiled, locale: 'en' }); // + server default
+      sinon
+        .stub(compiledSettings, 'compileSettingsOffline')
+        .resolves({ settings: compiled, sandboxDir: '/tmp/does-not-exist-p4' });
+
+      const result = await realAgent.verifyArtifact(
+        dockerHandle,
+        { kind: 'compiled-settings', configArtifact: 'app-settings', artifactName: 'app-settings', sections: [] },
+        '/mnt/conf'
+      );
+
+      expect(result.passed).to.equal(true);
+      const paths = (result as Extract<VerifyArtifactResult, { kind: 'compiled-settings' }>).checks.map(
+        (c) => c.path
+      );
+      // Whole-doc scope = the compiled keys; the injected `locale` is NOT compared.
+      expect(paths).to.deep.equal(Object.keys(compiled));
+      expect(paths).to.not.include('locale');
+    });
+
+    it('throws when configPath is missing for a real compiled-settings verify', async () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      sinon.stub(chtApi, 'fetchSettings').resolves(compiledDoc(RULES));
+
+      try {
+        await realAgent.verifyArtifact(dockerHandle, settingsOptions);
+        expect.fail('expected a missing-configPath throw');
+      } catch (error) {
+        expect((error as Error).message).to.include('configPath is required');
+      }
+    });
+  });
+
+  // P4: fetchSettingsRev — the settings-doc rev corroboration (settings analogue
+  // of formVersions). Undefined in mock mode; the live rev via fetchDocRevs.
+  describe('fetchSettingsRev (P4)', () => {
+    const dockerHandle: EnvironmentHandle = {
+      url: 'https://nginx',
+      auth: { user: 'medic', password: 'password' },
+      network: 'cht-agent-net',
+      source: 'docker',
+    };
+    afterEach(() => sinon.restore());
+
+    it('returns undefined in mock mode (no live instance)', async () => {
+      const handle = await provisionMock();
+      expect(await agent.fetchSettingsRev(handle)).to.equal(undefined);
+    });
+
+    it('reads the live settings-doc rev via fetchDocRevs (key `settings`)', async () => {
+      const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+      const stub = sinon
+        .stub(chtApi, 'fetchDocRevs')
+        .resolves([{ id: 'settings', rev: '7-abc' }]);
+
+      const rev = await realAgent.fetchSettingsRev(dockerHandle);
+
+      expect(rev).to.equal('7-abc');
+      expect(stub.calledOnceWith('https://nginx', dockerHandle.auth, ['settings'])).to.equal(true);
     });
   });
 

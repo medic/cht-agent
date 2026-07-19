@@ -10,11 +10,19 @@ import {
   DevelopmentOptions,
   DiscoveredConfig,
   EnvironmentHandle,
+  FormBindExpectation,
   IssueTemplate,
+  VerifyArtifactOptions,
   VerifyArtifactResult,
 } from '../../src/types';
 
 const YES_GATE = "selected(../pregnancy_summary/visit_option, 'yes')";
+
+/** Narrow union verify options to the form-xml expectedBinds (P4). */
+const formExpectedBinds = (options: VerifyArtifactOptions): FormBindExpectation[] => {
+  expect(options.kind).to.equal('form-xml');
+  return (options as Extract<VerifyArtifactOptions, { kind: 'form-xml' }>).expectedBinds;
+};
 
 const ticket = (layer?: 'cht-core' | 'cht-conf'): IssueTemplate => ({
   issue: {
@@ -42,7 +50,7 @@ const discovered = (rev: string): DiscoveredConfig => ({
   formVersions: { pregnancy_home_visit: rev },
 });
 const verifyResult = (passed: boolean): VerifyArtifactResult => ({
-  artifact: 'pregnancy_home_visit', configArtifact: 'form', passed,
+  kind: 'form-xml', artifact: 'pregnancy_home_visit', configArtifact: 'form', passed,
   checks: [{ nodeset: '/data/danger_signs', attr: 'relevant', expected: YES_GATE, passed }], summary: passed ? 'passed' : 'failed',
 });
 const applyOk: ConfigApplyResult = { configPath: '/mnt/conf', actions: [], succeeded: true, warnings: [] };
@@ -138,12 +146,12 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
 
       expect(result).to.not.equal(undefined);
       // reproduce (call 0) received the child target bind first, then the group bind as sibling
-      const passedOptions = verifyArtifact.firstCall.args[1];
-      expect(passedOptions.expectedBinds[0]).to.deep.equal({
+      const expectedBinds = formExpectedBinds(verifyArtifact.firstCall.args[1]);
+      expect(expectedBinds[0]).to.deep.equal({
         nodeset: CHILD_NODESET,
         attrs: { relevant: YES_GATE },
       });
-      const nodesets = passedOptions.expectedBinds.map((b) => b.nodeset);
+      const nodesets = expectedBinds.map((b) => b.nodeset);
       expect(nodesets).to.include('/data/danger_signs'); // group bind retained as sibling invariance
     });
 
@@ -155,8 +163,7 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
       // the dev phase produced no XlsformApplyResult).
       await runQaPhase(ticket('cht-conf'), devOptions, qaOptions);
 
-      const passedOptions = verifyArtifact.firstCall.args[1];
-      const nodesets = passedOptions.expectedBinds.map((b) => b.nodeset);
+      const nodesets = formExpectedBinds(verifyArtifact.firstCall.args[1]).map((b) => b.nodeset);
       expect(nodesets).to.not.include(CHILD_NODESET);
       expect(nodesets).to.deep.equal(['/data/danger_signs']);
     });
