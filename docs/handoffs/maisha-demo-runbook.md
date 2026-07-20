@@ -78,7 +78,7 @@ per-ticket reset is 100% operator procedure, across three layers:
 | Layer | State that accumulates during a ticket | Reset mechanism |
 |---|---|---|
 | **A. Config repo** (`/workspace/site-config-test` mount) | agent's fix edits, LLM-generated test specs, `.cht-agent/` scratch | `git checkout -B` from the `maisha-baseline` tag + `git clean -fd` (§4, after capturing the fix branch) |
-| **B. Instance** (CouchDB) | uploaded fixed config (settings doc / form docs + revs), demo-submitted reports & contacts, **client-emitted task docs** (M3!), sentinel processing | **volume snapshot restore** (primary, ~1 min, §3c/§4) or full `down -v` → re-provision (fallback, ~10 min) |
+| **B. Instance** (CouchDB) | uploaded fixed config (settings doc / form docs + revs), demo-submitted reports & contacts, **client-emitted task docs** (M3!), sentinel processing | **data snapshot restore** (bind-dir copy or volume loop per stack flavour — §3c/§4; primary, ~1 min) or full `down -v` → re-provision (fallback, ~10 min) |
 | **C. Browser client** | replicated local DB, rules-engine state, logged-in session | **fresh incognito/guest window per ticket** — never reuse a profile across a restore (its checkpoints would be ahead of the restored server) |
 
 The volume snapshot is taken ONCE, after the baseline is fully built
@@ -142,33 +142,68 @@ git add -A && git commit -m "demo baseline v2: M5 PNC fix applied; Maisha M3/M4/
 git tag maisha-baseline
 git remote -v    # MUST still print nothing
 
-# Layer B — instance snapshot. Stop the stack (keep volumes), copy every
-# stack volume aside, restart:
-cd <cht-core>/local-build
+# Layer B — instance snapshot. FIRST find where the CouchDB data actually
+# lives — it differs by stack flavour:
+docker inspect <project>-couchdb-1 \
+  --format '{{range .Mounts}}{{.Type}} src={{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+#   bind  src=<hostdir> -> /opt/couchdb/data   ← BIND-MOUNT stack (e.g. the
+#     published-compose cht-421-official stack: src=.../cht-421-official/srv)
+#   volume src=... cht-couchdb-data ...        ← NAMED-VOLUME stack
+
+# Stop the stack (keep data), snapshot, restart:
+cd <stack-dir>            # e.g. cht-421-official (the compose project dir)
 docker compose --env-file ./.env -f cht-core.yml -f cht-couchdb.yml \
   -f <cht-agent>/docker/cht-agent-net.override.yml stop
 mkdir -p ~/maisha-volsnap
-for v in $(docker volume ls -q | grep '^local-build_'); do   # verify prefix: docker volume ls
-  docker run --rm -v "$v":/from -v ~/maisha-volsnap/"$v":/to alpine \
-    sh -c 'cd /from && cp -a . /to'
-done
+# BIND-MOUNT stack (this engagement): the data is a plain host dir — copy it
+# with ownership preserved (couchdb runs under its own uid, hence sudo):
+sudo cp -a <hostdir-from-inspect> ~/maisha-volsnap/couch-data
+# NAMED-VOLUME stack instead: loop the stack's volumes (verify the prefix —
+# it is the compose PROJECT name, i.e. the directory name):
+#   for v in $(docker volume ls -q | grep '^<project>_'); do
+#     docker run --rm -v "$v":/from -v ~/maisha-volsnap/"$v":/to alpine \
+#       sh -c 'cd /from && cp -a . /to'
+#   done
 docker compose --env-file ./.env -f cht-core.yml -f cht-couchdb.yml \
   -f <cht-agent>/docker/cht-agent-net.override.yml start
 ```
 
-(⚠️ rehearsal-verify the volume-name prefix — compose names volumes
-`<project>_<name>`, project defaults to the directory name `local-build`.
-Snapshot **all** of the stack's volumes, not just couchdb.)
+(⚠️ the credentials/ssl named volumes don't change between tickets — the
+data dir/volume is the reset surface. Always confirm via the `docker
+inspect` above rather than assuming; a wrong-prefix loop "succeeds" while
+snapshotting nothing.)
 
-### 3d. [OPERATOR] Agent runtime
+### 3d. [OPERATOR] REBUILD + start the agent runtime (mandatory, not routine)
 
-As the M5 runbook step 3 (Mission-05 image with exceljs, `LLM_PROVIDER=
-claude-cli`, `ANTHROPIC_MODEL=claude-opus-4-8`, `CHT_URL=https://nginx`,
-TLS env, `CHT_CONF_PATH=/workspace/cht-conf-project`,
-`CHT_CONF_BIN=/workspace/cht-conf-project/node_modules/.bin/cht`,
-`DEV_MAX_ITERATIONS` as desired). The four tickets ship in the workbench
-`tickets/` dir — confirm they're visible in-container
-(`docker exec cht-agent ls /app/tickets | grep maisha`).
+The `--qa`/`--qa-tier2` support for these four tickets exists ONLY on the
+local branch stack (P1–P5, `feat/all-artifacts-p5-tier2-testgen` tip) — an
+image built before 2026-07-18 has the old guards and aborts QA for every
+non-`form` artifact. The agent is also its own compose project:
+`start`ing the CHT stack does NOT start (or rebuild) `cht-agent`.
+
+```bash
+cd <cht-agent-workbench>
+git branch --show-current   # must be feat/all-artifacts-p5-tier2-testgen
+                            # (or a branch containing it)
+# rebuild cht-agent:local from THIS checkout (compose build context is ..):
+CHT_CORE_PATH=<cht-core-checkout> CHT_CONF_PATH=<config-repo, e.g. .../demo-conf> \
+  docker compose -f docker/docker-compose.cht-agent.yml build
+# (re)create — never plain `start`: the --force-recreate re-binds the OAuth
+# credentials mount (the M5 staleness gotcha) and picks up the new image:
+CHT_CORE_PATH=<cht-core-checkout> CHT_CONF_PATH=<config-repo> \
+  docker compose -f docker/docker-compose.cht-agent.yml up -d --force-recreate
+# pre-flight:
+docker exec cht-agent claude -p "say ok"
+docker exec cht-agent ls /app/tickets | grep maisha   # all four visible
+```
+
+Env (compose defaults since the demo env block; override only to change):
+`LLM_PROVIDER=claude-cli`, `ANTHROPIC_MODEL=claude-opus-4-8`,
+`CHT_URL=https://nginx`, TLS env, `CHT_CONF_PATH=/workspace/cht-conf-project`
+(container path), `CHT_CONF_BIN=/workspace/cht-conf-project/node_modules/.bin/cht`,
+`DEV_MAX_ITERATIONS` as desired. The config repo's `npm ci` must have run
+BEFORE `up` (pinned cht-conf + mocha + harness ride the mount — P4's offline
+compile and P5's tier-2 both need them).
 
 ## 4. THE PER-TICKET RESET (run before ticket 1 and between every pair)
 
@@ -183,17 +218,23 @@ git checkout -B fix/maisha-mNEXT maisha-baseline   # next ticket works on its ow
 git clean -fd                                      # drop .cht-agent/ scratch etc.
 git status --short                                 # MUST be empty
 
-# ── B. restore the instance snapshot ──
-cd <cht-core>/local-build
+# ── B. restore the instance snapshot (match the flavour found in §3c) ──
+cd <stack-dir>            # e.g. cht-421-official
 docker compose --env-file ./.env -f cht-core.yml -f cht-couchdb.yml \
   -f <cht-agent>/docker/cht-agent-net.override.yml stop
-for v in $(docker volume ls -q | grep '^local-build_'); do
-  docker run --rm -v "$v":/vol -v ~/maisha-volsnap/"$v":/snap alpine \
-    sh -c 'find /vol -mindepth 1 -delete && cd /snap && cp -a . /vol'
-done
+# BIND-MOUNT stack (this engagement — data dir e.g. ./srv):
+sudo rsync -a --delete ~/maisha-volsnap/couch-data/ <hostdir-from-inspect>/
+# NAMED-VOLUME stack instead:
+#   for v in $(docker volume ls -q | grep '^<project>_'); do
+#     docker run --rm -v "$v":/vol -v ~/maisha-volsnap/"$v":/snap alpine \
+#       sh -c 'find /vol -mindepth 1 -delete && cd /snap && cp -a . /vol'
+#   done
 docker compose --env-file ./.env -f cht-core.yml -f cht-couchdb.yml \
   -f <cht-agent>/docker/cht-agent-net.override.yml start
 curl -sk https://localhost:10443/api/v2/monitoring | head -c 200   # wait for readiness
+# NOTE: the cht-agent container is a separate compose project — it keeps
+# running across CHT-stack restarts; only recreate it (§3d) at day start
+# or after switching workbench branches.
 
 # ── C. fresh browser ──
 # Close ALL demo browser windows; open a NEW incognito/guest window;
