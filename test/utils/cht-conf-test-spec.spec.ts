@@ -3,11 +3,15 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  deriveContactScenario,
   deriveScenario,
   detectHousePattern,
   extractHouseOptions,
+  generateContactFormSpec,
   generateHarnessSpec,
+  renderContactFormSpec,
   renderSpec,
+  resolveContactSpecPath,
   resolveSpecPath,
 } from '../../src/utils/cht-conf-test-spec';
 import { XlsformFixDescriptor } from '../../src/utils/xlsform-fix';
@@ -403,6 +407,169 @@ describe('cht-conf-test-spec (F7 generation)', () => {
       );
       // The whole generated file must parse — the failing case threw here.
       expect(() => new Function(spec.content)).to.not.throw();
+    });
+  });
+
+  // P5: deterministic contact-form spec generation. cht-conf-test-harness 3.0.15
+  // has no loadContactForm, so the contact template is a PLAIN mocha+chai spec
+  // whose oracle reads forms/contact/<form>.xml directly (no harness) and asserts
+  // the FULL attrs map (value + absence).
+  describe('contact-form template (P5)', () => {
+    const CONTACT_FORM = 'e_household-create';
+    const CONTACT_NODESET = '/data/e_household/is_orphan';
+    const CONTACT_GATE = "selected(../age, 'child')";
+    const contactDescriptor = (overrides: Partial<XlsformFixDescriptor> = {}): XlsformFixDescriptor => ({
+      version: 1,
+      form: CONTACT_FORM,
+      edits: [
+        { sheet: 'survey', match: { column: 'name', value: 'is_orphan' }, set: { column: 'relevant', value: CONTACT_GATE } },
+      ],
+      expect: { nodeset: CONTACT_NODESET, attrs: { relevant: CONTACT_GATE }, siblingsUnchanged: true },
+      rationale: 'gate orphan question on missing parent details',
+      ...overrides,
+    });
+    // The M8-shaped diff: a value attr AND an absence assertion (removed calculate).
+    const contactBindDiff = (overrides: Partial<XlsformBindDiff> = {}): XlsformBindDiff => ({
+      nodeset: CONTACT_NODESET,
+      before: undefined,
+      after: CONTACT_GATE,
+      attrs: { relevant: CONTACT_GATE, calculate: null },
+      attrsBefore: { relevant: null, calculate: 'member_filter = 2' },
+      siblingsUnchanged: 4,
+      ...overrides,
+    });
+
+    describe('resolveContactSpecPath — always the agent house location', () => {
+      it('targets <form>.agent.spec.js even when no partner spec exists', () => {
+        root = mkTmp();
+        const res = resolveContactSpecPath(root, CONTACT_FORM);
+        expect(res.relPath).to.equal(path.join('test', 'forms', `${CONTACT_FORM}.agent.spec.js`));
+        expect(res.overwriteAvoided).to.equal(false);
+      });
+
+      it('never overwrites a partner <form>.spec.js (flags overwriteAvoided)', () => {
+        root = mkTmp();
+        const formsDir = path.join(root, 'test', 'forms');
+        fs.mkdirSync(formsDir, { recursive: true });
+        fs.writeFileSync(path.join(formsDir, `${CONTACT_FORM}.spec.js`), '// partner spec\n');
+        const res = resolveContactSpecPath(root, CONTACT_FORM);
+        expect(res.relPath).to.equal(path.join('test', 'forms', `${CONTACT_FORM}.agent.spec.js`));
+        expect(res.overwriteAvoided).to.equal(true);
+      });
+    });
+
+    describe('deriveContactScenario — full attrs map from the bindDiff', () => {
+      it('carries the whole attrs map (value + absence)', () => {
+        const scenario = deriveContactScenario(contactDescriptor(), contactBindDiff());
+        expect(scenario.form).to.equal(CONTACT_FORM);
+        expect(scenario.nodeset).to.equal(CONTACT_NODESET);
+        expect(scenario.attrs).to.deep.equal({ relevant: CONTACT_GATE, calculate: null });
+        expect(scenario.rationale).to.equal('gate orphan question on missing parent details');
+      });
+    });
+
+    describe('renderContactFormSpec — self-contained, no harness', () => {
+      const content = () => renderContactFormSpec(deriveContactScenario(contactDescriptor(), contactBindDiff()));
+
+      it('does NOT import or use the harness', () => {
+        expect(content()).to.not.include('cht-conf-test-harness');
+        expect(content()).to.not.include('TestHarness');
+        expect(content()).to.not.include('loadContactForm');
+        expect(content()).to.not.include('harness.start');
+      });
+
+      it('reads the XML under forms/contact (not forms/app)', () => {
+        expect(content()).to.include("forms', 'contact'");
+        expect(content()).to.not.include("forms', 'app'");
+      });
+
+      it('embeds the full attrs map + the target nodeset', () => {
+        const c = content();
+        expect(c).to.include(JSON.stringify(CONTACT_NODESET));
+        expect(c).to.include('EXPECTED_ATTRS');
+        expect(c).to.include(JSON.stringify(CONTACT_GATE));
+        // the null attr survives as a JS null in the embedded literal
+        expect(c).to.match(/"calculate":\s*null/);
+      });
+
+      it('has no workbench imports and parses as valid JS', () => {
+        expect(content()).to.not.include("require('../../src");
+        expect(() => new Function(content())).to.not.throw();
+      });
+
+      it('header states it guards a fix and asserts the COMPILED source (regenerate via convert-contact-forms)', () => {
+        const c = content();
+        expect(c).to.include('convert-contact-forms');
+        expect(c).to.match(/COMPILED/i);
+      });
+    });
+
+    // The oracle must behave as red->green: the pre-fix XML fails it, the post-fix
+    // XML passes it. Rather than nest a mocha run, we evaluate the emitted module
+    // with stubbed globals (real chai, an fs stub returning a chosen XML), collect
+    // its `it` callbacks, and run each — counting pass (no throw) vs fail (throw),
+    // exactly what mocha would tally.
+    describe('renderContactFormSpec — red->green oracle behaviour', () => {
+      const runSpecAgainstXml = (bind: string): { passing: number; failing: number } => {
+        const content = renderContactFormSpec(
+          deriveContactScenario(contactDescriptor(), contactBindDiff()),
+        );
+        const xml = `<h:html><model>\n${bind}\n</model></h:html>`;
+        const tests: { name: string; cb: () => void }[] = [];
+        const req = (id: string): unknown => {
+          if (id === 'chai') return { expect };
+          if (id === 'node:path') return path;
+          if (id === 'node:fs') return { readFileSync: () => xml };
+          throw new Error(`unexpected require(${id})`);
+        };
+        const describeStub = (_name: string, fn: () => void): void => fn();
+        const itStub = (name: string, cb: () => void): void => {
+          tests.push({ name, cb });
+        };
+        // eslint-disable-next-line no-new-func
+        new Function('require', 'describe', 'it', '__dirname', content)(
+          req, describeStub, itStub, '/repo/test/forms',
+        );
+        let passing = 0;
+        let failing = 0;
+        for (const t of tests) {
+          try {
+            t.cb();
+            passing += 1;
+          } catch {
+            failing += 1;
+          }
+        }
+        return { passing, failing };
+      };
+
+      it('PASSES (green) against the fixed XML — relevant present, calculate absent', () => {
+        const stats = runSpecAgainstXml(
+          `<bind nodeset="${CONTACT_NODESET}" relevant="${CONTACT_GATE}" required="true()"/>`,
+        );
+        expect(stats.failing).to.equal(0);
+        expect(stats.passing).to.equal(3); // bind-exists + relevant value + calculate absence
+      });
+
+      it('FAILS (red) against the buggy XML — relevant absent, calculate present', () => {
+        const stats = runSpecAgainstXml(
+          `<bind nodeset="${CONTACT_NODESET}" calculate="member_filter = 2" required="true()"/>`,
+        );
+        expect(stats.failing).to.equal(2); // relevant missing + calculate still present
+        expect(stats.passing).to.equal(1); // the bind still exists
+      });
+    });
+
+    describe('generateContactFormSpec — end to end', () => {
+      it('emits one .agent.spec.js at test/forms with the full attrs oracle', () => {
+        root = mkTmp();
+        const spec = generateContactFormSpec(contactDescriptor(), contactBindDiff(), root);
+        expect(spec.relPath).to.equal(path.join('test', 'forms', `${CONTACT_FORM}.agent.spec.js`));
+        expect(spec.overwriteAvoided).to.equal(false);
+        expect(spec.content).to.include("forms', 'contact'");
+        expect(spec.content).to.not.include('cht-conf-test-harness');
+        expect(spec.content).to.include(JSON.stringify(CONTACT_GATE));
+      });
     });
   });
 });

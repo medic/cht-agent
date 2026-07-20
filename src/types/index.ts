@@ -73,6 +73,15 @@ export interface IssueTemplate {
       artifactName?: string;
       chtConfVersion?: string;
       deploymentRef?: string;
+      /**
+       * P5: repo-relative tier-2 spec paths this ticket pins as its regression
+       * surface (e.g. `test/tasks/immunization_service.spec.js`). When present the
+       * tier-2 QA hook runs EXACTLY these (a directory entry expands to the
+       * `*.spec.js` files directly inside it); when absent the hook falls back to
+       * the per-artifact default selection. Parsed as an array of non-empty
+       * strings (a single string is coerced to a one-element array).
+       */
+      qaSpecs?: string[];
     };
     requirements: string[];
     acceptance_criteria: string[];
@@ -852,6 +861,14 @@ export interface QaInput {
    * OFF (undefined/false) so the full-suite regression stays an operator step.
    */
   tier2?: boolean;
+  /**
+   * P5: the ticket's pinned tier-2 spec list (from
+   * `technical_context.qaSpecs`). When present the tier-2 hook runs EXACTLY these
+   * repo-relative specs (a directory entry expands to the `*.spec.js` files
+   * directly inside it) instead of the per-artifact default selection. A missing
+   * entry is an honest self-skip that names it — never silently dropped.
+   */
+  qaSpecs?: string[];
 }
 
 /**
@@ -869,6 +886,12 @@ export interface QaTier2Result {
   outputTail?: string;
   /** Why the hook did not run (missing harness dep, no spec, disabled). */
   reason?: string;
+  /**
+   * P5: the repo-relative spec paths that were actually selected + run (the
+   * pinned `qaSpecs` list, or the per-artifact default). Present whenever `ran`
+   * is true; useful for the report ("which specs constituted the proof").
+   */
+  specs?: string[];
 }
 
 /**

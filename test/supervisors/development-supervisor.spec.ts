@@ -766,10 +766,12 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
     expect(out.testGeneration).to.deep.equal(cannedTestGen);
   });
 
-  // P1: the deterministic harness generator is app-form-hardcoded, so a
-  // converted contact-form fix must SKIP test generation entirely (no broken
-  // deterministic spec, no LLM junk) until P5 lands the contact-form template.
-  const contactFormState = (configRoot: string) => mkDevState({
+  // P5: a converted contact-form fix now GENERATES a deterministic contact-form
+  // spec (a plain mocha+chai file whose oracle reads forms/contact/<form>.xml
+  // directly — no harness, since cht-conf-test-harness 3.0.15 has no
+  // loadContactForm). This REPLACES the P1 behavior (which skipped test-gen
+  // entirely for contact forms) now that P5 provides the contact template.
+  const contactFormState = (configRoot: string, withApply = true) => mkDevState({
     ...baseValidInputFragment,
     issue: {
       issue: {
@@ -779,26 +781,55 @@ describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
           components: [],
           layer: 'cht-conf',
           configArtifact: 'contact-form',
-          artifactName: 'person-create',
+          artifactName: 'e_household-create',
         },
       },
     } as DevelopmentState['issue'],
     options: { chtCorePath: configRoot, previewMode: true },
     codeGeneration: mkCodeGenResult([mkFile(F7_DESCRIPTOR_PATH, f7DescriptorJson, 'config')]),
-    xlsformApply: f7ApplyResult(configRoot) as unknown as DevelopmentState['xlsformApply'],
+    ...(withApply
+      ? { xlsformApply: f7ApplyResult(configRoot) as unknown as DevelopmentState['xlsformApply'] }
+      : {}),
   });
 
-  it('P1: a converted contact-form fix SKIPS test generation (no harness spec, no LLM agent)', async () => {
-    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-p1-'));
+  it('P5: a converted contact-form fix GENERATES a deterministic contact-form spec (no harness, no LLM agent)', async () => {
+    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-p5-'));
     try {
       const testGen = sinon.stub().resolves(cannedTestGen);
       const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
 
       const out = await supervisor.testGenerationNode(contactFormState(configRoot));
 
-      // Neither the LLM agent nor the app-form harness generator ran.
+      // The LLM test-gen agent is bypassed entirely.
       expect(testGen.called).to.equal(false);
       expect(out.currentPhase).to.equal('complete');
+      const result = out.testGeneration as { files: GeneratedFile[] };
+      // Exactly one contact-form spec at the .agent.spec.js house location.
+      expect(result.files).to.have.length(1);
+      const spec = result.files[0];
+      expect(spec.relativePath).to.equal(
+        path.join('test', 'forms', 'pregnancy_home_visit.agent.spec.js'),
+      );
+      expect(spec.type).to.equal('test');
+      expect(spec.language).to.equal('javascript');
+      // A direct forms/contact XML oracle — NOT the harness.
+      expect(spec.content).to.include("forms', 'contact'");
+      expect(spec.content).to.not.include('cht-conf-test-harness');
+      expect(spec.content).to.include('EXPECTED_ATTRS');
+    } finally {
+      await fs.rm(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('P5: a contact-form ticket WITHOUT a verified apply is a loud skip (no spec, no LLM agent)', async () => {
+    const configRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cht-agent-p5-'));
+    try {
+      const testGen = sinon.stub().resolves(cannedTestGen);
+      const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+      const out = await supervisor.testGenerationNode(contactFormState(configRoot, false));
+
+      expect(testGen.called).to.equal(false); // no fall-through to the LLM agent
       const result = out.testGeneration as { files: GeneratedFile[] };
       expect(result.files).to.have.length(0);
     } finally {

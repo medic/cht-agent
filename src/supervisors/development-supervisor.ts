@@ -48,7 +48,7 @@ import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker'
 import { isShutdownRequested } from '../utils/shutdown';
 import { applyXlsformFixToProject } from '../utils/xlsform-apply';
 import { parseXlsformFixDescriptor, XLSFORM_FIX_DESCRIPTOR_PATH } from '../utils/xlsform-fix';
-import { generateHarnessSpec } from '../utils/cht-conf-test-spec';
+import { generateHarnessSpec, generateContactFormSpec } from '../utils/cht-conf-test-spec';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 import { readEnv } from '../utils/env';
 import { REFINEMENT_THRESHOLD, formatValidationScore } from '../utils/score-display';
@@ -735,18 +735,15 @@ export class DevelopmentSupervisor {
       return this.finishTestGeneration(todoId, emptyResult);
     }
 
-    // P1 guard: the deterministic harness-spec generator is app-form-hardcoded
-    // (test/forms/, harness.loadForm, a forms/app/ XML read — cht-conf-test-spec.ts).
-    // For a contact-form fix that converted it would emit a BROKEN spec, and
-    // falling through to the LLM test-gen agent would produce junk. Deterministic
-    // contact-form spec generation lands with P5; until then, SKIP test
-    // generation for a converted contact-form fix rather than emit either.
-    if (state.xlsformApply && state.issue?.issue.technical_context.configArtifact === 'contact-form') {
-      console.log(
-        '[Development Supervisor] P1: contact-form XLSForm fix converted — SKIPPING test generation ' +
-          '(deterministic contact-form spec gen lands with P5; app-form generator would emit a broken spec).',
-      );
-      return this.finishTestGeneration(todoId, emptyResult);
+    // P5: contact-form test generation. cht-conf-test-harness 3.0.15 has no
+    // loadContactForm, so the contact-form spec is a plain mocha+chai file whose
+    // oracle is a DIRECT read of the compiled forms/contact/<form>.xml (no
+    // harness). It is generated deterministically from the descriptor + verified
+    // bindDiff (the FULL attrs map, incl. absence). Gated on a verified apply;
+    // a contact-form ticket without one is a loud skip (no converted form to
+    // assert) rather than a fall-through to the LLM agent (which would emit junk).
+    if (state.issue?.issue.technical_context.configArtifact === 'contact-form') {
+      return this.finishTestGeneration(todoId, this.tryGenerateContactFormSpec(state));
     }
 
     // F7: layer-aware test generation. For a cht-conf form ticket whose XLSForm
@@ -845,6 +842,73 @@ export class DevelopmentSupervisor {
       explanation:
         `Deterministic cht-conf-test-harness spec for the ${apply.form} form fix: asserts the ` +
         `compiled forms/app/${apply.form}.xml gates ${apply.bindDiff.nodeset} on the corrected relevant.`,
+      requirementsChecklist: [],
+      ...(warnings.length > 0 ? { warnings } : {}),
+    };
+  }
+
+  /**
+   * P5: deterministic contact-form spec generation. Returns a
+   * TestGenerationResult carrying the single generated plain-mocha spec (a direct
+   * forms/contact/<form>.xml bind-attr oracle, no harness) when this run is a
+   * contact-form fix that converted; returns an EMPTY result (a loud skip) when
+   * there is no verified apply / descriptor / config root — never a fall-through
+   * to the LLM agent (whose contact-form output would be junk).
+   *
+   * Unlike the app-form harness template, this asserts the FULL attrs map from
+   * the bindDiff (value attrs by equality, null attrs by absence), so an
+   * attrs-only fix (M8's removed calculate) is provable — there is no
+   * unchanged-relevant skip.
+   */
+  private tryGenerateContactFormSpec(
+    state: typeof DevelopmentStateAnnotation.State,
+  ): TestGenerationResult {
+    const emptyResult: TestGenerationResult = { files: [], explanation: '', requirementsChecklist: [] };
+    const apply = state.xlsformApply;
+    if (!apply) {
+      console.log(
+        '[Development Supervisor] P5: contact-form ticket without a verified XLSForm apply — ' +
+          'SKIPPING test generation (no converted contact form to assert).',
+      );
+      return emptyResult;
+    }
+    const descriptorFile = (state.codeGeneration?.files ?? []).find(
+      (f) => f.relativePath === XLSFORM_FIX_DESCRIPTOR_PATH,
+    );
+    if (!descriptorFile) {
+      return emptyResult;
+    }
+    const parsed = parseXlsformFixDescriptor(descriptorFile.content);
+    if (!parsed.valid || !parsed.descriptor) {
+      return emptyResult;
+    }
+    const configRoot = state.options?.chtCorePath;
+    if (!configRoot) {
+      return emptyResult;
+    }
+    const spec = generateContactFormSpec(parsed.descriptor, apply.bindDiff, configRoot);
+    const file: GeneratedFile = {
+      relativePath: spec.relPath,
+      content: spec.content,
+      language: 'javascript',
+      type: 'test',
+      description: `deterministic contact-form spec for the ${apply.form} XLSForm fix`,
+      action: 'create',
+    };
+    const warnings: string[] = [];
+    if (spec.overwriteAvoided) {
+      warnings.push(`a partner spec already exists at test/forms/${apply.form}.spec.js; wrote ${spec.relPath} beside it`);
+    }
+    console.log(
+      `[Development Supervisor] P5: emitted deterministic contact-form spec ${spec.relPath} ` +
+        `(direct forms/contact/${apply.form}.xml bind-attr oracle; no harness)`,
+    );
+    return {
+      files: [file],
+      explanation:
+        `Deterministic contact-form spec for the ${apply.form} fix: asserts the compiled ` +
+        `forms/contact/${apply.form}.xml bind ${apply.bindDiff.nodeset} carries the fixed attrs ` +
+        `(value + absence), read directly from XML (no cht-conf-test-harness).`,
       requirementsChecklist: [],
       ...(warnings.length > 0 ? { warnings } : {}),
     };

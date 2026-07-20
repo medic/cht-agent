@@ -20,6 +20,7 @@ These four keys must be present in the YAML block. Omitting any of them causes p
 | Field | Type | Description |
 | --- | --- | --- |
 | `labels` | list or string | Extra tags for categorization (e.g. GitHub-style labels). The parser coerces YAML values to strings internally; use simple scalar values if you rely on tooling beyond this repo. |
+| `qaSpecs` | list or string | For `layer: cht-conf` tickets: repo-relative tier-2 spec paths (in the deployment config) that constitute this ticket's regression surface, e.g. `["test/tasks/immunization_service.spec.js"]`. When present, the `--qa-tier2` hook runs EXACTLY these (a directory entry expands to the `*.spec.js` files directly inside it); when absent it falls back to the per-artifact default selection (form/contact-form → `test/forms/<form>*.spec.js`; task/target → `test/tasks/*.spec.js`; contact-summary → its suite; app-settings requires a `qaSpecs` pin). A single string is accepted and coerced to a one-element list; every entry must be a non-empty string. Worked examples: `tickets/maisha-m3-*.md`, `tickets/maisha-m4-*.md`. |
 | *(custom)* | any | You may add other YAML keys for local or external tooling. They are **not** mapped onto the parsed `IssueTemplate` today; the pipeline only consumes the fields documented here. They remain in the file for your own records. |
 
 ## Markdown body sections

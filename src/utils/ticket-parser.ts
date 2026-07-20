@@ -99,6 +99,48 @@ const validateConfigArtifact = (artifact: string): ConfigArtifact => {
   throw new Error(`Invalid configArtifact: "${artifact}". Must be one of: ${CONFIG_ARTIFACTS.join(', ')}`);
 };
 
+/**
+ * P5: parse the optional `qaSpecs` frontmatter into an array of non-empty,
+ * repo-relative spec paths. `parseFrontmatterYaml` collapses a YAML list into a
+ * JSON-encoded string (arrays are `JSON.stringify`ed), so the raw value is
+ * either a JSON array literal (`["a","b"]`) or a bare single string; both are
+ * accepted (a single string is coerced to a one-element array). Every entry must
+ * be a non-empty string — an empty/blank entry or a non-string element is a hard
+ * error rather than a silent drop, so a malformed pin never degrades to "no
+ * regression surface" unnoticed.
+ */
+const validateQaSpecs = (raw: string): string[] => {
+  const trimmed = raw.trim();
+  if (trimmed === '') {
+    throw new Error('Invalid qaSpecs: must be a non-empty spec path or an array of non-empty spec paths');
+  }
+  let candidates: unknown[];
+  if (trimmed.startsWith('[')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new Error(`Invalid qaSpecs: "${raw}" is not a valid array of spec paths`);
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error(`Invalid qaSpecs: "${raw}" is not a valid array of spec paths`);
+    }
+    candidates = parsed;
+  } else {
+    // A bare single string (YAML `qaSpecs: test/tasks/x.spec.js`) → one entry.
+    candidates = [trimmed];
+  }
+  if (candidates.length === 0) {
+    throw new Error('Invalid qaSpecs: the array must contain at least one spec path');
+  }
+  return candidates.map((entry) => {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw new Error(`Invalid qaSpecs: every entry must be a non-empty string (got ${JSON.stringify(entry)})`);
+    }
+    return entry.trim();
+  });
+};
+
 const extractSection = (markdown: string, sectionTitle: string): string => {
   const regex = new RegExp(String.raw`##\s+${sectionTitle}\s*\n([\s\S]*?)(?=\n##|$)`, 'i');
   const match = regex.exec(markdown);
@@ -210,6 +252,7 @@ export const parseTicketFile = (filePath: string): IssueTemplate => {
   // (frontmatter wins); the default to cht-core lands in inference/enrichment.
   const layer = metadata.layer ? validateLayer(metadata.layer) : undefined;
   const configArtifact = metadata.configArtifact ? validateConfigArtifact(metadata.configArtifact) : undefined;
+  const qaSpecs = metadata.qaSpecs ? validateQaSpecs(metadata.qaSpecs) : undefined;
 
   return {
     issue: {
@@ -226,6 +269,7 @@ export const parseTicketFile = (filePath: string): IssueTemplate => {
         ...(metadata.artifactName ? { artifactName: metadata.artifactName } : {}),
         ...(metadata.chtConfVersion ? { chtConfVersion: metadata.chtConfVersion } : {}),
         ...(metadata.deploymentRef ? { deploymentRef: metadata.deploymentRef } : {}),
+        ...(qaSpecs ? { qaSpecs } : {}),
       },
       requirements: extractBulletList(requirementsSection),
       acceptance_criteria: extractBulletList(acceptanceCriteriaSection),
@@ -265,6 +309,7 @@ const mapErrorMessage = (error: unknown): string => {
     [/Invalid domain:/, `Domain must be one of: ${VALID_DOMAINS.join(', ')}`],
     [/Invalid layer:/, `Layer must be one of: ${CHT_LAYERS.join(', ')}`],
     [/Invalid configArtifact:/, `configArtifact must be one of: ${CONFIG_ARTIFACTS.join(', ')}`],
+    [/Invalid qaSpecs:/, 'qaSpecs must be a non-empty spec path or an array of non-empty spec paths'],
     [/Ticket file not found:/, 'Ticket file not found'],
   ];
 

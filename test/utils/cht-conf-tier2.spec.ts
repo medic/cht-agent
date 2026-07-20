@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   findFormSpecs,
+  findTier2Specs,
   parseMochaPassing,
   resolveRepoMocha,
   runTier2,
@@ -141,6 +142,133 @@ describe('cht-conf-tier2 (F7 runner)', () => {
     });
   });
 
+  describe('findTier2Specs — per-artifact selection (P5)', () => {
+    const writeSpec = (r: string, ...rel: string[]) => {
+      const abs = path.join(r, ...rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, '// spec\n');
+    };
+
+    it('form: the form harness spec(s) under test/forms/', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'forms', `${FORM}.spec.js`);
+      writeSpec(root, 'test', 'forms', `${FORM}.agent.spec.js`);
+      const res = findTier2Specs(root, { configArtifact: 'form', artifactName: FORM });
+      expect(res.specs).to.deep.equal([
+        path.join('test', 'forms', `${FORM}.spec.js`),
+        path.join('test', 'forms', `${FORM}.agent.spec.js`),
+      ]);
+      expect(res.reason).to.equal(undefined);
+    });
+
+    it('contact-form: the same test/forms/<form>*.spec.js selection', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'forms', 'e_household-create.agent.spec.js');
+      const res = findTier2Specs(root, { configArtifact: 'contact-form', artifactName: 'e_household-create' });
+      expect(res.specs).to.deep.equal([path.join('test', 'forms', 'e_household-create.agent.spec.js')]);
+    });
+
+    it('form: honest skip (reason) when no spec exists', () => {
+      root = mkTmp();
+      const res = findTier2Specs(root, { configArtifact: 'form', artifactName: FORM });
+      expect(res.specs).to.deep.equal([]);
+      expect(res.reason).to.match(/no harness spec/);
+    });
+
+    it('task/target: every test/tasks/*.spec.js (sorted)', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'b_service.spec.js');
+      writeSpec(root, 'test', 'tasks', 'a_service.spec.js');
+      writeSpec(root, 'test', 'tasks', 'notaspec.js'); // ignored (not *.spec.js)
+      const task = findTier2Specs(root, { configArtifact: 'task', artifactName: 'x' });
+      expect(task.specs).to.deep.equal([
+        path.join('test', 'tasks', 'a_service.spec.js'),
+        path.join('test', 'tasks', 'b_service.spec.js'),
+      ]);
+      const target = findTier2Specs(root, { configArtifact: 'target', artifactName: 'x' });
+      expect(target.specs).to.deep.equal(task.specs);
+    });
+
+    it('task: honest skip when test/tasks has no specs', () => {
+      root = mkTmp();
+      const res = findTier2Specs(root, { configArtifact: 'task', artifactName: 'x' });
+      expect(res.specs).to.deep.equal([]);
+      expect(res.reason).to.match(/test\/tasks/);
+    });
+
+    it('contact-summary: the root spec + the directory suite', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'contact-summary.spec.js');
+      writeSpec(root, 'test', 'contact-summary', 'pregnancy.spec.js');
+      const res = findTier2Specs(root, { configArtifact: 'contact-summary', artifactName: 'x' });
+      expect(res.specs).to.deep.equal([
+        path.join('test', 'contact-summary.spec.js'),
+        path.join('test', 'contact-summary', 'pregnancy.spec.js'),
+      ]);
+    });
+
+    it('app-settings: requires qaSpecs (honest skip recommending the frontmatter)', () => {
+      root = mkTmp();
+      const res = findTier2Specs(root, { configArtifact: 'app-settings', artifactName: 'app-settings' });
+      expect(res.specs).to.deep.equal([]);
+      expect(res.reason).to.match(/qaSpecs/);
+    });
+
+    it('qaSpecs: runs EXACTLY the pinned specs (defaults ignored)', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'immunization_service.spec.js');
+      writeSpec(root, 'test', 'tasks', 'other.spec.js'); // present but NOT pinned
+      const res = findTier2Specs(root, {
+        configArtifact: 'task',
+        artifactName: 'x',
+        qaSpecs: ['test/tasks/immunization_service.spec.js'],
+      });
+      expect(res.specs).to.deep.equal(['test/tasks/immunization_service.spec.js']);
+      expect(res.reason).to.equal(undefined);
+    });
+
+    it('qaSpecs: a directory entry expands to *.spec.js directly inside it', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'a.spec.js');
+      writeSpec(root, 'test', 'tasks', 'b.spec.js');
+      writeSpec(root, 'test', 'tasks', 'nested', 'c.spec.js'); // NOT expanded (non-recursive)
+      const res = findTier2Specs(root, {
+        configArtifact: 'task',
+        artifactName: 'x',
+        qaSpecs: ['test/tasks'],
+      });
+      expect(res.specs).to.deep.equal([
+        path.join('test', 'tasks', 'a.spec.js'),
+        path.join('test', 'tasks', 'b.spec.js'),
+      ]);
+    });
+
+    it('qaSpecs: a MISSING entry is an honest skip naming it (never a silent partial run)', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'present.spec.js');
+      const res = findTier2Specs(root, {
+        configArtifact: 'task',
+        artifactName: 'x',
+        qaSpecs: ['test/tasks/present.spec.js', 'test/tasks/missing.spec.js'],
+      });
+      expect(res.specs).to.deep.equal([]);
+      expect(res.reason).to.match(/not found/);
+      expect(res.reason).to.include('test/tasks/missing.spec.js');
+      expect(res.reason).to.not.include('present.spec.js');
+    });
+
+    it('qaSpecs: de-duplicates when two entries name the same file', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'x.spec.js');
+      const res = findTier2Specs(root, {
+        configArtifact: 'task',
+        artifactName: 'x',
+        qaSpecs: ['test/tasks/x.spec.js', 'test/tasks/x.spec.js'],
+      });
+      expect(res.specs).to.deep.equal(['test/tasks/x.spec.js']);
+    });
+  });
+
   describe('resolveRepoMocha', () => {
     it('points at the repo-pinned node_modules/.bin/mocha', () => {
       expect(resolveRepoMocha('/mnt/conf')).to.equal(path.join('/mnt/conf', 'node_modules', '.bin', 'mocha'));
@@ -196,6 +324,45 @@ describe('cht-conf-tier2 (F7 runner)', () => {
       const env = calls[0].opts.env as NodeJS.ProcessEnv;
       expect(env.TZ).to.be.a('string');
       expect(env).to.not.have.property('ANTHROPIC_API_KEY');
+    });
+
+    it('honors pinned qaSpecs, runs exactly those, and carries them on the result', async () => {
+      root = mkTmp();
+      scaffoldRunnableRepo(root, { withSpec: false });
+      const formsDir = path.join(root, 'test', 'tasks');
+      fs.mkdirSync(formsDir, { recursive: true });
+      fs.writeFileSync(path.join(formsDir, 'immunization_service.spec.js'), '// spec\n');
+      fs.writeFileSync(path.join(formsDir, 'other.spec.js'), '// not pinned\n');
+      const proc = makeFakeProc();
+      const { fn, calls } = makeSpawnFn(proc);
+      const promise = runTier2({
+        configRoot: root,
+        configArtifact: 'task',
+        artifactName: 'newborn-immunization-followup',
+        qaSpecs: ['test/tasks/immunization_service.spec.js'],
+        spawnFn: fn,
+      });
+      proc.emit('close', 0);
+      const res = await promise;
+      expect(res.ran).to.equal(true);
+      expect(res.passed).to.equal(true);
+      expect(res.specs).to.deep.equal(['test/tasks/immunization_service.spec.js']);
+      // mocha got exactly the pinned spec, not the sibling.
+      expect(calls[0].args[0]).to.equal('test/tasks/immunization_service.spec.js');
+      expect(calls[0].args).to.not.include(path.join('test', 'tasks', 'other.spec.js'));
+    });
+
+    it('self-skips (ran:false) naming a missing pinned qaSpec', async () => {
+      root = mkTmp();
+      scaffoldRunnableRepo(root, { withSpec: false });
+      const res = await runTier2({
+        configRoot: root,
+        configArtifact: 'task',
+        artifactName: 'x',
+        qaSpecs: ['test/tasks/missing.spec.js'],
+      });
+      expect(res.ran).to.equal(false);
+      expect(res.reason).to.include('test/tasks/missing.spec.js');
     });
 
     it('records ran:true, passed:false on a non-zero exit', async () => {

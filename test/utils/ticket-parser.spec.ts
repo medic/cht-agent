@@ -1,4 +1,6 @@
 import { expect } from 'chai';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { parseTicketFile, findTicketFiles } from '../../src/utils/ticket-parser';
 
@@ -228,6 +230,69 @@ describe('ticket-parser', () => {
         const ticketPath = path.join(fixturesPath, 'unclosed-frontmatter.md');
 
         expect(() => parseTicketFile(ticketPath)).to.throw('Ticket must have a "title"');
+      });
+    });
+
+    // P5: qaSpecs is an optional array of repo-relative tier-2 spec paths.
+    describe('qaSpecs frontmatter (P5)', () => {
+      let tmp: string;
+      const writeTicket = (frontmatter: string): string => {
+        tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ticket-qaspecs-'));
+        const file = path.join(tmp, 'ticket.md');
+        fs.writeFileSync(
+          file,
+          `---\n${frontmatter}\n---\n\n## Description\n\nA sufficiently long description for the ticket body.\n`,
+        );
+        return file;
+      };
+      const base = 'title: "T"\ntype: bug\npriority: high\ndomain: tasks-and-targets';
+      afterEach(() => {
+        if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+      });
+
+      it('parses a YAML list into a string array', () => {
+        const file = writeTicket(
+          `${base}\nqaSpecs:\n  - test/tasks/a.spec.js\n  - test/tasks/b.spec.js`,
+        );
+        const ticket = parseTicketFile(file);
+        expect(ticket.issue.technical_context.qaSpecs).to.deep.equal([
+          'test/tasks/a.spec.js',
+          'test/tasks/b.spec.js',
+        ]);
+      });
+
+      it('parses a JSON-flow array', () => {
+        const file = writeTicket(`${base}\nqaSpecs: ["test/tasks/a.spec.js"]`);
+        expect(parseTicketFile(file).issue.technical_context.qaSpecs).to.deep.equal([
+          'test/tasks/a.spec.js',
+        ]);
+      });
+
+      it('coerces a single string to a one-element array', () => {
+        const file = writeTicket(`${base}\nqaSpecs: test/contact-summary.spec.js`);
+        expect(parseTicketFile(file).issue.technical_context.qaSpecs).to.deep.equal([
+          'test/contact-summary.spec.js',
+        ]);
+      });
+
+      it('is undefined when absent', () => {
+        const file = writeTicket(base);
+        expect(parseTicketFile(file).issue.technical_context.qaSpecs).to.equal(undefined);
+      });
+
+      it('throws on an empty-string entry (never a silent drop)', () => {
+        const file = writeTicket(`${base}\nqaSpecs:\n  - test/tasks/a.spec.js\n  - ""`);
+        expect(() => parseTicketFile(file)).to.throw('Invalid qaSpecs');
+      });
+
+      it('throws on a non-string entry', () => {
+        const file = writeTicket(`${base}\nqaSpecs: [1, 2]`);
+        expect(() => parseTicketFile(file)).to.throw('Invalid qaSpecs');
+      });
+
+      it('throws on an empty array', () => {
+        const file = writeTicket(`${base}\nqaSpecs: []`);
+        expect(() => parseTicketFile(file)).to.throw('Invalid qaSpecs');
       });
     });
   });

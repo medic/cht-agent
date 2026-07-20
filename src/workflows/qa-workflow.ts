@@ -228,6 +228,11 @@ export const createQaInput = (args: CreateQaInputArgs): QaInput | null => {
     ...(args.bindDiff ? { bindDiff: args.bindDiff } : {}),
     // F7: carry the tier-2 opt-in so executeQaWorkflow runs the repo harness spec.
     ...(args.tier2 ? { tier2: args.tier2 } : {}),
+    // P5: carry the ticket's pinned tier-2 spec list so the tier-2 hook runs
+    // EXACTLY those specs (instead of the per-artifact default selection).
+    ...(args.issue.issue.technical_context.qaSpecs
+      ? { qaSpecs: args.issue.issue.technical_context.qaSpecs }
+      : {}),
   };
 };
 
@@ -543,9 +548,20 @@ export const executeQaWorkflow = async (
   // there is nothing to strengthen about an already-failed loop.
   let tier2;
   if (input.tier2 && succeeded) {
-    tier2 = await runTier2({ configRoot: input.configPath, form: artifact });
+    // P5: select the tier-2 specs per artifact (form/contact-form → the form's
+    // harness spec; task/target → test/tasks/*; contact-summary → its suite),
+    // or run EXACTLY the ticket's pinned `qaSpecs` when present.
+    tier2 = await runTier2({
+      configRoot: input.configPath,
+      configArtifact: input.verify.configArtifact,
+      artifactName: artifact,
+      ...(input.qaSpecs ? { qaSpecs: input.qaSpecs } : {}),
+    });
     if (tier2.ran) {
       succeeded = succeeded && tier2.passed === true;
+      if (tier2.specs && tier2.specs.length > 0) {
+        messages.push(`tier-2 specs: ${tier2.specs.join(', ')}`);
+      }
       if (tier2.passed) {
         // F9: carry the parsed passing count in the transition, not a bare label.
         messages.push(tier2PassLine(tier2.outputTail));

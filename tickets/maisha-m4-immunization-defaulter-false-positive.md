@@ -8,6 +8,10 @@ configArtifact: contact-summary
 artifactName: is_immunization_defaulter
 chtConfVersion: "3.21.4"
 deploymentRef: "/workspace/cht-conf-project"
+qaSpecs:
+  - test/contact-summary.spec.js
+  - test/tasks/defaulter_follow_up.spec.js
+  - test/tasks/immunization_service.spec.js
 ---
 
 ## Description

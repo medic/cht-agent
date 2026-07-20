@@ -54,12 +54,47 @@ const tier2Env = (): NodeJS.ProcessEnv => {
 
 export interface Tier2RunOptions {
   configRoot: string;
-  form: string;
+  /**
+   * Back-compat alias for `{ configArtifact: 'form', artifactName: form }`. When
+   * `configArtifact` is set it is ignored; kept so existing `form`-only call
+   * sites (and their tests) keep working unchanged.
+   */
+  form?: string;
+  /** P5: which artifact this run verifies — drives the default spec selection. */
+  configArtifact?: string;
+  /** P5: the artifact id (form name / task id / 'app-settings'). */
+  artifactName?: string;
+  /**
+   * P5: the ticket's pinned tier-2 specs (repo-relative). When present these are
+   * run EXACTLY (a directory entry expands to `*.spec.js` directly inside it);
+   * a missing entry is an honest self-skip that names it.
+   */
+  qaSpecs?: string[];
   timeoutMs?: number;
   /** Override the mocha binary path (tests point this at a fake script). */
   mochaBin?: string;
   /** Injectable spawn for tests (defaults to node:child_process spawn). */
   spawnFn?: typeof spawn;
+}
+
+/** The selection inputs `findTier2Specs` resolves a spec list from. */
+export interface Tier2SpecSelection {
+  configArtifact: string;
+  artifactName: string;
+  /** Pinned repo-relative specs; when present they win over the defaults. */
+  qaSpecs?: string[];
+}
+
+/**
+ * Result of tier-2 spec selection: the resolved repo-relative spec files, or an
+ * honest `reason` when none could be selected (missing pinned entry, an artifact
+ * that requires `qaSpecs`, or no default spec on disk). `specs` and `reason` are
+ * mutually exclusive — a non-empty `specs` means "run these"; a `reason` means
+ * "self-skip with this message".
+ */
+export interface Tier2SpecResult {
+  specs: string[];
+  reason?: string;
 }
 
 /**
@@ -75,6 +110,9 @@ export const resolveRepoMocha = (configRoot: string): string =>
  * and the agent sibling `test/forms/<form>.agent.spec.js`, whichever exist.
  * Returns config-root-relative glob-free paths (mocha is given explicit files,
  * not a glob, so shell expansion is irrelevant).
+ *
+ * Retained for the form/contact-form default selection (and back-compat call
+ * sites); `findTier2Specs` delegates here for those two artifacts.
  */
 export const findFormSpecs = (configRoot: string, form: string): string[] => {
   const candidates = [
@@ -82,6 +120,133 @@ export const findFormSpecs = (configRoot: string, form: string): string[] => {
     path.join('test', 'forms', `${form}.agent.spec.js`),
   ];
   return candidates.filter((rel) => fs.existsSync(path.join(configRoot, rel)));
+};
+
+/**
+ * List the `*.spec.js` files DIRECTLY inside a config-root-relative directory
+ * (non-recursive — the plan's "directory rule": exact paths + this expansion,
+ * no glob library). Returns config-root-relative paths, sorted for a stable spec
+ * order; an empty array when the directory is missing/unreadable/has none.
+ */
+const listSpecsInDir = (configRoot: string, relDir: string): string[] => {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(path.join(configRoot, relDir));
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.endsWith('.spec.js'))
+    .sort()
+    .map((e) => path.join(relDir, e));
+};
+
+/**
+ * Resolve ONE pinned `qaSpecs` entry (config-root-relative) to the spec files it
+ * names: a `.spec.js` file → itself when it exists; a directory → the
+ * `*.spec.js` files directly inside it; anything else (missing, or a directory
+ * with no specs) → `{ missing: entry }`. A pinned entry that resolves to zero
+ * files is a config error, not a silent drop.
+ */
+const resolveQaSpecEntry = (
+  configRoot: string,
+  entry: string
+): { specs: string[] } | { missing: string } => {
+  const abs = path.join(configRoot, entry);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    return { missing: entry };
+  }
+  if (stat.isDirectory()) {
+    const specs = listSpecsInDir(configRoot, entry);
+    return specs.length > 0 ? { specs } : { missing: entry };
+  }
+  return { specs: [entry] };
+};
+
+/**
+ * P5: per-artifact tier-2 spec selection.
+ *
+ *  - `qaSpecs` present → run EXACTLY those (each must exist under configRoot; a
+ *    directory expands to `*.spec.js` directly inside it). Any missing entry
+ *    yields an honest `reason` naming ALL missing entries — never a partial run
+ *    that silently drops the pin.
+ *  - no `qaSpecs` → defaults by artifact:
+ *      form / contact-form → `test/forms/<artifactName>.spec.js` + `.agent.spec.js`
+ *      task / target       → every `test/tasks/*.spec.js`
+ *      contact-summary     → `test/contact-summary.spec.js` + `test/contact-summary/*.spec.js`
+ *      app-settings        → require qaSpecs (honest skip recommending the frontmatter)
+ *  - an unknown artifact with no qaSpecs also skips with a reason.
+ */
+export const findTier2Specs = (configRoot: string, selection: Tier2SpecSelection): Tier2SpecResult => {
+  const { configArtifact, artifactName, qaSpecs } = selection;
+
+  if (qaSpecs && qaSpecs.length > 0) {
+    const found: string[] = [];
+    const missing: string[] = [];
+    for (const entry of qaSpecs) {
+      const resolved = resolveQaSpecEntry(configRoot, entry);
+      if ('missing' in resolved) {
+        missing.push(resolved.missing);
+      } else {
+        found.push(...resolved.specs);
+      }
+    }
+    if (missing.length > 0) {
+      return {
+        specs: [],
+        reason: `pinned qaSpecs not found under the config root: ${missing.join(', ')}`,
+      };
+    }
+    // De-duplicate while preserving order (two entries can name the same file).
+    return { specs: [...new Set(found)] };
+  }
+
+  switch (configArtifact) {
+    case 'form':
+    case 'contact-form': {
+      const specs = findFormSpecs(configRoot, artifactName);
+      return specs.length > 0
+        ? { specs }
+        : { specs: [], reason: `no harness spec for ${artifactName} under test/forms/` };
+    }
+    case 'task':
+    case 'target': {
+      const specs = listSpecsInDir(configRoot, path.join('test', 'tasks'));
+      return specs.length > 0
+        ? { specs }
+        : { specs: [], reason: 'no test/tasks/*.spec.js specs found in the config root' };
+    }
+    case 'contact-summary': {
+      const primary = path.join('test', 'contact-summary.spec.js');
+      const specs = [
+        ...(fs.existsSync(path.join(configRoot, primary)) ? [primary] : []),
+        ...listSpecsInDir(configRoot, path.join('test', 'contact-summary')),
+      ];
+      return specs.length > 0
+        ? { specs }
+        : {
+          specs: [],
+          reason: 'no test/contact-summary.spec.js or test/contact-summary/*.spec.js in the config root',
+        };
+    }
+    case 'app-settings':
+      return {
+        specs: [],
+        reason:
+          'app-settings has no default tier-2 spec set — pin the regression surface via the ' +
+          "ticket's `qaSpecs` frontmatter (e.g. qaSpecs: [\"test/tasks/x.spec.js\"])",
+      };
+    default:
+      return {
+        specs: [],
+        reason:
+          `no default tier-2 spec selection for artifact "${configArtifact}" — pin specs via the ` +
+          "ticket's `qaSpecs` frontmatter",
+      };
+  }
 };
 
 /**
@@ -171,7 +336,7 @@ export const tier2PassLine = (outputTail: string | undefined): string => {
  * the QA workflow can aggregate without a try/catch.
  */
 export const runTier2 = async (options: Tier2RunOptions): Promise<QaTier2Result> => {
-  const { configRoot, form } = options;
+  const { configRoot } = options;
   const mochaBin = options.mochaBin ?? resolveRepoMocha(configRoot);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIER2_TIMEOUT_MS;
   const spawnFn = options.spawnFn ?? spawn;
@@ -180,10 +345,18 @@ export const runTier2 = async (options: Tier2RunOptions): Promise<QaTier2Result>
   if (!runnable.ok) {
     return { ran: false, reason: runnable.reason };
   }
-  const specs = findFormSpecs(configRoot, form);
-  if (specs.length === 0) {
-    return { ran: false, reason: `no harness spec for ${form} under test/forms/` };
+  // Back-compat: a bare `form` maps to `{ configArtifact: 'form', artifactName }`.
+  const configArtifact = options.configArtifact ?? 'form';
+  const artifactName = options.artifactName ?? options.form ?? '';
+  const selection = findTier2Specs(configRoot, {
+    configArtifact,
+    artifactName,
+    ...(options.qaSpecs ? { qaSpecs: options.qaSpecs } : {}),
+  });
+  if (selection.specs.length === 0) {
+    return { ran: false, reason: selection.reason ?? `no harness spec for ${artifactName} under test/forms/` };
   }
+  const specs = selection.specs;
 
   const args = [...specs, '--timeout', '120000', '--reporter', 'spec'];
   console.log(`[tier-2] mocha ${specs.join(' ')} (cwd=${configRoot})`);
@@ -204,7 +377,7 @@ export const runTier2 = async (options: Tier2RunOptions): Promise<QaTier2Result>
       settled = true;
       clearTimeout(timer);
       const output = keepTail(chunks.join('') + (extra ? `\n${extra}` : ''));
-      resolve({ ran: true, passed, outputTail: output });
+      resolve({ ran: true, passed, outputTail: output, specs });
     };
 
     const timer = setTimeout(() => {

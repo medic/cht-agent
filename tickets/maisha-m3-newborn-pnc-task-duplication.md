@@ -8,6 +8,9 @@ configArtifact: task
 artifactName: newborn-immunization-followup
 chtConfVersion: "3.21.4"
 deploymentRef: "/workspace/cht-conf-project"
+qaSpecs:
+  - test/tasks/postnatal_care_service_newborn.spec.js
+  - test/tasks/immunization_service.spec.js
 ---
 
 ## Description

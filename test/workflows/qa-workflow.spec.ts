@@ -261,6 +261,18 @@ describe('qa-workflow', () => {
       const off = createQaInput({ issue: formIssue(), configPath: dir, autoApprove: true });
       expect(off!.tier2).to.equal(undefined);
     });
+
+    it('createQaInput threads the ticket qaSpecs onto the QaInput (P5)', () => {
+      const pinned = ['test/tasks/immunization_service.spec.js', 'test/tasks/defaulter_follow_up.spec.js'];
+      const input = createQaInput({
+        issue: formIssue({ qaSpecs: pinned }),
+        configPath: dir,
+        autoApprove: true,
+      });
+      expect(input!.qaSpecs).to.deep.equal(pinned);
+      const none = createQaInput({ issue: formIssue(), configPath: dir, autoApprove: true });
+      expect(none!.qaSpecs).to.equal(undefined);
+    });
   });
 
   // F7: opt-in tier-2 QA — after the tier-1 GREEN, shell the config repo's own
@@ -326,6 +338,37 @@ describe('qa-workflow', () => {
       expect(result.messages.some((m) => /tier-2 FAILED — last output:/.test(m))).to.equal(true);
       expect(result.messages.some((m) => /tier-2 fake mocha ran/.test(m))).to.equal(true);
       expect(result.messages.some((m) => /see outputTail/.test(m))).to.equal(false);
+    });
+
+    it('runs EXACTLY the pinned qaSpecs and lists them in the transition (P5)', async () => {
+      writeCorrectedForm(dir);
+      scaffoldMocha(dir, 0);
+      // No test/forms spec — the default selection would self-skip; the pin drives it.
+      const tasksDir = path.join(dir, 'test', 'tasks');
+      fs.mkdirSync(tasksDir, { recursive: true });
+      fs.writeFileSync(path.join(tasksDir, 'immunization_service.spec.js'), '// spec\n');
+      const { agent } = stubbedAgent();
+      const result = await executeQaWorkflow(
+        agent,
+        makeQaInput({ configPath: dir, tier2: true, qaSpecs: ['test/tasks/immunization_service.spec.js'] }),
+      );
+      expect(result.tier2?.ran).to.equal(true);
+      expect(result.tier2?.specs).to.deep.equal(['test/tasks/immunization_service.spec.js']);
+      expect(result.messages.some((m) => /tier-2 specs: test\/tasks\/immunization_service\.spec\.js/.test(m)))
+        .to.equal(true);
+    });
+
+    it('self-skips honestly (succeeded unchanged) naming a missing pinned qaSpec (P5)', async () => {
+      writeCorrectedForm(dir);
+      scaffoldMocha(dir, 0);
+      const { agent } = stubbedAgent();
+      const result = await executeQaWorkflow(
+        agent,
+        makeQaInput({ configPath: dir, tier2: true, qaSpecs: ['test/tasks/missing.spec.js'] }),
+      );
+      expect(result.tier2?.ran).to.equal(false);
+      expect(result.tier2?.reason).to.include('test/tasks/missing.spec.js');
+      expect(result.succeeded).to.equal(true); // green loop untouched
     });
 
     it('self-skips honestly (succeeded unchanged) when no harness spec exists', async () => {
