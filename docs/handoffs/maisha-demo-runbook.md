@@ -105,31 +105,59 @@ steps 1–2 / `demo-conf/DEMO-STEPS.md` steps 1–3 verbatim:
    `csv-to-docs upload-docs create-users` or `test-data-generator`
    (`demo-conf/demo-seed-design.js`).
 
-### 3b. [OPERATOR] Seed the per-ticket cohorts (in-app, once)
+### 3b. [OPERATOR] Seed the per-ticket cohorts — one script
 
-Give each ticket its own **household lane** so reproductions never share
-contacts, then do the fiddly clinical setup ONCE here — it rides the
-snapshot, so demo day starts with rich, ready cohorts:
+The cohorts are seeded by `demo/maisha-seed/seed-maisha-cohorts.js`
+(self-contained node, no deps; idempotent upserts; every doc `_id` is
+prefixed `maisha-seed-` so a botched run is identifiable/deletable; it
+self-discovers the hierarchy from the `demo_chv` user so nothing is
+hardcoded). It creates four **household lanes** under the CHV area so
+reproductions never share contacts:
 
-- **`HH-M8` / `HH-M7`** — two empty-ish households under the CHV area (M8
-  registers a new client live; M7 registers a child live). Nothing to
-  pre-submit.
-- **`HH-M4`** — a household with an **under-5 child whose immunization
-  history is complete for age** (submit `immunization_service` reports as
-  `demo_chv` covering every age-due vaccine, plus one extra/optional dose —
-  the over-count is what trips the `!==` length test). Verify the symptom
-  while you're here: the child's profile/newborn-PNC flow must already show
-  the defaulter flag (`is_immunization_defaulter = 'yes'`). If it doesn't,
-  adjust doses until it does — **the snapshot must contain a reproducing
-  cohort.**
-- **`HH-M3`** — a mother with a **recorded delivery + registered newborn**
-  (run the M5-demo "Visit 1" delivery flow: `postnatal_care_service`, "Has
-  she delivered?" → Yes, outcome 1 delivered/1 alive). Do **NOT** submit any
-  newborn PNC follow-up reports here — the duplicate-accumulation is the
-  live demo. The delivery's own legit PNC task series will exist in the
-  snapshot; that's fine and realistic.
+```bash
+cd <cht-agent-workbench>
+CHT_URL=https://localhost:10443 COUCHDB_USER=medic COUCHDB_PASSWORD=password \
+  node demo/maisha-seed/seed-maisha-cohorts.js
+```
 
-Sync everything, log out, close the browser.
+| Lane | Docs | Demo use |
+|---|---|---|
+| `maisha-seed-hh-m8` | 1 adult f_client | M8 registers a new member live |
+| `maisha-seed-hh-m7` | 1 adult f_client | M7 registers a child live |
+| `maisha-seed-hh-m4` | mother + **14-day-old newborn** + `immunization_service` report (`bcg opv_0 opv_1`) | the M4 RED cohort (see below) |
+| `maisha-seed-hh-m3` | mother + **10-day-old newborn** (+ linked delivery report; `created_by_doc`/`place_of_birth` set) | newborn PNC form launchable — M3's live duplicates |
+
+**Why the M4 child is a NEWBORN (config finding):**
+`is_immunization_defaulter` is computed only inside `if (isNewborn)`
+(`contact-summary.templated.js:171-176` + the task's `modifyContent`) — an
+older under-5 would prove the predicate math but the flag would never
+render in-app. The seeded newborn is complete-for-age (BCG+OPV0, the two
+doses `countTotalVaccinesByAge` expects at <6 weeks) plus one early extra
+dose (OPV1) → the buggy `!==` reads `'yes'` while the correct coverage
+predicate reads not-a-defaulter. The seeder run was verified by evaluating
+BOTH predicates with demo-conf's own functions against the docs fetched
+back from the instance (divergence holds).
+
+**⚠️ Newborn freshness:** the two newborn DOBs are computed at seed time
+(now−14d / now−10d). `is_newborn` requires <28 days — a stale snapshot ages
+them out. **Re-run the seeder after every §4 restore** (idempotent, ~2s —
+refreshes the DOBs) and any time the snapshot is older than ~a week.
+
+**M3 — what stays manual (by design):** the duplicate-emitting reports
+cannot be doc-seeded (`needs_immunization_follow_up` /
+`immunization_follow_up_date` are form-calculated). That IS the live demo
+(§5.4). The RED click-path, grounded in the form XML: as `demo_chv`, open
+**Baby Njoki (M3 Seed)** → **"Newborn PNC Home Visit Service"** → "Is Baby
+Njoki available?" → **Yes** → PNC Danger Signs (Child): "Is Baby Njoki's
+immunization upto date?" → **No** (this calculates the follow-up need +
+date) → answer the remaining danger signs normally → **Submit**. Repeat ×3
+→ duplicate immunization-follow-up tasks accumulate, none resolve.
+
+Note: seeded contacts have no sentinel shortcodes (`patient_id`) — they
+render fine by name and reports link by UUID; harmless for the demo.
+
+After seeding: log in as `demo_chv` once, **Sync now**, confirm the four
+lanes render, log out, close the browser.
 
 ### 3c. [OPERATOR] Freeze the baseline — git tag + volume snapshot
 
@@ -232,6 +260,9 @@ sudo rsync -a --delete ~/maisha-volsnap/couch-data/ <hostdir-from-inspect>/
 docker compose --env-file ./.env -f cht-core.yml -f cht-couchdb.yml \
   -f <cht-agent>/docker/cht-agent-net.override.yml start
 curl -sk https://localhost:10443/api/v2/monitoring | head -c 200   # wait for readiness
+# Refresh the newborn DOBs (idempotent, ~2s — is_newborn needs <28 days and
+# the snapshot froze them at seed time):
+(cd <cht-agent-workbench> && node demo/maisha-seed/seed-maisha-cohorts.js)
 # NOTE: the cht-agent container is a separate compose project — it keeps
 # running across CHT-stack restarts; only recreate it (§3d) at day start
 # or after switching workbench branches.
@@ -356,9 +387,11 @@ with father → deceased (or unknown) → question still appears.
 
 **RED (browser, primary — content-grep on the compiled settings is
 unreliable here, the bundle is minified and this predicate has no unique
-string literal):** open the `HH-M4` fully-immunized child → the defaulter
-flag/branch is visible (per §3b rehearsal: contact profile card and/or the
-newborn PNC form's defaulter-tracing branch opening).
+string literal):** open the seeded **14-day-old newborn** in
+`maisha-seed-hh-m4` (the flag only renders for newborns — §3b finding) →
+the defaulter flag/branch is visible (contact profile card and/or the
+newborn PNC form's defaulter-tracing branch opening) despite the child
+being complete-for-age (BCG+OPV0) + one extra dose.
 
 **RED (partner suite, the CHT-docs-compliant proof):** the repo's own
 `test/contact-summary.spec.js` + an over-immunized-child case. If the
@@ -400,12 +433,14 @@ curl -sk -u medic:password https://localhost:10443/api/v1/settings \
 # match ⇒ the broken resolver is live
 ```
 
-**RED (browser, the showpiece):** in `HH-M3`, on the newborn: submit the
-newborn PNC home-visit form (`postnatal_care_service_newborn`, with an
-immunization follow-up date) **twice, then a third time** → the Tasks tab
-accumulates **duplicate immunization-follow-up tasks**; submitting the
-follow-up form **does not resolve them** (the resolver looks for a form id
-that can never exist). Narrate: "in production this reached ten."
+**RED (browser, the showpiece):** on the seeded newborn (**Baby Njoki**,
+`maisha-seed-hh-m3`): run the §3b click-path — "Newborn PNC Home Visit
+Service" → available? **Yes** → "Is Baby Njoki's immunization upto date?"
+→ **No** (this calculates the follow-up need + date) → submit — **three
+times** → the Tasks tab accumulates **duplicate immunization-follow-up
+tasks**; submitting the follow-up form **does not resolve them** (the
+resolver looks for a form id that can never exist). Narrate: "in
+production this reached ten."
 
 **Agent:** expected diff in `tasks.js` newborn report-based templates:
 `posnatal_` → `postnatal_` at `:1368`, plus `report._id` passed as the
