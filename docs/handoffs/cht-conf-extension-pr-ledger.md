@@ -33,7 +33,7 @@ QA wiring → orchestrator → test-gen → memory pipeline.
 | B1 | `feat/all-artifacts-p1p2-bind-oracle` | **P1** contact-form parity in the XLSForm orchestrator (routing gate, `form-paths` resolver, contact-forms offline convert bucket, prompts, deterministic-test-gen guard for contact forms) + **P2** generalized bind oracle (`expect.attrs` incl. absence, editor `clear` + calculate-type guardrail, inspector `extractBindAttr`/attrs-aware `verifyFormBinds`, schema + tolerant-parse update) + review hardening (resolver-driven HC2/summary display, unchanged-relevant spec-gen skip) | **LANDED** `8d52006` (2026-07-18) — 1630 tests |
 | B2 | `feat/all-artifacts-p3-contact-form-qa` | **P3** QA closed loop for contact-form: `VerifyArtifactType` union, `deriveVerifyOptions`/guards, `deployedFormId` mapping (`e_household-create` → `contact:e_household:create`), `contact-forms` apply bucket, F6 oracle path, formVersions rev-key fix; live-smoked against the running 4.21.1 (M7 RED honest) | **LANDED** `607ce63` (2026-07-18) — 1646 tests |
 | B3 | `feat/all-artifacts-p4-compiled-settings-oracle` | **P4** compiled-settings byte-oracle for task/target/contact-summary/app-settings: COMPILE verb (`NODE_OPTIONS=--openssl-legacy-provider`, sandbox node_modules symlink, **cwd = sandbox** — eslint-loader resolves `.eslintrc` plugins cwd-relative, found live), `compiled-settings` util + comparator (compiled-keys-only scope, permissions rule — from the normalization spike), `app-settings` apply bucket mapping, settings-doc rev corroboration. Live-smoked: GREEN byte-parity (task/contact-summary/whole-doc 24 checks) + RED at the perturbed M3 typo. Deferred within P4: git-baseline drift guard | **LANDED** `95d871d` (2026-07-18) — 1680 tests |
-| B4 | `feat/all-artifacts-p5-tier2-testgen` | **P5** tier-2 spec selection per artifact (`qaSpecs` frontmatter), contact-form fill-based generated spec, house-pattern LLM test-gen for JS artifacts | NOT this run (demo-optional) — do after demo |
+| B4 | `feat/all-artifacts-p5-tier2-testgen` | **P5** per-artifact tier-2 spec selection + `qaSpecs` frontmatter (exact paths + dir expansion, missing pins abort by name) + deterministic contact-form generated spec (harness-free attrs-aware XML oracle incl. absence; replaces the P1 test-gen skip). M3/M4 tickets pin their partner specs. Live-smoked: pinned M3 specs pass under repo mocha; generated `e_household-create` spec RED vs buggy / GREEN control | **LANDED** `a164378` (2026-07-18) — 1715 tests |
 | B5 | (docs, rolling) | P6: fixtures land with B1–B3; runbook updates (`maisha-demo-runbook.md` manual steps collapse to `--qa`); cht-conf version-pin note (installed 3.21.5 vs frontmatter 3.21.4) | rolling |
 
 ## C. Deferred / backlog (tracked, deliberately not in the train yet)
@@ -47,6 +47,15 @@ QA wiring → orchestrator → test-gen → memory pipeline.
 - `canonical-diff.ts` artifact-path generalization (research aid only).
 - Multi-form fix descriptors (M7's three-form scope — three single-form
   runs instead, by design).
+- **Enketo fill-based specs for contact forms** (hand-authored per
+  engagement, rehearsal work): harness 3.0.15 has no `loadContactForm`
+  and `fillContactCreateForm` needs complete answer arrays for every
+  required question — not derivable from a bindDiff, and generating
+  plausible-but-failing fills is the F7 junk problem. The generated
+  XML-oracle spec is the deterministic substitute; M3/M4's tier-2 is
+  already Enketo/Chromium-backed via the partner's own harness suites.
+- LLM test-gen house-pattern exemplars for JS artifacts (partner suites
+  via `qaSpecs` are the surface today).
 
 ## Run log
 

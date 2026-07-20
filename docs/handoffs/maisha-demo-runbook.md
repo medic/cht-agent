@@ -41,10 +41,19 @@ on the `maisha-baseline` state defined in §3.
 
 **Consequences for the demo (updated):**
 
-- **Run WITH `--qa`:** `npm run full -- tickets/maisha-mX-….md --qa` for all
-  four tickets (the `--` is still load-bearing). Do NOT pass `--qa-tier2`
-  for these: tier-2 spec selection is per-artifact only with P5 (form
-  artifacts only today).
+- **Run WITH `--qa --qa-tier2`:** `npm run full -- tickets/maisha-mX-….md
+  --qa --qa-tier2` for all four tickets (the `--` is still load-bearing).
+  Since P5 (`a164378`) tier-2 selects per artifact: M3/M4 run the partner
+  specs pinned in their ticket `qaSpecs` frontmatter under the repo's own
+  mocha+harness (Chromium-backed; all pass on the buggy baseline — verified
+  — so they gate regressions without false-blocking); M7/M8 run the
+  generated `.agent.spec.js` (attrs-aware XML oracle incl. absence —
+  live-smoked red/green). Coverage honesty: the pinned M3/M4 specs are
+  no-regression gates; the fix-PROVING cases (over-immunized child,
+  duplicate-resolution) come from the agent's generated/banked specs (§6).
+  Enketo-level fill specs for the two contact forms remain hand-authored
+  rehearsal work (no `loadContactForm` in harness 3.0.15 — see the ledger
+  backlog).
 - **M7/M8 fixes land in the `.xlsx` source** (P1 orchestrator) and QA's
   `contact-forms` bucket convert+upload keeps source and instance in
   lockstep — no upload-without-convert workaround, no post-demo workbook
@@ -221,7 +230,9 @@ docker exec -it cht-agent npm run full -- tickets/maisha-mX-<name>.md --qa
 #      Approve ⇒ files land in the working copy. Nothing is uploaded yet.
 # QA:  reproduce RED on the deployed instance → HC3 gate → apply (contact-forms
 #      bucket for M7/M8, app-settings for M3/M4) → rev change → verify GREEN.
-#      No --qa-tier2 here (per-artifact tier-2 selection is P5).
+# Add --qa-tier2 (P5): after GREEN, runs the ticket's qaSpecs-pinned partner
+#      specs (M3/M4) or the generated contact-form spec (M7/M8) with the
+#      repo-pinned mocha; `succeeded` then requires them to pass.
 ```
 
 The per-ticket `[OPERATOR] Apply` blocks below are the **no-QA fallback**
