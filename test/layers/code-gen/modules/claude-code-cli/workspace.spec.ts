@@ -80,6 +80,89 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.baselineUntracked).to.deep.equal(['ignored-by-committed-rules.log']);
     });
 
+    it('refuses to start when a previous run leaked a cht-agent stash (#140)', async () => {
+      const ws = loadWorkspace({
+        'git stash list --format=%gd %gs': {
+          stdout: 'stash@{0} On main: cht-agent-claude-code-cli-1700000000000\n',
+        },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      let threw = false;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        threw = true;
+        const msg = (err as Error).message;
+        expect(msg).to.match(/leftover cht-agent stash/i);
+        expect(msg).to.include('git -C /tmp/cht-core stash pop stash@{0}'); // recovery command
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it('proceeds past a leaked stash when CHT_AGENT_IGNORE_LEAKED_STASH=true', async () => {
+      const prev = process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
+      process.env.CHT_AGENT_IGNORE_LEAKED_STASH = 'true';
+      try {
+        const ws = loadWorkspace({
+          'git stash list --format=%gd %gs': {
+            stdout: 'stash@{0} On main: cht-agent-claude-code-cli-1700000000000\n',
+          },
+          'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+          'git status --porcelain': { stdout: '' },
+        });
+        const snap = await ws.snapshotChtCore('/tmp/cht-core');
+        expect(snap.headSha).to.equal('abc1234deadbeef');
+      } finally {
+        if (prev === undefined) delete process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
+        else process.env.CHT_AGENT_IGNORE_LEAKED_STASH = prev;
+      }
+    });
+
+    it('ignores an unrelated third-party stash', async () => {
+      const ws = loadWorkspace({
+        'git stash list --format=%gd %gs': { stdout: 'stash@{0} On main: my own wip\n' },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.headSha).to.equal('abc1234deadbeef');
+    });
+
+    it('warns when the stashed work includes a .gitignore edit (#140)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M .gitignore\n M src/a.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      const warned = warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])));
+      expect(warned).to.exist;
+    });
+
+    it('does not warn about ignore rules for ordinary edits', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M src/a.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      const warned = warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])));
+      expect(warned).to.be.undefined;
+    });
+
     it('refuses to run if cht-core has unmerged paths', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },

@@ -27,8 +27,12 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { GeneratedFile } from '../../interface';
+import { readEnv } from '../../../../utils/env';
 
 const execFileAsync = promisify(execFile);
+
+/** Marker prefix baked into our stash names so we can recognize our own leaks. */
+const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
 
 export interface ChtCoreSnapshot {
   /** SHA of HEAD at the time of snapshot. Used for `git diff` capture and `git reset`. */
@@ -50,6 +54,47 @@ export interface ChtCoreSnapshot {
    * everything" would silently reintroduce the data loss this field exists to fix.
    */
   baselineUntracked: string[];
+}
+
+/**
+ * Refuse to start when a previous run left one of our stashes behind (a hard
+ * kill between snapshot and rollback strands the operator's work there). Taking
+ * a second stash on top would bury it further, so stop and print the recovery
+ * command. Set CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed deliberately.
+ */
+async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
+  if (readEnv('CHT_AGENT_IGNORE_LEAKED_STASH') === 'true') return;
+  const { stdout } = await execFileAsync(
+    'git', ['stash', 'list', '--format=%gd %gs'], { cwd: chtCorePath }
+  );
+  const leaked = stdout.split('\n').filter(l => l.includes(STASH_MARKER_PREFIX));
+  if (leaked.length === 0) return;
+  const ref = leaked[0].split(' ')[0];
+  throw new Error(
+    `cht-core at ${chtCorePath} has a leftover cht-agent stash from an interrupted run: ` +
+    `${leaked[0].trim()}. Your uncommitted work is inside it. Recover with: ` +
+    `git -C ${chtCorePath} stash pop ${ref} ` +
+    `(or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place).`
+  );
+}
+
+/**
+ * Warn when the work being stashed includes a `.gitignore` edit: stashing it
+ * reverts ignore rules to HEAD for the duration of the session, so files ignored
+ * only by that edit become visible. The baseline delta keeps this SAFE; the
+ * warning is operator transparency.
+ */
+function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: string): void {
+  const touchesIgnoreRules = statusLines.some(line => {
+    const filePath = line.substring(3).trim();
+    return filePath === '.gitignore' || filePath.endsWith('/.gitignore');
+  });
+  if (!touchesIgnoreRules) return;
+  console.warn(
+    `[claude-code-cli] Uncommitted .gitignore change in ${chtCorePath} will be stashed for this ` +
+    `session, so ignore rules revert to HEAD and files ignored only by that edit become visible. ` +
+    `They are recorded in the session baseline and will be left untouched.`
+  );
 }
 
 /** Untracked, non-ignored paths in the working tree right now. */
@@ -93,6 +138,10 @@ async function gitExecVerifyOrThrow(
  * that `git stash` cannot capture cleanly.
  */
 export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnapshot> {
+  // A leftover stash from an interrupted run holds the operator's work; stashing
+  // on top of it would bury it deeper.
+  await assertNoLeakedStash(chtCorePath);
+
   // Capture HEAD
   const { stdout: head } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: chtCorePath });
   const headSha = head.trim();
@@ -115,7 +164,8 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   let stashRef: string | null = null;
   let stashName: string | null = null;
   if (lines.length > 0) {
-    const name = `cht-agent-claude-code-cli-${Date.now()}`;
+    warnOnIgnoreRuleEdits(lines, chtCorePath);
+    const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
     // `git stash push -u` can exit non-zero on file-removal warnings even when
     // the stash was successfully created (R14/R15). Verify by checking the
     // top-of-stack message for our unique marker before re-throwing.
@@ -136,6 +186,12 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
       'git', ['stash', 'list', '-1', '--format=%gd'], { cwd: chtCorePath }
     );
     stashRef = stashList.trim();
+    // Print recovery up front: if the process is hard-killed before rollback,
+    // this line is the operator's only pointer to their stashed work.
+    console.log(
+      `[claude-code-cli] Stashed your uncommitted work as "${name}" (${stashRef}). ` +
+      `If this run is interrupted, recover with: git -C ${chtCorePath} stash pop ${stashRef}`
+    );
   }
 
   // Record the untracked baseline AFTER the stash: stashing an uncommitted
