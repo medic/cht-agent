@@ -29,8 +29,7 @@ tags:
   - accessibility
   - arabic
   - translations
-related_workflows:
-  - ui-extensions
+related_workflows: []
 source_pr: medic/cht-core#9727
 source_sha: 2175676e28ea8d6eaa232408c8fe3573c3b0ae74
 distilled_at: '2026-06-22'
@@ -51,7 +50,8 @@ concepts:
   - Redux/NgRx global state propagation
   - direction-specific CSS overrides
   - locale-aware UI rendering
-related_issues: []
+related_issues:
+  - cht-core-9683
 stale: false
 ---
 
@@ -69,7 +69,7 @@ Introduced a boolean `rtl` field on language docs (messages-xx); the API default
 
 ## Code Patterns
 
-Directionality stored per-language in the translation doc and surfaced through global state (webapp/src/ts/actions/global.ts, reducers/global.ts, selectors/index.ts), consumed by app.component.ts/html to set the document direction; RTL-only overrides isolated in webapp/src/css/rtl.less; language.service.ts resolves the rtl property from the language doc; components (analytics targets, date-filter, fast-action-button, reports-more-menu, select2-search) adapt to the direction flag.
+Directionality stored per-language in the translation doc and surfaced through global state (webapp/src/ts/actions/global.ts, reducers/global.ts, selectors/index.ts), consumed by app.component.ts/html to set the document direction; RTL-only overrides isolated in webapp/src/css/rtl.less; webapp/src/ts/providers/translation-loader.provider.ts reads `doc.rtl` off the fetched translation doc and calls `languageService.setRtlLanguage(locale)`, while language.service.ts holds an in-memory `rtlLanguages` registry exposed as `useRtl(code)` — the service itself performs no document access; SetLanguageService then dispatches `globalActions.setLanguage({ code, rtl: useRtl(code) })` and `Selectors.getDirection` maps that to 'rtl'/'ltr'; components (analytics targets, date-filter, fast-action-button, reports-more-menu, select2-search) adapt to the direction flag.
 
 ## Design Choices
 

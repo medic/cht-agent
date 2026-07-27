@@ -58,11 +58,11 @@ Added a `ui-extension:` doc-id prefix check in `config-watcher.listen()` that ca
 
 ## Code Patterns
 
-In `api/src/services/config-watcher.js`, the changes-feed listener dispatches side effects by matching `change.id` against known doc-id prefixes; a new reaction is added by checking the `ui-extension:` prefix and invoking `updateServiceWorker()` (from `api/src/services/ui-extension.js`). Pattern: extend the config-watcher dispatch with a doc-id prefix branch to trigger downstream rebuilds.
+In `api/src/services/config-watcher.js`, the changes-feed listener dispatches side effects by matching `change.id` against known doc-id prefixes; a new reaction is added by checking the UI-extension doc-id prefix and invoking `updateServiceWorker()`, which is defined and exported in that same file (`config-watcher.js`, definition line 140, export line 208) alongside `handleBrandingChanges`/`handleLibsChanges`, which already call it. The `ui-extension:` prefix constant itself lives in `api/src/services/ui-extension.js`. Pattern: extend the config-watcher dispatch with a doc-id prefix branch to trigger downstream rebuilds.
 
 ## Design Choices
 
-Reused the pre-existing config-watcher changes-feed monitoring and `updateServiceWorker()` flow rather than introducing a separate watcher, keeping all config-doc reactions in one place. The linked issue explicitly notes the watch/rebuild logic already existed and that only an additional prefix branch was required.
+Reused the pre-existing config-watcher changes-feed monitoring and its own `updateServiceWorker()` flow rather than introducing a separate watcher, keeping all config-doc reactions in one place. The linked issue explicitly notes the watch/rebuild logic already existed and that only an additional prefix branch was required.
 
 ## Related Files
 
@@ -73,7 +73,7 @@ Reused the pre-existing config-watcher changes-feed monitoring and `updateServic
 
 ## Testing
 
-Added Mocha unit tests in config-watcher.spec.js and ui-extension.spec.js verifying that creating a `ui-extension:*` doc triggers a service worker rebuild, updating one triggers a rebuild, and unrelated doc changes do not. Run with `npx mocha api/tests/mocha/services/config-watcher.spec.js --exit`. Manual test plan covered creating/updating ui-extension docs and confirming regeneration.
+Added Mocha unit tests in config-watcher.spec.js and ui-extension.spec.js verifying that creating a `ui-extension:*` doc triggers a service worker rebuild, updating one triggers a rebuild, and unrelated doc changes do not. Run via the repo's own script, `npm run unit-api`, which sets `UNIT_TEST_ENV=1` (required — `api/src/db.js` gates its PouchDB stubbing on it, and `@medic/environment` calls `process.exit(1)` when `COUCH_URL` is unset). To run just this file: `COUCH_URL=http://admin:pass@localhost:5984/medic-test UNIT_TEST_ENV=1 npx mocha api/tests/mocha/services/config-watcher.spec.js`. Manual test plan covered creating/updating ui-extension docs and confirming regeneration.
 
 ## Related Issues
 

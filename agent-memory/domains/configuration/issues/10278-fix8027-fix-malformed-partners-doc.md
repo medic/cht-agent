@@ -57,11 +57,11 @@ The code assumed the partners document's resources property always existed — c
 
 ## Solution
 
-Added null checks and lazy initialization of an empty resources object when it is missing. In the Admin controller (images-partners.js), resources is initialized during document loading and attachment operations; in both the Admin service (resource-icons.js) and the Webapp service (resource-icons.service.ts), getDocResources returns an empty array when resources is absent. This keeps the UI usable so users can view and edit the partners list to correct the malformed document instead of crashing.
+Added null checks and lazy initialization of an empty resources object when it is missing. In the Admin controller (images-partners.js) a single `doc.resources = doc.resources || {};` was added in the attachment path — inside `addAttachment`, on the doc re-fetched after `putAttachment`, immediately before `doc.resources[$scope.name] = file.name` — while the document-loading path was left unchanged (a second, redundant initialization was dropped during review); in both the Admin service (resource-icons.js) and the Webapp service (resource-icons.service.ts), getDocResources returns an empty array when resources is absent. This keeps the UI usable so users can view and edit the partners list to correct the malformed document instead of crashing.
 
 ## Code Patterns
 
-Guard before iterating object keys: have getDocResources return [] when res.resources is missing (admin/src/js/services/resource-icons.js, webapp/src/ts/services/resource-icons.service.ts) rather than calling Object.keys on undefined; initialize doc.resources = {} before writing partner properties on load and during attachment ops (admin/src/js/controllers/images-partners.js).
+Guard before iterating object keys: have `getDocResources` return `[]` when the doc has no resources rather than calling `Object.keys` on undefined — spelled `Object.keys((res && res.resources) ? res.resources : {})` in admin/src/js/services/resource-icons.js and `Object.keys(res?.resources ?? {})` in webapp/src/ts/services/resource-icons.service.ts; and initialize `doc.resources = doc.resources || {}` before writing partner properties in the attachment path (admin/src/js/controllers/images-partners.js).
 
 ## Design Choices
 

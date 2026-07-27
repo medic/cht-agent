@@ -30,7 +30,6 @@ tags:
   - translations
 related_workflows:
   - data-migration
-  - ui-extensions
 source_pr: medic/cht-core#8722
 source_sha: d93b9162e21b180b1c920d58a6890812ae3ea9e7
 distilled_at: '2026-06-23'
@@ -40,7 +39,6 @@ confidence: medium
 entities:
   - api/src/services/branding.js
   - api/src/migrations/add-cht-branding-doc.js
-  - api/src/migrations/add-branding-doc.js
   - api/src/public/login/style.css
   - webapp/src/ts/modules/about/about.component.html
   - webapp/src/css/about.less
@@ -72,13 +70,13 @@ CHT migration pattern: a migration module under api/src/migrations/ (add-cht-bra
 
 ## Design Choices
 
-Delivered the brand change as a CouchDB migration rather than only swapping static files, so already-deployed instances get the updated branding doc on upgrade while remaining backwards compatible. A new migration (add-cht-branding-doc.js) was added alongside the existing add-branding-doc.js instead of mutating the original, preserving migration history idempotency.
+Delivered the brand change as a CouchDB migration rather than only swapping static files, so already-deployed instances get the updated branding doc on upgrade while remaining backwards compatible. The old `api/src/migrations/add-branding-doc.js` was deleted and replaced by `add-cht-branding-doc.js` (created date bumped 2018 → 2023), which upserts rather than inserts: it retitles "Medic" to "Community Health Toolkit" and overwrites the logo/favicon attachments only where the digest still matches the old Medic assets, so customised branding is left alone.
 
 ## Related Files
 
 - api/resources/translations/messages-en.properties
-- api/src/migrations/add-branding-doc.js
-- api/src/migrations/add-cht-branding-doc.js
+- api/src/migrations/add-branding-doc.js (deleted)
+- api/src/migrations/add-cht-branding-doc.js (added)
 - api/src/public/login/style.css
 - api/src/resources/ico/favicon.ico
 - api/src/resources/logo/cht-logo-light.png

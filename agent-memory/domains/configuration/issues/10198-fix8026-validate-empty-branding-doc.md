@@ -50,7 +50,7 @@ images-branding.js read keys off the branding document and populated $scope obje
 
 ## Solution
 
-The controller now checks whether the expected keys exist on the branding doc and, when they are missing, creates a minimal set of keys on the $scope objects so the template can still render; the template was adjusted accordingly. A new unit test spec was added for the previously untested controller.
+The controller now scaffolds a single empty `resources` object on `$scope.doc` when it is absent, guards the `$scope.favicon`/`$scope.icon` assignments behind `if (doc._attachments && doc.resources)` so they stay undefined rather than being faked, extends the submit guard to reject a doc with no `resources`, and moves the initial fetch into `this.$onInit`. Template safety comes from new `ng-if="favicon"` / `ng-if="icon"` attributes on the two `<img>` tags, not from scaffolded keys. A new unit test spec was added for the previously untested controller.
 
 ## Code Patterns
 

@@ -41,7 +41,8 @@ concepts:
   - translation properties files
   - enketo localization
   - bootstrapper translator locale loading
-related_issues: []
+related_issues:
+  - cht-core-9682
 stale: false
 ---
 
@@ -86,4 +87,4 @@ No automated tests were described in the PR; translations were sourced from a sh
 
 **Fit:** strong
 
-Adding translation strings and registering a new locale is canonically the configuration domain — this is the direct analog of the 'add Brazilian Portuguese translations and register the pt locale' seed, which is an explicit strong fit.
+Adding translation strings and registering a new locale is canonically the configuration domain: the change is entirely locale registration and translation resources, with no behavioural code involved.
