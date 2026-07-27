@@ -171,8 +171,17 @@ export function resolveAnchor(
  */
 export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?: string): string[] {
   const scope = pathspec ? ['--', pathspec] : [];
-  const raw = git(ctx, ['grep', '-n', '-F', '-w', symbol, sha, ...scope]);
-  return raw.split('\n').map(l => l.trim()).filter(Boolean);
+  const search = (needle: string): string[] =>
+    git(ctx, ['grep', '-n', '-F', '-w', needle, sha, ...scope])
+      .split('\n').map(l => l.trim()).filter(Boolean);
+
+  const hits = search(symbol);
+  if (hits.length > 0 || !symbol.includes('.')) return hits;
+  // A dotted member reference is often written with optional chaining in the
+  // source (`res?.resources`) while prose and claim extraction normalise it to
+  // `res.resources`. Retrying the optional-chained spelling avoids reporting a
+  // real member access as fabricated.
+  return search(symbol.replace(/\./g, '?.'));
 }
 
 /** Paths the commit itself changed, mapped to their git status letter. */
@@ -209,12 +218,28 @@ const verdict = (
   claim: Claim, outcome: Outcome, evidence: string, suggestion?: string, provenance?: Provenance
 ): Verdict => ({ claim, outcome, evidence, suggestion, provenance });
 
+/**
+ * Absence proves a fabrication only at the draft's OWN commit. Under `fallback`
+ * we are searching a tree that predates the change, so a symbol the PR itself
+ * introduced is legitimately missing — reporting that as a defect manufactures
+ * false positives on every draft whose PR postdates the checkout. Absence under
+ * fallback is therefore `unverifiable`; presence still grounds the claim.
+ */
+function absenceOutcome(prov: Provenance): Outcome {
+  return prov === 'anchor' ? 'ungrounded' : 'unverifiable';
+}
+
 function checkSymbol(ctx: ProbeCtx, ref: string, claim: Claim & { kind: 'symbol' }, prov: Provenance): Verdict {
   const hits = symbolHits(ctx, ref, claim.symbol);
   const cmd = `git grep -nFw ${claim.symbol} ${refLabel(ref)}`;
-  return hits.length > 0
-    ? verdict(claim, 'grounded', `${cmd} → ${hits.length} hit(s), e.g. ${hits[0]}`, undefined, prov)
-    : verdict(claim, 'ungrounded', `${cmd} → 0 hits: the symbol does not exist in this tree`, undefined, prov);
+  if (hits.length > 0) {
+    return verdict(claim, 'grounded', `${cmd} → ${hits.length} hit(s), e.g. ${hits[0]}`, undefined, prov);
+  }
+  const note = prov === 'fallback'
+    ? ' — but the anchor is unresolved, so this tree predates the change and the PR may have introduced it; fetch cht-core to settle'
+    : '';
+  return verdict(claim, absenceOutcome(prov), `${cmd} → 0 hits: the symbol does not exist in this tree${note}`,
+    undefined, prov);
 }
 
 /**
@@ -231,13 +256,26 @@ function checkSymbolInFile(
 
   const global = symbolHits(ctx, ref, claim.symbol);
   if (global.length === 0) {
-    return verdict(claim, 'ungrounded',
-      `${cmd} → 0 hits, and 0 anywhere in the tree: the symbol does not exist`, undefined, prov);
+    // Absent everywhere: under fallback this may simply be code the PR added.
+    const note = prov === 'fallback' ? ' (tree predates the change — fetch cht-core to settle)' : '';
+    return verdict(claim, absenceOutcome(prov),
+      `${cmd} → 0 hits, and 0 anywhere in the tree: the symbol does not exist${note}`, undefined, prov);
   }
+  // The symbol exists, just not in the named file. At the anchor that is
+  // misattribution. Under fallback it is only a hint: we cannot tell a wrong
+  // attribution from a symbol the PR itself added to that file, and a common
+  // word ("weight") matches somewhere in any large tree — so report it for a
+  // human rather than asserting a defect.
   const elsewhere = [...new Set(global.map(h => h.split(':')[1] ?? h))].slice(0, 3);
+  const where = `found in ${elsewhere.join(', ')}`;
+  if (prov === 'fallback') {
+    return verdict(claim, 'unverifiable',
+      `${cmd} → 0 hits, but ${global.length} elsewhere in a tree that predates the change; ` +
+        'cannot distinguish misattribution from code this PR added — fetch cht-core to settle',
+      where, prov);
+  }
   return verdict(claim, 'ungrounded',
-    `${cmd} → 0 hits, but ${global.length} elsewhere: attributed to the wrong file`,
-    `found in ${elsewhere.join(', ')}`, prov);
+    `${cmd} → 0 hits, but ${global.length} elsewhere: attributed to the wrong file`, where, prov);
 }
 
 function checkFileTouched(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' }): Verdict {
