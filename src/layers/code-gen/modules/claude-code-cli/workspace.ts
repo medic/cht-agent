@@ -4,10 +4,18 @@
  * The CLI edits cht-core in place via its native tools. To preserve the existing
  * HC2 preview-mode contract, we:
  *
- *   1. Snapshot HEAD + stash uncommitted work before running the CLI.
+ *   1. Snapshot HEAD + stash uncommitted work before running the CLI, and record
+ *      the untracked files already present (the baseline).
  *   2. Let the CLI edit files in place.
- *   3. Capture the diff (`git diff --name-status preRunSha`) as GeneratedFile[].
- *   4. Roll back via `git reset --hard preRunSha` + `git clean -fd` + restore stash.
+ *   3. Capture the diff (`git diff --name-status preRunSha`) as GeneratedFile[],
+ *      counting only untracked files absent from the baseline.
+ *   4. Roll back via `git reset --hard preRunSha` + a clean scoped to the files
+ *      this session created + restore stash.
+ *
+ * Steps 1/3/4 reason about a session DELTA, not absolute repo state (#140): a
+ * blanket untracked sweep both misattributes the operator's files as generated
+ * and deletes them on rollback (unrecoverable when they were ignored at stash
+ * time, e.g. unmasked by stashing an uncommitted .gitignore edit).
  *
  * The captured GeneratedFile[] then flows through the existing staging path
  * (writeToStaging → HC2 preview → writeToChtCore). The user reviews the diff
@@ -239,6 +247,37 @@ async function readChtCoreFile(
   };
 }
 
+/** Max pathspec entries per `git clean` invocation, to stay clear of OS arg limits. */
+const CLEAN_PATHSPEC_CHUNK = 1000;
+
+/**
+ * Untracked paths that appeared DURING the session: everything untracked now
+ * minus the operator's post-stash baseline. Only these may be deleted on
+ * rollback — a blanket `git clean -fd` would also delete pre-existing untracked
+ * files that the stash never captured, which is unrecoverable (#140 RC-3).
+ */
+async function computeCleanDelta(
+  chtCorePath: string,
+  baselineUntracked: readonly string[],
+): Promise<string[]> {
+  const baseline = new Set(baselineUntracked);
+  const untrackedNow = await listUntracked(chtCorePath);
+  return untrackedNow.filter(p => !baseline.has(p));
+}
+
+/** True when every delta path is gone from disk (what "removed" actually means). */
+async function allPathsRemoved(chtCorePath: string, deltaPaths: readonly string[]): Promise<boolean> {
+  for (const relPath of deltaPaths) {
+    try {
+      await fs.access(path.join(chtCorePath, relPath));
+      return false; // still there
+    } catch {
+      // ENOENT: removed, keep checking the rest.
+    }
+  }
+  return true;
+}
+
 /**
  * Per-op outcome of a rollback attempt. `reset` is fatal when failed; the
  * other two are warnings the orchestrator surfaces but does not abort on.
@@ -251,11 +290,49 @@ export interface RollbackResult {
 }
 
 /**
- * Always restore cht-core to the snapshot state: reset to HEAD, clean untracked,
- * pop the stash if one was created. Each op runs through the verify-then-throw
- * helper so a non-zero exit that actually succeeded does not generate a
- * misleading warning. Returns a typed result the orchestrator inspects to emit
- * a recovery checklist when reset failed.
+ * Delete only the untracked files this session created (delta against the
+ * snapshot baseline), never the operator's pre-existing untracked files.
+ *
+ * An EMPTY pathspec is deliberately handled by skipping the clean entirely:
+ * `git clean -fd --` with no paths degenerates to a blanket clean, which is the
+ * exact data loss this function exists to prevent.
+ */
+async function cleanSessionCreatedFiles(
+  chtCorePath: string,
+  baselineUntracked: readonly string[],
+): Promise<void> {
+  const delta = await computeCleanDelta(chtCorePath, baselineUntracked);
+  if (delta.length === 0) return; // nothing of ours to remove; never blanket-clean
+
+  for (let i = 0; i < delta.length; i += CLEAN_PATHSPEC_CHUNK) {
+    const chunk = delta.slice(i, i + CLEAN_PATHSPEC_CHUNK);
+    await gitExecVerifyOrThrow(
+      ['clean', '-fd', '--', ...chunk],
+      chtCorePath,
+      // The tree is legitimately dirty after a rollback (the operator's own
+      // untracked files survive by design), so "status is empty" is the wrong
+      // check — it would misreport clean: 'failed' and print a spurious
+      // ROLLBACK INCOMPLETE banner. Assert what removal actually means instead.
+      () => allPathsRemoved(chtCorePath, chunk),
+      'session-created files were removed',
+    );
+  }
+}
+
+/**
+ * Always restore cht-core to the snapshot state: reset to HEAD, clean the files
+ * this session created, pop the stash if one was created. Each op runs through
+ * the verify-then-throw helper so a non-zero exit that actually succeeded does
+ * not generate a misleading warning. Returns a typed result the orchestrator
+ * inspects to emit a recovery checklist when reset failed.
+ *
+ * Residual (strictly better than the pre-#140 behavior, which deleted such files
+ * outright): if the session OVERWRITES a pre-existing baseline-untracked file,
+ * capture excludes it and rollback cannot restore its prior content, because it
+ * was never in the stash.
+ *
+ * Edge: empty directories the session created are not listed by `ls-files`, so
+ * an empty dir may remain after rollback. Accepted; harmless residue.
  */
 export async function rollbackChtCore(
   chtCorePath: string,
@@ -280,15 +357,7 @@ export async function rollbackChtCore(
   }
 
   try {
-    await gitExecVerifyOrThrow(
-      ['clean', '-fd'],
-      chtCorePath,
-      async () => {
-        const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: chtCorePath });
-        return stdout.trim() === '';
-      },
-      'working tree is clean',
-    );
+    await cleanSessionCreatedFiles(chtCorePath, snapshot.baselineUntracked);
   } catch (err) {
     result.clean = 'failed';
     result.errors.push(`clean: ${err}`);

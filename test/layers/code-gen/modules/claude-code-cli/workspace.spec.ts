@@ -159,7 +159,23 @@ describe('workspace.ts (A.2b)', () => {
       return fn;
     };
 
-    it('always runs reset + clean; pops stash if present', async () => {
+    /** trackingStub with per-prefix stdout, so `ls-files` can produce a delta. */
+    const trackingStubWith = (calls: string[], responses: Record<string, string>) => {
+      const fn = (_cmd: string, _args: string[], _opts: object, cb: (e: Error | null, s: string, t: string) => void) => {
+        cb(null, '', '');
+      };
+      (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+        const key = `${cmd} ${args.join(' ')}`;
+        calls.push(key);
+        for (const k of Object.keys(responses)) {
+          if (key.startsWith(k)) return Promise.resolve({ stdout: responses[k], stderr: '' });
+        }
+        return Promise.resolve({ stdout: '', stderr: '' });
+      };
+      return fn;
+    };
+
+    it('always runs reset; pops stash if present', async () => {
       const calls: string[] = [];
       const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
         'node:child_process': { execFile: trackingStub(calls) },
@@ -169,8 +185,53 @@ describe('workspace.ts (A.2b)', () => {
       await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: 'stash@{0}', baselineUntracked: [] });
 
       expect(calls.some(c => c.startsWith('git reset --hard abc1234'))).to.equal(true);
-      expect(calls.some(c => c.startsWith('git clean -fd'))).to.equal(true);
       expect(calls.some(c => c.startsWith('git stash pop stash@{0}'))).to.equal(true);
+    });
+
+    it('cleans ONLY session-created paths, sparing the baseline (#140)', async () => {
+      const calls: string[] = [];
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: trackingStubWith(calls, {
+            'git ls-files --others --exclude-standard': '.aider.chat\nsrc/cli-made.ts\n',
+          }),
+        },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234',
+        stashRef: null,
+        stashName: null,
+        baselineUntracked: ['.aider.chat'],
+      });
+
+      const cleanCall = calls.find(c => c.startsWith('git clean'));
+      expect(cleanCall).to.equal('git clean -fd -- src/cli-made.ts');
+      expect(cleanCall).to.not.include('.aider.chat'); // operator's file spared
+    });
+
+    it('skips the clean entirely when the delta is empty (no blanket clean) (#140)', async () => {
+      const calls: string[] = [];
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: trackingStubWith(calls, {
+            // Everything untracked is the operator's; nothing of ours to remove.
+            'git ls-files --others --exclude-standard': '.aider.chat\noperator-notes.md\n',
+          }),
+        },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234',
+        stashRef: null,
+        stashName: null,
+        baselineUntracked: ['.aider.chat', 'operator-notes.md'],
+      });
+
+      expect(calls.some(c => c.startsWith('git clean'))).to.equal(false);
+      expect(result.clean).to.equal('ok');
     });
 
     it('skips stash pop when stashRef is null', async () => {
@@ -289,26 +350,81 @@ describe('workspace.ts (A.2b)', () => {
       expect(failureWarn).to.be.undefined;
     });
 
-    it('A.5: clean -fd exits non-zero but working tree is clean → no warning', async () => {
+    it('A.5: clean exits non-zero but the delta paths are gone → no warning', async () => {
       const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\n' },
             'git clean -fd': { error: new Error('warning: could not remove') },
-            'git status --porcelain': { stdout: '' }, // verify says clean landed
           }),
         },
-        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          // Verifier asserts removal: ENOENT means the file is gone.
+          access: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+        },
       });
 
       const warnSpy = sinon.spy(console, 'warn');
+      let result;
       try {
-        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [] });
+        result = await ws.rollbackChtCore('/tmp/cht-core', {
+          headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+        });
       } finally {
         warnSpy.restore();
       }
       const failureWarn = warnSpy.getCalls().find(c => /clean -fd during rollback failed/.test(String(c.args[0])));
       expect(failureWarn).to.be.undefined;
+      expect(result.clean).to.equal('ok');
+    });
+
+    it('A.5: clean does NOT report failure just because the tree is legitimately dirty (#140)', async () => {
+      // The operator's own untracked files survive rollback by design, so the old
+      // "status --porcelain is empty" verifier would have misreported a failure.
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: '.aider.chat\nsrc/cli-made.ts\n' },
+            'git clean -fd': { error: new Error('warning: could not remove') },
+            'git status --porcelain': { stdout: '?? .aider.chat\n' }, // still dirty, legitimately
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          access: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: ['.aider.chat'],
+      });
+      expect(result.clean).to.equal('ok');
+      expect(result.errors).to.deep.equal([]);
+    });
+
+    it('A.5: clean reports failure when a delta path still exists', async () => {
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\n' },
+            'git clean -fd': { error: new Error('permission denied') },
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          access: sinon.stub().resolves(undefined), // file is still there
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+      expect(result.clean).to.equal('failed');
+      expect(result.errors[0]).to.match(/^clean: /);
     });
 
     it('A.5: stash pop exits non-zero but stash was popped (by name) → no warning', async () => {
