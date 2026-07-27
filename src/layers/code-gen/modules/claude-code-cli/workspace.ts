@@ -32,6 +32,24 @@ export interface ChtCoreSnapshot {
    * by name later (more robust than `stash@{0}` when other stashes exist).
    */
   stashName: string | null;
+  /**
+   * Untracked paths present immediately AFTER the stash, i.e. the files that were
+   * already in the operator's working tree and are NOT ours. Capture and rollback
+   * both work against this baseline so the cycle reasons about a session DELTA
+   * rather than absolute repo state (#140).
+   *
+   * Required, deliberately not optional: an absent baseline degrading to "clean
+   * everything" would silently reintroduce the data loss this field exists to fix.
+   */
+  baselineUntracked: string[];
+}
+
+/** Untracked, non-ignored paths in the working tree right now. */
+async function listUntracked(chtCorePath: string): Promise<string[]> {
+  const { stdout } = await execFileAsync(
+    'git', ['ls-files', '--others', '--exclude-standard'], { cwd: chtCorePath }
+  );
+  return stdout.split('\n').filter(Boolean);
 }
 
 /**
@@ -112,30 +130,43 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
     stashRef = stashList.trim();
   }
 
-  return { headSha, stashRef, stashName };
+  // Record the untracked baseline AFTER the stash: stashing an uncommitted
+  // .gitignore edit reverts ignore rules to HEAD, which can unmask files that
+  // were ignored only by that edit. Reading here means those files land in the
+  // baseline (they are the operator's, not ours), which is what makes the
+  // capture/clean delta correct regardless of the ignore-rule churn. The read is
+  // unconditional: the stash is conditional on a dirty tree, but unmasked or
+  // pre-existing untracked files can exist either way.
+  const baselineUntracked = await listUntracked(chtCorePath);
+
+  return { headSha, stashRef, stashName, baselineUntracked };
 }
 
 /**
  * Capture every file the CLI modified during its run, packaged as GeneratedFile[].
  * MODIFY entries carry originalContent (the pre-run version from `git show`).
  * CREATE entries omit originalContent.
+ *
+ * Untracked files are attributed to the session only when they are NOT in
+ * `baselineUntracked` (the post-stash snapshot of the operator's own untracked
+ * files). Without that subtraction, pre-existing files are reported as
+ * session-generated and an HC2 approve would write them back into cht-core (#140).
  */
 export async function captureChtCoreDiff(
   chtCorePath: string,
   preRunSha: string,
+  baselineUntracked: readonly string[],
 ): Promise<GeneratedFile[]> {
   // git diff --name-status against the pre-run SHA picks up tracked changes (M, A, D, R, ...)
   // but NOT untracked files. For untracked CREATEs the CLI made, we also need ls-files --others.
   const { stdout: nameList } = await execFileAsync(
     'git', ['diff', '--name-status', preRunSha], { cwd: chtCorePath }
   );
-  const { stdout: untrackedList } = await execFileAsync(
-    'git', ['ls-files', '--others', '--exclude-standard'], { cwd: chtCorePath }
-  );
+  const untrackedNow = await listUntracked(chtCorePath);
 
   const files: GeneratedFile[] = [];
   await collectTrackedChanges(files, nameList, chtCorePath, preRunSha);
-  await collectUntrackedCreates(files, untrackedList, chtCorePath, preRunSha);
+  await collectUntrackedCreates(files, untrackedNow, chtCorePath, preRunSha, new Set(baselineUntracked));
   return files;
 }
 
@@ -163,11 +194,13 @@ function parseDiffStatusLine(line: string): { relPath: string; action: 'create' 
 
 async function collectUntrackedCreates(
   files: GeneratedFile[],
-  untrackedList: string,
+  untrackedNow: readonly string[],
   chtCorePath: string,
   preRunSha: string,
+  baseline: ReadonlySet<string>,
 ): Promise<void> {
-  for (const relPath of untrackedList.split('\n').filter(Boolean)) {
+  for (const relPath of untrackedNow) {
+    if (baseline.has(relPath)) continue; // the operator's file, not ours
     const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
     if (file) files.push(file);
   }

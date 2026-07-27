@@ -56,6 +56,30 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.stashRef).to.equal('stash@{0}');
     });
 
+    it('records the post-stash untracked baseline (#140)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M .gitignore\n' },
+        'git stash push': { stdout: 'Saved working directory\n' },
+        'git stash list': { stdout: 'stash@{0}\n' },
+        // Stashing the .gitignore edit unmasked these pre-existing files.
+        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\n.aider.tags\n' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.baselineUntracked).to.deep.equal(['.aider.chat', '.aider.tags']);
+    });
+
+    it('reads the baseline even on a clean tree (no stash taken)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: 'ignored-by-committed-rules.log\n' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.stashRef).to.be.null;
+      expect(snap.baselineUntracked).to.deep.equal(['ignored-by-committed-rules.log']);
+    });
+
     it('refuses to run if cht-core has unmerged paths', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
@@ -79,7 +103,7 @@ describe('workspace.ts (A.2b)', () => {
         'git ls-files --others --exclude-standard': { stdout: '' },
         'git show': { stdout: 'old content' },
       });
-      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       const create = files.find((f: { path: string }) => f.path === 'src/new.ts');
       const modify = files.find((f: { path: string }) => f.path === 'src/changed.ts');
       expect(create).to.exist;
@@ -93,8 +117,23 @@ describe('workspace.ts (A.2b)', () => {
         'git diff --name-status abc1234': { stdout: '' },
         'git ls-files --others --exclude-standard': { stdout: 'src/untracked.ts\n' },
       });
-      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/untracked.ts')).to.exist;
+    });
+
+    it('excludes baseline untracked files and keeps CLI-created ones (#140)', async () => {
+      const ws = loadWorkspace({
+        'git diff --name-status abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': {
+          stdout: '.aider.chat\n.aider.tags\noperator-notes.md\nsrc/cli-made.ts\n',
+        },
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', [
+        '.aider.chat',
+        '.aider.tags',
+        'operator-notes.md',
+      ]);
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/cli-made.ts']);
     });
 
     it('skips deletes', async () => {
@@ -102,7 +141,7 @@ describe('workspace.ts (A.2b)', () => {
         'git diff --name-status abc1234': { stdout: 'D\tsrc/deleted.ts\nA\tsrc/new.ts\n' },
         'git ls-files --others --exclude-standard': { stdout: '' },
       });
-      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/deleted.ts')).to.not.exist;
       expect(files.find((f: { path: string }) => f.path === 'src/new.ts')).to.exist;
     });
@@ -127,7 +166,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
       });
 
-      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: 'stash@{0}' });
+      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: 'stash@{0}', baselineUntracked: [] });
 
       expect(calls.some(c => c.startsWith('git reset --hard abc1234'))).to.equal(true);
       expect(calls.some(c => c.startsWith('git clean -fd'))).to.equal(true);
@@ -141,7 +180,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
       });
 
-      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null });
+      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
 
       expect(calls.some(c => c.startsWith('git stash pop'))).to.equal(false);
     });
@@ -242,7 +281,7 @@ describe('workspace.ts (A.2b)', () => {
       // Should not throw and should not log a "during rollback failed" warning.
       const warnSpy = sinon.spy(console, 'warn');
       try {
-        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null });
+        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [] });
       } finally {
         warnSpy.restore();
       }
@@ -264,7 +303,7 @@ describe('workspace.ts (A.2b)', () => {
 
       const warnSpy = sinon.spy(console, 'warn');
       try {
-        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null });
+        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [] });
       } finally {
         warnSpy.restore();
       }
@@ -293,6 +332,7 @@ describe('workspace.ts (A.2b)', () => {
           headSha: 'abc1234',
           stashRef: 'stash@{0}',
           stashName: 'cht-agent-claude-code-cli-1700000000000',
+          baselineUntracked: [],
         });
       } finally {
         warnSpy.restore();
@@ -318,6 +358,7 @@ describe('workspace.ts (A.2b)', () => {
         headSha: 'abc1234',
         stashRef: 'stash@{0}',
         stashName: 'cht-agent-claude-code-cli-1700000000000',
+        baselineUntracked: [],
       });
       expect(result.reset).to.equal('ok');
       expect(result.clean).to.equal('ok');
@@ -390,6 +431,7 @@ describe('workspace.ts (A.2b)', () => {
           headSha: 'abc1234',
           stashRef: 'stash@{0}',
           stashName: 'cht-agent-claude-code-cli-1700000000000',
+          baselineUntracked: [],
         });
       } finally {
         warnSpy.restore();
