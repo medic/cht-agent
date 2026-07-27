@@ -47,9 +47,8 @@ cannot see:
 - **Version and backport claims.** "backported to the 4.1.x line" when the
   backport was 4.13.x.
 
-Those need the source tree at the PR's merge commit. That is `ground-claims.ts`
-(operator-run, needs a cht-core checkout); this script deliberately stays
-hermetic so it can gate CI.
+Those need the source tree at the PR's merge commit. That is `ground-claims`,
+below; this script deliberately stays hermetic so it can gate CI.
 
 ## Running it
 
@@ -87,3 +86,77 @@ npm run build-vocab -- --cht-core /path/to/cht-core
 
 Regeneration is a deliberate, reviewable commit: it changes what the gate
 considers real.
+
+---
+
+# Layer 2: `ground-claims`
+
+Where Layer 1 reads only the draft, `ground-claims` reads the **source**. It runs
+operator-side, before pushing a promote branch.
+
+```sh
+CHT_CORE_PATH=/home/h4reet/ai_medic/medic-cht-core/cht-core \
+LLM_PROVIDER=claude-cli \
+  npm run ground-claims -- --changed-only --base origin/main --label promote-messaging
+```
+
+`LLM_PROVIDER=claude-cli` runs on the operator's Claude subscription — no API key.
+Budget roughly **40 seconds per draft**; `--concurrency 3` is the default and
+`--limit N` smoke-tests the prompt cheaply before committing to a full branch.
+
+## Two stages, and why they are split
+
+1. **Extraction (LLM).** A model reads the draft and reports what it *asserts* —
+   identifiers, file attributions, "the PR changed X", backport lines. It is told
+   explicitly never to judge truth and never to correct a spelling, because a
+   silently corrected symbol is a lost defect.
+2. **Adjudication (git).** Every extracted claim is settled by `git grep -F -w`,
+   `git diff-tree --name-status`, `git ls-tree`, or `git branch --contains`.
+
+The model decides *what was claimed*; git decides *whether it is true*. An LLM
+verdict can flip between runs on identical bytes — which is precisely why a
+"review this draft" prompt is not trustworthy enough to act on, and why this is
+not a CI check.
+
+## Outcomes
+
+| Outcome | Meaning |
+|---|---|
+| `grounded` | the probe confirms the claim |
+| `ungrounded` | the probe contradicts it — a defect to fix |
+| `unverifiable` | the probe could not run. **Not a pass.** |
+| `anchor-unusable` | the anchor is a revert, so it cannot evidence the change |
+
+Each verdict also carries a **provenance**: `anchor` (proven at the draft's own
+commit — settled) or `fallback` (the anchor would not resolve, so the claim was
+checked against `origin/master`). Absence under `fallback` still refutes a
+fabricated symbol, but cannot distinguish "never existed" from "existed then was
+removed", so treat it as strong evidence rather than proof.
+
+## Anchor resolution, and why it often fails
+
+In order: `source_sha` if that commit is present locally, then the squash-merge
+subject (`git log --all --fixed-strings --grep='(#<PR>)'`), since cht-core stamps
+the PR number there. Two reasons it still fails:
+
+- **`source_sha` is frequently a PR-head commit** that squash-merge discarded, so
+  it never lands on `master`.
+- **cht-core does not stamp every PR number** into a subject. The SSO cluster
+  (#9833, #9900, #9901) has no `(#N)` subject anywhere, even though the code is
+  plainly in the tree.
+
+Both are why the `fallback` ref exists. Keeping the checkout fetched materially
+improves coverage — a stale clone turns `file-touched` and `release-branch`
+claims into `unverifiable`, and those are exactly the mechanism and backport
+claims that fooled the reviewer.
+
+## Reports
+
+Written to `outputs/verification/<label>/` — `outputs/` is gitignored, and reports
+must **never** be moved under `agent-memory/`, where a future agent would load a
+verification artifact as domain knowledge. Each report is stamped with a
+**content hash** of the draft bytes, so a promotion gate can later refuse a
+report that no longer matches the draft it claims to verify.
+
+Exit codes: `1` any ungrounded claim, `3` only unverifiable / anchor-unusable
+claims, `0` fully grounded.
