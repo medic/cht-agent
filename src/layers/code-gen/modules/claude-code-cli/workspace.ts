@@ -307,6 +307,19 @@ async function readChtCoreFile(
 const CLEAN_PATHSPEC_CHUNK = 1000;
 
 /**
+ * Wrap a path so git treats it as a LITERAL filename, not an fnmatch glob.
+ *
+ * Without this, a session file named `pages/[id].tsx` is a bracket-expression
+ * pathspec that also matches the operator's `pages/d.tsx` — `git clean` deletes
+ * both, exits 0, and the verifier (which only runs on a non-zero exit) never
+ * notices. Same class for `*` and `?` in a filename. Every path we hand to git
+ * for deletion comes from `ls-files` output, i.e. it is always a real filename.
+ */
+function toLiteralPathspec(relPath: string): string {
+  return `:(literal)${relPath}`;
+}
+
+/**
  * Untracked paths that appeared DURING the session: everything untracked now
  * minus the operator's post-stash baseline. Only these may be deleted on
  * rollback — a blanket `git clean -fd` would also delete pre-existing untracked
@@ -363,7 +376,7 @@ async function cleanSessionCreatedFiles(
   for (let i = 0; i < delta.length; i += CLEAN_PATHSPEC_CHUNK) {
     const chunk = delta.slice(i, i + CLEAN_PATHSPEC_CHUNK);
     await gitExecVerifyOrThrow(
-      ['clean', '-fd', '--', ...chunk],
+      ['clean', '-fd', '--', ...chunk.map(toLiteralPathspec)],
       chtCorePath,
       // The tree is legitimately dirty after a rollback (the operator's own
       // untracked files survive by design), so "status is empty" is the wrong

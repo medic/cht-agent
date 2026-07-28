@@ -114,6 +114,45 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await read('tracked.txt')).to.equal('committed content\n');
   });
 
+  it('does not glob-delete an operator file when a session filename holds metachars (#140 F-1)', async () => {
+    // The operator file has to be BASELINE-untracked to be at risk, i.e. ignored
+    // at stash time and unmasked once the .gitignore edit is stashed (the aider
+    // shape). Passed raw, the session's `pages/[id].tsx` is an fnmatch bracket
+    // expression that also matches `pages/d.tsx`, so `git clean` deletes both,
+    // exits 0, and the verifier never runs. :(literal) prevents it.
+    await fs.mkdir(path.join(repo, 'pages'), { recursive: true });
+    await write('.gitignore', 'node_modules/\npages/d.tsx\n');
+    await write('pages/d.tsx', 'operator component\n');
+    const snapshot = await snapshotChtCore(repo);
+    expect(snapshot.baselineUntracked).to.include('pages/d.tsx');
+
+    await write('pages/[id].tsx', 'export default function Page() {}\n');
+
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    expect(captured.map(f => f.path)).to.deep.equal(['pages/[id].tsx']);
+
+    const rollback = await rollbackChtCore(repo, snapshot);
+    expect(rollback.clean).to.equal('ok');
+
+    expect(await exists('pages/[id].tsx')).to.equal(false); // session file removed
+    expect(await read('pages/d.tsx')).to.equal('operator component\n'); // operator file SURVIVES
+    expect(await read('.gitignore')).to.equal('node_modules/\npages/d.tsx\n');
+  });
+
+  it('handles a session filename with a * metachar without collateral deletion', async () => {
+    await write('.gitignore', 'node_modules/\nreport-2026.txt\n');
+    await write('report-2026.txt', 'operator report\n');
+    const snapshot = await snapshotChtCore(repo);
+    expect(snapshot.baselineUntracked).to.include('report-2026.txt');
+
+    // A literal asterisk in the name; as a glob it would match report-2026.txt.
+    await write('report-*.txt', 'session scratch\n');
+
+    await rollbackChtCore(repo, snapshot);
+    expect(await exists('report-*.txt')).to.equal(false);
+    expect(await read('report-2026.txt')).to.equal('operator report\n');
+  });
+
   it('detects a stash leaked by a killed run and recovers with the printed command', async () => {
     await makeDirty();
     // Snapshot, then "die" before rollback.

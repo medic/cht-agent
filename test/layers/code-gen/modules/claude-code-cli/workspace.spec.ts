@@ -290,7 +290,9 @@ describe('workspace.ts (A.2b)', () => {
       });
 
       const cleanCall = calls.find(c => c.startsWith('git clean'));
-      expect(cleanCall).to.equal('git clean -fd -- src/cli-made.ts');
+      // :(literal) so a metachar in a session filename cannot fnmatch-delete an
+      // operator file (#140 F-1).
+      expect(cleanCall).to.equal('git clean -fd -- :(literal)src/cli-made.ts');
       expect(cleanCall).to.not.include('.aider.chat'); // operator's file spared
     });
 
