@@ -177,11 +177,17 @@ export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?
 
   const hits = search(symbol);
   if (hits.length > 0 || !symbol.includes('.')) return hits;
+
   // A dotted member reference is often written with optional chaining in the
-  // source (`res?.resources`) while prose and claim extraction normalise it to
-  // `res.resources`. Retrying the optional-chained spelling avoids reporting a
-  // real member access as fabricated.
-  return search(symbol.replace(/\./g, '?.'));
+  // source while prose normalises it away — and the `?` may sit on ANY subset of
+  // the dots (`doc.fields?.patient_id`). Retry once with a regex that makes the
+  // `?` optional at every position, rather than guessing one spelling.
+  const pattern = symbol
+    .split('.')
+    .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\??\\.');
+  return git(ctx, ['grep', '-n', '-E', '-w', pattern, sha, ...scope])
+    .split('\n').map(l => l.trim()).filter(Boolean);
 }
 
 /** Paths the commit itself changed, mapped to their git status letter. */
@@ -303,15 +309,41 @@ function checkPathExists(
     : verdict(claim, 'ungrounded', `${cmd} → no such path in this tree`, undefined, prov);
 }
 
+/**
+ * A backport is almost always a CHERRY-PICK, so it is a different commit and
+ * `--contains <anchor>` can never see it. Falling back to searching the release
+ * branches for a commit that references the same PR is what makes a true
+ * backport claim verifiable instead of a false defect.
+ */
+function findCherryPick(ctx: ProbeCtx, prNumber: number | undefined): string[] {
+  if (prNumber === undefined) return [];
+  const raw = git(ctx, [
+    'log', '--all', '--fixed-strings', `--grep=(#${prNumber})`, '--format=%H',
+  ]).split('\n').map(l => l.trim()).filter(Boolean);
+  return raw.flatMap(sha => branchesContaining(ctx, sha));
+}
+
 function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'release-branch' }): Verdict {
+  const onBranch = (branches: string[]): string | undefined =>
+    branches.find(b => b === `origin/${claim.branch}` || b.endsWith(`/${claim.branch}`)
+      // "4.x" / "4.21" in prose vs "origin/4.21.x" as a ref
+      || new RegExp(`/${claim.branch.replace(/\./g, '\\.').replace(/x$/, '')}[0-9.]*x?$`).test(b));
+
   const containing = branchesContaining(ctx, a.sha);
+  const direct = onBranch(containing);
   const cmd = `git branch -r --contains ${refLabel(a.sha)}`;
-  const match = containing.find(b => b === `origin/${claim.branch}` || b.endsWith(`/${claim.branch}`));
-  if (match) return verdict(claim, 'grounded', `${cmd} → includes ${match}`);
+  if (direct) return verdict(claim, 'grounded', `${cmd} → includes ${direct}`);
+
+  const viaPick = onBranch(findCherryPick(ctx, a.prNumber));
+  if (viaPick) {
+    return verdict(claim, 'grounded',
+      `${cmd} does not contain the anchor, but a commit referencing (#${a.prNumber}) reaches ${viaPick} — cherry-picked backport`);
+  }
+
   const releaseLines = containing.filter(b => /\d+\.\d+\.x$/.test(b));
   return verdict(claim, 'ungrounded',
-    `${cmd} → does not include ${claim.branch}`,
-    releaseLines.length ? `present on ${releaseLines.join(', ')}` : undefined);
+    `${cmd} → does not include ${claim.branch}, and no commit referencing (#${a.prNumber}) reaches it`,
+    releaseLines.length ? `anchor reaches ${releaseLines.join(', ')}` : undefined);
 }
 
 /** Claim kinds that read a tree and so can fall back to a tree-wide ref. */
