@@ -24,6 +24,11 @@
  * 3. REVERTS ARE NOT EVIDENCE. cht-core PR #10599 resolves to a commit that
  *    REVERTS the change its draft describes; grounding against it yields a
  *    confidently wrong pass. A revert anchor is `anchor-unusable`.
+ *
+ * One carve-out: anchor RESOLUTION may consult the GitHub API (see
+ * `resolveViaApi`) when the clone alone cannot name the commit. Resolution only
+ * picks WHICH local commit to probe — adjudication itself never leaves git, and
+ * a sha the clone does not have is never anchored to.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -47,6 +52,8 @@ export interface Anchor {
   subject: string;
   /** Subject looks like a revert — the anchor cannot evidence the described change. */
   isRevert: boolean;
+  /** How a not-locally-derivable anchor was located — the report's audit trail. */
+  note?: string;
 }
 
 export type Claim =
@@ -91,6 +98,14 @@ export interface ProbeCtx {
    * though the code is sitting in the checkout.
    */
   fallbackRef?: string;
+  /**
+   * Let resolveAnchor consult the GitHub API (gh, then anonymous curl) when the
+   * clone alone cannot locate a draft's commit. Resolution only — every verdict
+   * is still a git probe against a commit the clone has. Defaults to true;
+   * transport failures degrade to an unresolved anchor, never to a defect or a
+   * crash. Set false for a fully offline run.
+   */
+  apiResolve?: boolean;
 }
 
 export const DEFAULT_FALLBACK_REF = 'origin/master';
@@ -137,14 +152,16 @@ const isRevertSubject = (subject: string): boolean => /^revert[\s"']/i.test(subj
  * Resolve the cht-core commit for a draft. `source_sha` is used when it resolves
  * locally; otherwise the PR number is found via the squash-merge subject, which
  * cht-core stamps as `... (#NNNNN)` — this is why grounding works without
- * `refs/pull/*` fetched.
+ * `refs/pull/*` fetched. When both clone-local strategies fail and `repo` is
+ * known, the GitHub API is asked which local commit carries the PR (see
+ * `resolveViaApi`).
  *
- * Returns null when neither resolves (typically a PR newer than the checkout),
+ * Returns null when nothing resolves (typically a PR newer than the checkout),
  * which callers must render as `unverifiable`.
  */
 export function resolveAnchor(
   ctx: ProbeCtx,
-  opts: { prNumber?: number; sourceSha?: string }
+  opts: { prNumber?: number; sourceSha?: string; repo?: string }
 ): Anchor | null {
   if (opts.sourceSha && commitExists(ctx, opts.sourceSha)) {
     const subject = subjectOf(ctx, opts.sourceSha);
@@ -155,9 +172,99 @@ export function resolveAnchor(
   const raw = git(ctx, [
     'log', '--all', '-1', '--fixed-strings', `--grep=(#${opts.prNumber})`, '--format=%H%x00%s',
   ]).trim();
-  if (!raw) return null;
-  const [sha, subject = ''] = raw.split('\0');
-  return { prNumber: opts.prNumber, sha, subject, isRevert: isRevertSubject(subject) };
+  if (raw) {
+    const [sha, subject = ''] = raw.split('\0');
+    return { prNumber: opts.prNumber, sha, subject, isRevert: isRevertSubject(subject) };
+  }
+
+  if ((ctx.apiResolve ?? true) && opts.repo) return resolveViaApi(ctx, opts.repo, opts.prNumber);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// GitHub-API anchor resolution
+//
+// A PR merged into a FEATURE branch that later squash-merged onto master (the
+// ui-extensions epic, PR #130's drafts 11057/11021) leaves no trace a clone can
+// see: its merge commit lives only on the deleted branch, and no squash subject
+// carries its number — so both local strategies fail and nine TRUE claims
+// degraded to `unverifiable`. The API knows the missing link: the child's base
+// branch names the epic, and the epic's own squash IS in the clone. Resolution
+// only — a sha the clone does not have is never anchored to, so verdicts remain
+// reproducible from the clone plus the resolved sha.
+//
+// Grounding against an epic squash carries the same over-approximation the
+// sibling-diff union already accepts: `file-touched` sees the union of every
+// child's changes, and statuses reflect the landed state rather than the child
+// PR's own diff. The anchor's `note` makes that provenance visible in reports.
+// ---------------------------------------------------------------------------
+
+/** Minimal slice of the pulls endpoints the resolver reads. */
+interface PrRecord {
+  number?: number;
+  /** Single-PR endpoint only; the list endpoint exposes `merged_at` instead. */
+  merged?: boolean;
+  merged_at?: string | null;
+  merge_commit_sha?: string | null;
+  base?: { ref?: string };
+}
+
+/**
+ * GET a GitHub API path as parsed JSON — `gh` first (authenticated, higher rate
+ * limit), anonymous `curl` second. Null on ANY failure: gh missing, HTTP error,
+ * rate limit, malformed JSON. Resolution must degrade to an unresolved anchor,
+ * never throw mid-run.
+ */
+function githubApi(ctx: ProbeCtx, apiPath: string): unknown {
+  const transports: Array<[string, string[]]> = [
+    ['gh', ['api', apiPath]],
+    ['curl', ['-sf', '--max-time', '15', `https://api.github.com/${apiPath}`]],
+  ];
+  for (const [file, args] of transports) {
+    try {
+      return JSON.parse(ctx.exec(file, args));
+    } catch {
+      // Try the next transport; callers treat null as "could not resolve".
+    }
+  }
+  return null;
+}
+
+/** Anchor at `sha` only if the clone has it — never anchor to a sha we cannot probe. */
+function anchorAt(ctx: ProbeCtx, sha: string, prNumber: number, note: string): Anchor | null {
+  if (!commitExists(ctx, sha)) return null;
+  const subject = subjectOf(ctx, sha);
+  return { prNumber, sha, subject, isRevert: isRevertSubject(subject), note };
+}
+
+function resolveViaApi(ctx: ProbeCtx, repo: string, prNumber: number): Anchor | null {
+  const pr = githubApi(ctx, `repos/${repo}/pulls/${prNumber}`) as PrRecord | null;
+  if (!pr || pr.merged !== true) return null; // unmerged or unknown stays unverifiable
+
+  // Merged, and the merge commit is sitting in the clone — the squash subject
+  // just carries no "(#N)" stamp (cht-core's SSO cluster merges without one).
+  if (pr.merge_commit_sha) {
+    const direct = anchorAt(ctx, pr.merge_commit_sha, prNumber,
+      `resolved via GitHub API: merge commit of ${repo}#${prNumber}`);
+    if (direct) return direct;
+  }
+
+  // Epic child: its merge commit lives on a deleted feature branch. The PR that
+  // carried that branch onward has OUR base as ITS head, and that PR's squash is
+  // what the clone can see. One hop only — an epic nested inside another epic
+  // stays unresolved rather than chasing the graph.
+  const base = pr.base?.ref;
+  if (!base) return null;
+  const owner = repo.split('/')[0];
+  const carriers = githubApi(ctx, `repos/${repo}/pulls?state=closed&head=${owner}:${base}`);
+  if (!Array.isArray(carriers)) return null;
+  for (const c of carriers as PrRecord[]) {
+    if (!c.merged_at || !c.merge_commit_sha) continue;
+    const viaEpic = anchorAt(ctx, c.merge_commit_sha, prNumber,
+      `resolved via GitHub API: ${repo}#${prNumber} merged into ${base}; anchored at the squash of #${c.number}`);
+    if (viaEpic) return viaEpic;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

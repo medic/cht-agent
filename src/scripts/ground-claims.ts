@@ -28,6 +28,7 @@
  *     npm run ground-claims -- --dir agent-memory --label promote-messaging
  *   ... -- --changed-only --base origin/main     # only this branch's drafts
  *   ... -- --limit 5                             # smoke-test the prompt cheaply
+ *   ... -- --no-api-resolve                      # fully offline: skip GitHub-API anchor resolution
  *
  * Reports land in outputs/verification/<label>/ (gitignored, never committed —
  * a report inside agent-memory/ would become memory a future agent reads).
@@ -62,7 +63,7 @@ export interface DraftReport {
   file: string;
   /** sha256 of the draft bytes — lets a later gate refuse a stale report. */
   contentHash: string;
-  anchor: { sha: string; subject: string; isRevert: boolean } | null;
+  anchor: { sha: string; subject: string; isRevert: boolean; note?: string } | null;
   verdicts: Verdict[];
   counts: Record<Outcome, number>;
   /** Extraction failed; the draft was not verified. */
@@ -82,6 +83,8 @@ export interface GroundOptions {
   /** Stop after N drafts — for cheaply smoke-testing the prompt. */
   limit?: number;
   concurrency?: number;
+  /** False disables GitHub-API anchor resolution (fully offline run). */
+  apiResolve?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +185,7 @@ function readDraft(abs: string, scanRoot: string): DraftInput | null {
   return { file: displayPath(abs, scanRoot), frontmatter: fm, body: parsed.content, raw };
 }
 
-const SOURCE_PR_RE = /^[^#]+#(\d+)$/;
+const SOURCE_PR_RE = /^([^#]+)#(\d+)$/;
 
 /**
  * Anchors for the OTHER PRs a collapsed draft covers. A draft that merged a
@@ -195,9 +198,9 @@ function siblingAnchors(ctx: ProbeCtx, fm: Record<string, unknown>, canonical: A
   for (const ref of refs) {
     const m = typeof ref === 'string' ? SOURCE_PR_RE.exec(ref) : null;
     if (!m) continue;
-    const pr = Number.parseInt(m[1], 10);
+    const pr = Number.parseInt(m[2], 10);
     if (canonical?.prNumber === pr) continue;
-    const a = resolveAnchor(ctx, { prNumber: pr });
+    const a = resolveAnchor(ctx, { prNumber: pr, repo: m[1] });
     if (a && a.sha !== canonical?.sha) out.push(a);
   }
   return out;
@@ -207,8 +210,9 @@ function siblingAnchors(ctx: ProbeCtx, fm: Record<string, unknown>, canonical: A
 function anchorFor(ctx: ProbeCtx, fm: Record<string, unknown>): Anchor | null {
   const sourcePr = typeof fm.source_pr === 'string' ? SOURCE_PR_RE.exec(fm.source_pr) : null;
   return resolveAnchor(ctx, {
-    prNumber: sourcePr ? Number.parseInt(sourcePr[1], 10) : undefined,
+    prNumber: sourcePr ? Number.parseInt(sourcePr[2], 10) : undefined,
     sourceSha: typeof fm.source_sha === 'string' ? fm.source_sha : undefined,
+    repo: sourcePr?.[1],
   });
 }
 
@@ -230,7 +234,10 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
   const base = {
     file: draft.file,
     contentHash: contentHash(draft.raw),
-    anchor: anchor && { sha: anchor.sha, subject: anchor.subject, isRevert: anchor.isRevert },
+    anchor: anchor && {
+      sha: anchor.sha, subject: anchor.subject, isRevert: anchor.isRevert,
+      ...(anchor.note !== undefined && { note: anchor.note }),
+    },
   };
   let claims: Claim[];
   try {
@@ -292,7 +299,7 @@ export async function groundClaims(opts: GroundOptions = {}): Promise<GroundResu
     throw new Error('cht-core checkout required: pass --cht-core <path> or set CHT_CORE_PATH');
   }
   const exec = opts.exec ?? defaultExec;
-  const ctx: ProbeCtx = { chtCorePath, exec, fallbackRef: opts.fallbackRef };
+  const ctx: ProbeCtx = { chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve };
   const dir = path.resolve(REPO_ROOT, opts.dir ?? 'agent-memory');
   const extract = opts.extractFn ?? cliExtractor();
 
@@ -339,7 +346,8 @@ export function renderReport(reports: DraftReport[], meta: ReportMeta): string {
   if (!withFindings.length) lines.push('_None._', '');
   for (const r of withFindings) {
     lines.push(`### \`${r.file}\``);
-    lines.push(`anchor: ${r.anchor ? `\`${r.anchor.sha.slice(0, 10)}\` — ${r.anchor.subject}` : '_unresolved_'}  `);
+    lines.push(`anchor: ${r.anchor ? `\`${r.anchor.sha.slice(0, 10)}\` — ${r.anchor.subject}` : '_unresolved_'}` +
+      `${r.anchor?.note ? ` _(${r.anchor.note})_` : ''}  `);
     lines.push(`content hash: \`${r.contentHash}\``, '');
     for (const v of r.verdicts.filter(x => x.outcome === 'ungrounded')) {
       lines.push(`- **${describeClaim(v.claim)}** _(${v.provenance ?? 'anchor'})_`);
@@ -419,6 +427,7 @@ async function main(): Promise<void> {
     fallbackRef: argValue(argv, '--fallback-ref'),
     limit: limitArg ? Number.parseInt(limitArg, 10) : undefined,
     concurrency: concArg ? Number.parseInt(concArg, 10) : undefined,
+    apiResolve: argv.includes('--no-api-resolve') ? false : undefined,
   });
 
   const { totals } = result;
