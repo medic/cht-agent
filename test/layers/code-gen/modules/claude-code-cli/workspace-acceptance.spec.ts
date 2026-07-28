@@ -153,6 +153,39 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await read('report-2026.txt')).to.equal('operator report\n');
   });
 
+  it('captures and cleans a non-ASCII session filename (#140 F-2)', async () => {
+    // git C-quotes non-ASCII paths by default ("caf\303\251.txt"), so without -z
+    // the file is dropped from capture and the clean matches nothing while still
+    // reporting success, leaving phantom residue that pollutes the next baseline.
+    const snapshot = await snapshotChtCore(repo);
+    await write('café.txt', 'unicode content\n');
+    await write('日本語.md', 'japanese content\n');
+
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    expect(captured.map(f => f.path).sort()).to.deep.equal(['café.txt', '日本語.md']);
+
+    const rollback = await rollbackChtCore(repo, snapshot);
+    expect(rollback.clean).to.equal('ok');
+    expect(await exists('café.txt')).to.equal(false);
+    expect(await exists('日本語.md')).to.equal(false);
+  });
+
+  it('captures and cleans a filename containing a newline (#140 C-5)', async () => {
+    // THE discriminator for -z over core.quotePath=false: with quoting disabled,
+    // the raw newline splits one path into two bogus ones.
+    const weird = 'we\nird.txt';
+    const snapshot = await snapshotChtCore(repo);
+    await write(weird, 'newline in the name\n');
+
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    expect(captured.map(f => f.path)).to.deep.equal([weird]);
+
+    const rollback = await rollbackChtCore(repo, snapshot);
+    expect(rollback.clean).to.equal('ok');
+    expect(await exists(weird)).to.equal(false);
+    expect(await read('tracked.txt')).to.equal('committed content\n');
+  });
+
   it('detects a stash leaked by a killed run and recovers with the printed command', async () => {
     await makeDirty();
     // Snapshot, then "die" before rollback.

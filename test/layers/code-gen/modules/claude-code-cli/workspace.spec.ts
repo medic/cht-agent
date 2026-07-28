@@ -63,7 +63,7 @@ describe('workspace.ts (A.2b)', () => {
         'git stash push': { stdout: 'Saved working directory\n' },
         'git stash list': { stdout: 'stash@{0}\n' },
         // Stashing the .gitignore edit unmasked these pre-existing files.
-        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\n.aider.tags\n' },
+        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0.aider.tags\0' },
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.baselineUntracked).to.deep.equal(['.aider.chat', '.aider.tags']);
@@ -73,7 +73,7 @@ describe('workspace.ts (A.2b)', () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         'git status --porcelain': { stdout: '' },
-        'git ls-files --others --exclude-standard': { stdout: 'ignored-by-committed-rules.log\n' },
+        'git ls-files --others --exclude-standard': { stdout: 'ignored-by-committed-rules.log\0' },
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.stashRef).to.be.null;
@@ -182,7 +182,7 @@ describe('workspace.ts (A.2b)', () => {
   describe('captureChtCoreDiff', () => {
     it('parses git diff --name-status A as create and M as modify', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: 'A\tsrc/new.ts\nM\tsrc/changed.ts\n' },
+        'git diff --name-status -z abc1234': { stdout: 'A\0src/new.ts\0M\0src/changed.ts\0' },
         'git ls-files --others --exclude-standard': { stdout: '' },
         'git show': { stdout: 'old content' },
       });
@@ -197,8 +197,8 @@ describe('workspace.ts (A.2b)', () => {
 
     it('includes untracked files as create', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: '' },
-        'git ls-files --others --exclude-standard': { stdout: 'src/untracked.ts\n' },
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: 'src/untracked.ts\0' },
       });
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/untracked.ts')).to.exist;
@@ -206,9 +206,9 @@ describe('workspace.ts (A.2b)', () => {
 
     it('excludes baseline untracked files and keeps CLI-created ones (#140)', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: '' },
+        'git diff --name-status -z abc1234': { stdout: '' },
         'git ls-files --others --exclude-standard': {
-          stdout: '.aider.chat\n.aider.tags\noperator-notes.md\nsrc/cli-made.ts\n',
+          stdout: '.aider.chat\0.aider.tags\0operator-notes.md\0src/cli-made.ts\0',
         },
       });
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', [
@@ -219,9 +219,24 @@ describe('workspace.ts (A.2b)', () => {
       expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/cli-made.ts']);
     });
 
+    it('stays in phase on a rename entry, which carries two paths (#140 F-2)', async () => {
+      // -z renames emit STATUS\0OLD\0NEW\0; consuming only one path would treat
+      // the old path as the next status and desynchronize the whole stream.
+      const ws = loadWorkspace({
+        'git diff --name-status -z abc1234': {
+          stdout: 'R100\0src/old.ts\0src/new.ts\0M\0src/after.ts\0',
+        },
+        'git ls-files --others --exclude-standard': { stdout: '' },
+        'git show': { stdout: 'old content' },
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
+      // NEW path kept for the rename, and the following entry still parses.
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/new.ts', 'src/after.ts']);
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: 'D\tsrc/deleted.ts\nA\tsrc/new.ts\n' },
+        'git diff --name-status -z abc1234': { stdout: 'D\0src/deleted.ts\0A\0src/new.ts\0' },
         'git ls-files --others --exclude-standard': { stdout: '' },
       });
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
@@ -276,7 +291,7 @@ describe('workspace.ts (A.2b)', () => {
       const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
         'node:child_process': {
           execFile: trackingStubWith(calls, {
-            'git ls-files --others --exclude-standard': '.aider.chat\nsrc/cli-made.ts\n',
+            'git ls-files --others --exclude-standard': '.aider.chat\0src/cli-made.ts\0',
           }),
         },
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
@@ -302,7 +317,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: trackingStubWith(calls, {
             // Everything untracked is the operator's; nothing of ours to remove.
-            'git ls-files --others --exclude-standard': '.aider.chat\noperator-notes.md\n',
+            'git ls-files --others --exclude-standard': '.aider.chat\0operator-notes.md\0',
           }),
         },
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
@@ -440,7 +455,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard': { stdout: '' },
-            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\n' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
             'git clean -fd': { error: new Error('warning: could not remove') },
           }),
         },
@@ -472,7 +487,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard': { stdout: '' },
-            'git ls-files --others --exclude-standard': { stdout: '.aider.chat\nsrc/cli-made.ts\n' },
+            'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0src/cli-made.ts\0' },
             'git clean -fd': { error: new Error('warning: could not remove') },
             'git status --porcelain': { stdout: '?? .aider.chat\n' }, // still dirty, legitimately
           }),
@@ -495,7 +510,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard': { stdout: '' },
-            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\n' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
             'git clean -fd': { error: new Error('permission denied') },
           }),
         },

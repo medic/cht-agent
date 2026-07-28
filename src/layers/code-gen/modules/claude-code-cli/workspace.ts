@@ -97,12 +97,21 @@ function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: stri
   );
 }
 
-/** Untracked, non-ignored paths in the working tree right now. */
+/**
+ * Untracked, non-ignored paths in the working tree right now.
+ *
+ * `-z` is mandatory, not cosmetic. Git's default `core.quotePath=true` C-quotes
+ * any non-ASCII path (`"caf\303\251.txt"`), which would silently drop the file
+ * from capture and make the clean match nothing while still reporting success.
+ * `core.quotePath=false` is not sufficient either: a newline in a filename would
+ * then break line splitting into bogus paths. NUL delimiting is the only form
+ * that survives every legal filename.
+ */
 async function listUntracked(chtCorePath: string): Promise<string[]> {
   const { stdout } = await execFileAsync(
-    'git', ['ls-files', '--others', '--exclude-standard'], { cwd: chtCorePath }
+    'git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: chtCorePath }
   );
-  return stdout.split('\n').filter(Boolean);
+  return stdout.split('\0').filter(Boolean);
 }
 
 /**
@@ -223,8 +232,9 @@ export async function captureChtCoreDiff(
 ): Promise<GeneratedFile[]> {
   // git diff --name-status against the pre-run SHA picks up tracked changes (M, A, D, R, ...)
   // but NOT untracked files. For untracked CREATEs the CLI made, we also need ls-files --others.
+  // `-z` for the same reason as listUntracked: unquoted, NUL-delimited paths.
   const { stdout: nameList } = await execFileAsync(
-    'git', ['diff', '--name-status', preRunSha], { cwd: chtCorePath }
+    'git', ['diff', '--name-status', '-z', preRunSha], { cwd: chtCorePath }
   );
   const untrackedNow = await listUntracked(chtCorePath);
 
@@ -240,20 +250,38 @@ async function collectTrackedChanges(
   chtCorePath: string,
   preRunSha: string,
 ): Promise<void> {
-  for (const line of nameList.split('\n').filter(Boolean)) {
-    const entry = parseDiffStatusLine(line);
-    if (!entry) continue;
+  for (const entry of parseDiffNameStatusZ(nameList)) {
     const file = await readChtCoreFile(chtCorePath, entry.relPath, preRunSha, entry.action);
     if (file) files.push(file);
   }
 }
 
-function parseDiffStatusLine(line: string): { relPath: string; action: 'create' | 'modify' } | null {
-  const parts = line.split('\t');
-  const status = parts[0]?.charAt(0);
-  const relPath = parts.at(-1);
-  if (!status || !relPath || status === 'D') return null;
-  return { relPath, action: status === 'A' ? 'create' : 'modify' };
+/**
+ * Parse `git diff --name-status -z` output. Unlike the line/tab form, `-z` emits
+ * a flat NUL-delimited token stream: `STATUS\0PATH\0` per entry, except renames
+ * and copies (`R100`, `C75`) which emit `STATUS\0OLD\0NEW\0`. Consuming the extra
+ * token is what keeps the parser in phase; a line-based split would treat the old
+ * path as the next status and desynchronize the rest of the stream.
+ */
+function parseDiffNameStatusZ(
+  nameList: string,
+): Array<{ relPath: string; action: 'create' | 'modify' }> {
+  const tokens = nameList.split('\0');
+  const entries: Array<{ relPath: string; action: 'create' | 'modify' }> = [];
+  let i = 0;
+  while (i < tokens.length) {
+    const status = tokens[i];
+    if (!status) { i++; continue; } // trailing NUL / empty token
+    const code = status.charAt(0);
+    // R/C carry two paths; the NEW path is the one on disk now (matches the
+    // previous `parts.at(-1)` semantics).
+    const pathCount = code === 'R' || code === 'C' ? 2 : 1;
+    const relPath = tokens[i + pathCount];
+    i += pathCount + 1;
+    if (!relPath || code === 'D') continue;
+    entries.push({ relPath, action: code === 'A' ? 'create' : 'modify' });
+  }
+  return entries;
 }
 
 async function collectUntrackedCreates(
