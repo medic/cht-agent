@@ -77,7 +77,29 @@ describe('createAnthropicProvider (v9a.6) — wiring', () => {
     expect(ctor!.anthropicApiKey).to.equal('sk-test');
     expect(ctor!.temperature).to.be.undefined;
     expect(Object.hasOwn(ctor!, 'temperature')).to.equal(false); // key omitted, not just undefined
+    expect(ctor!.maxTokens).to.equal(65536); // DEFAULT_CONFIG.maxTokens, under opus 4.6's cap
     expect(ctor!.streaming).to.equal(true);
+  });
+
+  it('applies the invokeForJSON maxTokens default of 16384', async () => {
+    const stub = buildChatAnthropicStub();
+    stub.invokeStub.resolves({ content: '{"ok":true}' } as ChatResponseShape);
+    const { createAnthropicProvider } = loadProvider(stub);
+    const provider = createAnthropicProvider(baseConfig);
+    await provider.invokeForJSON('prompt');
+    // development-supervisor relies on this default now that it passes no options.
+    expect(stub.getLastCtorArgs()!.maxTokens).to.equal(16384);
+  });
+
+  it('honors a per-call maxTokens on invokeWithMessages too', async () => {
+    const stub = buildChatAnthropicStub();
+    stub.invokeStub.resolves({ content: 'ok' } as ChatResponseShape);
+    const { createAnthropicProvider } = loadProvider(stub);
+    const provider = createAnthropicProvider(baseConfig);
+    await provider.invokeWithMessages([{ role: 'user', content: 'hi' }], { maxTokens: 4096 });
+    // Second of the two narrowed conditionals; only invoke's was covered before.
+    expect(stub.getLastCtorArgs()!.maxTokens).to.equal(4096);
+    expect(stub.getLastCtorArgs()!.temperature).to.be.undefined;
   });
 
   it('caps maxTokens to the model limit (128000 for opus 4.6)', () => {

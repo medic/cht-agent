@@ -108,16 +108,16 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
    * Create a ChatAnthropic instance with an optional maxTokens override.
    *
    * No sampling parameters are sent. `temperature`, `top_p`, and `top_k` are
-   * removed on current Anthropic models and return a 400 (on Sonnet 5, any
-   * non-default value does), and there is no replacement parameter — prompt-level
-   * instruction is the lever. Omitting the keys entirely, rather than passing
-   * undefined, states that intent (#148).
+   * removed on current Anthropic models, where supplying one is rejected (an API
+   * 400, or a client-side throw from langchain's compatibility check before the
+   * request is made; on Sonnet 5 any non-default value is rejected). There is no
+   * replacement parameter — prompt-level instruction is the lever. Omitting the
+   * keys entirely, rather than passing undefined, states that intent (#148).
    */
   const createModel = (overrides?: { maxTokens?: number }) => new ChatAnthropic({
     modelName: config.model,
     anthropicApiKey: config.apiKey,
     maxTokens: capMaxTokens(config.model, overrides?.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens),
-    topP: undefined,
     streaming: true,
   });
 
