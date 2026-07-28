@@ -104,11 +104,18 @@ function toLangChainTools(tools: LLMToolDefinition[]) {
  * Create an Anthropic LLM provider
  */
 export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider => {
-  /** Create a ChatAnthropic instance with optional temperature/maxTokens overrides */
-  const createModel = (overrides?: { temperature?: number; maxTokens?: number }) => new ChatAnthropic({
+  /**
+   * Create a ChatAnthropic instance with an optional maxTokens override.
+   *
+   * No sampling parameters are sent. `temperature`, `top_p`, and `top_k` are
+   * removed on current Anthropic models and return a 400 (on Sonnet 5, any
+   * non-default value does), and there is no replacement parameter — prompt-level
+   * instruction is the lever. Omitting the keys entirely, rather than passing
+   * undefined, states that intent (#148).
+   */
+  const createModel = (overrides?: { maxTokens?: number }) => new ChatAnthropic({
     modelName: config.model,
     anthropicApiKey: config.apiKey,
-    temperature: overrides?.temperature ?? config.temperature ?? DEFAULT_CONFIG.temperature,
     maxTokens: capMaxTokens(config.model, overrides?.maxTokens ?? config.maxTokens ?? DEFAULT_CONFIG.maxTokens),
     topP: undefined,
     streaming: true,
@@ -165,8 +172,8 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
   };
 
   const invoke = async (prompt: string, options?: InvokeOptions): Promise<LLMResponse> => {
-    const invokeModel = options?.temperature !== undefined || options?.maxTokens !== undefined
-      ? createModel({ temperature: options?.temperature, maxTokens: options?.maxTokens })
+    const invokeModel = options?.maxTokens !== undefined
+      ? createModel({ maxTokens: options.maxTokens })
       : model;
 
     if (options?.tools?.length && options.toolHandler) {
@@ -192,8 +199,8 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     messages: LLMMessage[],
     options?: InvokeOptions
   ): Promise<LLMResponse> => {
-    const invokeModel = options?.temperature !== undefined || options?.maxTokens !== undefined
-      ? createModel({ temperature: options?.temperature, maxTokens: options?.maxTokens })
+    const invokeModel = options?.maxTokens !== undefined
+      ? createModel({ maxTokens: options.maxTokens })
       : model;
 
     if (options?.tools?.length && options.toolHandler) {

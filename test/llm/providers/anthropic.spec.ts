@@ -64,15 +64,19 @@ const baseConfig: APIProviderConfig = {
 };
 
 describe('createAnthropicProvider (v9a.6) — wiring', () => {
-  it('constructs ChatAnthropic with the config api key, model, and a default temperature', () => {
+  it('constructs ChatAnthropic with the config api key and model, and NO temperature (#148)', () => {
     const stub = buildChatAnthropicStub();
     const { createAnthropicProvider } = loadProvider(stub);
     createAnthropicProvider(baseConfig);
+    // This is the BASE model (createModel() with no overrides) — the instance every
+    // non-override call path uses, and the one that used to carry DEFAULT_CONFIG's
+    // 0.3 and 400 on current models.
     const ctor = stub.getLastCtorArgs();
     expect(ctor).to.not.be.undefined;
     expect(ctor!.modelName).to.equal('claude-opus-4-6');
     expect(ctor!.anthropicApiKey).to.equal('sk-test');
-    expect(ctor!.temperature).to.equal(0.3); // DEFAULT_CONFIG.temperature
+    expect(ctor!.temperature).to.be.undefined;
+    expect(Object.hasOwn(ctor!, 'temperature')).to.equal(false); // key omitted, not just undefined
     expect(ctor!.streaming).to.equal(true);
   });
 
@@ -83,7 +87,7 @@ describe('createAnthropicProvider (v9a.6) — wiring', () => {
     expect(stub.getLastCtorArgs()!.maxTokens).to.equal(128000);
   });
 
-  it('honors per-call temperature and maxTokens via a fresh ChatAnthropic instance', async () => {
+  it('honors a per-call maxTokens via a fresh ChatAnthropic instance', async () => {
     const stub = buildChatAnthropicStub();
     stub.invokeStub.resolves({
       content: 'ok',
@@ -92,10 +96,10 @@ describe('createAnthropicProvider (v9a.6) — wiring', () => {
     } as ChatResponseShape);
     const { createAnthropicProvider } = loadProvider(stub);
     const provider = createAnthropicProvider(baseConfig);
-    await provider.invoke('hi', { temperature: 0.9, maxTokens: 10000 });
+    await provider.invoke('hi', { maxTokens: 10000 });
     // The override-instance ctor args are the most recent.
-    expect(stub.getLastCtorArgs()!.temperature).to.equal(0.9);
     expect(stub.getLastCtorArgs()!.maxTokens).to.equal(10000);
+    expect(stub.getLastCtorArgs()!.temperature).to.be.undefined; // no sampling param (#148)
   });
 });
 
