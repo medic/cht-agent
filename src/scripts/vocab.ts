@@ -109,13 +109,24 @@ export function loadVocab(vocabPath: string = VOCAB_PATH): Vocab {
 // Generation (needs a cht-core checkout; not used by verification)
 // ---------------------------------------------------------------------------
 
-/** How each family is mined from a checkout. `filter` drops test-fixture noise. */
+/**
+ * How each family is mined from a checkout.
+ *
+ * `source` matters more than it looks. Mining a name from CODE REFERENCES makes
+ * the vocabulary only as complete as the current call sites: `doc_by_type` is a
+ * live CouchDB view whose consumers moved to constants, so a reference-based
+ * mine silently dropped it and would have disabled the check that catches
+ * `docs_by_type`. Where the repository itself declares the names — ddoc view
+ * directories — mine the declaration, not the references.
+ */
 interface FamilySpec {
   name: string;
   description: string;
   candidatePattern: string;
   maxDistance: number;
-  /** git-grep -oE pattern collecting raw matches. */
+  /** `grep` scans file contents; `view-paths` reads ddoc view directory names. */
+  source: 'grep' | 'view-paths';
+  /** git-grep -oE pattern collecting raw matches (source: 'grep'). */
   minePattern: string;
   pathspecs: string[];
   /** Reduce a raw match to the bare term. */
@@ -133,6 +144,7 @@ const FAMILY_SPECS: FamilySpec[] = [
     candidatePattern:
       '\\b[a-z]{2,5}_(?:create|add|edit|delete|update|view|export|configure|manage|access|bulk)_[a-z][a-z_]{2,}\\b',
     maxDistance: 2,
+    source: 'grep',
     minePattern: '\\bcan_[a-z][a-z_]{2,}\\b',
     pathspecs: ['*.js', '*.ts', '*.html', '*.json'],
     extract: raw => raw,
@@ -140,13 +152,16 @@ const FAMILY_SPECS: FamilySpec[] = [
   },
   {
     name: 'couch-view',
-    description: 'CouchDB view names of the <noun>_by_<key> shape',
+    description: 'CouchDB view names declared under ddocs/**/views/',
     candidatePattern: '\\b[a-z][a-z0-9]*_by_[a-z][a-z0-9_]*\\b',
     maxDistance: 2,
-    // git grep -E is POSIX ERE: no (?:...) non-capturing groups.
-    minePattern: '(medic-client|medic)/[a-z][a-z0-9_]{3,}',
-    pathspecs: ['*.js', '*.ts'],
-    extract: raw => raw.slice(raw.lastIndexOf('/') + 1),
+    // Declarations, not references: `doc_by_type` is a live view whose callers
+    // moved to constants, so a content grep loses it and with it the check that
+    // catches `docs_by_type`.
+    source: 'view-paths',
+    minePattern: '',
+    pathspecs: ['ddocs'],
+    extract: raw => raw,
     filter: term => term.includes('_by_'),
   },
   {
@@ -154,6 +169,7 @@ const FAMILY_SPECS: FamilySpec[] = [
     description: 'Fields on a scheduled-task object (task.*)',
     candidatePattern: '\\btask\\.[a-z][a-zA-Z_]+\\b',
     maxDistance: 2,
+    source: 'grep',
     minePattern: '\\btask\\.[a-z][a-zA-Z_]{1,}\\b',
     pathspecs: ['*.js', '*.ts'],
     extract: raw => raw,
@@ -171,20 +187,30 @@ const defaultExec: ExecFn = (file, args) =>
  * success — the one failure mode this snapshot must never have.
  */
 function mine(chtCorePath: string, spec: FamilySpec, exec: ExecFn): string[] {
+  const args = spec.source === 'view-paths'
+    ? ['ls-tree', '-r', '--name-only', 'HEAD', '--', ...spec.pathspecs]
+    : ['grep', '-hoE', spec.minePattern, '--', ...spec.pathspecs];
+
   let raw: string;
   try {
-    raw = exec('git', ['-C', chtCorePath, 'grep', '-hoE', spec.minePattern, '--', ...spec.pathspecs]);
+    raw = exec('git', ['-C', chtCorePath, ...args]);
   } catch (err) {
     const status = (err as { status?: unknown }).status;
     if (status !== 1) {
       const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`mining family "${spec.name}" failed (git grep exit ${String(status)}): ${detail}`);
+      throw new Error(`mining family "${spec.name}" failed (git ${args[0]} exit ${String(status)}): ${detail}`);
     }
     return [];
   }
+
   const terms = new Set<string>();
   for (const line of raw.split('\n')) {
-    const token = spec.extract(line.trim());
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // ddocs/<db>/<ddoc>/views/<name>/map.js -> <name>
+    const token = spec.source === 'view-paths'
+      ? (/\/views\/([^/]+)\//.exec(trimmed)?.[1] ?? '')
+      : spec.extract(trimmed);
     if (token && spec.filter(token)) terms.add(token);
   }
   return [...terms].toSorted((a, b) => a.localeCompare(b));
