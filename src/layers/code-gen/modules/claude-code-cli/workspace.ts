@@ -34,6 +34,34 @@ const execFileAsync = promisify(execFile);
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
 const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
 
+/**
+ * A `%gd %gs` stash-list line whose MESSAGE ends with our marker plus the
+ * timestamp we generate. Anchored so a user stash that merely mentions the
+ * marker in prose does not read as one of ours. Linear, no backtracking.
+ */
+const LEAKED_STASH_LINE = /:\s*cht-agent-claude-code-cli-\d+\s*$/;
+
+/** Env flag read, tolerant of casing and stray whitespace. */
+function isFlagEnabled(name: string): boolean {
+  return readEnv(name)?.trim().toLowerCase() === 'true';
+}
+
+/**
+ * Recovery guidance for stashed work. Deliberately a LOOKUP, not `stash pop
+ * <name>`: a stash name is not a valid git reference, and a `stash@{N}` ref goes
+ * stale the moment anything else is stashed. The durable identifier is the
+ * marker in the message, so tell the operator how to resolve the ref at recovery
+ * time rather than baking in one that may have shifted.
+ */
+function recoveryHint(chtCorePath: string, stashName?: string): string {
+  const marker = stashName ?? STASH_MARKER_PREFIX;
+  return (
+    `Recover by locating the stash and popping the ref it reports: ` +
+    `git -C ${chtCorePath} stash list | grep ${marker}   then   ` +
+    `git -C ${chtCorePath} stash pop <the stash@{N} shown>`
+  );
+}
+
 export interface ChtCoreSnapshot {
   /** SHA of HEAD at the time of snapshot. Used for `git diff` capture and `git reset`. */
   headSha: string;
@@ -63,17 +91,21 @@ export interface ChtCoreSnapshot {
  * command. Set CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed deliberately.
  */
 async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
-  if (readEnv('CHT_AGENT_IGNORE_LEAKED_STASH') === 'true') return;
+  if (isFlagEnabled('CHT_AGENT_IGNORE_LEAKED_STASH')) return;
   const { stdout } = await execFileAsync(
     'git', ['stash', 'list', '--format=%gd %gs'], { cwd: chtCorePath }
   );
-  const leaked = stdout.split('\n').filter(l => l.includes(STASH_MARKER_PREFIX));
+  // Anchored: our stash message always ENDS with the marker plus a timestamp, so a
+  // user stash that merely mentions the marker ("wip after cht-agent-claude-code-cli
+  // crash") is not a false positive. Report every match, not just the first — a real
+  // leak can sit underneath a user stash, and naming the wrong one sends the
+  // operator to the wrong place.
+  const leaked = stdout.split('\n').filter(l => LEAKED_STASH_LINE.test(l));
   if (leaked.length === 0) return;
-  const ref = leaked[0].split(' ')[0];
+  const listed = leaked.map(l => l.trim()).join('; ');
   throw new Error(
-    `cht-core at ${chtCorePath} has a leftover cht-agent stash from an interrupted run: ` +
-    `${leaked[0].trim()}. Your uncommitted work is inside it. Recover with: ` +
-    `git -C ${chtCorePath} stash pop ${ref} ` +
+    `cht-core at ${chtCorePath} has ${leaked.length} leftover cht-agent stash(es) from an ` +
+    `interrupted run: ${listed}. Your uncommitted work is inside. ${recoveryHint(chtCorePath)} ` +
     `(or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place).`
   );
 }
@@ -199,18 +231,33 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
       },
       `stash "${name}" was created`,
     );
-    stashName = name;
-    // Capture the top stash ref. `git stash list -1 --format=%gd` returns just the ref name.
-    const { stdout: stashList } = await execFileAsync(
-      'git', ['stash', 'list', '-1', '--format=%gd'], { cwd: chtCorePath }
+    // Confirm OUR stash is on top before trusting the ref. The verify-or-throw
+    // helper only inspects on a non-zero exit, but `stash push -u` can exit ZERO
+    // having saved nothing; taking top-of-stack blindly would then hand rollback
+    // a third-party stash to pop.
+    const { stdout: topMessage } = await execFileAsync(
+      'git', ['stash', 'list', '-1', '--format=%gs'], { cwd: chtCorePath }
     );
-    stashRef = stashList.trim();
-    // Print recovery up front: if the process is hard-killed before rollback,
-    // this line is the operator's only pointer to their stashed work.
-    console.log(
-      `[claude-code-cli] Stashed your uncommitted work as "${name}" (${stashRef}). ` +
-      `If this run is interrupted, recover with: git -C ${chtCorePath} stash pop ${stashRef}`
-    );
+    if (!topMessage.includes(name)) {
+      console.warn(
+        `[claude-code-cli] git stash push reported success but "${name}" is not on top of the ` +
+        `stash stack; treating the run as unstashed so rollback never pops someone else's stash.`
+      );
+    } else {
+      stashName = name;
+      // Capture the top stash ref. `git stash list -1 --format=%gd` returns just the ref name.
+      const { stdout: stashList } = await execFileAsync(
+        'git', ['stash', 'list', '-1', '--format=%gd'], { cwd: chtCorePath }
+      );
+      stashRef = stashList.trim();
+      // Print recovery up front: if the process is hard-killed before rollback,
+      // this line is the operator's only pointer to their stashed work. The name
+      // is durable; the stash@{N} ref is not, so lead with the name.
+      console.log(
+        `[claude-code-cli] Stashed your uncommitted work as "${name}" (currently ${stashRef}). ` +
+        `If this run is interrupted: ${recoveryHint(chtCorePath, name)}`
+      );
+    }
   }
 
   // Record the untracked baseline AFTER the stash: stashing an uncommitted
@@ -429,19 +476,27 @@ async function cleanSessionCreatedFiles(
   const delta = await computeCleanDelta(chtCorePath, baselineUntracked);
   if (delta.length === 0) return; // nothing of ours to remove; never blanket-clean
 
+  // Keep going after a failing chunk: aborting would leave later chunks' session
+  // files behind on top of whatever the failing chunk left. Report them together.
+  const failures: string[] = [];
   for (let i = 0; i < delta.length; i += CLEAN_PATHSPEC_CHUNK) {
     const chunk = delta.slice(i, i + CLEAN_PATHSPEC_CHUNK);
-    await gitExecVerifyOrThrow(
-      ['clean', '-fd', '--', ...chunk.map(toLiteralPathspec)],
-      chtCorePath,
-      // The tree is legitimately dirty after a rollback (the operator's own
-      // untracked files survive by design), so "status is empty" is the wrong
-      // check — it would misreport clean: 'failed' and print a spurious
-      // ROLLBACK INCOMPLETE banner. Assert what removal actually means instead.
-      () => allPathsRemoved(chtCorePath, chunk),
-      'session-created files were removed',
-    );
+    try {
+      await gitExecVerifyOrThrow(
+        ['clean', '-fd', '--', ...chunk.map(toLiteralPathspec)],
+        chtCorePath,
+        // The tree is legitimately dirty after a rollback (the operator's own
+        // untracked files survive by design), so "status is empty" is the wrong
+        // check — it would misreport clean: 'failed' and print a spurious
+        // ROLLBACK INCOMPLETE banner. Assert what removal actually means instead.
+        () => allPathsRemoved(chtCorePath, chunk),
+        'session-created files were removed',
+      );
+    } catch (err) {
+      failures.push(`paths ${i}-${i + chunk.length - 1}: ${err}`);
+    }
   }
+  if (failures.length > 0) throw new Error(failures.join('; '));
 }
 
 /**

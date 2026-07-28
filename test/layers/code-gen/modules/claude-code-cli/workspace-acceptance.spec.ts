@@ -199,10 +199,17 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       message = (err as Error).message;
     }
     expect(message).to.match(/leftover cht-agent stash/i);
-    expect(message).to.include(`git -C ${repo} stash pop stash@{0}`);
+    // Lookup form (#140 F-8/C-1): `stash pop <name>` is not valid git, and a
+    // stash@{N} baked in at snapshot time goes stale once anything else is
+    // stashed. The message tells the operator how to resolve the ref instead.
+    expect(message).to.include('stash list | grep');
+    expect(message).to.include('stash pop <the stash@{N} shown>');
 
-    // The recovery command in the message restores the operator's work.
-    await git('stash', 'pop', 'stash@{0}');
+    // Follow that guidance for real: resolve the ref from the marker, then pop it.
+    const { stdout: list } = await git('stash', 'list', '--format=%gd %gs');
+    const line = list.split('\n').find(l => /cht-agent-claude-code-cli-\d+\s*$/.test(l));
+    expect(line, 'a cht-agent stash should be listed').to.exist;
+    await git('stash', 'pop', line!.split(' ')[0]);
     expect(await read('.gitignore')).to.equal('node_modules/\n.aider*\n');
     expect(await read('tracked.txt')).to.equal('operator work in progress\n');
     expect(await read('operator-notes.md')).to.equal('my notes\n');
