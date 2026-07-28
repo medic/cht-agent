@@ -95,10 +95,16 @@ Where Layer 1 reads only the draft, `ground-claims` reads the **source**. It run
 operator-side, before pushing a promote branch.
 
 ```sh
-CHT_CORE_PATH=/home/h4reet/ai_medic/medic-cht-core/cht-core \
+CHT_CORE_PATH=/path/to/a/current/cht-core \
 LLM_PROVIDER=claude-cli \
   npm run ground-claims -- --changed-only --base origin/main --label promote-messaging
 ```
+
+Keep that checkout **fetched**. A stale clone does not produce wrong answers — an
+unresolvable anchor reports `unverifiable`, never a pass — but it converts
+decidable claims into undecidable ones, and the `file-touched` and
+`release-branch` claims it gives up on are exactly the mechanism and backport
+claims that are hardest to catch by reading.
 
 `LLM_PROVIDER=claude-cli` runs on the operator's Claude subscription — no API key.
 Budget roughly **40 seconds per draft**; `--concurrency 3` is the default and
@@ -145,10 +151,18 @@ the PR number there. Two reasons it still fails:
   (#9833, #9900, #9901) has no `(#N)` subject anywhere, even though the code is
   plainly in the tree.
 
-Both are why the `fallback` ref exists. Keeping the checkout fetched materially
-improves coverage — a stale clone turns `file-touched` and `release-branch`
-claims into `unverifiable`, and those are exactly the mechanism and backport
-claims that fooled the reviewer.
+Both are why the `fallback` ref exists — and fetching does **not** fix the second
+one. Measured against a same-day clone, `#9833`, `#9900`, `#9901`, `#11021`,
+`#11057` and `#9281` still resolve to nothing, because those PR numbers are
+stamped nowhere in history.
+
+That makes an unresolvable anchor worth a second look rather than a shrug. Two
+of the three configuration drafts that would not anchor turned out to have real
+problems a reader would not spot: one describes a feature that is not on master
+at all (no dispatch branch, no commit referencing its issue), and one describes a
+real mechanism that actually arrived under a different PR number. An anchor that
+will not resolve on a current checkout is weak evidence that the draft's
+provenance is wrong.
 
 ## Reports
 
