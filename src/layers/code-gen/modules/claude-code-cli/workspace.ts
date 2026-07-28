@@ -349,22 +349,23 @@ export async function captureChtCoreDiff(
   );
   const untrackedNow = await listUntracked(chtCorePath);
 
-  const files: GeneratedFile[] = [];
-  await collectTrackedChanges(files, nameList, chtCorePath, preRunSha);
-  await collectUntrackedCreates(files, untrackedNow, chtCorePath, preRunSha, new Set(baselineUntracked));
-  return files;
+  return [
+    ...await collectTrackedChanges(nameList, chtCorePath, preRunSha),
+    ...await collectUntrackedCreates(untrackedNow, chtCorePath, preRunSha, new Set(baselineUntracked)),
+  ];
 }
 
 async function collectTrackedChanges(
-  files: GeneratedFile[],
   nameList: string,
   chtCorePath: string,
   preRunSha: string,
-): Promise<void> {
+): Promise<GeneratedFile[]> {
+  const files: GeneratedFile[] = [];
   for (const entry of parseDiffNameStatusZ(nameList)) {
     const file = await readChtCoreFile(chtCorePath, entry.relPath, preRunSha, entry.action);
     if (file) files.push(file);
   }
+  return files;
 }
 
 /**
@@ -374,39 +375,54 @@ async function collectTrackedChanges(
  * token is what keeps the parser in phase; a line-based split would treat the old
  * path as the next status and desynchronize the rest of the stream.
  */
-function parseDiffNameStatusZ(
-  nameList: string,
-): Array<{ relPath: string; action: 'create' | 'modify' }> {
-  const tokens = nameList.split('\0');
-  const entries: Array<{ relPath: string; action: 'create' | 'modify' }> = [];
+interface DiffEntry { relPath: string; action: 'create' | 'modify' }
+
+/**
+ * Path tokens a `-z` status entry carries. Renames and copies emit OLD and NEW;
+ * everything else emits one path.
+ */
+function pathTokenCount(code: string): number {
+  return code === 'R' || code === 'C' ? 2 : 1;
+}
+
+/** The capture entry for one status/path pair, or null when it is not capturable. */
+function diffEntryFor(code: string, relPath: string | undefined): DiffEntry | null {
+  if (!relPath || code === 'D') return null;
+  return { relPath, action: code === 'A' ? 'create' : 'modify' };
+}
+
+function parseDiffNameStatusZ(nameList: string): DiffEntry[] {
+  // Empty tokens only ever come from the trailing NUL: git emits neither an
+  // empty status nor an empty path, so dropping them cannot desynchronize the
+  // status/path pairing.
+  const tokens = nameList.split('\0').filter(Boolean);
+  const entries: DiffEntry[] = [];
   let i = 0;
   while (i < tokens.length) {
-    const status = tokens[i];
-    if (!status) { i++; continue; } // trailing NUL / empty token
-    const code = status.charAt(0);
-    // R/C carry two paths; the NEW path is the one on disk now (matches the
-    // previous `parts.at(-1)` semantics).
-    const pathCount = code === 'R' || code === 'C' ? 2 : 1;
-    const relPath = tokens[i + pathCount];
+    const code = tokens[i].charAt(0);
+    // For R/C the NEW path is the one on disk now (matches the previous
+    // `parts.at(-1)` semantics).
+    const pathCount = pathTokenCount(code);
+    const entry = diffEntryFor(code, tokens[i + pathCount]);
     i += pathCount + 1;
-    if (!relPath || code === 'D') continue;
-    entries.push({ relPath, action: code === 'A' ? 'create' : 'modify' });
+    if (entry) entries.push(entry);
   }
   return entries;
 }
 
 async function collectUntrackedCreates(
-  files: GeneratedFile[],
   untrackedNow: readonly string[],
   chtCorePath: string,
   preRunSha: string,
   baseline: ReadonlySet<string>,
-): Promise<void> {
+): Promise<GeneratedFile[]> {
+  const files: GeneratedFile[] = [];
   for (const relPath of untrackedNow) {
     if (baseline.has(relPath)) continue; // the operator's file, not ours
     const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
     if (file) files.push(file);
   }
+  return files;
 }
 
 async function readChtCoreFile(
@@ -487,14 +503,19 @@ async function computeCleanDelta(
  */
 async function allPathsRemoved(chtCorePath: string, deltaPaths: readonly string[]): Promise<boolean> {
   for (const relPath of deltaPaths) {
-    try {
-      await fs.lstat(path.join(chtCorePath, relPath));
-      return false; // still there
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return false;
-    }
+    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) return false;
   }
   return true;
+}
+
+/** ENOENT means removed; anything still stat-able, or any other errno, does not. */
+async function pathIsRemoved(fullPath: string): Promise<boolean> {
+  try {
+    await fs.lstat(fullPath);
+    return false; // still there
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+  }
 }
 
 /**
