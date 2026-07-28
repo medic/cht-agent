@@ -373,6 +373,28 @@ describe('workspace.ts (A.2b)', () => {
       expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/new.ts', 'src/after.ts']);
     });
 
+    it('V3-1: a non-array baseline throws instead of misattributing operator files (#140)', async () => {
+      // Symmetry with the clean path's guard. Without it, `new Set(undefined)` is
+      // empty, so every pre-existing untracked file is reported as a session
+      // CREATE and offered for approval into cht-core (silent RC-1 misattribution).
+      const ws = loadWorkspace({
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0operator-notes.md\0' },
+      });
+
+      for (const bad of [undefined, null, 'operator-notes.md']) {
+        let threw = false;
+        try {
+          await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', bad);
+        } catch (err) {
+          threw = true;
+          expect((err as Error).message).to.match(/baselineUntracked is missing or not an array/);
+          expect((err as Error).message).to.include('captureChtCoreDiff');
+        }
+        expect(threw, `expected a throw for baseline ${JSON.stringify(bad)}`).to.equal(true);
+      }
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
         'git diff --name-status -z abc1234': { stdout: 'D\0src/deleted.ts\0A\0src/new.ts\0' },

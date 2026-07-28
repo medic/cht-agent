@@ -298,6 +298,29 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
 }
 
 /**
+ * Enforce the required-baseline contract at RUNTIME, not just in the type, for
+ * every path that consumes it. An untyped caller (or a stale test literal)
+ * passing undefined would make `new Set(undefined)` an empty set, which fails
+ * silently in opposite but equally wrong directions: the clean would treat every
+ * untracked file as session-created and delete it, while the capture would report
+ * every operator file as a session CREATE into HC2. Fail loudly instead.
+ *
+ * `caller` and `consequence` are parameterized because the two call sites fail
+ * differently; the "missing or not an array" phrasing is shared and asserted on.
+ */
+function assertBaseline(
+  baselineUntracked: readonly string[],
+  caller: string,
+  consequence: string,
+): void {
+  if (Array.isArray(baselineUntracked)) return;
+  throw new Error(
+    `${caller}: snapshot.baselineUntracked is missing or not an array. ${consequence} ` +
+    'Pass the ChtCoreSnapshot returned by snapshotChtCore.'
+  );
+}
+
+/**
  * Capture every file the CLI modified during its run, packaged as GeneratedFile[].
  * MODIFY entries carry originalContent (the pre-run version from `git show`).
  * CREATE entries omit originalContent.
@@ -312,6 +335,12 @@ export async function captureChtCoreDiff(
   preRunSha: string,
   baselineUntracked: readonly string[],
 ): Promise<GeneratedFile[]> {
+  assertBaseline(
+    baselineUntracked,
+    'captureChtCoreDiff',
+    'Refusing to capture, because an absent baseline would report every pre-existing untracked ' +
+    'file as session-generated and offer it for approval into cht-core.',
+  );
   // git diff --name-status against the pre-run SHA picks up tracked changes (M, A, D, R, ...)
   // but NOT untracked files. For untracked CREATEs the CLI made, we also need ls-files --others.
   // `-z` for the same reason as listUntracked: unquoted, NUL-delimited paths.
@@ -439,18 +468,11 @@ async function computeCleanDelta(
   chtCorePath: string,
   baselineUntracked: readonly string[],
 ): Promise<string[]> {
-  // Enforce the required-baseline contract at RUNTIME, not just in the type. An
-  // untyped caller (or a stale test literal) passing undefined would make
-  // `new Set(undefined)` an empty set, so the delta would become "every untracked
-  // file" — silently restoring the blanket clean this whole design removes.
-  // Fail loudly instead: rollback reports clean:'failed' and nothing is deleted.
-  if (!Array.isArray(baselineUntracked)) {
-    throw new Error(
-      'rollbackChtCore: snapshot.baselineUntracked is missing or not an array. Refusing to clean, ' +
-      'because an absent baseline would delete every untracked file in the target repo. ' +
-      'Pass the ChtCoreSnapshot returned by snapshotChtCore.'
-    );
-  }
+  assertBaseline(
+    baselineUntracked,
+    'rollbackChtCore',
+    'Refusing to clean, because an absent baseline would delete every untracked file in the target repo.',
+  );
   const baseline = new Set(baselineUntracked);
   const untrackedNow = await listUntracked(chtCorePath);
   return untrackedNow.filter(p => !baseline.has(p));
