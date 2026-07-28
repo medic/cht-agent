@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10908
 issueUrl: https://github.com/medic/cht-core/issues/10908
 title: Support ordering header tabs and sidebar menu options by a configurable `weight` property (app settings + UI Extensions)
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-28'
 summary: Header tab order ('Messages', 'Reports', 'People', etc.) was fixed and non-configurable, blocking deployments from controlling tab order and the initial landing tab. This PR makes ordering driven by a configurable `weight` on header_tabs app settings and header_tab UI Extensions, honored in both the new and old UI, and refactors sidebar menu option handling to reuse the same pattern.
 services:
   - webapp
@@ -27,6 +27,9 @@ tags:
 related_workflows:
   - ui-extensions
 source_pr: medic/cht-core#11057
+source_prs:
+  - medic/cht-core#11057
+  - medic/cht-core#11050
 source_sha: 46c8f7c8e43a969d9ecd12c65d3816b19664fd63
 distilled_at: '2026-06-22'
 reviewed_by: null
@@ -90,6 +93,7 @@ Karma unit tests added/updated for header-tabs.service, ui-extensions.service, h
 - #10672: Blocker for #10908 (UI Extensions groundwork)
 - #10901: Blocker for #10908
 - cht-docs#2213: Documentation for the new header_tabs/UI Extension weight configuration
+- #10224: UI Extensions epic — this PR merged into its `10224-ui-extensions` feature branch and reached master in the epic's squash, medic/cht-core#11050 (commit `180c29ecf`). `source_sha` is that feature-branch merge commit, so it is not an ancestor of master; resolve provenance via `source_prs`.
 
 ## Domain Rationale
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8027
 issueUrl: https://github.com/medic/cht-core/issues/8027
 title: Defensively handle malformed partners branding document missing its 'resources' property to prevent fatal crashes in Admin app and Webapp
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-28'
 summary: A malformed partners document (empty content {}) uploaded via the cht tool caused fatal TypeErrors in both the Admin app and Webapp because code assumed the resources property existed. The fix adds null checks and initializes an empty resources object so the UI stays functional and users can repair the document.
 services:
   - admin
@@ -65,7 +65,7 @@ Guard before iterating object keys: have `getDocResources` return `[]` when the 
 
 ## Design Choices
 
-Chose graceful degradation over rejecting/validating the bad document: initializing an empty resources object keeps the UI functional so users can repair the document in-place. Per review feedback, redundant resource initialization was removed, tests were consolidated to cut duplication, one-liner style was applied, and a browserify-compatibility const was documented.
+Chose graceful degradation over rejecting/validating the bad document: initializing an empty resources object keeps the UI functional so users can repair the document in-place. Per review feedback, redundant resource initialization was removed, tests were consolidated to cut duplication, and one-liner style was applied. A reviewer-suggested `res?.resources` one-liner was declined for the Admin service because its browserify build does not parse optional chaining (build error surfaced in review) — which is why the Admin service keeps the ES5 spelling while the Angular-CLI-built webapp service uses `res?.resources ?? {}`.
 
 ## Related Files
 

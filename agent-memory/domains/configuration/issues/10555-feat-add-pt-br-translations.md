@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10556
 issueUrl: https://github.com/medic/cht-core/issues/10556
 title: Add Brazilian Portuguese (pt-BR) translations and register the pt locale
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-28'
 summary: CHT Core shipped no Portuguese translations despite deployment in Lusophone geographies. This PR adds a Brazilian Portuguese messages properties file and registers the `pt` locale across the API translation loader and the webapp bootstrapper, Enketo, and Angular entry points.
 services:
   - api
@@ -64,7 +64,7 @@ To add a new UI language: drop a messages-<locale>.properties file into api/reso
 
 ## Design Choices
 
-Used the `pt` extension rather than `pt-BR`/`pt-PT` since separate Portugal-Portuguese translations are unlikely in the short term for CHT's target regions. Chose Brazilian Portuguese conventions (e.g. "usuário" over "utilizador", "senha" over "palavra-passe") as more widely understood across Lusophone Africa. Included an explicit AI-disclosure comment documenting Claude-assisted authorship as a reference pattern.
+Used the `pt` extension rather than `pt-BR`/`pt-PT` since separate Portugal-Portuguese translations are unlikely in the short term for CHT's target regions. Chose Brazilian Portuguese conventions (e.g. "usuário" over "utilizador", "senha" over "palavra-passe") as more widely understood across Lusophone Africa. The PR description includes an explicit AI-disclosure section documenting the Claude-assisted authorship and human review — a reference pattern for future translation PRs.
 
 ## Related Files
 
@@ -86,4 +86,4 @@ PR checklist reports the change was verified for UI/UX backwards compatibility (
 
 **Fit:** strong
 
-Adding translations and registering a new locale is canonically the configuration domain; this is a textbook strong fit, not a catch-all pick.
+Adding translations and registering a new locale is canonically the configuration domain: the change is entirely a translation resource file plus locale registration across the API and webapp entry points.

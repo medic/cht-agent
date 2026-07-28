@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10598
 issueUrl: https://github.com/medic/cht-core/issues/10598
 title: Fix admin languages service DB request after doc_by_type stopped emitting translations
-lastUpdated: '2026-07-27'
+lastUpdated: '2026-07-28'
 summary: The admin privacy-policies change page loaded no privacy policies because the languages service still queried the medic-client/doc_by_type view with a key shape the view no longer emitted; the query was replaced with an allDocs prefix scan, restoring policy loading.
 services:
   - admin
@@ -48,7 +48,7 @@ The admin app's privacy-policies change page displayed no privacy policies (issu
 
 ## Root Cause
 
-PR medic/cht-core#10255 (commit `de02d8421`, "chore(#8157): remove use of translationdoc.enabled") removed the `translations` special case from `ddocs/medic-db/medic-client/views/doc_by_type/map.js`, deleting the block that emitted `[ 'translations', doc.enabled ]` with a `{ code, name }` value and leaving only `emit([ doc.type ])`. The view itself was neither renamed nor removed — it still exists on master with roughly fifteen consumers. That PR updated `admin/src/js/controllers/display-languages.js` and `admin/src/js/controllers/display-translations.js` but missed `admin/src/js/services/languages.js`, which kept querying the old key shape and silently returned nothing.
+PR medic/cht-core#10255 (commit `de02d8421`, "chore(#8157): remove use of translationdoc.enabled") removed the `translations` special case from `ddocs/medic-db/medic-client/views/doc_by_type/map.js`, deleting the block that emitted `[ 'translations', doc.enabled ]` with a `{ code, name }` value and leaving only `emit([ doc.type ])`. The view itself was neither renamed nor removed — at the time of this fix, 18 files still referenced it. (PR medic/cht-core#10822, commit `57ea9228b`, 2026-07-01, has since narrowed the view to indexing only `form` and `user-settings` docs and moved the remaining consumers off it; current master carries no code reference to the view name.) #10255 updated `admin/src/js/controllers/display-languages.js` and `admin/src/js/controllers/display-translations.js` but missed `admin/src/js/services/languages.js`, which kept querying the old key shape and silently returned nothing.
 
 ## Solution
 
