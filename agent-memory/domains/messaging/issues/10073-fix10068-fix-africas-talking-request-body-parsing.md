@@ -5,9 +5,9 @@ domain: messaging
 domainFit: strong
 issueNumber: 10068
 issueUrl: https://github.com/medic/cht-core/issues/10068
-title: Fix Africa's Talking SMS gateway double-parsing of the inbound request body
+title: Fix Africa's Talking SMS gateway double-parsing of the outbound send response body
 lastUpdated: '2026-07-16'
-summary: The Africa's Talking SMS integration attempted to JSON-parse a request body that had already been parsed, breaking inbound message handling. The fix stops the redundant double-parse and adds a CI-only e2e test that exercises the Africa's Talking Sandbox server.
+summary: The Africa's Talking SMS integration JSON-parsed the response body of its own outbound send request, which `@medic/couch-request` had already parsed, so every send failed to produce a message state change. The fix removes the redundant `parseResponseBody` helper and appends a CI-only e2e case (gated on `AFRICAS_TALKING_SANDBOX_API_KEY`) to the pre-existing Africa's Talking wdio spec, exercising the Sandbox server.
 services:
   - api
 techStack:
@@ -38,27 +38,27 @@ entities:
   - api/src/services/africas-talking.js
 concepts:
   - SMS gateway integration
-  - inbound webhook request parsing
-  - Express body parsing
+  - outbound SMS send response handling
+  - HTTP client response parsing
 related_issues: []
 stale: false
 ---
 
 ## Problem
 
-The Africa's Talking integration failed because it tried to parse a request/response body that was already parsed, causing a double-parse error when processing requests from the Africa's Talking gateway.
+Outbound SMS state updates silently failed: `sendMessage` in api/src/services/africas-talking.js passed the already-parsed response object from `request.post` into a `parseResponseBody` helper, whose `JSON.parse` threw and was swallowed, returning `undefined`. The service then logged `Unable to JSON parse response` and returned no state change, so message states were never updated after a send even when the gateway had accepted the message.
 
 ## Root Cause
 
-The africas-talking service re-parsed the incoming request body even though it had already been parsed upstream (by Express middleware), so the second parse operated on a non-string/already-parsed value and failed.
+The africas-talking service re-parsed the HTTP response body of its own outbound POST to the Africa's Talking API. `@medic/couch-request`'s `post` already resolves the parsed body when the response is `application/json`, so `parseResponseBody`'s `JSON.parse` threw on the object, the catch swallowed the error and returned `undefined`, and `sendMessage` logged "Unable to JSON parse response" and returned no state change. Nothing inbound, no webhook, and no Express middleware is involved anywhere in this file.
 
 ## Solution
 
-Removed the redundant parsing step in api/src/services/africas-talking.js so the already-parsed body is consumed directly. Added unit coverage and a CI-only e2e test (tests/e2e/default/sms/africas-talking.wdio-spec.js) that interacts with the Africa's Talking Sandbox server, with supporting changes in tests/utils/index.js and .github/workflows/build.yml to run it in CI.
+Removed the `parseResponseBody` helper in api/src/services/africas-talking.js so the already-parsed response object from `request.post` is consumed directly. Updated — not added — the existing unit spec: its three response fixtures changed from `JSON.stringify({...})` to plain objects (6 insertions / 6 deletions, no new cases). Appended a `(CREDENTIAL_PASS_OUTGOING ? describe : describe.skip)` block to the pre-existing tests/e2e/default/sms/africas-talking.wdio-spec.js that sends through the Africa's Talking Sandbox server; .github/workflows/build.yml only exports the `AFRICAS_TALKING_SANDBOX_API_KEY` secret (which is what gates the block), and the tests/utils/index.js edit is an incidental `getDoc(id, rev = '', ...)` default with no bearing on the new e2e case.
 
 ## Code Patterns
 
-Do not re-parse request bodies that have already been parsed by upstream middleware — consume req.body directly rather than calling JSON.parse on it again (api/src/services/africas-talking.js).
+Do not re-parse an HTTP response body the HTTP client already parsed — `@medic/couch-request`'s `post` resolves an object, so consume it directly instead of calling `JSON.parse` on it (api/src/services/africas-talking.js). The file is outbound-only; it contains no Express handler and never touches `req.body`.
 
 ## Design Choices
 
@@ -76,7 +76,7 @@ This fix was backported to the 4.21 release line (PR #10082, cherry-picked from 
 
 ## Testing
 
-Updated unit tests in api/tests/mocha/services/africas-talking.spec.js and added a CI-only e2e test in tests/e2e/default/sms/africas-talking.wdio-spec.js that interacts with the Africa's Talking Sandbox server; tests/utils/index.js and .github/workflows/build.yml were updated to support running the e2e test in CI. The fix was also confirmed by manual testing.
+Updated unit-test fixtures in api/tests/mocha/services/africas-talking.spec.js (the three stringified response fixtures became plain objects; 6 insertions / 6 deletions, no new cases) and added a CI-only e2e case to tests/e2e/default/sms/africas-talking.wdio-spec.js that interacts with the Africa's Talking Sandbox server. The case is a `(CREDENTIAL_PASS_OUTGOING ? describe : describe.skip)` block keyed on `process.env.AFRICAS_TALKING_SANDBOX_API_KEY`, which .github/workflows/build.yml supplies from repository secrets; the tests/utils/index.js edit in the same commit is an incidental `getDoc(id, rev = '', ...)` default and does not support the e2e test. The fix was also confirmed by manual testing.
 
 ## Related Issues
 

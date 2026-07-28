@@ -7,7 +7,7 @@ issueNumber: 10428
 issueUrl: https://github.com/medic/cht-core/issues/10428
 title: Clear scheduled messages when their due_tasks schedule fails or becomes invalid
 lastUpdated: '2026-07-16'
-summary: Scheduled messages (scheduled_tasks) had no mechanism to be cleared when their schedule failed or became invalid, risking stale or erroneous delivery. The due_tasks Sentinel schedule now clears those messages instead of leaving them scheduled.
+summary: Scheduled messages (scheduled_tasks) had no mechanism to be cleared when message generation failed or produced an empty message body, so they sat in `scheduled` indefinitely. The due_tasks Sentinel schedule can now set them to `clear`, but only when the new opt-in `sms.clear_failing_schedules` app setting is true; when it is unset or false such a task is simply left in `scheduled` rather than cleared.
 services:
   - sentinel
 techStack:
@@ -53,15 +53,15 @@ shared-libs/transitions/src/schedule/due_tasks.js processed scheduled_tasks (out
 
 ## Solution
 
-Added logic to due_tasks.js so that when a message's associated schedule fails or is invalid, the scheduled_tasks are cleared rather than left scheduled or transitioned to pending. Covered by new and updated unit tests and a dedicated Sentinel integration test for clearing invalid scheduled tasks.
+Added an opt-in `sms.clear_failing_schedules` app setting, read in `processBatch` as `config.get('sms')?.clear_failing_schedules || false` and passed as the new `clearFailing` argument of `updateScheduledTasks(doc, context, dueDates, clearFailing=false)`. The old `if (task.messages) { utils.setTaskState(task, 'pending'); }` became `const hasValidMessage = task.messages?.[0].message?.trim().length > 0;` followed by `if (hasValidMessage || clearFailing) { utils.setTaskState(task, hasValidMessage? 'pending' : 'clear'); }` — a due task with a non-empty message body still goes to `pending`, and only when `clearFailing` is true does an empty/ungenerated message get set to `clear`. When the setting is absent or false such a task is now simply left in `scheduled` (note this is itself a change: previously any task with a `messages` array, even an empty-bodied one, was moved to `pending`). Covered by new and updated unit tests and a dedicated Sentinel integration test at tests/integration/sentinel/schedules/clear-invalid-scheduled-tasks.spec.js.
 
 ## Code Patterns
 
-In shared-libs/transitions/src/schedule/due_tasks.js, iterate a document's scheduled_tasks and, on schedule-resolution failure, move the task to a cleared state instead of transitioning it to pending; scope any per-run 'clear' state to a single schedule execution so it does not leak across successive due_tasks runs.
+In shared-libs/transitions/src/schedule/due_tasks.js, iterate a document's scheduled_tasks and, when a due task has no non-empty message body, move it to the `clear` state instead of leaving it `scheduled` — gated behind the `sms.clear_failing_schedules` app setting, which `processBatch` reads once per batch and threads down as the `clearFailing = false` parameter of `updateScheduledTasks`.
 
 ## Design Choices
 
-Clearing invalid/failed scheduled messages (preventing erroneous future delivery) was chosen over erroring out or leaving messages indefinitely scheduled. The behavior was folded into the existing due_tasks schedule rather than introduced as a separate transition or schedule.
+Clearing invalid/failed scheduled messages (preventing erroneous future delivery) was made opt-in via the new `sms.clear_failing_schedules` setting, which defaults to false — so existing deployments keep leaving such messages indefinitely scheduled unless an admin turns it on. The behavior was folded into the existing due_tasks schedule rather than introduced as a separate transition or schedule.
 
 ## Related Files
 

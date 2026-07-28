@@ -27,7 +27,7 @@ The SMS gateway API endpoint had no test coverage, making it risky to modify or 
 
 ## Root Cause
 
-The SMS gateway endpoint (`api/src/controllers/sms-gateway.js`) was implemented without corresponding tests. This violated testing best practices and made the codebase fragile.
+The SMS gateway endpoint (`api/controllers/sms-gateway.js` — the `api/src/` layout postdates this change) was not untested: `api/tests/unit/controllers/sms-gateway.js` covered it at the unit level, and `tests/protractor/e2e/sms-gateway.js` already POSTed to `/api/sms` as part of browser-driven UI assertions. What was missing was a dedicated API-level e2e suite asserting the `/api/sms` request/response contract and the resulting database state on their own, which made the endpoint risky to modify or extend.
 
 ## Solution
 
@@ -41,14 +41,14 @@ Added comprehensive test suite for SMS gateway API endpoint:
      // ... assertion logic
    }
    ```
-3. **Used changes listener approach**: Registered CouchDB changes listener to capture documents created by endpoint calls
+3. **Polled a view, not a changes listener**: `allMessageDocs()` reads `medic-client/messages_by_contact_date` with `{ reduce: false, include_docs: true }` and maps `res.rows` to docs; no CouchDB changes listener is used
 4. **Tested message flow**: Verified messages sent to gateway endpoint are properly stored in database
 5. **Validated error handling**: Tested endpoint behavior with invalid content
 
 ## Code Patterns
 
 - Use polling with timeout for async test assertions (100ms intervals)
-- Pattern: Register changes listener before API call to capture resulting documents
+- Pattern: after the API call, poll the view in a `check()` loop until the expected snapshot matches or a 10s deadline expires, then resolve/reject
 - Pattern: Use `utils.db.query()` to verify database state after API calls
 - Pattern: `tests/protractor/e2e/api/controllers/sms-gateway.spec.js` for e2e API tests
 - Use JSON comparison for deep equality checks: `JSON.stringify(actual) === JSON.stringify(expected)`
@@ -56,26 +56,22 @@ Added comprehensive test suite for SMS gateway API endpoint:
 
 ## Design Choices
 
-Chose changes listener approach over view polling because:
-- Independent of view implementation (views can change without breaking tests)
-- More reliable than polling views that might be refactored
-- Captures documents directly as they're created
-- Faster than waiting for view index updates
+Chose to poll a view rather than register a changes listener:
+- `allMessageDocs()` queries the `medic-client/messages_by_contact_date` view with `{ reduce: false, include_docs: true }` and maps `res.rows` to docs
+- `expectMessagesInDb` and `expectMessageStates` re-run that query via `setTimeout(check, 100)` until the JSON-stringified actual snapshot equals the expected one, or a 10s deadline (`const endTime = Date.now() + 10000`) expires, at which point they reject with an expected/actual diff
 
-The adopted approach: register a changes listener (including docs) before the endpoint is called, then assert the docs come through it within 10s.
+No CouchDB changes listener is registered anywhere in the spec.
 
 ## Related Files
 
 - tests/protractor/e2e/api/controllers/sms-gateway.spec.js
-- api/src/controllers/sms-gateway.js
+- api/controllers/sms-gateway.js (the endpoint under test; not modified — this commit adds only the spec)
 
 ## Testing
 
 - Added e2e tests for SMS gateway endpoint
 - Tested message receiving and storage
 - Verified error handling for invalid content
-- Tested with valid and invalid phone numbers
-- Confirmed endpoint returns correct HTTP status codes
 
 ## Related Issues
 

@@ -58,7 +58,7 @@ Added a link in sender.component.html plus supporting navigation logic in sender
 
 ## Code Patterns
 
-Conditional navigation link in an Angular component template bound to a router-navigation method in the component class (sender.component.html + sender.component.ts); e2e page-object extension in messages.wdio.page.js exposing the sender link for the wdio spec.
+Conditional `<a class="name" *ngIf="!sentBy && getId() && getName(); else noLinkLabel" [routerLink]="[ '/contacts', getId() ]">` in the Angular template — navigation is the declarative `routerLink` directive, not a navigation method: `sender.component.ts` injects no `Router` and gained only two data accessors, `getName()` (`doc?.name || contact?.name || (!form && name) || from || sent_by || doc?.from`) and `getId()` (`this.message.contact?._id || this.message.doc?._id`). An `<ng-template #noLinkLabel>` renders a plain `<span class="name">` when there is no id. E2e page-object extension in messages.wdio.page.js (`navigateFromConversationToContact`, which waits for and clicks `a.name` inside the message header) exposes the sender link for the wdio spec.
 
 ## Design Choices
 
@@ -74,7 +74,7 @@ Implemented as an in-component link kept close to the existing sender display ra
 
 ## Testing
 
-Added a karma unit test (sender.component.spec.ts), a happy-path e2e wdio spec (messages-sender-data.wdio-spec.js), and a supporting page-object method (messages.wdio.page.js); the change was also verified manually.
+Added two karma unit tests to sender.component.spec.ts ('should render sender as a link when message has a contact with id' and '... when message has a doc with id'), along with `RouterModule.forRoot([])` in the TestBed and `div .name` -> `div span.name` selector updates. The e2e file is not new: tests/e2e/default/sms/messages-breadcrumbs.wdio-spec.js was renamed (git -M reports R079; without rename detection, D + A) to tests/e2e/default/sms/messages-sender-data.wdio-spec.js, keeping its two existing breadcrumb tests and gaining one happy-path case, 'should display conversation with link and navigate to contact'. A supporting page-object method `navigateFromConversationToContact` was added to messages.wdio.page.js; the change was also verified manually.
 
 ## Related Issues
 

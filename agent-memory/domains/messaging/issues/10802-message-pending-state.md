@@ -39,7 +39,7 @@ The scheduled task processing logic in `shared-libs/transitions/src/schedule/due
 2. When a document had multiple `scheduled_tasks` with identical due dates and one was stuck in `scheduled` state, the system continuously added already-processed messages back to the pending queue
 3. Created a feedback loop where the same message was resent every processing cycle (every 5 minutes) regardless of its current status
 
-The code only checked `due_date` without checking if the task was already processed or in a different state. More precisely, `due_tasks.js` trusted the (eventually-consistent) `messages_by_state` CouchDB view results and did not re-verify each message's current state on the freshly loaded/hydrated document before mutating it; a message already transitioned out of the schedulable state (muted, cleared, or already sent) still appeared in the view and was reprocessed (PR #10803, PR #10811).
+The code only checked the task's computed due value (`task.due || task.timestamp || doc.reported_date`) against the collected due dates, without checking whether the task was already processed or had moved to a different `state`. More precisely, `due_tasks.js` trusted the (eventually-consistent) `messages_by_state` CouchDB view results and did not re-verify each message's current state on the freshly loaded/hydrated document before mutating it; a message already transitioned out of the schedulable state (muted, cleared, or already sent) still appeared in the view and was reprocessed (PR #10803, PR #10811).
 
 ## Solution
 
@@ -49,21 +49,28 @@ Modified the task processing logic to check BOTH the due date AND the task statu
 2. Prevents already-processed messages from being re-queued
 3. Ensures each task is processed only once per due date window
 
-The key change was adding a status filter:
+The key change was an early return that skips any task not still in the `scheduled` state, added at the top of the `doc.scheduled_tasks.forEach` callback in `updateScheduledTasks`:
 ```javascript
-if (task.status === 'scheduled' && isDue(task.due_date)) {
-  // process task
-}
+const SCHEDULED_STATE = 'scheduled';
+// ...
+doc.scheduled_tasks.forEach(task => {
+  // only process tasks that are still in 'scheduled' state - skip tasks that have already
+  // progressed to other states (e.g. pending, sent, delivered) to prevent re-sending
+  if (task.state !== SCHEDULED_STATE) {
+    return;
+  }
+  // ...
+});
 ```
 
-The fix landed as two sibling read-check-write guards on the same file: re-checking a message's current status before it is processed (PR #10803), and guarding the `scheduled_task` update so it only transitions to `'pending'` when still in the `scheduled` state (PR #10811). The #10811 guard was cherry-picked/backported to the 5.1.x release line.
+The fix is a single guard: an early `return` that skips any `scheduled_task` whose `state` is not `'scheduled'`, so only still-scheduled tasks can be transitioned to `'pending'`. It landed twice as byte-identical patches — PR #10803 (6a5867bb) on master and 5.2.x, and PR #10811 (b87a025f), the cherry-pick onto the 5.1.x release line, which is the only line carrying it. There is no second, separate guard.
 
 ## Code Patterns
 
 - Always check task status alongside due dates when processing scheduled tasks
 - Use proper state management to prevent reprocessing of completed tasks
 - Filter tasks by both `due_date` and `status` fields to avoid duplicate processing
-- Pattern: `if (task.status === 'scheduled' && isDue(task.due_date))` - process only scheduled tasks that are actually due
+- Pattern: `if (task.state !== SCHEDULED_STATE) { return; }` as the first statement in the `doc.scheduled_tasks.forEach` callback - skip any task not still in the `'scheduled'` state before the due-date comparison runs
 - File: `shared-libs/transitions/src/schedule/due_tasks.js` contains the core scheduling logic
 - File: `shared-libs/transitions/test/unit/due_tasks.js` contains unit tests
 - The fix prevents SMS/notification spam by properly managing task state transitions
@@ -81,15 +88,12 @@ Chose to fix at the library level (`shared-libs/transitions`) rather than in ind
 - shared-libs/transitions/src/schedule/due_tasks.js
 - shared-libs/transitions/test/unit/due_tasks.js
 - tests/integration/sentinel/schedules/due-tasks.spec.js (sentinel integration coverage; PR #10803, PR #10811)
-- api/src/controllers/scheduled_tasks.js
-- sentinel/src/schedule/task-processor.js
 
 ## Testing
 
 - Added integration test to verify that only scheduled tasks are processed in each window
 - Test simulates multiple tasks with same due date and different statuses
 - Verified that processed tasks don't get re-added to pending queue
-- Edge case testing for tasks with null/undefined status fields
 - Added a sentinel integration test (`tests/integration/sentinel/schedules/due-tasks.spec.js`) asserting scheduled_tasks are only updated to `pending` when still in the `scheduled` state and left untouched otherwise (PR #10803, PR #10811)
 
 ## Related Issues

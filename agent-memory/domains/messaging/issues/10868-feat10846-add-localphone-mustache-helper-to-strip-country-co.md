@@ -80,4 +80,4 @@ Unit tests added/extended in shared-libs/message-utils/test/index.js. Cases cove
 
 **Fit:** strong
 
-The PR adds a Mustache helper in message-utils that controls how phone numbers are rendered in outgoing SMS message content — squarely SMS message composition, the core of the messaging domain. Although it reads default_country_code from app_settings, the work is message rendering rather than gateway/integration setup, so the configuration pitfall does not apply.
+The PR adds a Mustache helper in message-utils that controls how phone numbers are rendered in outgoing SMS message content — squarely SMS message composition, the core of the messaging domain. It reads `default_country_code` from app_settings, but the work is message rendering rather than gateway or integration setup.

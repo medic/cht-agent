@@ -7,7 +7,7 @@ issueNumber: 10459
 issueUrl: https://github.com/medic/cht-core/issues/10459
 title: Allow multiple SMS recipients to be specified and resolved in order in message-utils
 lastUpdated: '2026-06-22'
-summary: SMS message configurations could previously target only a single recipient. This PR lets multiple recipients be specified and resolves them in order, giving SMS deployments more flexibility.
+summary: SMS message configurations could previously name only a single recipient definition. This PR lets an array of recipient definitions be specified and uses the first one that resolves to a phone number, giving deployments an ordered fallback chain. It does not deliver the message to multiple recipients.
 services:
   - sentinel
   - api
@@ -41,7 +41,7 @@ stale: false
 
 ## Problem
 
-Message configurations could only specify a single SMS recipient, limiting deployments that need a message delivered to more than one resolved recipient or that want ordered fallback among recipient definitions.
+Message configurations could only specify a single SMS recipient definition, so there was no way to declare an ordered fallback chain (try `contact_no_phone`, then `reporting_unit`, then a literal number) for when the preferred recipient does not resolve.
 
 ## Root Cause
 
@@ -49,11 +49,11 @@ The recipient-resolution logic in shared-libs/message-utils/src/index.js resolve
 
 ## Solution
 
-Updated message-utils to accept multiple recipients and resolve each in the order specified, so one message configuration can target several recipients with deterministic precedence while remaining backwards compatible with single-recipient configs.
+Updated message-utils so `recipient` may be a string or an array. `normalizeRecipient` coerces it to a trimmed string array and `resolveMany` walks that array returning the FIRST entry that resolves to a phone number — this is ordered fallback, not fan-out: `generate` still returns a single `[ result ]` with one `to`. If none resolve, `getRecipient` falls back to the sender (when `default_to_sender` is on) or to `recipient[0]`. Single-recipient configs behave exactly as before.
 
 ## Code Patterns
 
-Recipient resolution iterates over a list of recipient specifications and resolves each in declared order in shared-libs/message-utils/src/index.js; message generation produces output per resolved recipient.
+Recipient resolution iterates a list of recipient specifications in declared order in shared-libs/message-utils/src/index.js and short-circuits on the first one that resolves (`resolveMany` returns as soon as `resolveRecipient` yields a phone); if none resolve, `getRecipient` falls back to the sender or to `recipient[0]`. Message generation still produces exactly one message object with a single `to`.
 
 ## Design Choices
 

@@ -53,7 +53,7 @@ Updated fast-action-button.service.ts to check the logged-in user's identity and
 
 ## Code Patterns
 
-Guard a context-sensitive fast action by comparing the target contact's id against the logged-in user's id before exposing the action, centralized in webapp/src/ts/services/fast-action-button.service.ts.
+Guard a context-sensitive fast action by comparing the target contact's `_id` against the logged-in user's linked **`contact_id`** (not the user's own id), resolved asynchronously through a newly injected `UserSettingsService` — `const user: any = await this.userSettingsService.get(); return user?.contact_id === sendTo?._id;` — and AND-ing the negated result into the send-message action's existing async `canDisplay()` next to the phone and permission checks, in webapp/src/ts/services/fast-action-button.service.ts.
 
 ## Design Choices
 

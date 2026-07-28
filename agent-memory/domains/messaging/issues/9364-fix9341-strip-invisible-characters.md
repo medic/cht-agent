@@ -5,9 +5,9 @@ domain: messaging
 domainFit: strong
 issueNumber: 9341
 issueUrl: https://github.com/medic/cht-core/issues/9341
-title: Strip invisible characters from SMS message content in the smsparser before parsing report fields
+title: Strip invisible characters inside standardiseDigits so digit-normalised SMS fields (Bikram Sambat dates, phone numbers) are sanitised too
 lastUpdated: '2026-06-23'
-summary: SMS messages containing invisible/non-printing characters were parsed incorrectly by the smsparser, corrupting field values. The fix strips invisible characters from the SMS content before parsing and backfills unit tests for the previously-untested parser.
+summary: smsparser.js already stripped zero-width characters in its `integer`/`string`/`date`/`bsDate`/`boolean`/`month` field parsers, but the shared `standardiseDigits` helper used by the `bsYear`/`bsMonth`/`bsDay` and `phone_number` parsers (and by the Muvuku aggregate-BS-date assembly) did not, so those field values kept their invisible characters. The one-line fix wraps `standardiseDigits`' output in the existing `stripInvisibleCharacters`, and four `parseField` cases were appended to the already ~1670-line smsparser spec.
 services:
   - api
 techStack:
@@ -42,23 +42,23 @@ stale: false
 
 ## Problem
 
-SMS messages submitted with invisible or zero-width/non-printing characters were not handled by the smsparser, so those characters leaked into parsed field values and produced incorrect report data for SMS-submitted reports. The parser function additionally had no unit test coverage at all.
+SMS reports whose Bikram Sambat date fields (`bsYear`/`bsMonth`/`bsDay`) contained zero-width characters were parsed incorrectly, because those field parsers only ran `standardiseDigits`, which did not strip invisible characters the way the other field parsers already did. `smsparser.parseField` had no direct unit coverage before this change (the only pre-existing BS-date tests exercised `smsparser.parse` on compact-textforms fixtures), although api/tests/mocha/services/report/smsparser.spec.js itself was already ~1670 lines of existing tests.
 
 ## Root Cause
 
-smsparser.js did not sanitize the raw SMS text before parsing, so invisible characters embedded in the incoming message were treated as part of the field content rather than being discarded.
+smsparser.js already had a `stripInvisibleCharacters` helper (defined at line 51) and already applied it in the `integer`, `string`, `date`, `bsDate`, `boolean` and `month` field parsers. It was NOT applied on the `standardiseDigits` path — the only normalisation performed by the `bsYear`, `bsMonth`, `bsDay` and `phone_number` field parsers, and by the Muvuku aggregate-BS-date assembly. Any zero-width character in those field values therefore survived into the parsed report (independently of whether the digits were Devanagari or ASCII).
 
 ## Solution
 
-Added logic in smsparser.js to strip invisible characters from the SMS message content prior to parsing field values, and added unit tests covering the parser — including a test asserting that an input containing an invisible character is parsed correctly with the character removed.
+Wrapped the output of the existing per-field helper `standardiseDigits` in the already-present `stripInvisibleCharacters` (a single line in api/src/services/report/smsparser.js), so the parsers that only went through digit standardisation — `bsYear`, `bsMonth`, `bsDay`, `phone_number`, and the Muvuku aggregate-BS-date assembly — now also drop zero-width characters. Four mocha cases were appended to the existing smsparser spec: three Devanagari-digit `smsparser.parseField` cases for bsYear/bsMonth/bsDay, plus one that injects a zero-width space (`'२​०८०'`) and asserts it still parses to `'2080'`. The raw SMS message text itself is unchanged by this fix.
 
 ## Code Patterns
 
-Normalize/sanitize raw inbound message text by stripping invisible (zero-width/non-printing) characters before tokenizing and parsing fields in api/src/services/report/smsparser.js.
+When a per-field parser applies its own normalisation helper, make that helper the sanitisation point too: `standardiseDigits(original)` now returns `stripInvisibleCharacters(original.toString().replace(/[०-९]/g, digitReplacer))`, so every field parser that normalises digits gets zero-width stripping for free (api/src/services/report/smsparser.js). This is post-tokenisation, per-field-value sanitisation, not raw-message preprocessing.
 
 ## Design Choices
 
-Strip invisible characters once at the parser level so every SMS-submitted report benefits, rather than sanitizing per field or downstream. Tests were written red/green (failing first, then passing after the fix) to both prove the behavior and fill a pre-existing coverage gap in this function.
+Kept the file's existing per-field-parser sanitisation design rather than stripping once at the message level: the strip was pushed into the shared `standardiseDigits` helper so the digit-normalising parsers (`bsYear`, `bsMonth`, `bsDay`, `phone_number`) inherit the behaviour that `integer`/`string`/`date`/`bsDate`/`boolean`/`month` already had from their own `stripInvisibleCharacters` calls.
 
 ## Related Files
 
@@ -67,7 +67,7 @@ Strip invisible characters once at the parser level so every SMS-submitted repor
 
 ## Testing
 
-Added unit tests in api/tests/mocha/services/report/smsparser.spec.js for the previously-untested smsparser function, using a red/green TDD approach (write failing test, then implement). Includes a dedicated test that copies a passing case but injects an invisible character into the input to verify it is stripped and parsing still succeeds.
+Appended four mocha cases to the existing api/tests/mocha/services/report/smsparser.spec.js (which already held ~1670 lines of tests): three assert `smsparser.parseField` standardises Devanagari digits for the `bsYear`, `bsMonth` and `bsDay` field types, and a fourth copies the bsYear case with a zero-width space injected (`'२​०८०'`) and asserts it still yields `'2080'`.
 
 ## Related Issues
 

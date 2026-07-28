@@ -45,11 +45,11 @@ stale: false
 
 ## Problem
 
-When generating SMS content for due/scheduled tasks, the webapp (format-data-record service) and Sentinel (due_tasks schedule) built a template context that did not include patient information. Messages whose templates referenced patient fields therefore rendered with missing or incorrect patient data.
+When generating SMS content for due/scheduled tasks, the webapp (format-data-record service) and Sentinel (due_tasks schedule) added the patient/place to the template context only when a shortcode id was present on the report's `fields`. Reports that had been hydrated with `doc.patient`/`doc.place` but carried no `fields.patient_id`/`fields.place_id` got a context with no patient (Sentinel: an entirely `undefined` context), so templates referencing patient fields rendered with missing data.
 
 ## Root Cause
 
-The SMS-content generation paths in webapp and Sentinel constructed the template context without resolving/attaching the patient document, unlike the admin path which already built the context correctly. The patient context was simply absent from these two code paths.
+Both paths already attached `patient: doc.patient` and `place: doc.place` — but only when a shortcode id was present on the doc's `fields`. In shared-libs/transitions/src/schedule/due_tasks.js, `getTemplateContext` short-circuited with `return Promise.resolve();` (an **undefined** context) whenever neither `doc.fields.patient_id` nor `doc.fields.place_id` was set, even though the doc had already been hydrated with `doc.patient`/`doc.place`. In webapp/src/ts/services/format-data-record.service.ts, `context.patient` was gated on `if (patientId)` where `patientId = doc.patient_id || doc.fields?.patient_id`, so a hydrated `doc.patient` whose shortcode lived only at `doc.patient.patient_id` never reached the context. The fix moves `patient`/`place` out of the conditional (Sentinel), re-gates on `if (doc.patient)` / `if (doc.place)` (webapp), and falls back to `doc.patient?.patient_id` / `doc.place?.place_id` when looking up registrations.
 
 ## Solution
 
@@ -57,7 +57,7 @@ Updated shared-libs/transitions/src/schedule/due_tasks.js (Sentinel) and webapp/
 
 ## Code Patterns
 
-Resolve and include the patient document/fields in the template context prior to rendering SMS message bodies (shared-libs/transitions/src/schedule/due_tasks.js, webapp/src/ts/services/format-data-record.service.ts) so message templates referencing patient fields populate correctly.
+Key the template context off the *already-hydrated* doc (`patient: doc.patient`, `place: doc.place`, built unconditionally) rather than off the presence of a shortcode id, and treat the shortcode as a fallback used only for registration lookups (`doc.fields?.patient_id || doc.patient?.patient_id`, likewise for place) — shared-libs/transitions/src/schedule/due_tasks.js and webapp/src/ts/services/format-data-record.service.ts, whose gates became `if (doc.patient)` / `if (doc.place)`.
 
 ## Design Choices
 

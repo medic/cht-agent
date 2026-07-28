@@ -7,7 +7,7 @@ issueNumber: 10473
 issueUrl: https://github.com/medic/cht-core/issues/10473
 title: Add `default_to_sender` app setting to control whether messages fall back to the original sender when no other recipient resolves
 lastUpdated: '2026-06-22'
-summary: CHT always fell back to sending an outgoing message to the original sender when no other recipient could be resolved. This adds a `default_to_sender` app setting so administrators can disable that fallback while keeping the existing behavior as the default.
+summary: CHT always fell back to sending an outgoing message to the original sender when a configured recipient could not be resolved. This adds an `sms.default_to_sender` app setting (default true) so administrators can disable that fallback; when disabled the message is instead addressed to the unresolved recipient string, and messages with no configured recipient still go to the sender.
 services:
   - sentinel
   - api
@@ -50,7 +50,7 @@ The recipient resolution logic in shared-libs/message-utils/src/index.js hard-co
 
 ## Solution
 
-Introduced a `default_to_sender` parameter sourced from app settings. The recipient resolution in message-utils now only falls back to the original sender when `default_to_sender` is enabled; when disabled, no message is sent to the sender if no other recipient resolves. The default preserves the prior send-to-sender behavior for backwards compatibility.
+Introduced an `sms.default_to_sender` app setting, read in `getPhone` as `getRecipient(context, recipient, config?.sms?.default_to_sender ?? true)`. The final line of `getRecipient` changed from `return phone || from || recipient;` to `return phone || (defaultToSender && from) || recipient;`, so when the setting is false and a configured recipient cannot be resolved the message is still generated but addressed to the raw recipient string (the integration test asserts `to: 'patient.message_phone'`). The setting does not apply when no recipient is configured at all: the untouched `if (!recipient) { return from; }` guard still returns the sender unconditionally. The `?? true` default preserves the prior send-to-sender behaviour. The PR also refactored `getRecipient`'s if/else chain into a `resolveRecipient` resolver table plus a new `resolveAncestor(context, levels)` helper.
 
 ## Code Patterns
 
