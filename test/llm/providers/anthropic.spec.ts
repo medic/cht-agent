@@ -25,7 +25,7 @@ interface ChatResponseShape {
 /**
  * Stub the `@langchain/anthropic` ChatAnthropic class with one whose `invoke`
  * is a sinon stub. The production code constructs new instances per call
- * (when options override temperature/maxTokens); we install a captured
+ * (when options override maxTokens); we install a captured
  * `lastInstance` reference so tests can read the constructor args.
  */
 const buildChatAnthropicStub = () => {

@@ -24,7 +24,6 @@ export interface APIProviderConfig {
   provider: APIProviderType;
   apiKey: string;
   model: string;
-  temperature?: number;
   maxTokens?: number;
 }
 
@@ -40,7 +39,6 @@ export interface CLIProviderConfig {
   timeout: number;
   maxTurns: number;
   model: string;
-  temperature?: number;
   maxTokens?: number;
   /** Pass --dangerously-skip-permissions to the CLI. Default: true (preserves prior behavior). */
   skipPermissions?: boolean;
@@ -83,7 +81,6 @@ export type ToolHandler = (toolName: string, toolInput: Record<string, unknown>)
  * Options for invoking the LLM
  */
 export interface InvokeOptions {
-  temperature?: number;
   maxTokens?: number;
   stopSequences?: string[];
   /** Override max agentic turns for CLI provider */

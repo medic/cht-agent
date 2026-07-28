@@ -182,7 +182,6 @@ describe('ClaudeApiCodeGenModule', () => {
       for (let i = 0; i < invokeStub.callCount; i++) {
         const options = invokeStub.getCall(i).args[1] as InvokeOptions;
         expect(options.disableTools).to.be.undefined;
-        expect(options.temperature).to.equal(0.3);
       }
     });
 

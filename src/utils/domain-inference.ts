@@ -243,7 +243,7 @@ Respond in this exact JSON format:
   "reasoning": "Brief explanation of why this domain and these components"
 }`;
 
-  const response = await llm.invoke(prompt, { temperature: 0.2 });
+  const response = await llm.invoke(prompt);
   // Providers return string content, but stringify defensively in case one
   // surfaces structured content (preserves the prior ChatAnthropic behavior).
   const rawContent: unknown = response.content;

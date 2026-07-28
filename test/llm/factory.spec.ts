@@ -23,7 +23,6 @@ const loadFactory = (overrides: {
 const ENV_KEYS = [
   'LLM_PROVIDER',
   'LLM_MODEL',
-  'LLM_TEMPERATURE',
   'LLM_MAX_TOKENS',
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
@@ -134,22 +133,17 @@ describe('llm/factory env-driven config readers', () => {
       expect(getAPIConfigFromEnv().model).to.equal('claude-haiku-4-5');
     });
 
-    it('parses LLM_TEMPERATURE and LLM_MAX_TOKENS when set', () => {
+    it('parses LLM_MAX_TOKENS when set', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test';
-      process.env.LLM_TEMPERATURE = '0.7';
       process.env.LLM_MAX_TOKENS = '4096';
       const { getAPIConfigFromEnv } = loadFactory();
-      const config = getAPIConfigFromEnv();
-      expect(config.temperature).to.equal(0.7);
-      expect(config.maxTokens).to.equal(4096);
+      expect(getAPIConfigFromEnv().maxTokens).to.equal(4096);
     });
 
-    it('leaves temperature and maxTokens undefined when env vars are unset (lets the provider apply its defaults)', () => {
+    it('leaves maxTokens undefined when the env var is unset (capMaxTokens applies the model cap)', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test';
       const { getAPIConfigFromEnv } = loadFactory();
-      const config = getAPIConfigFromEnv();
-      expect(config.temperature).to.be.undefined;
-      expect(config.maxTokens).to.be.undefined;
+      expect(getAPIConfigFromEnv().maxTokens).to.be.undefined;
     });
   });
 
