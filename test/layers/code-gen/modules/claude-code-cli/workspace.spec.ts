@@ -432,7 +432,8 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard abc1234': { error: new Error('warning during reset') },
-            'git rev-parse HEAD': { stdout: 'abc1234\n' }, // verify says reset landed
+            // verify (tree diff vs the snapshot) says the reset landed
+            'git diff --quiet abc1234': { stdout: '' },
             'git status --porcelain': { stdout: '' },     // clean succeeded by default
           }),
         },
@@ -450,6 +451,75 @@ describe('workspace.ts (A.2b)', () => {
       expect(failureWarn).to.be.undefined;
     });
 
+    it('M1: reset failure is reported when the tree does NOT match the snapshot (#140)', async () => {
+      // v1 verified `rev-parse HEAD === snapshot.headSha`, which nothing in a
+      // session can falsify, so a real reset failure verified as success and the
+      // session's edits silently stayed in the operator's tree.
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { error: new Error('fatal: Unable to create index.lock') },
+            'git rev-parse HEAD': { stdout: 'abc1234\n' },      // v1's check would say "ok"
+            'git diff --quiet abc1234': { error: new Error('tree still differs') },
+          }),
+        },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+      expect(result.reset).to.equal('failed');
+      expect(result.errors[0]).to.match(/^reset: /);
+    });
+
+    it('F-4: a baseline-less snapshot throws instead of blanket-cleaning (#140)', async () => {
+      const calls: string[] = [];
+      const fn = (_c: string, _a: string[], _o: object, cb: (e: Error | null, s: string, t: string) => void) => cb(null, '', '');
+      (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+        calls.push(`${cmd} ${args.join(' ')}`);
+        if (`${cmd} ${args.join(' ')}`.startsWith('git ls-files')) {
+          return Promise.resolve({ stdout: 'operator-file.txt\0', stderr: '' });
+        }
+        return Promise.resolve({ stdout: '', stderr: '' });
+      };
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': { execFile: fn },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      // An untyped caller (or a stale spec literal) omitting the baseline.
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null,
+      });
+
+      expect(result.clean).to.equal('failed');
+      expect(result.errors.join(' ')).to.match(/baselineUntracked is missing or not an array/);
+      expect(calls.some(c => c.startsWith('git clean'))).to.equal(false); // nothing deleted
+    });
+
+    it('M2: a non-ENOENT stat error counts as NOT removed → clean failed (#140)', async () => {
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
+            'git clean -fd': { error: new Error('permission denied') },
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          // v1 caught every error as "removed"; EACCES means the clean did NOT work.
+          lstat: sinon.stub().rejects(Object.assign(new Error('EACCES'), { code: 'EACCES' })),
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+      expect(result.clean).to.equal('failed');
+    });
+
     it('A.5: clean exits non-zero but the delta paths are gone → no warning', async () => {
       const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
         'node:child_process': {
@@ -462,7 +532,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:fs/promises': {
           readFile: sinon.stub().resolves(''),
           // Verifier asserts removal: ENOENT means the file is gone.
-          access: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+          lstat: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
         },
       });
 
@@ -494,7 +564,7 @@ describe('workspace.ts (A.2b)', () => {
         },
         'node:fs/promises': {
           readFile: sinon.stub().resolves(''),
-          access: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+          lstat: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
         },
       });
 
@@ -516,7 +586,7 @@ describe('workspace.ts (A.2b)', () => {
         },
         'node:fs/promises': {
           readFile: sinon.stub().resolves(''),
-          access: sinon.stub().resolves(undefined), // file is still there
+          lstat: sinon.stub().resolves({}), // file is still there
         },
       });
 
@@ -598,6 +668,7 @@ describe('workspace.ts (A.2b)', () => {
         headSha: 'abc1234',
         stashRef: null,
         stashName: null,
+        baselineUntracked: [],
       });
       expect(result.stashPop).to.equal('skipped');
     });
@@ -607,8 +678,8 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard': { error: new Error('reset blew up') },
-            // Verify says HEAD is NOT at the snapshot SHA, so reset is judged failed.
-            'git rev-parse HEAD': { stdout: 'somethingelse\n' },
+            // Verify says the tree still differs from the snapshot, so reset is judged failed.
+            'git diff --quiet abc1234': { error: new Error('tree still differs') },
             'git clean -fd': { stdout: '' },
             'git status --porcelain': { stdout: '' },
           }),
@@ -620,6 +691,7 @@ describe('workspace.ts (A.2b)', () => {
         headSha: 'abc1234',
         stashRef: null,
         stashName: null,
+        baselineUntracked: [],
       });
       expect(result.reset).to.equal('failed');
       expect(result.errors).to.have.length(1);

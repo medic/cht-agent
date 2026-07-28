@@ -123,6 +123,16 @@ async function listUntracked(chtCorePath: string): Promise<string[]> {
  * Use only for ops whose effect is independently inspectable (stash push,
  * reset, clean, stash pop). Pure-read git calls do not need this.
  */
+/** True when the git command exits zero. For predicate-style git calls. */
+async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', args, { cwd });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function gitExecVerifyOrThrow(
   args: string[],
   cwd: string,
@@ -357,19 +367,37 @@ async function computeCleanDelta(
   chtCorePath: string,
   baselineUntracked: readonly string[],
 ): Promise<string[]> {
+  // Enforce the required-baseline contract at RUNTIME, not just in the type. An
+  // untyped caller (or a stale test literal) passing undefined would make
+  // `new Set(undefined)` an empty set, so the delta would become "every untracked
+  // file" — silently restoring the blanket clean this whole design removes.
+  // Fail loudly instead: rollback reports clean:'failed' and nothing is deleted.
+  if (!Array.isArray(baselineUntracked)) {
+    throw new Error(
+      'rollbackChtCore: snapshot.baselineUntracked is missing or not an array. Refusing to clean, ' +
+      'because an absent baseline would delete every untracked file in the target repo. ' +
+      'Pass the ChtCoreSnapshot returned by snapshotChtCore.'
+    );
+  }
   const baseline = new Set(baselineUntracked);
   const untrackedNow = await listUntracked(chtCorePath);
   return untrackedNow.filter(p => !baseline.has(p));
 }
 
-/** True when every delta path is gone from disk (what "removed" actually means). */
+/**
+ * True when every delta path is gone from disk (what "removed" actually means).
+ *
+ * Only ENOENT counts as removed: an EACCES/ENOTDIR/ELOOP failure means the clean
+ * did NOT do its job and must be reported. `lstat`, not `access`, so a surviving
+ * broken symlink is seen as still-present rather than followed to nowhere.
+ */
 async function allPathsRemoved(chtCorePath: string, deltaPaths: readonly string[]): Promise<boolean> {
   for (const relPath of deltaPaths) {
     try {
-      await fs.access(path.join(chtCorePath, relPath));
+      await fs.lstat(path.join(chtCorePath, relPath));
       return false; // still there
-    } catch {
-      // ENOENT: removed, keep checking the rest.
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') return false;
     }
   }
   return true;
@@ -441,11 +469,15 @@ export async function rollbackChtCore(
     await gitExecVerifyOrThrow(
       ['reset', '--hard', snapshot.headSha],
       chtCorePath,
-      async () => {
-        const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: chtCorePath });
-        return stdout.trim() === snapshot.headSha;
-      },
-      `HEAD is at ${snapshot.headSha}`,
+      // Verify RESTORATION, not HEAD identity. Comparing rev-parse HEAD to the
+      // snapshot sha is tautological here (nothing in a session moves HEAD, the
+      // CLI has no shell), so a genuinely failed reset — a stale index.lock, say —
+      // used to verify as success while the session's edits stayed in the
+      // operator's tree. `diff --quiet <sha> --` exits 0 only when tracked content
+      // actually matches the snapshot; untracked files are invisible to it, which
+      // is correct because the clean step owns those.
+      () => gitSucceeds(['diff', '--quiet', snapshot.headSha, '--'], chtCorePath),
+      `working tree matches ${snapshot.headSha}`,
     );
   } catch (err) {
     result.reset = 'failed';
