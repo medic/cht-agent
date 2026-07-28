@@ -167,7 +167,11 @@ const FAMILY_SPECS: FamilySpec[] = [
   {
     name: 'task-field',
     description: 'Fields on a scheduled-task object (task.*)',
-    candidatePattern: '\\btask\\.[a-z][a-zA-Z_]+\\b',
+    // `(?!\.[a-z])` rejects a longer dotted path: `task.list.complete` is a real
+    // translation key, and matching its `task.list` prefix reported it as a
+    // fabricated field. A trailing sentence period is still fine, because that
+    // dot is not followed by a lowercase letter.
+    candidatePattern: '\\btask\\.[a-z][a-zA-Z_]+\\b(?!\\.[a-z])',
     maxDistance: 2,
     source: 'grep',
     minePattern: '\\btask\\.[a-z][a-zA-Z_]{1,}\\b',

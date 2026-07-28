@@ -334,10 +334,17 @@ function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 're
   const cmd = `git branch -r --contains ${refLabel(a.sha)}`;
   if (direct) return verdict(claim, 'grounded', `${cmd} → includes ${direct}`);
 
-  const viaPick = onBranch(findCherryPick(ctx, a.prNumber));
-  if (viaPick) {
-    return verdict(claim, 'grounded',
-      `${cmd} does not contain the anchor, but a commit referencing (#${a.prNumber}) reaches ${viaPick} — cherry-picked backport`);
+  // The backport is usually carried by a DIFFERENT PR, and the draft normally
+  // names it right there in the sentence ("backported to 4.13.x (PR #9555)").
+  // Searching only the draft's own PR number misses it and reports a true claim
+  // as a defect.
+  const quotedPrs = [...claim.quote.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10));
+  for (const pr of [a.prNumber, ...quotedPrs].filter((n): n is number => n !== undefined)) {
+    const viaPick = onBranch(findCherryPick(ctx, pr));
+    if (viaPick) {
+      return verdict(claim, 'grounded',
+        `${cmd} does not contain the anchor, but a commit referencing (#${pr}) reaches ${viaPick} — cherry-picked backport`);
+    }
   }
 
   const releaseLines = containing.filter(b => /\d+\.\d+\.x$/.test(b));

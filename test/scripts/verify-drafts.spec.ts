@@ -121,6 +121,16 @@ describe('vocab', () => {
       expect(terms('task-field')).to.not.include('task.status');
     });
 
+    it('does not read a longer dotted key as a fabricated task field', () => {
+      // `task.list.complete` is a real translation key; matching its `task.list`
+      // prefix reported it as a fabricated field on a correct draft.
+      const family = loadVocab().families.find(f => f.name === 'task-field');
+      const re = new RegExp(family!.candidatePattern, 'g');
+      expect([...'renders task.list.complete above'.matchAll(re)].map(m => m[0])).to.deep.equal([]);
+      // a sentence-ending period must still leave a real field detectable
+      expect([...'the field is task.status.'.matchAll(re)].map(m => m[0])).to.deep.equal(['task.status']);
+    });
+
     it('records the cht-core commit it was mined from', () => {
       expect(loadVocab().sha).to.match(/^[0-9a-f]{40}$/);
     });

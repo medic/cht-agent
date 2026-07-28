@@ -127,7 +127,7 @@
     {
       "name": "task-field",
       "description": "Fields on a scheduled-task object (task.*)",
-      "candidatePattern": "\\btask\\.[a-z][a-zA-Z_]+\\b",
+      "candidatePattern": "\\btask\\.[a-z][a-zA-Z_]+\\b(?!\\.[a-z])",
       "maxDistance": 2,
       "terms": [
         "task.actions",
