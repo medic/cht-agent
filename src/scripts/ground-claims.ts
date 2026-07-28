@@ -184,6 +184,25 @@ function readDraft(abs: string, scanRoot: string): DraftInput | null {
 
 const SOURCE_PR_RE = /^[^#]+#(\d+)$/;
 
+/**
+ * Anchors for the OTHER PRs a collapsed draft covers. A draft that merged a
+ * duplicate cluster carries `source_prs[]`, and its Related Files span every one
+ * of them, so checking only `source_sha` reports the siblings' files as untouched.
+ */
+function siblingAnchors(ctx: ProbeCtx, fm: Record<string, unknown>, canonical: Anchor | null): Anchor[] {
+  const refs = Array.isArray(fm.source_prs) ? fm.source_prs : [];
+  const out: Anchor[] = [];
+  for (const ref of refs) {
+    const m = typeof ref === 'string' ? SOURCE_PR_RE.exec(ref) : null;
+    if (!m) continue;
+    const pr = Number.parseInt(m[1], 10);
+    if (canonical?.prNumber === pr) continue;
+    const a = resolveAnchor(ctx, { prNumber: pr });
+    if (a && a.sha !== canonical?.sha) out.push(a);
+  }
+  return out;
+}
+
 /** Anchor metadata from frontmatter: source_sha first, then the source PR number. */
 function anchorFor(ctx: ProbeCtx, fm: Record<string, unknown>): Anchor | null {
   const sourcePr = typeof fm.source_pr === 'string' ? SOURCE_PR_RE.exec(fm.source_pr) : null;
@@ -220,7 +239,8 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
     const message = err instanceof Error ? err.message : String(err);
     return { ...base, verdicts: [], counts: tally([]), error: `claim extraction failed: ${message}` };
   }
-  const verdicts = claims.map(c => checkClaim(ctx, anchor, c));
+  const siblings = siblingAnchors(ctx, draft.frontmatter, anchor);
+  const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings));
   return { ...base, verdicts, counts: tally(verdicts) };
 }
 

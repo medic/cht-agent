@@ -284,9 +284,20 @@ function checkSymbolInFile(
     `${cmd} → 0 hits, but ${global.length} elsewhere: attributed to the wrong file`, where, prov);
 }
 
-function checkFileTouched(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' }): Verdict {
+function checkFileTouched(
+  ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' }, siblings: Anchor[] = []
+): Verdict {
+  // A draft that collapsed a duplicate cluster covers several commits, and its
+  // Related Files legitimately spans all of them. Checking only the canonical
+  // source_sha reports the sibling PRs' files as untouched.
   const changed = changedPaths(ctx, a.sha);
-  const cmd = `git diff-tree --name-status -r ${refLabel(a.sha)}`;
+  for (const sib of siblings) {
+    for (const [file, status] of changedPaths(ctx, sib.sha)) {
+      if (!changed.has(file)) changed.set(file, status);
+    }
+  }
+  const scope = siblings.length ? ` (+${siblings.length} sibling commit(s))` : '';
+  const cmd = `git diff-tree --name-status -r ${refLabel(a.sha)}${scope}`;
   const status = changed.get(claim.file);
   if (status === undefined) {
     return verdict(claim, 'ungrounded', `${cmd} → ${claim.file} is not in this PR's diff (${changed.size} files changed)`);
@@ -376,7 +387,9 @@ function checkAtRef(ctx: ProbeCtx, ref: string, claim: Claim, prov: Provenance):
  * and stays `unverifiable` for claims that need the commit itself (what the PR
  * changed, which release lines carry it).
  */
-export function checkClaim(ctx: ProbeCtx, anchor: Anchor | null, claim: Claim): Verdict {
+export function checkClaim(
+  ctx: ProbeCtx, anchor: Anchor | null, claim: Claim, siblings: Anchor[] = []
+): Verdict {
   if (anchor?.isRevert) {
     return verdict(claim, 'anchor-unusable',
       `anchor ${anchor.sha.slice(0, 10)} is a revert ("${anchor.subject}") — it cannot evidence the described change`);
@@ -396,6 +409,6 @@ export function checkClaim(ctx: ProbeCtx, anchor: Anchor | null, claim: Claim): 
 
   if (TREE_SCOPED.has(claim.kind)) return checkAtRef(ctx, anchor.sha, claim, 'anchor');
   return claim.kind === 'file-touched'
-    ? checkFileTouched(ctx, anchor, claim)
+    ? checkFileTouched(ctx, anchor, claim, siblings)
     : checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
 }
