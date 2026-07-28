@@ -229,6 +229,61 @@ describe('workspace.ts (A.2b)', () => {
       expect(warned).to.exist;
     });
 
+    it('warns for a renamed-away .gitignore and a C-quoted path (#140 F-6)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // Rename AWAY from .gitignore (old side), and a quoted non-ASCII dir.
+        'git status --porcelain': { stdout: 'R  .gitignore -> .gitignore.bak\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.exist;
+    });
+
+    it('warns for a C-quoted nested .gitignore path (#140 F-6)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M "caf\\303\\251/.gitignore"\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.exist;
+    });
+
+    it('warns without promising the CLI cannot touch the unmasked files (#140 C-3)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M .gitignore\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      const msg = String(warnSpy.getCalls().find(c => /ignore rules revert/.test(String(c.args[0])))?.args[0]);
+      // v1 said the files "will be left untouched", which is false of the CLI.
+      expect(msg).to.not.match(/left untouched/);
+      expect(msg).to.match(/CLI can still read, overwrite, or delete them/);
+    });
+
     it('does not warn about ignore rules for ordinary edits', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },

@@ -111,21 +111,34 @@ async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
 }
 
 /**
+ * Paths named by a `status --porcelain` line. Handles both the rename form
+ * (`R  old -> new`, either side may be the ignore file) and C-quoted paths,
+ * which git emits for anything non-ASCII (`"caf\303\251/.gitignore"`).
+ */
+function pathsFromStatusLine(line: string): string[] {
+  const unquote = (p: string) => (p.startsWith('"') && p.endsWith('"') ? p.slice(1, -1) : p);
+  const body = line.substring(3).trim();
+  return body.split(' -> ').map(part => unquote(part.trim()));
+}
+
+/**
  * Warn when the work being stashed includes a `.gitignore` edit: stashing it
  * reverts ignore rules to HEAD for the duration of the session, so files ignored
- * only by that edit become visible. The baseline delta keeps this SAFE; the
- * warning is operator transparency.
+ * only by that edit become visible. cht-agent's own capture and clean stay safe
+ * (the baseline delta covers them), but the CLI itself is not constrained by the
+ * baseline, so the warning must not promise the files are untouchable.
  */
 function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: string): void {
-  const touchesIgnoreRules = statusLines.some(line => {
-    const filePath = line.substring(3).trim();
-    return filePath === '.gitignore' || filePath.endsWith('/.gitignore');
-  });
+  const touchesIgnoreRules = statusLines.some(line =>
+    pathsFromStatusLine(line).some(p => p === '.gitignore' || p.endsWith('/.gitignore'))
+  );
   if (!touchesIgnoreRules) return;
   console.warn(
     `[claude-code-cli] Uncommitted .gitignore change in ${chtCorePath} will be stashed for this ` +
     `session, so ignore rules revert to HEAD and files ignored only by that edit become visible. ` +
-    `They are recorded in the session baseline and will be left untouched.`
+    `cht-agent records them in the session baseline and will not capture or delete them, but the ` +
+    `CLI can still read, overwrite, or delete them while it runs, and such edits cannot be undone ` +
+    `by rollback. Commit or move anything you cannot afford to lose before starting.`
   );
 }
 
@@ -462,8 +475,13 @@ export interface RollbackResult {
 }
 
 /**
- * Delete only the untracked files this session created (delta against the
+ * Delete the untracked files that APPEARED DURING the session (delta against the
  * snapshot baseline), never the operator's pre-existing untracked files.
+ *
+ * "Appeared during", not "created by the CLI": the delta is computed at rollback
+ * time, so an untracked file written mid-run by the operator, an editor, or a
+ * watcher is inside it and will be deleted. Narrowing that further would need
+ * per-write attribution the CLI does not provide.
  *
  * An EMPTY pathspec is deliberately handled by skipping the clean entirely:
  * `git clean -fd --` with no paths degenerates to a blanket clean, which is the
@@ -506,13 +524,22 @@ async function cleanSessionCreatedFiles(
  * not generate a misleading warning. Returns a typed result the orchestrator
  * inspects to emit a recovery checklist when reset failed.
  *
- * Residual (strictly better than the pre-#140 behavior, which deleted such files
- * outright): if the session OVERWRITES a pre-existing baseline-untracked file,
- * capture excludes it and rollback cannot restore its prior content, because it
- * was never in the stash.
+ * Documented residuals. All are strictly better than the pre-#140 behavior,
+ * which deleted every pre-existing untracked file outright:
  *
- * Edge: empty directories the session created are not listed by `ls-files`, so
- * an empty dir may remain after rollback. Accepted; harmless residue.
+ *  - OVERWRITE: if the session overwrites a baseline-untracked file, capture
+ *    excludes it and rollback cannot restore its prior content — it was never in
+ *    the stash. The file survives, but with the session's content.
+ *  - DELETE: if the session deletes a baseline-untracked file, it is gone for the
+ *    same reason (never stashed, so nothing to restore from).
+ *  - MID-RUN CREATES: untracked files that appear during the run are in the delta
+ *    and get cleaned, whoever wrote them (see cleanSessionCreatedFiles).
+ *  - EMPTY DIRS: directories the session created are not listed by `ls-files`, so
+ *    an empty dir may remain after rollback. Harmless residue.
+ *  - SESSION-AUTHORED IGNORE RULES (pre-existing, same on main): if the session
+ *    creates or edits a `.gitignore` covering its own output, that output is
+ *    invisible to `ls-files --others --exclude-standard`, so it is neither
+ *    captured (absent from HC2) nor cleaned (left behind).
  */
 export async function rollbackChtCore(
   chtCorePath: string,
