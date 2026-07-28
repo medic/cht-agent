@@ -53,11 +53,11 @@ stale: false
 
 ## Problem
 
-The analytics targets and target-aggregates views only showed the current reporting month's data. Managers and supervisors reviewing coverage had no UI to look back at a previous month's targets.
+The analytics targets view only showed the current reporting month's data. The target-aggregates view already had a sidebar filter with This month / Last month options (shipped in #9317), but there was no equivalent control on the targets view, so managers and supervisors could not look back at a previous month's targets there.
 
 ## Root Cause
 
-Feature gap: the analytics module lacked any month-selection control, so target components and the target-aggregates service always computed/loaded data for the current interval only.
+Feature gap on the analytics targets page specifically: the target-aggregates page had carried a reporting-period sidebar filter (This month / Last month radios) since #9317 (analytics-target-aggregates-sidebar-filter.component.ts, 2024-08-14) and target-aggregates.service.ts already resolved its interval tag from a ReportingPeriod, but the targets view had no month-selection control and RulesEngineService.fetchTargets() took no reporting-period argument.
 
 ## Solution
 
@@ -65,7 +65,7 @@ Added a new analytics-sidebar-filter Angular component opened by a filter icon o
 
 ## Code Patterns
 
-Sidebar filter mirrors the existing reports/contacts sidebar-filter UX (analytics-sidebar-filter.component.ts/html). Filter trigger is wired through analytics-filter.component.ts; month-scoped data retrieval was added to target-aggregates.service.ts and surfaced via analytics-modules.service.ts.
+The sidebar filter is the existing analytics target-aggregates sidebar filter generalised: analytics-target-aggregates-sidebar-filter.component.ts/html were replaced by analytics-sidebar-filter.component.ts/html (AnalyticsSidebarFilterComponent), which adds showFacilityFilter and telemetryKey inputs so the targets page can embed it with [showFacilityFilter]="false". Filter trigger is wired through analytics-filter.component.ts; month-scoped data retrieval was added to target-aggregates.service.ts and surfaced via analytics-modules.service.ts.
 
 ## Design Choices
 
@@ -91,7 +91,7 @@ Reused the established sidebar-filter pattern for UI consistency; radio buttons 
 
 ## Testing
 
-Added an e2e WebdriverIO spec (analytics.wdio-spec.js) plus page-object methods for opening and closing the sidebar, and Karma/Jasmine unit specs for the sidebar-filter, targets, target-aggregates, target-aggregates-detail, and analytics-filter components and the target-aggregates service.
+Added an e2e WebdriverIO spec (analytics.wdio-spec.js) plus page-object methods for opening and closing the sidebar, and Karma unit specs (mocha + chai + sinon, per webapp/tests/karma/karma-unit.base.conf.js) for the sidebar-filter, targets, target-aggregates, target-aggregates-detail, and analytics-filter components and the target-aggregates service.
 
 ## Related Issues
 
@@ -101,4 +101,4 @@ Added an e2e WebdriverIO spec (analytics.wdio-spec.js) plus page-object methods 
 
 **Fit:** strong
 
-The PR adds month-selection filtering to the analytics targets and target-aggregates views. Targets and coverage metrics are canonically the tasks-and-targets domain (per seed example #5), and the change is entirely about target data presentation.
+The PR adds month-selection filtering to the analytics targets and target-aggregates views. Targets and coverage metrics are canonically the tasks-and-targets domain, and the change is entirely about target data presentation.

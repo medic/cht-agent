@@ -56,11 +56,11 @@ The sorting logic in the tasks reducer used due date as the sole sort key, with 
 
 ## Solution
 
-Implemented a refined comparator in the tasks reducer that sorts primarily by priority descending (higher numbers first), then by due date ascending within the same priority. Invalid/missing priorities are pushed to the end, invalid dates are pushed to the end within the same priority, and tasks with both invalid retain their original relative order. Added supporting priority handling in config/default/tasks.js and date validation/formatting in format-date.service.ts.
+Implemented a refined comparator in the tasks reducer that sorts primarily by priority descending (higher numbers first), then by due date ascending within the same priority. Invalid/missing priorities are pushed to the end, invalid dates are pushed to the end within the same priority, and tasks with both invalid retain their original relative order. Added supporting `priority` functions to two tasks in config/default/tasks.js; format-date.service.ts was only reformatted (import reordering and prettier line wrapping) with no behavioural change.
 
 ## Code Patterns
 
-Layered comparator pattern in webapp/src/ts/reducers/tasks.ts: compare priority (desc) first, fall back to due date (asc) on ties, and short-circuit invalid values to the end while preserving original order when both keys are invalid. Date parsing/validity guard centralized in webapp/src/ts/services/format-date.service.ts.
+Layered comparator pattern in webapp/src/ts/reducers/tasks.ts: compare priority (desc) first, fall back to due date (asc) on ties, and short-circuit invalid values to the end while preserving original order when both keys are invalid. Date parsing/validity guard lives in the `getDueDate` helper inside `orderByDueDateAndPriority` in webapp/src/ts/reducers/tasks.ts: numbers pass through, numeric strings go through `Number()`, other strings go through `moment(dueDate).isValid()`, and everything else becomes `NaN`.
 
 ## Design Choices
 

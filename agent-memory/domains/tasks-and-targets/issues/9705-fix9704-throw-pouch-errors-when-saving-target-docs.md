@@ -7,7 +7,7 @@ issueNumber: 9704
 issueUrl: https://github.com/medic/cht-core/issues/9704
 title: Throw PouchDB errors when saving target documents in the rules-engine pouchdb-provider
 lastUpdated: '2026-06-22'
-summary: Errors returned by PouchDB while saving target documents were being silently swallowed, so callers could not detect failed writes. The provider now inspects write results and throws so the errors propagate.
+summary: Errors returned by PouchDB while saving target documents were being silently swallowed, so callers could not detect failed writes. The provider now rethrows any non-404 error from the target-doc read so the errors propagate.
 services:
   - webapp
 techStack:
@@ -40,19 +40,19 @@ stale: false
 
 ## Problem
 
-When the rules-engine saved (committed) target documents through the pouchdb-provider, any PouchDB error on the write was silently ignored rather than surfaced to the caller. PouchDB's write path resolves even when an individual document fails, so failures (e.g. conflicts or other store errors) went undetected, risking silent loss or inconsistency of target state with no error reported.
+When the rules-engine saved (committed) target documents through the pouchdb-provider, any PouchDB error on the write was silently ignored rather than surfaced to the caller. The failure was swallowed on the read that precedes the write: `commitTargetDoc` caught every rejection from `db.get`, but returned a freshly-built target doc only when `err.status === 404` and returned `undefined` for anything else — so a genuine store error was never reported as itself, surfacing at best as a downstream `TypeError` when the `undefined` document was dereferenced.
 
 ## Root Cause
 
-The target-doc save path in pouchdb-provider.js did not inspect the per-document result/error from the PouchDB write (bulkDocs resolves successfully even when individual docs error), so error entries were never checked or rethrown.
+`commitTargetDoc` read the existing doc with `db.get(_id)` and attached a `.catch(err => …)` that returned a newly-constructed target doc when `err.status === 404` but silently fell through for every other rejection, so non-404 PouchDB errors were never surfaced or rethrown.
 
 ## Solution
 
-Updated the target-doc save logic in pouchdb-provider.js to inspect the PouchDB write results and throw when a document write returns an error, ensuring PouchDB errors propagate to the caller instead of being swallowed.
+Added `throw err;` to the `.catch` in `commitTargetDoc` in pouchdb-provider.js so only `err.status === 404` yields a new target doc and every other PouchDB error propagates to the caller. The PR also rewrote `contactsBySubjectId` and `taskDataFor` in async/await form.
 
 ## Code Patterns
 
-When persisting via PouchDB bulkDocs, always inspect the returned results array for per-document error entries and throw on them, because bulkDocs resolves even on partial/individual failures. See shared-libs/rules-engine/src/pouchdb-provider.js.
+When a `.catch` on a PouchDB read exists only to synthesise a default document, gate it on the expected status and rethrow everything else: `commitTargetDoc` in shared-libs/rules-engine/src/pouchdb-provider.js returns a freshly-built target doc when `err.status === 404` and now ends the handler with `throw err;`, so every other read failure reaches the caller. (The one `bulkDocs` call in this file is `commitTaskDocs`, whose errors are still only `console.error`-ed.)
 
 ## Design Choices
 

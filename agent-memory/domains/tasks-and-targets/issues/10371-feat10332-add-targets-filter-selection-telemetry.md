@@ -54,7 +54,7 @@ The analytics filter component recorded a telemetry event only on filter open an
 
 ## Solution
 
-Added telemetry recording for the target sidebar filter selection event in the analytics-filter and analytics-sidebar-filter components (in addition to the existing open event), wired through the analytics-targets template, plus a shared telemetry test util and e2e assertions.
+Added selection telemetry in analytics-sidebar-filter.component.ts (collectFilterSelectionTelemetry records sidebar_filter:analytics:<telemetryKey>:<facility|reporting-period>:select), with the key supplied per page via the telemetryKey input set in analytics-targets.component.html; analytics-filter.component.ts still records only open events and gained sidebar_filter:analytics:targets:open alongside the existing target_aggregates one. E2e assertions were added on top of the pre-existing tests/utils/telemetry.js helper.
 
 ## Code Patterns
 
@@ -78,7 +78,7 @@ Recorded a distinct selection event alongside the existing open event rather tha
 
 ## Testing
 
-Added/updated karma unit tests for the analytics-filter and analytics-sidebar-filter components and added e2e (wdio) assertions for the telemetry entries across the analytics, target-aggregates, and duplicate-contacts specs, backed by a new shared telemetry assertion util in tests/utils/telemetry.js.
+Added/updated karma unit tests for the analytics-filter and analytics-sidebar-filter components and added e2e (wdio) assertions for the telemetry entries across the analytics, target-aggregates, and duplicate-contacts specs, extending the pre-existing shared telemetry util at tests/utils/telemetry.js (added in #9609) with getTelemetry()/destroyTelemetryDb() helpers.
 
 ## Related Issues
 

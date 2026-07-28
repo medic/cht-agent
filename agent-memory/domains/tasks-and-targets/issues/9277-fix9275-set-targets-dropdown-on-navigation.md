@@ -45,7 +45,7 @@ The targets dropdown in the analytics filter did not reflect the correct selecti
 
 ## Root Cause
 
-The analytics-filter component did not update the targets dropdown's selected value in response to navigation/route changes, so the dropdown selection was not synchronized with the currently active analytics route/module.
+The analytics-filter component did subscribe to route changes, but to the parent `ActivatedRoute`'s `url` observable (`this.route.url.subscribe(() => this.setActiveModule())`). The component is rendered from analytics.component.html — the template of the parent `analytics` route, with `moduleId` living on the `targets`/`target-aggregates` child routes — so that observable does not re-emit when navigation only switches children. `setActiveModule` was therefore not re-run, and the `ngAfterContentChecked` fallback only called it while `!this.activeModule`, so the dropdown kept its first-resolved module.
 
 ## Solution
 
@@ -53,11 +53,11 @@ Updated analytics-filter.component.ts to set the targets dropdown selection on n
 
 ## Code Patterns
 
-Derive/refresh UI dropdown selected-state from navigation/route changes rather than only on initial load, in webapp/src/ts/components/filters/analytics-filter/analytics-filter.component.ts.
+When a parent component must track a child route's data, subscribe to `Router.events` filtered on `ActivationEnd` and read the id off `event.snapshot.data` rather than subscribing to the parent `ActivatedRoute.url` and re-reading `route.snapshot.firstChild`, in webapp/src/ts/components/filters/analytics-filter/analytics-filter.component.ts.
 
 ## Design Choices
 
-Keeps the dropdown's selected state driven by navigation so the control stays consistent with the active view, rather than relying on a one-time initialization that goes stale on route changes.
+Keeps the dropdown's selected state driven by navigation so the control stays consistent with the active view, rather than relying on the parent `ActivatedRoute.url` subscription, which never re-emitted for child-route-only navigations.
 
 ## Related Files
 
@@ -66,7 +66,7 @@ Keeps the dropdown's selected state driven by navigation so the control stays co
 
 ## Testing
 
-Karma unit tests in analytics-filter.component.spec.ts were updated to cover setting the targets dropdown on navigation. The fix was additionally verified manually (screen recording attached to the PR).
+A new Karma spec, webapp/tests/karma/ts/components/filters/analytics-filter.component.spec.ts, was added to cover setting the targets dropdown on navigation. The fix was additionally verified manually (screen recording attached to the PR).
 
 ## Related Issues
 

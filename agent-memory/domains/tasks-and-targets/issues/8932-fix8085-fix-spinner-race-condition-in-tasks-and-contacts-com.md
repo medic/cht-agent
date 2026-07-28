@@ -7,7 +7,7 @@ issueNumber: 8085
 issueUrl: https://github.com/medic/cht-core/issues/8085
 title: Fix spinner race condition that briefly flashed 'No more tasks'/'No more people' empty states in tasks and contacts components
 lastUpdated: '2026-06-23'
-summary: The tasks and contacts list views momentarily displayed empty-state messages before rendering loaded items, due to a race between the loading flag dropping to false and the data refresh actually completing. Added explicit tasksReady/contactsReady flags set only at true load completion to gate the spinner and empty-state display.
+summary: The tasks and contacts list views momentarily displayed empty-state messages before rendering loaded items, due to a race between the loading flag dropping to false and the data refresh actually completing. Fixed by moving `this.loading = false;` out of the mid-function success and error paths into the `finally` block in both tasks.component.ts and contacts.component.ts, so the loading flag stays true until the whole load has settled.
 services:
   - webapp
 techStack:
@@ -46,19 +46,19 @@ When loading the tasks list — especially as an offline user with a large numbe
 
 ## Root Cause
 
-During component initialization there was a momentary state where the `loading` flag was already false but `refreshTasks` (or the contacts load) had not yet completed, so `hasTasks`/contacts were still false. The template's empty-state condition (not loading + no items) evaluated true in that gap, flashing the 'No more tasks'/'No more people' message before the items populated.
+`this.loading = false;` was assigned partway through the load rather than at the end. In `tasks.component.ts` it ran immediately after `this.hasTasks = taskDocs.length > 0;`, i.e. before `hydrateEmissions`, the lineage lookup and `setTasksList(hydratedTasks)`; in `contacts.component.ts` it ran inside the `.then` and `.catch` handlers rather than in `.finally`. Both end-of-list messages are gated on the has-items flag being true — `*ngIf="!errorStack && !loading && hasTasks && !tasksDisabled"` renders `task.list.complete` ('No more tasks') and `*ngIf="!error && !loading && hasContacts && !moreItems"` renders 'No more contacts' ('No more people') — not on an empty-list condition. So in the tasks case `loading` was already false and `hasTasks` already true while `tasksList` was still unpopulated, and the end-of-list message rendered above an empty `<ul>`.
 
 ## Solution
 
-Introduced dedicated boolean readiness flags — `tasksReady` in the tasks component and `contactsReady` in the contacts component — initialized to false and set to true only at the very end of refreshTasks / when contacts are fully loaded. The view gates spinner visibility and the empty-state message on these flags, synchronizing the UI with actual data-load completion rather than the prematurely-cleared `loading` flag.
+No new flags were introduced. The fix relocates the reset of the existing `loading` flag. In `tasks.component.ts`, `this.loading = false;` was deleted from the `try` body (where it ran immediately after `this.hasTasks = taskDocs.length > 0;`, i.e. before `hydrateEmissions`, the lineage lookup and `setTasksList`) and from the `catch` block, and a single `this.loading = false;` was added as the first statement of the existing `finally` block. `contacts.component.ts` got the identical treatment: removed from the `.then` and `.catch` handlers, added to `.finally`. `loading` therefore stays true until the entire load has settled. No template was changed.
 
 ## Code Patterns
 
-Gate empty-state/spinner rendering on a dedicated 'ready' flag set at the true completion point of an async load (tasksReady set at end of refreshTasks in tasks.component.ts; contactsReady set when contacts fully load in contacts.component.ts) instead of relying on the inverse of a `loading` flag — this closes the window between loading=false and data-populated.
+Clear an async `loading` flag exactly once, in a `finally` block, rather than assigning it on each of the success and error paths — that way no path can clear it before the rest of the async work (hydration, lineage resolution, store dispatch) has finished. Both `tasks.component.ts` and `contacts.component.ts` apply this: `this.loading = false;` was deleted from the `try`/`catch` (resp. `.then`/`.catch`) bodies and added once to the `finally`.
 
 ## Design Choices
 
-Chose to add a separate readiness flag rather than reuse the existing `loading` flag, because `loading` was cleared before the data refresh resolved, creating the race window. An explicit completion flag deterministically signals when the view can be rendered, avoiding the empty-state flash without restructuring the async load.
+Chose the minimal fix — move the existing `loading = false;` assignment into the `finally` block — over introducing a new readiness flag, so neither the templates nor the component state shape had to change. Consolidating the reset in `finally` also removed the duplicated assignment that previously existed on both the success and the error path.
 
 ## Related Files
 

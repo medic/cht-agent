@@ -5,9 +5,9 @@ domain: tasks-and-targets
 domainFit: strong
 issueNumber: 10438
 issueUrl: https://github.com/medic/cht-core/issues/10438
-title: Add `tasks:visible-count` telemetry recorded on every task recalculation in TasksComponent
+title: Add `tasks:all-tasks` telemetry recorded on every task recalculation in TasksComponent
 lastUpdated: '2026-06-22'
-summary: There was no client-side way to know how many tasks a user can see without expensive server-side analysis of all user tasks and their statuses. This adds a `tasks:visible-count` telemetry entry recorded in refreshTasks(), capturing the count on initial load and every recalculation.
+summary: There was no client-side way to know how many tasks a user can see without expensive server-side analysis of all user tasks and their statuses. This adds a `tasks:all-tasks` telemetry entry recorded in refreshTasks(), capturing the count on initial load and every recalculation.
 services:
   - webapp
 techStack:
@@ -51,11 +51,11 @@ TasksComponent.refreshTasks() recalculated and rendered the visible task list (t
 
 ## Solution
 
-Injected TelemetryService into TasksComponent and added a telemetryService.record('tasks:visible-count', tasksWithLineage.length) call after tasks are recalculated in refreshTasks(), so the visible count is recorded on initial load and on every subsequent recalculation triggered by data changes or rules engine updates.
+Injected TelemetryService into TasksComponent and added a telemetryService.record('tasks:all-tasks', tasksWithLineage.length) call after tasks are recalculated in refreshTasks(), so the visible count is recorded on initial load and on every subsequent recalculation triggered by data changes or rules engine updates.
 
 ## Code Patterns
 
-Instrument a component metric by injecting TelemetryService and calling telemetryService.record('<namespaced:key>', value) at the single point where the value is computed (here, after tasksWithLineage is built in refreshTasks() in webapp/src/ts/modules/tasks/tasks.component.ts). Use a colon-namespaced key (tasks:visible-count) consistent with existing telemetry conventions.
+Instrument a component metric by injecting TelemetryService and calling telemetryService.record('<namespaced:key>', value) at the single point where the value is computed (here, after tasksWithLineage is built in refreshTasks() in webapp/src/ts/modules/tasks/tasks.component.ts). Use a colon-namespaced key (tasks:all-tasks) consistent with existing telemetry conventions.
 
 ## Design Choices
 
@@ -68,7 +68,7 @@ Recording inside refreshTasks() rather than at a single load path was chosen del
 
 ## Testing
 
-Added a Karma unit test in tasks.component.spec.ts asserting that TelemetryService.record is called with the key 'tasks:visible-count' and the correct visible task count after recalculation.
+Added a Karma unit test in tasks.component.spec.ts asserting that TelemetryService.record is called with the key 'tasks:all-tasks' and the correct visible task count after recalculation.
 
 ## Related Issues
 

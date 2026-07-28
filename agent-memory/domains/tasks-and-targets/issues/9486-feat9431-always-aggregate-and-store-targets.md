@@ -64,15 +64,15 @@ Target aggregation and task recalculation were only triggered when the user navi
 
 ## Root Cause
 
-The rules engine computed and aggregated targets/tasks lazily on page visit rather than reacting to rules-state changes or document updates, and aggregated target state was not stored. There was no hook from the sync/change feed into the rules engine to trigger recalculation when underlying documents changed.
+The rules engine computed and aggregated targets/tasks lazily on page visit rather than reacting to rules-state changes or document updates, and aggregated target state was not stored. A change-feed hook already existed — `monitorChanges` subscribed through `ChangesService` under the key `mark-contacts-dirty` and called `rulesEngineCore.updateEmissionsFor(subjectIds)` for each matching change — but it fired once per document with no batching, aggregated target state was never persisted, and the task and target freshness paths ran two separate 120s debounces.
 
 ## Solution
 
-Refactored the rules engine to always aggregate and store targets and to recalculate tasks automatically when the rules state changes or documents are updated. The webapp wires the db-sync change feed into the rules-engine service so changes trigger recalculation, and a 1s debounce batches incoming changes so that bulk document downloads or creations do not kick off repeated heavy recalculation cycles. Target/aggregation state is persisted via the pouchdb provider and rules-state-store.
+Refactored the rules engine to always aggregate and store targets and to recalculate tasks automatically when the rules state changes or documents are updated. The webapp debounces the existing `ChangesService` `mark-contacts-dirty` subscription inside rules-engine.service.ts with `DEBOUNCE_CHANGE_MILLIS = 1000`, accumulating subject ids across a burst into a single `updateEmissionsFor` call so that bulk document downloads or creations do not kick off repeated heavy recalculation cycles; db-sync.service.ts is changed only to make `inProgressSync` an awaitable promise. Target/aggregation state is persisted via the pouchdb provider and rules-state-store.
 
 ## Code Patterns
 
-Debounced, change-driven recalculation: subscribe to the db-sync change feed and debounce (1s) before invoking the rules engine, then aggregate and persist target state. Key files: webapp/src/ts/services/db-sync.service.ts and webapp/src/ts/services/rules-engine.service.ts (change subscription + debounce), shared-libs/rules-engine/src/target-state.js and shared-libs/rules-engine/src/rules-state-store.js (aggregate + store targets), shared-libs/rules-engine/src/provider-wireup.js and pouchdb-provider.js (persistence wiring).
+Debounced, change-driven recalculation: subscribe to the CouchDB changes feed via `ChangesService` (key `mark-contacts-dirty`) inside rules-engine.service.ts and debounce (`DEBOUNCE_CHANGE_MILLIS = 1000`) before invoking the rules engine, then aggregate and persist target state. Key files: webapp/src/ts/services/db-sync.service.ts and webapp/src/ts/services/rules-engine.service.ts (change subscription + debounce), shared-libs/rules-engine/src/target-state.js and shared-libs/rules-engine/src/rules-state-store.js (aggregate + store targets), shared-libs/rules-engine/src/provider-wireup.js and pouchdb-provider.js (persistence wiring).
 
 Dirty-tracking gates recomputation: rules-state-store.js decides when cached task/target emissions are dirty so target-state.js only recomputes when needed rather than on every change; calendar-interval/src/index.js computes period boundaries that invalidate periodic-target emissions when an interval turns over, and recalculation is coordinated off sync completion rather than by polling (PR #9549).
 

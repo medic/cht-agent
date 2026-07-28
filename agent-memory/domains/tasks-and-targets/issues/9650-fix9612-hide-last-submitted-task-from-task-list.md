@@ -85,4 +85,4 @@ Added/updated Karma unit tests for the tasks reducer (tasks.spec.ts) and the rul
 
 **Fit:** strong
 
-The PR changes task-list display behavior, the tasks reducer, and the rules-engine service that generates/refreshes tasks — squarely the tasks-and-targets domain. It concerns rules-engine service timing/behavior, not rules-engine configuration, so the config-related pitfall does not apply.
+The PR changes task-list display behavior, the tasks reducer, and the rules-engine service that generates/refreshes tasks — squarely the tasks-and-targets domain. It concerns rules-engine service timing/behavior, not rules-engine configuration.

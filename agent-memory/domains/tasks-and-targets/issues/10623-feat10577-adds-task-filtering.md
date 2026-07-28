@@ -7,7 +7,7 @@ issueNumber: 10577
 issueUrl: https://github.com/medic/cht-core/issues/10577
 title: Add task list filtering by due date, task type, and area; centralize lineage filtering in the message pipe
 lastUpdated: '2026-06-22'
-summary: CHWs struggled to find specific follow-up tasks while scrolling long task lists. This PR adds a sidebar filter to the tasks module — a due-date radio (overdue/due-today vs future), task-type checkboxes, and an area filter reused from Reports — and refactors duplicated per-component lineage filtering into the shared message pipe backed by the ngrx store of user facilities.
+summary: CHWs struggled to find specific follow-up tasks while scrolling long task lists. This PR adds a sidebar filter to the tasks module — a due-date radio (overdue/due-today vs future), task-type checkboxes, and a place filter reused from Reports — and refactors duplicated per-component lineage filtering into the shared LineagePipe (declared in webapp/src/ts/pipes/message.pipe.ts) backed by the ngrx store of user facilities.
 services:
   - webapp
   - api
@@ -22,7 +22,7 @@ tags:
   - sidebar-filter
   - due-date-filter
   - task-type-filter
-  - area-filter
+  - place-filter
   - lineage
   - component-reuse
   - i18n
@@ -63,15 +63,15 @@ The tasks module exposed no filter UI, forcing users to scroll the entire task l
 
 ## Solution
 
-Added three filters to the tasks module via a tasks-sidebar-filter component, modeled on the existing Reports filters: a due-date radio (overdue/due-today vs future), task-type checkboxes generated from the available task types, and an area filter identical to the Reports area filter that filters by task owner lineage. Wired filtering through new/updated tasks reducer, global reducer, selectors and actions. Refactored lineage filtering out of individual components into the message pipe itself, sourcing user facilities from the store. Added translation keys across all locales (ar, en, es, fr, ne, pt, sw).
+Added three filters to the tasks module via a tasks-sidebar-filter component, modeled on the existing Reports filters: a due-date radio (overdue/due-today vs future), task-type checkboxes generated from the available task types, and a place filter identical to the Reports place filter (the reused FacilityFilterComponent / `mm-facility-filter`, fieldId `placeFilter`, label `tasks.sidebar.filter.place`) that filters by task owner lineage. Wired filtering through new/updated tasks reducer, global reducer, selectors and actions. Refactored lineage filtering out of individual components into LineagePipe (declared in webapp/src/ts/pipes/message.pipe.ts — there is no MessagePipe class), which subscribes to Selectors.getUserFacilities and Selectors.getIsOnlineOnly and pops the user's own facility off the tail of the lineage; UserContactService.getUserLineageToRemove() was deleted as part of the move. Added translation keys across all locales (ar, en, es, fr, ne, pt, sw).
 
 ## Code Patterns
 
-Reuse of the Reports filter components (overdue-filter, task-type-filter, area filter) for the tasks domain via a shared sidebar-filter component (webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.ts). Centralizing cross-component transformation in an Angular pipe (webapp/src/ts/pipes/message.pipe.ts) that reads user facilities from the ngrx store instead of each consuming component (reports.component.ts, messages.component.ts) duplicating the filtering.
+New task-specific filter components (overdue-filter, task-type-filter) plus reuse of the Reports place filter (FacilityFilterComponent, unchanged by this PR) for the tasks domain via a shared sidebar-filter component (webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.ts). Centralizing cross-component transformation in an Angular pipe (webapp/src/ts/pipes/message.pipe.ts) that reads user facilities from the ngrx store instead of each consuming component (reports.component.ts, messages.component.ts) duplicating the filtering.
 
 ## Design Choices
 
-Reused existing Reports filter components rather than building task-specific filters from scratch, keeping UI and behavior consistent. The area filter was deliberately kept lazy-loaded rather than eager-loading to count places, preserving performance. Lineage filtering was moved into the pipe (DRY) so the store of user facilities is the single source rather than per-component logic.
+Reused existing Reports filter components rather than building task-specific filters from scratch, keeping UI and behavior consistent. The place filter's facility list is lazy-loaded — FacilityFilterComponent (inherited unchanged by this PR) only calls loadFacilities() once Selectors.getSidebarFilter reports isOpen. TasksSidebarFilterComponent does, however, eagerly call placeHierarchyService.get() in ngOnInit to count places (hasMultiplePlaces) so it can hide the whole place panel (showPlaceFilter) when the user's hierarchy holds no more than one place. Lineage filtering was moved into the pipe (DRY) so the store of user facilities is the single source rather than per-component logic.
 
 ## Related Files
 
@@ -90,7 +90,7 @@ Reused existing Reports filter components rather than building task-specific fil
 
 ## Testing
 
-Added/updated Karma+Jasmine unit tests for the new and changed code: overdue-filter, task-type-filter, tasks-sidebar-filter, tasks component, reducers (tasks, global), selectors, message pipe, user-contact service, and the reports/messages components affected by the lineage refactor. Added a WebdriverIO e2e spec (tests/e2e/default/tasks/sidebar-filter.wdio-spec.js) with supporting task config and page-object updates. Manually verified behavior across multiple user account types.
+Added/updated Karma unit tests (karma-mocha with chai and sinon per webapp/tests/karma/karma-unit.base.conf.js, not Jasmine) for the new and changed code: overdue-filter, task-type-filter, tasks-sidebar-filter, tasks component, reducers (tasks, global), selectors, message pipe, user-contact service, and the reports/messages components affected by the lineage refactor. Added a WebdriverIO e2e spec (tests/e2e/default/tasks/sidebar-filter.wdio-spec.js) with supporting task config and page-object updates. Manually verified behavior across multiple user account types.
 
 ## Related Issues
 

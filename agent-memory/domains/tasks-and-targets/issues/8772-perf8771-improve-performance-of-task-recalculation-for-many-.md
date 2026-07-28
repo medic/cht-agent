@@ -51,11 +51,11 @@ The pouchdb-provider issued a single view query passing all contact keys via the
 
 ## Solution
 
-Added a short-circuit in the keyed view query in pouchdb-provider.js: when the number of keys exceeds a configurable limit of 500, the provider stops passing `keys` and instead fetches all rows from the view and filters them in memory. The 500 threshold is adjustable.
+Added a `dbQuery(view, params)` wrapper in pouchdb-provider.js that every rules-engine view call now routes through. When `params.keys` is present and `params.keys.length >= MAX_QUERY_KEYS`, the wrapper deletes `params.keys`, runs the unkeyed query, and filters the returned rows against a `Set` of the original keys in memory. `MAX_QUERY_KEYS` is a hard-coded module-level constant set to 500 — it is not exported and not settings-driven, so changing it means editing the source.
 
 ## Code Patterns
 
-Threshold-based query strategy switch in shared-libs/rules-engine/src/pouchdb-provider.js: when key count exceeds a configurable limit (500), abandon the `keys` query parameter and fetch-all-rows-then-filter client-side. Useful wherever PouchDB views are queried with potentially large key sets.
+Threshold-based query strategy switch in shared-libs/rules-engine/src/pouchdb-provider.js: when key count reaches a hard-coded `MAX_QUERY_KEYS` limit (500), abandon the `keys` query parameter and fetch-all-rows-then-filter client-side. Useful wherever PouchDB views are queried with potentially large key sets.
 
 ## Design Choices
 

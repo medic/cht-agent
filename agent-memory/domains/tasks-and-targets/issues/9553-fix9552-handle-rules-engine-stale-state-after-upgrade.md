@@ -55,33 +55,33 @@ stale: false
 
 ## Problem
 
-Following an upgrade (issue #9552), the rules engine carried forward a persisted target state that no longer matched the current target configuration. Newly configured target aggregates were absent from the stored state ('missing aggregate'), so affected installs showed inaccurate or missing target values until the state was rebuilt.
+Following an upgrade past #9486 (issue #9552), the rules engine carried forward a persisted target state written in the older schema, in which the top-level `aggregate` key does not exist. The post-upgrade code rehydrated that blob as-is, so affected installs showed inaccurate or missing target values until the state was rebuilt.
 
 A distinct facet of the same issue surfaces on reporting-interval turnover: when a target's reporting interval rolls over (e.g. the start of a new calendar month under the configured `monthStartDate`), the rules engine reused stale target state persisted from the previous interval, aggregating emissions from the prior period instead of resetting for the new interval and showing incorrect counts/percentages until the state was rebuilt (PR #9569, #9570).
 
 ## Root Cause
 
-The rules-state-store / target-state logic loaded and reused previously persisted target state without reconciling it against the currently configured targets. When configuration added a target aggregate that was not present in the stored state, the code did not account for the absent aggregate, leaving the target state stale and incomplete after the upgrade.
+#9486 changed the persisted `targetState` shape from a bare `{ [targetId]: ... }` map to `{ targets: {...}, aggregate: {...} }`. `rules-state-store.load` rehydrated a blob written by a pre-#9486 build without checking that shape, so the missing top-level `aggregate` key was carried forward and target values came out inaccurate or absent after the upgrade.
 
 For the interval-turnover facet, the persisted state stored target emissions without detecting that the reporting interval had changed between the cached state and the current computation time; on load after a turnover, the stale per-interval emissions were rehydrated and reused as-is rather than being re-scoped/reset for the now-current interval, so aggregation spanned the wrong period (PR #9569, #9570).
 
 ## Solution
 
-Updated target-state.js and rules-state-store.js to detect when the persisted target state is stale relative to the current target configuration and to backfill/initialize the missing target aggregates (rather than dropping them), so target state stays consistent across an upgrade. Added unit coverage for the stale-state scenario and an e2e target-accuracy spec to confirm correct target values after the configuration change.
+Updated target-state.js and rules-state-store.js to detect that the persisted target state is in the pre-#9486 shape — the new `targetState.isStale` is `(state) => !state || !state.targets || !state.aggregate`, called from `load` as `targetState.isStale(state.targetState)` — and, when it fires, to mark the whole rules state stale so `provider-wireup.initialize` discards it and calls `rulesStateStore.build()`, rebuilding contact and target state from scratch. Added unit coverage for the stale-state scenario and an e2e target-accuracy spec to confirm correct target values after the configuration change.
 
 A follow-up added interval-turnover handling: when the rules state store is hydrated and the persisted reporting interval no longer matches the current `CalendarInterval`, the stale target state is migrated in place — stored target emissions are re-scoped/reset to the active interval before aggregation — while staying compatible with documents written by older versions (PR #9569, #9570).
 
 ## Code Patterns
 
-Reconcile persisted state against current configuration on load: in target-state.js, compare stored target aggregates with configured targets and initialize any missing entries before computing values; rules-state-store.js gates reuse of stored state on this consistency check instead of trusting the persisted blob verbatim.
+Validate the shape of persisted state on load: `target-state.isStale` checks only that the stored blob has both a `targets` and an `aggregate` key — it never reads the configured targets — and `rules-state-store.load` ORs that check with the `rulesConfigHash` mismatch to set `state.stale`, which forces a full rebuild rather than a partial repair.
 
-Interval-turnover detection follows the same shape: compare the persisted reporting interval against the current `CalendarInterval` during state hydration in rules-state-store.js, and when they differ invoke a migration routine in target-state.js to clear/re-scope stale target emissions rather than reusing them directly (PR #9569, #9570).
+The interval-turnover follow-up reuses the same shape check rather than an interval comparison: `rules-state-store.load` calls `state.targetState = targetState.migrateStaleState(state.targetState)` inside the existing `rulesConfigHash`/`isStale` branch, and `migrateStaleState` wraps a pre-#9486 bare targets map into `{ targets: <old map>, aggregate: {} }` when `isStale` is true. Emissions are preserved, not cleared; the wrap exists so `handleIntervalTurnover` in provider-wireup.js can read the migrated state before the rebuild (PR #9569, #9570).
 
 ## Design Choices
 
-Backfilling only the missing target aggregates preserves already-computed rules state and avoids forcing a full, expensive rules-engine rebuild on every upgrade, while still guaranteeing target accuracy when configuration changes.
+Detecting the unusable persisted shape and rebuilding from scratch was chosen over trying to repair the blob: `load` returns true, `provider-wireup.initialize` calls `rulesStateStore.build()`, and all contact and target state is recomputed. One full rebuild after upgrade was accepted in exchange for guaranteed target accuracy.
 
-The interval-turnover fix likewise migrates the existing persisted state in place instead of forcing a full rules-engine rebuild, preserving unrelated contact/task state, avoiding a costly full recomputation, and remaining backwards compatible with state written by older versions (PR #9569, #9570).
+The interval-turnover follow-up migrates the persisted blob in place but does not avoid the rebuild — `load` still sets `state.stale = true` on the very next line, so contact and task state are still discarded. The migration exists so the pre-#9486 blob is readable by `handleIntervalTurnover`, which writes the previous interval's target doc before `rulesStateStore.build()` runs, and it remains backwards compatible with state written by older versions (PR #9569, #9570).
 
 ## Related Files
 
@@ -98,7 +98,7 @@ Added/updated unit tests in rules-state-store.spec.js and target-state.spec.js c
 
 ## Backports
 
-The stale-state-after-upgrade fix was backported to the 4.1.x line (PR #9555, cherry-pick of dc47c51) and to 4.13.x. The interval-turnover migration was also backported to 4.13.x (PR #9570).
+The stale-state-after-upgrade fix was backported to the 4.13.x line (PR #9555, commit c8a7f13, cherry-pick of dc47c51). It was not backported to 4.1.x, whose tip (62aadbd, 4.1.2) predates the fix. The interval-turnover migration was also backported to 4.13.x (PR #9570).
 
 ## Related Issues
 

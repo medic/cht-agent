@@ -57,11 +57,11 @@ The freetext search input in the shared search bar was explicitly disabled for t
 
 ## Solution
 
-Enabled the freetext input on the Tasks page. Typed queries are written into the global filters state (reducers/global.ts) via the tasks sidebar filter component, and a memoized NgRx selector (selectors/index.ts) reactively re-filters the already-loaded task list by matching the query against contact name, lineage, and task title — with no extra query round-trip or page reload.
+Enabled the freetext input on the Tasks page. Typed queries are written into the global filters state by the shared `FreetextFilterComponent` (`applyFilter()` calls `globalActions.setFilter({ search: this.inputText })`); reducers/global.ts only gains a `search?: string` field on the `TasksFilters` interface. The memoized NgRx selector `getFilteredTasksList` (selectors/index.ts) then reactively re-filters the already-loaded task list by matching the query against contact name, lineage, and task title — with no extra query round-trip or page reload.
 
 ## Code Patterns
 
-Memoized NgRx selector in webapp/src/ts/selectors/index.ts reads the freetext value from global filters state and filters the in-memory task list; tasks-sidebar-filter.component.ts writes the search query into global filters state; the shared search bar component and global filter infrastructure are reused across the Reports and Tasks pages.
+Memoized NgRx selector `getFilteredTasksList` in webapp/src/ts/selectors/index.ts reads `filters.search` from global filters state and filters the in-memory task list in two passes over `[task.contact.name, ...task.lineage, task.title]` — a diacritic-insensitive substring pass (`normalizeText` lowercases, NFD-decomposes and strips U+0300-U+036F), then, for queries of at least 3 characters, a Fuse.js fuzzy pass (`threshold: 0.2, ignoreLocation: true, minMatchCharLength: 3`) over the remaining candidates, which is why the PR adds the `fuse.js` ^7.3.0 dependency to webapp/package.json; tasks-sidebar-filter.component.ts passes `'search'` as the skip key to `clearFilters()` so a sidebar filter reset preserves the freetext query (the query itself is written to state by the shared freetext-filter component inside the search bar); the shared search bar component and global filter infrastructure are reused across the Reports and Tasks pages.
 
 ## Design Choices
 

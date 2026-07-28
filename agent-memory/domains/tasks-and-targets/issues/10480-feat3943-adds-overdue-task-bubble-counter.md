@@ -59,11 +59,11 @@ Feature gap rather than a defect: the existing nav-bar bubble pattern only cover
 
 ## Solution
 
-Extended the rules engine (shared-libs/rules-engine/src/index.js) to compute the number of overdue and due-today tasks, exposed it through rules-engine.service.ts, and wired it into NgRx via a tasks action/reducer and a selector. The header component reads the selected count and renders a bubble next to the tasks tab, reusing the existing unread-count bubble pattern. Tasks due in the future are intentionally excluded from the count.
+Added a single `showTask(taskDoc)` predicate to the rules engine (shared-libs/rules-engine/src/index.js) returning `taskDoc.state === taskStates.states.Ready` — the rules engine does not compute the count. In rules-engine.service.ts the background freshness debounce was shortened from 120s to 1s (ENSURE_FRESHNESS_MILLIS) and now calls fetchOverdueTasksForAllContacts(), which pulls all task docs and dispatches setTasksList with their emissions; it also registers a changes watcher (monitorTaskChanges) filtered by `change.doc.type === 'task' && this.rulesEngineCore.showTask(change.doc)` that dispatches setOverdueTasks with the hydrated task docs. hydrateTaskDocs sets `emission.overdue = dueDate.isBefore(moment())`; reducers/tasks.ts keeps an `overdue` array of those emissions; and the count is derived in the selector, `Selectors.getBubbleCounter` returning `task: taskState.overdue?.length || 0`. The header component reads the selected count and renders a bubble next to the tasks tab, reusing the existing unread-count bubble pattern. Tasks due in the future are intentionally excluded from the count.
 
 ## Code Patterns
 
-Mirrors the existing unread-count flow for reports/messages: a service computes the count -> dispatches an NgRx action -> reducer stores it (webapp/src/ts/reducers/tasks.ts) -> selector exposes it (webapp/src/ts/selectors/index.ts) -> header.component.ts/.html renders the bubble. Reuse this service->action->reducer->selector->header chain when adding new nav-bar counters.
+The PR generalises the existing unread-count flow rather than mirroring it: Actions.setUnreadCount/updateUnreadCount became setBubbleCounter/updateBubbleCounter, GlobalState.unreadCount became bubbleCounter, Selectors.getUnreadCount became getBubbleCounter, and HeaderComponent.unreadCount became bubbleCount. The header renders one generic badge keyed by `bubbleCount[tab.typeName]`, so a new nav-bar counter is added by (a) giving the tab a `typeName` in header-tabs.service.ts (here `typeName: 'task'`) and (b) making getBubbleCounter supply that key's value. Reports and messages still push their counts in from a service (UnreadRecordsService -> GlobalActions.setBubbleCounter in app.component.ts), but nothing dispatches a *task* count: the task actions (setTasksList with emissions, setOverdueTasks with hydrated task docs) carry tasks, the reducer stores the filtered `overdue` array, and getBubbleCounter derives `task: taskState.overdue?.length || 0`.
 
 ## Design Choices
 
@@ -89,7 +89,7 @@ The bubble counts only 'Overdue' and due 'Today' tasks (not tasks due tomorrow o
 
 ## Testing
 
-Added Karma unit tests covering the header component, tasks component, tasks and global reducers, selectors, rules-engine.service, header-tabs.service, reports.effects, and app.component. Added an integration test in shared-libs/rules-engine/test/integration.spec.js for the count computation. Added WDIO e2e coverage (tests/e2e/default/tasks/overdue-bubble.wdio-spec.js) with dedicated configs for overdue tasks (overdue-bubble-config.js) and the no-overdue case (no-overdue-tasks-config.js), plus targets analytics specs/config.
+Added Karma unit tests covering the header component, tasks component, tasks and global reducers, selectors, rules-engine.service, header-tabs.service, reports.effects, and app.component. Added an integration test in shared-libs/rules-engine/test/integration.spec.js for the count computation. Added WDIO e2e coverage (tests/e2e/default/tasks/overdue-bubble.wdio-spec.js) with dedicated configs for overdue tasks (overdue-bubble-config.js) and the no-overdue case (no-overdue-tasks-config.js), plus the pre-existing targets analytics e2e spec and configs, which were not added or edited but moved unchanged (three 100% renames) from tests/e2e/default/analytics/ to tests/e2e/default/targets/, with the now-dead `./analytics/**/*.wdio-spec.js` glob dropped from tests/e2e/default/suites.js to follow.
 
 ## Related Issues
 
