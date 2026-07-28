@@ -195,6 +195,71 @@ async function gitExecVerifyOrThrow(
   }
 }
 
+/** Unmerged paths show up as "UU", "AA", "DD", etc. in the first two columns. */
+const UNMERGED_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
+
+function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: string): void {
+  if (!statusLines.some(line => UNMERGED_CODES.has(line.substring(0, 2)))) return;
+  throw new Error(
+    `cht-core has unmerged paths at ${chtCorePath}; refuse to run claude-code-cli. ` +
+    `Resolve conflicts and try again.`
+  );
+}
+
+/**
+ * Stash the operator's uncommitted work under a marked name, returning the ref
+ * only once OUR marker is confirmed on top of the stack.
+ */
+async function stashOperatorWork(
+  chtCorePath: string,
+  statusLines: readonly string[],
+): Promise<{ stashRef: string | null; stashName: string | null }> {
+  warnOnIgnoreRuleEdits(statusLines, chtCorePath);
+  const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
+  const topMessageIsOurs = async () => {
+    const { stdout } = await execFileAsync(
+      'git', ['stash', 'list', '-1', '--format=%gs'], { cwd: chtCorePath }
+    );
+    return stdout.includes(name);
+  };
+
+  // `git stash push -u` can exit non-zero on file-removal warnings even when
+  // the stash was successfully created (R14/R15). Verify by checking the
+  // top-of-stack message for our unique marker before re-throwing.
+  await gitExecVerifyOrThrow(
+    ['stash', 'push', '-u', '-m', name],
+    chtCorePath,
+    topMessageIsOurs,
+    `stash "${name}" was created`,
+  );
+
+  // Confirm our stash is on top before trusting the ref. The verify-or-throw
+  // helper only inspects on a non-zero exit, but `stash push -u` can exit ZERO
+  // having saved nothing; taking top-of-stack blindly would then hand rollback a
+  // third-party stash to pop.
+  if (!(await topMessageIsOurs())) {
+    console.warn(
+      `[claude-code-cli] git stash push reported success but "${name}" is not on top of the ` +
+      `stash stack; treating the run as unstashed so rollback never pops someone else's stash.`
+    );
+    return { stashRef: null, stashName: null };
+  }
+
+  // `git stash list -1 --format=%gd` returns just the ref name.
+  const { stdout: stashList } = await execFileAsync(
+    'git', ['stash', 'list', '-1', '--format=%gd'], { cwd: chtCorePath }
+  );
+  const stashRef = stashList.trim();
+  // Print recovery up front: if the process is hard-killed before rollback, this
+  // line is the operator's only pointer to their stashed work. The name is
+  // durable; the stash@{N} ref is not, so lead with the name.
+  console.log(
+    `[claude-code-cli] Stashed your uncommitted work as "${name}" (currently ${stashRef}). ` +
+    `If this run is interrupted: ${recoveryHint(chtCorePath, name)}`
+  );
+  return { stashRef, stashName: name };
+}
+
 /**
  * Capture the current cht-core state. Stashes any uncommitted work so that
  * (a) the CLI sees a clean workspace, and (b) we can restore the user's work
@@ -213,65 +278,12 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   // Refuse if there are unmerged paths (git stash would fail later).
   const { stdout: status } = await execFileAsync('git', ['status', '--porcelain'], { cwd: chtCorePath });
   const lines = status.split('\n').filter(Boolean);
-  for (const line of lines) {
-    // Unmerged paths show up as "UU", "AA", "DD", etc. in the first two columns.
-    const code = line.substring(0, 2);
-    if (code === 'UU' || code === 'AA' || code === 'DD' || code === 'AU' || code === 'UA' || code === 'DU' || code === 'UD') {
-      throw new Error(
-        `cht-core has unmerged paths at ${chtCorePath}; refuse to run claude-code-cli. ` +
-        `Resolve conflicts and try again.`
-      );
-    }
-  }
+  assertNoUnmergedPaths(lines, chtCorePath);
 
   // Stash uncommitted work (if any) so the CLI sees a clean workspace.
-  let stashRef: string | null = null;
-  let stashName: string | null = null;
-  if (lines.length > 0) {
-    warnOnIgnoreRuleEdits(lines, chtCorePath);
-    const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
-    // `git stash push -u` can exit non-zero on file-removal warnings even when
-    // the stash was successfully created (R14/R15). Verify by checking the
-    // top-of-stack message for our unique marker before re-throwing.
-    await gitExecVerifyOrThrow(
-      ['stash', 'push', '-u', '-m', name],
-      chtCorePath,
-      async () => {
-        const { stdout } = await execFileAsync(
-          'git', ['stash', 'list', '-1', '--format=%gs'], { cwd: chtCorePath }
-        );
-        return stdout.includes(name);
-      },
-      `stash "${name}" was created`,
-    );
-    // Confirm OUR stash is on top before trusting the ref. The verify-or-throw
-    // helper only inspects on a non-zero exit, but `stash push -u` can exit ZERO
-    // having saved nothing; taking top-of-stack blindly would then hand rollback
-    // a third-party stash to pop.
-    const { stdout: topMessage } = await execFileAsync(
-      'git', ['stash', 'list', '-1', '--format=%gs'], { cwd: chtCorePath }
-    );
-    if (!topMessage.includes(name)) {
-      console.warn(
-        `[claude-code-cli] git stash push reported success but "${name}" is not on top of the ` +
-        `stash stack; treating the run as unstashed so rollback never pops someone else's stash.`
-      );
-    } else {
-      stashName = name;
-      // Capture the top stash ref. `git stash list -1 --format=%gd` returns just the ref name.
-      const { stdout: stashList } = await execFileAsync(
-        'git', ['stash', 'list', '-1', '--format=%gd'], { cwd: chtCorePath }
-      );
-      stashRef = stashList.trim();
-      // Print recovery up front: if the process is hard-killed before rollback,
-      // this line is the operator's only pointer to their stashed work. The name
-      // is durable; the stash@{N} ref is not, so lead with the name.
-      console.log(
-        `[claude-code-cli] Stashed your uncommitted work as "${name}" (currently ${stashRef}). ` +
-        `If this run is interrupted: ${recoveryHint(chtCorePath, name)}`
-      );
-    }
-  }
+  const { stashRef, stashName } = lines.length > 0
+    ? await stashOperatorWork(chtCorePath, lines)
+    : { stashRef: null, stashName: null };
 
   // Record the untracked baseline AFTER the stash: stashing an uncommitted
   // .gitignore edit reverts ignore rules to HEAD, which can unmask files that
