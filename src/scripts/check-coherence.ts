@@ -1,0 +1,283 @@
+/**
+ * check-coherence.ts — Layer 3 of draft verification: does a draft contradict
+ * ITSELF?
+ *
+ * Layers 1 and 2 both compare a draft to something outside it — the schema and
+ * the corpus (verify-drafts), then the cht-core tree (ground-claims). Neither can
+ * see the defect class that dominated the third review round: a draft whose
+ * every individual sentence grounds, but whose sections disagree with each other.
+ *
+ * It arises mechanically. A grounding pass corrects the sections that assert
+ * mechanism against code (title, summary, Root Cause, Solution, Code Patterns,
+ * Testing) and leaves the interpretive ones (Problem, Design Choices, Domain
+ * Rationale, Related Issues) asserting the story it just disproved. Both halves
+ * then ground independently — `resources` exists, the scaffolding exists — while
+ * the document as a whole tells two incompatible stories. The 10198 draft ended
+ * up stating that template safety comes from `ng-if` attributes "not from
+ * scaffolded keys" in its Solution, and that the controller "scaffolds the
+ * minimum keys the template requires" in its Design Choices.
+ *
+ * That is worse than untidy: the interpretive sections are where the transferable
+ * lesson lives, so the stale version is the one a consuming agent reuses.
+ *
+ * An LLM is the right tool for finding it and the wrong tool for being trusted
+ * about it, so the same split as ground-claims applies: the model may only
+ * IDENTIFY candidate pairs and must quote both sides verbatim; this script then
+ * verifies mechanically that each quote really occurs in the draft and drops any
+ * pair that does not. A hallucinated contradiction cannot survive that gate.
+ *
+ * Usage:
+ *   LLM_PROVIDER=claude-cli npm run check-coherence -- --dir agent-memory
+ *   ... -- --changed-only --base origin/main
+ *   ... -- --limit 3
+ *
+ * Exit: 1 when any verified contradiction is found, 0 when clean.
+ */
+
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { z } from 'zod';
+import { REPO_ROOT } from './schema-utils';
+import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { DraftInput, loadDrafts } from './ground-claims';
+
+/** One pair of statements in a single draft that cannot both be true. */
+export interface Contradiction {
+  /** Verbatim span from the draft. */
+  quoteA: string;
+  /** Verbatim span from the draft that the first cannot coexist with. */
+  quoteB: string;
+  /** Why they are incompatible, in one sentence. */
+  why: string;
+  /** 1-indexed lines, filled in by the verification step. */
+  lineA?: number;
+  lineB?: number;
+}
+
+export interface CoherenceReport {
+  file: string;
+  contradictions: Contradiction[];
+  /** The model answered but its quotes did not occur in the draft. */
+  discarded: number;
+  error?: string;
+}
+
+const schema = z.object({
+  contradictions: z.array(z.object({
+    quoteA: z.string().min(1),
+    quoteB: z.string().min(1),
+    why: z.string().min(1),
+  })),
+});
+
+const SHAPE = `{"contradictions": [
+  {"quoteA": "<verbatim sentence from the draft>", "quoteB": "<verbatim sentence it contradicts>", "why": "<one sentence>"}
+]}`;
+
+/**
+ * Prompt for CONTRADICTION FINDING only. It never asks which side is correct —
+ * that needs the source tree, which ground-claims owns. Asking for a fix here
+ * would invite the model to invent one.
+ */
+export function coherencePrompt(draft: DraftInput): string {
+  return `You are auditing one distilled engineering memory about the medic/cht-core repository for INTERNAL CONTRADICTIONS.
+
+These documents are produced in passes. A later pass often corrects the technical sections (title, summary, Root Cause, Solution, Code Patterns, Testing) against the real source code, but forgets the interpretive sections (Problem, Design Choices, Domain Rationale, Related Issues), leaving them asserting the very thing that was just corrected. Your job is to find those leftovers.
+
+Report a pair ONLY when both sides make a factual assertion and they cannot both be true of the same pull request. Real examples of what to report:
+- Solution says template safety comes from "ng-if" attributes "not from scaffolded keys", while Design Choices says the controller "scaffolds the minimum keys the template requires".
+- Root Cause says the endpoint "was not untested" and lists its existing coverage, while Problem opens with "the endpoint had no test coverage".
+- Testing says "neither fix is covered by existing tests", while Design Choices says "existing unit tests already covered the functionality".
+- Root Cause says the bug is in outbound response parsing and that nothing inbound is involved, while Domain Rationale says the bug is in the inbound request-parsing code.
+
+Do NOT report:
+- Differences of emphasis, detail, abstraction or wording where both statements can be true at once.
+- A summary being shorter or vaguer than the section it summarises.
+- Anything you would need to read the cht-core source to adjudicate. You are only comparing the document against itself.
+- Speculation about whether a statement is correct. Only whether two statements conflict.
+
+For each pair, quote BOTH sides EXACTLY as they appear in the document, character for character, so a human can locate them. Do not paraphrase, do not fix typos, do not add ellipses. Quote a complete sentence or clause, not a whole section. If the document is self-consistent, return an empty array — that is the expected answer for most drafts.
+
+DRAFT: ${draft.file}
+
+${draft.raw}`;
+}
+
+/** Normalise whitespace so a quote spanning a wrapped line still matches. */
+const flatten = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * Keep only contradictions whose BOTH quotes really occur in the draft, and
+ * locate them. This is the guard that makes an LLM finding safe to act on: a
+ * fabricated quote is dropped rather than filed as a defect.
+ */
+export function verifyContradictions(
+  draft: DraftInput, found: Array<Omit<Contradiction, 'lineA' | 'lineB'>>
+): { kept: Contradiction[]; discarded: number } {
+  const lines = draft.raw.split('\n');
+  const flatLines = lines.map(flatten);
+  const haystack = flatten(draft.raw);
+  const locate = (quote: string): number | undefined => {
+    const needle = flatten(quote);
+    const exact = flatLines.findIndex(l => l.includes(needle));
+    if (exact >= 0) return exact + 1;
+    // The quote may wrap across lines; fall back to the first line that starts it.
+    const head = needle.slice(0, 40);
+    const partial = flatLines.findIndex(l => l.includes(head));
+    return partial >= 0 ? partial + 1 : undefined;
+  };
+
+  const kept: Contradiction[] = [];
+  let discarded = 0;
+  for (const c of found) {
+    const a = flatten(c.quoteA);
+    const b = flatten(c.quoteB);
+    if (!haystack.includes(a) || !haystack.includes(b)) {
+      discarded++;
+      continue;
+    }
+    if (a === b) {          // a "contradiction" with itself is a model artefact
+      discarded++;
+      continue;
+    }
+    kept.push({ ...c, lineA: locate(c.quoteA), lineB: locate(c.quoteB) });
+  }
+  return { kept, discarded };
+}
+
+export type FindFn = (draft: DraftInput) => Promise<Array<Omit<Contradiction, 'lineA' | 'lineB'>>>;
+
+function cliFinder(): FindFn {
+  const chain = createStructuredCliChain(schema, SHAPE);
+  return async draft => (await chain.invoke(coherencePrompt(draft))).contradictions;
+}
+
+export interface CoherenceOptions {
+  dir?: string;
+  base?: string;
+  limit?: number;
+  outDir?: string;
+  label?: string;
+  findFn?: FindFn;
+  concurrency?: number;
+}
+
+async function checkOne(draft: DraftInput, find: FindFn): Promise<CoherenceReport> {
+  try {
+    const found = await find(draft);
+    const { kept, discarded } = verifyContradictions(draft, found);
+    return { file: draft.file, contradictions: kept, discarded };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { file: draft.file, contradictions: [], discarded: 0, error: `coherence check failed: ${message}` };
+  }
+}
+
+/** Bounded-concurrency map preserving input order. */
+async function pooled<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return out;
+}
+
+export async function checkCoherence(opts: CoherenceOptions = {}): Promise<{
+  reports: CoherenceReport[];
+  outDir: string;
+  total: number;
+}> {
+  const drafts = loadDrafts(opts.dir ?? 'agent-memory', { base: opts.base, limit: opts.limit });
+  const find = opts.findFn ?? cliFinder();
+  const reports = await pooled(drafts, opts.concurrency ?? 3, d => checkOne(d, find));
+  const total = reports.reduce((n, r) => n + r.contradictions.length, 0);
+
+  const outDir = path.resolve(
+    REPO_ROOT, opts.outDir ?? path.join('outputs', 'verification', opts.label ?? 'local')
+  );
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, 'coherence.json'), JSON.stringify({ reports }, null, 2) + '\n', 'utf8');
+  fs.writeFileSync(path.join(outDir, 'COHERENCE.md'), renderCoherence(reports), 'utf8');
+  return { reports, outDir, total };
+}
+
+export function renderCoherence(reports: CoherenceReport[]): string {
+  const withFindings = reports.filter(r => r.contradictions.length > 0);
+  const lines = [
+    '# Internal coherence report',
+    '',
+    `- drafts checked: ${reports.length}`,
+    `- self-contradicting: ${withFindings.length}`,
+    `- discarded (quote not found in draft): ${reports.reduce((n, r) => n + r.discarded, 0)}`,
+    '',
+    'Each pair below is two statements from the SAME draft that cannot both be true.',
+    'Both quotes were verified to occur in the file. Which side is correct is not',
+    'decided here — check the anchor commit and fix the stale side.',
+    '',
+  ];
+  if (!withFindings.length) lines.push('_No contradictions found._', '');
+  for (const r of withFindings) {
+    lines.push(`## \`${r.file}\``, '');
+    for (const c of r.contradictions) {
+      lines.push(`- **${c.why}**`);
+      lines.push(`  - L${c.lineA ?? '?'}: "${c.quoteA.trim()}"`);
+      lines.push(`  - L${c.lineB ?? '?'}: "${c.quoteB.trim()}"`);
+    }
+    lines.push('');
+  }
+  const failed = reports.filter(r => r.error);
+  if (failed.length) {
+    lines.push('## Not checked', '');
+    for (const r of failed) lines.push(`- \`${r.file}\` — ${r.error}`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/* istanbul ignore next */
+function argValue(argv: string[], flag: string): string | undefined {
+  const i = argv.indexOf(flag);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
+/* istanbul ignore next */
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (!isUsingCLIProvider() && !process.env.OPENROUTER_API_KEY && !process.env.ANTHROPIC_API_KEY) {
+    console.error('No LLM available: set LLM_PROVIDER=claude-cli (uses the claude binary, no API key) ' +
+      'or provide OPENROUTER_API_KEY / ANTHROPIC_API_KEY.');
+    process.exit(1);
+  }
+  const limitArg = argValue(argv, '--limit');
+  const concArg = argValue(argv, '--concurrency');
+  const result = await checkCoherence({
+    dir: argValue(argv, '--dir'),
+    base: argv.includes('--changed-only') ? (argValue(argv, '--base') ?? 'origin/main') : undefined,
+    outDir: argValue(argv, '--out'),
+    label: argValue(argv, '--label'),
+    limit: limitArg ? Number.parseInt(limitArg, 10) : undefined,
+    concurrency: concArg ? Number.parseInt(concArg, 10) : undefined,
+  });
+
+  const discarded = result.reports.reduce((n, r) => n + r.discarded, 0);
+  console.log(`\ncheck-coherence: ${result.reports.length} drafts, ${result.total} contradiction(s)` +
+    `${discarded ? `, ${discarded} discarded (quote not in draft)` : ''}`);
+  console.log(`report: ${path.relative(REPO_ROOT, result.outDir)}/COHERENCE.md`);
+  for (const r of result.reports.filter(x => x.contradictions.length > 0)) {
+    console.log(`  ✗ ${r.file} — ${r.contradictions.length}`);
+  }
+  if (result.total > 0) process.exit(1);
+}
+
+/* istanbul ignore next */
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}

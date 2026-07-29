@@ -16,11 +16,19 @@
  *   process-leakage         classifier/review scaffolding left in the prose
  *   uniform-domain-fit      every draft self-reports a strong fit (warning)
  *   related-issues-empty    machine-readable linkage never backfilled (warning)
+ *   stale-timestamp         lastUpdated predates the file's last commit (warning)
  *
- * `--online` adds the one check that needs the network: assert `issueNumber`
- * really is an issue and not a PR, via the `pull_request` key on the issues
- * endpoint (gh-classify.ts). A transient gh failure reports "unverified" and
- * never fabricates a pass.
+ * `--online` adds the checks that need the network:
+ *   issue-number-is-pr          `issueNumber` names a PR, via the `pull_request`
+ *                               key on the issues endpoint (gh-classify.ts)
+ *   related-ref-missing         a `## Related Issues` number does not exist
+ *   related-ref-is-pr           a PR cited there as though it were an issue
+ *   related-ref-gloss-mismatch  the draft's one-line gloss of a cross-reference
+ *                               shares no substantive word with the real title —
+ *                               how #10754 ("Cookies not being sent with
+ *                               `secure: true`") passed review glossed as
+ *                               "Scheduled task duplicate processing"
+ * A transient gh failure reports "unverified" and never fabricates a pass.
  *
  * What this does NOT catch, by construction: a fabricated symbol that is not a
  * near-miss of a real one (`getOidc`), a real symbol attributed to the wrong
@@ -41,7 +49,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import matter from 'gray-matter';
 import { REPO_ROOT } from './schema-utils';
-import { classifyNumber, ClassifyCache, ExecFn } from './gh-classify';
+import { classifyNumber, describeNumber, ClassifyCache, ExecFn, NumberKind } from './gh-classify';
 import { loadVocab, nearMiss, Vocab, VOCAB_PATH } from './vocab';
 
 export type { ExecFn };
@@ -120,6 +128,9 @@ const LEAKAGE_PATTERNS: Array<{ re: RegExp; label: string }> = [
 interface Draft {
   /** Repo-relative path. */
   file: string;
+  /** Absolute path — git pathspecs must not use the display path, which may be
+   *  relative to a sibling worktree's parent and would silently match nothing. */
+  abs: string;
   body: string;
   lines: string[];
   fm: Record<string, unknown>;
@@ -290,6 +301,107 @@ function checkIssueIsNotPr(d: Draft, gh: GhCtx): { findings: Finding[]; unverifi
   }
 }
 
+/** `- #1234: gloss text` inside the prose `## Related Issues` section. */
+const RELATED_REF_RE = /^-\s*(?:PR\s*)?#(\d{2,7})\s*:\s*(.+)$/;
+/** The draft already labels the ref as a PR, so citing a PR number is honest. */
+const LABELLED_PR_RE = /^-\s*PR\s*#/;
+
+const STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'to', 'of', 'in', 'on', 'for', 'with', 'when', 'if', 'is',
+  'are', 'be', 'not', 'no', 'this', 'that', 'it', 'its', 'from', 'by', 'as', 'at', 'into',
+  'related', 'issue', 'original', 'tracking', 'similar', 'improvement', 'bug', 'fixed', 'fix',
+]);
+
+const contentWords = (s: string): Set<string> =>
+  new Set(
+    s.toLowerCase().replace(/[`_*'"()[\]{}.,:;!?/\\-]/g, ' ').split(/\s+/)
+      .filter(w => w.length > 3 && !STOPWORDS.has(w))
+  );
+
+/**
+ * Does the draft's gloss share any substantive word with the real title? A
+ * paraphrase ("privacy policies do not load" vs "privacy policies change page
+ * not loading") always will; a wrong reference ("Scheduled task duplicate
+ * processing" vs "Cookies not being sent with `secure: true`") will not. Only
+ * total disjointness is reported, so paraphrasing stays free.
+ */
+function glossMatchesTitle(gloss: string, title: string): boolean {
+  const g = contentWords(gloss);
+  const t = contentWords(title);
+  if (g.size === 0 || t.size === 0) return true; // nothing to compare — do not guess
+  for (const w of g) {
+    if (t.has(w)) return true;
+    // Cheap stem tolerance: "policies"/"policy", "loading"/"load".
+    for (const tw of t) if (w.startsWith(tw.slice(0, 5)) || tw.startsWith(w.slice(0, 5))) return true;
+  }
+  return false;
+}
+
+/**
+ * Audit every cross-reference in `## Related Issues`. Two defect classes, both
+ * from real review rounds: a number that is a PR presented as an issue, and a
+ * gloss describing a different issue than the one cited.
+ */
+function checkRelatedIssueRefs(d: Draft, gh: GhCtx): { findings: Finding[]; unverified: boolean } {
+  const out: Finding[] = [];
+  let unverified = false;
+  const repo = parseSourcePr(d.fm.source_pr)?.repo ?? gh.repo;
+  const self = num(d.fm.issueNumber);
+
+  for (const [i, raw] of d.lines.entries()) {
+    const m = RELATED_REF_RE.exec(raw.trim());
+    if (!m) continue;
+    const n = Number.parseInt(m[1], 10);
+    const gloss = m[2].trim();
+    if (n === self) continue; // the draft's own issue, already checked by identity
+    let described: { kind: NumberKind; title: string | null };
+    try {
+      described = describeNumber(repo, n, gh.exec);
+    } catch {
+      unverified = true;
+      continue;
+    }
+    if (described.kind === 'missing') {
+      out.push(finding(d.file, 'related-ref-missing', 'blocking',
+        `${repo}#${n} does not exist in this repo`, i + 1));
+      continue;
+    }
+    if (described.kind === 'pr' && !LABELLED_PR_RE.test(raw.trim())) {
+      out.push(finding(d.file, 'related-ref-is-pr', 'warning',
+        `#${n} is a PULL REQUEST cited in Related Issues as an issue — label it "PR #${n}"`, i + 1));
+    }
+    if (described.title && !glossMatchesTitle(gloss, described.title)) {
+      out.push(finding(d.file, 'related-ref-gloss-mismatch', 'blocking',
+        `#${n} is "${described.title}" — the draft glosses it as "${gloss}", which describes ` +
+          'something else entirely', i + 1));
+    }
+  }
+  return { findings: out, unverified };
+}
+
+/**
+ * `lastUpdated` must not predate the last commit that edited the draft. A
+ * substantive rewrite that leaves the old stamp makes the corpus look older than
+ * it is, and reviewers use the stamp to decide what to re-read.
+ */
+function checkTimestampFreshness(d: Draft, dir: string, exec: ExecFn): Finding[] {
+  const stamp = str(d.fm.lastUpdated) ?? (d.fm.lastUpdated instanceof Date
+    ? d.fm.lastUpdated.toISOString().slice(0, 10)
+    : undefined);
+  if (!stamp) return [];
+  let committed: string;
+  try {
+    committed = exec('git', ['-C', dir, 'log', '-1', '--format=%ad', '--date=short', '--', d.abs])
+      .trim();
+  } catch {
+    return [];
+  }
+  if (!committed || stamp >= committed) return [];
+  return [finding(d.file, 'stale-timestamp', 'warning',
+    `lastUpdated is ${stamp} but the file was last edited ${committed} — bump it`,
+    lineOf(d.lines, 'lastUpdated:'))];
+}
+
 // ---------------------------------------------------------------------------
 // Corpus-level checks
 // ---------------------------------------------------------------------------
@@ -405,7 +517,7 @@ function readDraft(abs: string, scanRoot: string): { draft?: Draft; skipped?: st
     if (NO_FRONTMATTER_ALLOWLIST.has(path.basename(abs))) return { skipped: rel };
     return { malformed: finding(rel, 'missing-frontmatter', 'blocking', 'no YAML frontmatter block') };
   }
-  return { draft: { file: rel, body: parsed.content, lines: content.split('\n'), fm } };
+  return { draft: { file: rel, abs, body: parsed.content, lines: content.split('\n'), fm } };
 }
 
 function hermeticFileChecks(d: Draft, vocab: Vocab): Finding[] {
@@ -455,10 +567,13 @@ export function verifyDrafts(opts: VerifyOptions = {}): VerifyReport {
 
   for (const d of focused) {
     findings.push(...hermeticFileChecks(d, vocab));
+    findings.push(...checkTimestampFreshness(d, dir, exec));
     if (opts.online) {
       const res = checkIssueIsNotPr(d, gh);
       findings.push(...res.findings);
-      if (res.unverified) unverified++;
+      const refs = checkRelatedIssueRefs(d, gh);
+      findings.push(...refs.findings);
+      if (res.unverified || refs.unverified) unverified++;
     }
   }
 

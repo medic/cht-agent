@@ -78,6 +78,20 @@ export type Claim =
  */
 export type Provenance = 'anchor' | 'fallback';
 
+/**
+ * A claim that is TRUE at its anchor but names something the current tree no
+ * longer has, stated without any temporal qualifier. Not a defect in what the
+ * draft says about its own PR — a defect in how a reader will read it, since an
+ * agent consuming the memory takes an unqualified path or symbol as current.
+ */
+export interface Drift {
+  /** The path or symbol that is gone from the current tree. */
+  entity: string;
+  /** The commit that removed it, when git can say — the fix's citation. */
+  removedBy?: string;
+  note: string;
+}
+
 export interface Verdict {
   claim: Claim;
   outcome: Outcome;
@@ -86,6 +100,8 @@ export interface Verdict {
   /** Where the real thing lives, when the probe can say. */
   suggestion?: string;
   provenance?: Provenance;
+  /** Grounded at the anchor, but stale as written against the current tree. */
+  drift?: Drift;
 }
 
 export interface ProbeCtx {
@@ -520,6 +536,122 @@ function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 're
 /** Claim kinds that read a tree and so can fall back to a tree-wide ref. */
 const TREE_SCOPED = new Set<Claim['kind']>(['symbol', 'symbol-in-file', 'path-exists']);
 
+// ---------------------------------------------------------------------------
+// Snippet fidelity
+// ---------------------------------------------------------------------------
+
+/**
+ * Does a fenced code block attributed to `file` actually occur there at `sha`?
+ *
+ * A draft can pass every symbol probe while its illustrative snippet is a
+ * composite that exists nowhere: the 4278 draft showed a `check()` function
+ * calling `utils.db.query(...)` without `include_docs`, assembled from two real
+ * helpers, and every identifier in it was real. Comparison is whitespace- and
+ * comment-insensitive, and a snippet using `...`/`// ...` elision is checked
+ * segment by segment, so only genuinely invented code fails.
+ *
+ * Returns null when the snippet is too short to judge or the file is absent.
+ */
+export function snippetMatches(
+  ctx: ProbeCtx, sha: string, file: string, snippet: string
+): boolean | null {
+  const blob = fileAt(ctx, sha, file);
+  if (blob === null) return null;
+  const strip = (s: string): string => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map(l => l.replace(/\/\/.*$/, ''))
+    .join(' ')
+    .replace(/\s+/g, '');
+  const haystack = strip(blob);
+  // Elision markers split a snippet into segments that must each appear, in order.
+  const segments = snippet
+    .split(/\n\s*(?:\/\/\s*)?\.\.\.\s*\n|\n\s*\/\/\s*\.\.\.\s*\n/)
+    .map(strip)
+    .filter(s => s.length >= 12);
+  if (segments.length === 0) return null;
+  let from = 0;
+  for (const seg of segments) {
+    const at = haystack.indexOf(seg, from);
+    if (at < 0) return false;
+    from = at + seg.length;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Drift: true at the anchor, stale as written
+// ---------------------------------------------------------------------------
+
+/**
+ * Prose that scopes a claim to the past. A draft that says "at the time of this
+ * fix" or annotates "(deleted)" is already honest about a dead entity; one that
+ * simply names it is not. Deliberately generous — a false negative here costs a
+ * missed nit, a false positive costs churn on a correct draft.
+ */
+const TIME_SCOPED = new RegExp([
+  'at the time', 'as of ', 'no longer', 'used to', 'former', 'then-',
+  'has since', 'since (?:replaced|renamed|removed|deleted)',
+  '(?:was|were|later) (?:replaced|renamed|removed|deleted)',
+  'postdates', 'predates', '-era\\b', '\\(deleted\\)', '\\(added\\)', '\\(modified\\)',
+].join('|'), 'i');
+
+/** The entity a claim asserts exists, if it names one checkable in a tree. */
+function claimEntity(claim: Claim): { kind: 'path' | 'symbol'; value: string } | null {
+  switch (claim.kind) {
+    case 'path-exists': return { kind: 'path', value: claim.file };
+    case 'file-touched': return { kind: 'path', value: claim.file };
+    case 'symbol-in-file': return { kind: 'path', value: claim.file };
+    case 'symbol': return { kind: 'symbol', value: claim.symbol };
+    default: return null;
+  }
+}
+
+/** Subject of the commit that deleted `file`, when there is one. */
+function removalCommit(ctx: ProbeCtx, ref: string, file: string): string | undefined {
+  const raw = git(ctx, ['log', '--diff-filter=D', '-1', '--format=%h %s', ref, '--', file]).trim();
+  return raw || undefined;
+}
+
+/**
+ * Flag a claim that grounds at its anchor but names something absent from
+ * `currentRef`, unless the draft sentence already time-scopes it.
+ *
+ * This is the class no existing probe could see: `resource-icons.service.ts` was
+ * real when its PR shipped and is gone today, so checking only the anchor
+ * certifies it and checking only master refutes it — both wrong. The claim is
+ * true; the tense is not.
+ */
+export function driftFor(
+  ctx: ProbeCtx, claim: Claim, currentRef: string, anchorSha: string
+): Drift | undefined {
+  const entity = claimEntity(claim);
+  if (!entity || TIME_SCOPED.test(claim.quote)) return undefined;
+  if (!commitExists(ctx, currentRef)) return undefined;
+
+  if (entity.kind === 'path') {
+    if (pathExistsAt(ctx, currentRef, entity.value)) return undefined;
+    // Never report drift for something that was already absent at the anchor —
+    // that is a different (and worse) finding, and the outcome layer owns it.
+    if (!pathExistsAt(ctx, anchorSha, entity.value)) return undefined;
+    const removedBy = removalCommit(ctx, currentRef, entity.value);
+    return {
+      entity: entity.value,
+      removedBy,
+      note: `present at the anchor but absent from ${refLabel(currentRef)}` +
+        `${removedBy ? ` (removed by ${removedBy})` : ''} — the draft names it without time-scoping`,
+    };
+  }
+
+  if (symbolHits(ctx, currentRef, entity.value).length > 0) return undefined;
+  if (symbolHits(ctx, anchorSha, entity.value).length === 0) return undefined;
+  return {
+    entity: entity.value,
+    note: `present at the anchor but absent from ${refLabel(currentRef)} — ` +
+      'the draft names it without time-scoping',
+  };
+}
+
 /** Dispatch a tree-scoped claim at `ref`. */
 function checkAtRef(ctx: ProbeCtx, ref: string, claim: Claim, prov: Provenance): Verdict {
   switch (claim.kind) {
@@ -560,8 +692,16 @@ export function checkClaim(
     return checkAtRef(ctx, ref, claim, 'fallback');
   }
 
-  if (TREE_SCOPED.has(claim.kind)) return checkAtRef(ctx, anchor.sha, claim, 'anchor');
-  return claim.kind === 'file-touched'
-    ? checkFileTouched(ctx, anchor, claim, siblings)
-    : checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
+  const settleAtAnchor = (): Verdict => {
+    if (TREE_SCOPED.has(claim.kind)) return checkAtRef(ctx, anchor.sha, claim, 'anchor');
+    if (claim.kind === 'file-touched') return checkFileTouched(ctx, anchor, claim, siblings);
+    return checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
+  };
+  const settled = settleAtAnchor();
+
+  // Drift is only meaningful for a claim that HELD at its anchor: the sentence
+  // is true about its own PR, and stale only as read against today's tree.
+  if (settled.outcome !== 'grounded') return settled;
+  const drift = driftFor(ctx, claim, ctx.fallbackRef ?? DEFAULT_FALLBACK_REF, anchor.sha);
+  return drift ? { ...settled, drift } : settled;
 }

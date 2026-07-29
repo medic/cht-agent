@@ -52,16 +52,25 @@ function draft(issue: number, extra: string[] = [], body = 'Body.'): string {
 const REPO_API = 'https://api.github.com/repos/medic/cht-core';
 
 /** gh double: `issues/N` distinguishes issue / pr / missing / transient. */
-function fakeGh(reg: { issues?: number[]; prs?: number[]; transient?: number[] }): ExecFn {
+function fakeGh(reg: {
+  issues?: number[];
+  prs?: number[];
+  transient?: number[];
+  /** Titles served for the gloss-mismatch check. */
+  titles?: Record<number, string>;
+}): ExecFn {
   const issues = new Set(reg.issues ?? []);
   const prs = new Set(reg.prs ?? []);
   const transient = new Set(reg.transient ?? []);
+  const title = (n: number): Record<string, string> =>
+    reg.titles?.[n] ? { title: reg.titles[n] } : {};
   return (file, args) => {
+    if (file === 'git') throw new Error('git not stubbed in this test');
     if (file !== 'gh') throw new Error(`unexpected command: ${file}`);
     const n = Number(args[1].split('/').pop());
     if (transient.has(n)) throw new Error('HTTP 403: API rate limit exceeded');
-    if (prs.has(n)) return JSON.stringify({ repository_url: REPO_API, pull_request: {} });
-    if (issues.has(n)) return JSON.stringify({ repository_url: REPO_API });
+    if (prs.has(n)) return JSON.stringify({ repository_url: REPO_API, pull_request: {}, ...title(n) });
+    if (issues.has(n)) return JSON.stringify({ repository_url: REPO_API, ...title(n) });
     throw new Error('gh: Not Found (HTTP 404)');
   };
 }
@@ -290,6 +299,100 @@ describe('verifyDrafts', () => {
       const dir = tmpCorpus({ 'a.md': draft(10082) });
       const exploding: ExecFn = () => { throw new Error('should not be called'); };
       expect(() => verifyDrafts({ dir, exec: exploding })).to.not.throw();
+    });
+  });
+
+  describe('--online Related Issues cross-references', () => {
+    const withRefs = (refs: string[]): string =>
+      draft(9000, [], ['## Related Issues', '', ...refs, ''].join('\n'));
+
+    it('blocks a gloss that describes a different issue than the one cited', () => {
+      // The 10802 defect: #10754 is a cookie bug, glossed as a scheduling issue.
+      const dir = tmpCorpus({ 'a.md': withRefs(['- #10754: Scheduled task duplicate processing (similar issue)']) });
+      const report = verifyDrafts({
+        dir, online: true,
+        exec: fakeGh({ issues: [9000, 10754], titles: { 10754: 'Cookies not being sent with `secure: true`' } }),
+      });
+      const f = report.findings.find(x => x.check === 'related-ref-gloss-mismatch');
+      expect(f?.severity).to.equal('blocking');
+      expect(f?.message).to.contain('Cookies not being sent');
+    });
+
+    it('accepts a paraphrase that shares substantive words', () => {
+      const dir = tmpCorpus({
+        'a.md': withRefs(['- #10598: Admin app privacy policies change page not loading any policies']),
+      });
+      const report = verifyDrafts({
+        dir, online: true,
+        exec: fakeGh({ issues: [9000, 10598], titles: { 10598: 'Admin privacy policies do not load' } }),
+      });
+      expect(report.findings.some(x => x.check === 'related-ref-gloss-mismatch')).to.equal(false);
+    });
+
+    it('warns when a PR is cited as though it were an issue, unless labelled', () => {
+      const bare = tmpCorpus({ 'a.md': withRefs(['- #4374: Refuse duplicate SMS messages']) });
+      const gh = fakeGh({ issues: [9000], prs: [4374], titles: { 4374: 'Refuse duplicate SMS messages' } });
+      expect(verifyDrafts({ dir: bare, online: true, exec: gh })
+        .findings.some(x => x.check === 'related-ref-is-pr')).to.equal(true);
+
+      const labelled = tmpCorpus({ 'a.md': withRefs(['- PR #4374: Refuse duplicate SMS messages']) });
+      expect(verifyDrafts({ dir: labelled, online: true, exec: gh })
+        .findings.some(x => x.check === 'related-ref-is-pr')).to.equal(false);
+    });
+
+    it('blocks a reference to a number that does not exist', () => {
+      const dir = tmpCorpus({ 'a.md': withRefs(['- #99999: Something invented']) });
+      const report = verifyDrafts({ dir, online: true, exec: fakeGh({ issues: [9000] }) });
+      expect(report.findings.some(x => x.check === 'related-ref-missing')).to.equal(true);
+    });
+
+    it('counts a throttled cross-reference lookup as unverified, not a defect', () => {
+      const dir = tmpCorpus({ 'a.md': withRefs(['- #10754: whatever']) });
+      const report = verifyDrafts({
+        dir, online: true, exec: fakeGh({ issues: [9000], transient: [10754] }),
+      });
+      expect(report.findings.some(x => x.check.startsWith('related-ref'))).to.equal(false);
+      expect(report.unverified).to.equal(1);
+    });
+
+    it('does not re-flag the draft\'s own issue number', () => {
+      const dir = tmpCorpus({ 'a.md': withRefs(['- #9000: totally unrelated words here']) });
+      const report = verifyDrafts({
+        dir, online: true, exec: fakeGh({ issues: [9000], titles: { 9000: 'Draft 9000' } }),
+      });
+      expect(report.findings.some(x => x.check.startsWith('related-ref'))).to.equal(false);
+    });
+  });
+
+  describe('stale-timestamp', () => {
+    const gitLog = (date: string): ExecFn => (file, args) => {
+      expect(file).to.equal('git');
+      expect(args).to.include('--date=short');
+      return `${date}\n`;
+    };
+
+    it('warns when lastUpdated predates the file\'s last commit', () => {
+      const dir = tmpCorpus({ 'a.md': draft(7000) }); // stamped 2026-07-27
+      const report = verifyDrafts({ dir, exec: gitLog('2026-07-29') });
+      const f = report.findings.find(x => x.check === 'stale-timestamp');
+      expect(f?.severity).to.equal('warning');
+      expect(f?.message).to.contain('2026-07-27');
+      expect(f?.message).to.contain('2026-07-29');
+    });
+
+    it('passes when the stamp is current or newer', () => {
+      const dir = tmpCorpus({ 'a.md': draft(7000) });
+      expect(verifyDrafts({ dir, exec: gitLog('2026-07-27') })
+        .findings.some(x => x.check === 'stale-timestamp')).to.equal(false);
+      expect(verifyDrafts({ dir, exec: gitLog('2026-07-01') })
+        .findings.some(x => x.check === 'stale-timestamp')).to.equal(false);
+    });
+
+    it('stays silent when git cannot answer', () => {
+      const dir = tmpCorpus({ 'a.md': draft(7000) });
+      const exploding: ExecFn = () => { throw new Error('not a git repo'); };
+      expect(verifyDrafts({ dir, exec: exploding })
+        .findings.some(x => x.check === 'stale-timestamp')).to.equal(false);
     });
   });
 

@@ -73,6 +73,25 @@ export function classifyNumber(repo: string, n: number, exec: ExecFn, cache?: Cl
   return kind;
 }
 
+/**
+ * Kind plus title for `n`. The title is what lets a caller check a draft's
+ * one-line gloss of a cross-reference against reality: a draft citing #10754 as
+ * "Scheduled task duplicate processing" is only catchable by reading that the
+ * real title is "Cookies not being sent with `secure: true`".
+ *
+ * @throws {GhTransientError} on a non-404 gh failure.
+ */
+export function describeNumber(
+  repo: string, n: number, exec: ExecFn
+): { kind: NumberKind; title: string | null } {
+  const obj = fetchIssueRecord(repo, n, exec);
+  if (obj === null) return { kind: 'missing', title: null };
+  return {
+    kind: recordKind(obj, repo),
+    title: typeof obj.title === 'string' ? obj.title : null,
+  };
+}
+
 /** Same-repo issues a PR closes (cross-repo closing-refs dropped). */
 function prClosingIssues(repo: string, n: number, exec: ExecFn): number[] {
   let raw: string;

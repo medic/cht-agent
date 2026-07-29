@@ -23,6 +23,7 @@
     "verify-drafts": "ts-node src/scripts/verify-drafts.ts",
     "build-vocab": "ts-node src/scripts/vocab.ts",
     "ground-claims": "ts-node src/scripts/ground-claims.ts",
+    "check-coherence": "ts-node src/scripts/check-coherence.ts",
     "open-review-pr": "ts-node src/scripts/open-review-pr.ts",
     "relink-issues": "ts-node src/scripts/relink-issues.ts",
     "run-pipeline": "ts-node src/scripts/run-pipeline.ts",

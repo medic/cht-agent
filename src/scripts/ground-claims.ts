@@ -42,7 +42,8 @@ import { z } from 'zod';
 import { REPO_ROOT } from './schema-utils';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import {
-  Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, resolveAnchor, ExecFn,
+  Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, resolveAnchor, snippetMatches,
+  ExecFn,
 } from './claim-probes';
 
 const OUTCOMES: Outcome[] = ['grounded', 'ungrounded', 'unverifiable', 'anchor-unusable'];
@@ -59,6 +60,20 @@ export interface DraftInput {
 
 export type ExtractFn = (draft: DraftInput) => Promise<Claim[]>;
 
+/**
+ * A fenced code block that occurs in none of the files the draft names. Every
+ * identifier in it may be real — the 4278 snippet was assembled from two genuine
+ * helpers — so no symbol probe can catch it.
+ */
+export interface SnippetFinding {
+  language: string;
+  /** 1-indexed line of the opening fence. */
+  line: number;
+  excerpt: string;
+  /** Files it was compared against, so the report shows the search was fair. */
+  checkedAgainst: string[];
+}
+
 export interface DraftReport {
   file: string;
   /** sha256 of the draft bytes — lets a later gate refuse a stale report. */
@@ -66,6 +81,8 @@ export interface DraftReport {
   anchor: { sha: string; subject: string; isRevert: boolean; note?: string } | null;
   verdicts: Verdict[];
   counts: Record<Outcome, number>;
+  /** Code fences matching nothing in the files the draft names. */
+  snippets?: SnippetFinding[];
   /** Extraction failed; the draft was not verified. */
   error?: string;
 }
@@ -133,6 +150,7 @@ Extract a claim for each of these, and nothing else:
 - Every release line the draft says the change was backported to. Use kind "release-branch" with just the branch name, e.g. "4.13.x".
 
 Rules:
+- Do NOT extract a "symbol" or "path-exists" claim for something the draft says the PR REMOVED, deleted, renamed away, or replaced ("removed the parseResponseBody helper", "the old add-branding-doc.js was deleted"). The draft is asserting the thing is GONE at that commit, so probing for its existence inverts the claim. Where the draft names the file such a removal happened in, extract "file-touched" with status "deleted" instead, and nothing else.
 - "quote" must be a verbatim span from the draft (one sentence is ideal) so a human can find it.
 - For a dotted field reference like \`task.state\`, use the whole dotted token as the symbol.
 - Do not extract prose concepts, issue/PR numbers, dates, people, or anything not checkable by searching a source tree.
@@ -241,6 +259,61 @@ const tally = (verdicts: Verdict[]): Record<Outcome, number> => {
 
 const contentHash = (raw: string): string => createHash('sha256').update(raw).digest('hex').slice(0, 16);
 
+/** Languages whose fences are real source and so checkable against the tree. */
+const CODE_FENCE = /^```(js|javascript|ts|typescript|jsx|tsx)\s*$/;
+const REPO_PATH_RE =
+  /\b(?:api|webapp|admin|sentinel|shared-libs|tests|ddocs|config|scripts)\/[A-Za-z0-9_./-]+\.(?:js|ts|json|less|css|html)\b/g;
+
+/** Every cht-core path the draft names, from frontmatter and prose alike. */
+function candidateFiles(draft: DraftInput): string[] {
+  const out = new Set<string>();
+  const entities = Array.isArray(draft.frontmatter.entities) ? draft.frontmatter.entities : [];
+  for (const e of entities) if (typeof e === 'string') for (const m of e.matchAll(REPO_PATH_RE)) out.add(m[0]);
+  for (const m of draft.raw.matchAll(REPO_PATH_RE)) out.add(m[0]);
+  return [...out];
+}
+
+/**
+ * Check every code fence against the files the draft names. Reporting "this
+ * snippet is in none of the files this draft cites" avoids guessing which file a
+ * fence belongs to, which prose rarely states unambiguously.
+ */
+function auditSnippets(ctx: ProbeCtx, draft: DraftInput, anchor: Anchor | null): SnippetFinding[] {
+  if (!anchor || anchor.isRevert) return [];
+  const files = candidateFiles(draft);
+  if (files.length === 0) return [];
+  const lines = draft.raw.split('\n');
+  const out: SnippetFinding[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const open = CODE_FENCE.exec(lines[i].trim());
+    if (!open) continue;
+    const close = lines.indexOf('```', i + 1);
+    if (close < 0) break;
+    const snippet = lines.slice(i + 1, close).join('\n');
+    i = close;
+    if (snippet.replace(/\s+/g, '').length < 24) continue;   // too short to judge
+
+    let anyMatch = false;
+    let anyChecked = false;
+    for (const f of files) {
+      const res = snippetMatches(ctx, anchor.sha, f, snippet);
+      if (res === null) continue;                             // file absent at the anchor
+      anyChecked = true;
+      if (res) { anyMatch = true; break; }
+    }
+    if (anyChecked && !anyMatch) {
+      out.push({
+        language: open[1],
+        line: i + 1,
+        excerpt: snippet.split('\n').slice(0, 3).join(' ⏎ ').slice(0, 160),
+        checkedAgainst: files,
+      });
+    }
+  }
+  return out;
+}
+
 /** Ground one draft: extract claims, then probe each. */
 async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): Promise<DraftReport> {
   const anchor = anchorFor(ctx, draft.frontmatter);
@@ -261,7 +334,8 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
   }
   const siblings = siblingAnchors(ctx, draft.frontmatter, anchor);
   const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings));
-  return { ...base, verdicts, counts: tally(verdicts) };
+  const snippets = auditSnippets(ctx, draft, anchor);
+  return { ...base, verdicts, counts: tally(verdicts), ...(snippets.length && { snippets }) };
 }
 
 /** Bounded-concurrency map preserving input order. */
@@ -276,6 +350,19 @@ async function pooled<T, R>(items: T[], limit: number, fn: (item: T) => Promise<
   };
   await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
   return out;
+}
+
+/**
+ * Load the drafts a run should cover. Exported so sibling checkers (coherence)
+ * select exactly the same set from the same flags rather than re-implementing the
+ * walk and drifting out of step.
+ */
+export function loadDrafts(dir: string, opts: { base?: string; limit?: number; exec?: ExecFn } = {}): DraftInput[] {
+  return selectDrafts(
+    { base: opts.base, limit: opts.limit },
+    path.resolve(REPO_ROOT, dir),
+    opts.exec ?? defaultExec
+  );
 }
 
 function selectDrafts(opts: GroundOptions, dir: string, exec: ExecFn): DraftInput[] {
@@ -380,6 +467,37 @@ export function renderReport(reports: DraftReport[], meta: ReportMeta): string {
     lines.push('');
   }
 
+  const withSnippets = reports.filter(r => r.snippets?.length);
+  if (withSnippets.length) {
+    lines.push('## Code fences matching nothing in the files the draft names', '');
+    lines.push('Every identifier in these may be real while the block as written exists nowhere —',
+      'a composite assembled from separate helpers. Replace with the real code or drop the fence.', '');
+    for (const r of withSnippets) {
+      lines.push(`### \`${r.file}\``);
+      for (const s of r.snippets ?? []) {
+        lines.push(`- L${s.line} (\`${s.language}\`): ${s.excerpt}`);
+        lines.push(`  - checked against: ${s.checkedAgainst.join(', ')}`);
+      }
+      lines.push('');
+    }
+  }
+
+  const drifted = reports.filter(r => r.verdicts.some(v => v.drift));
+  if (drifted.length) {
+    lines.push('## Stale as written (true at the anchor, gone from the current tree)', '');
+    lines.push('These claims are correct about their own PR but name something the current tree no',
+      'longer has, with no temporal qualifier — an agent reading the memory will take them as',
+      'current. Time-scope them.', '');
+    for (const r of drifted) {
+      lines.push(`### \`${r.file}\``);
+      for (const v of r.verdicts.filter(x => x.drift)) {
+        lines.push(`- **${v.drift!.entity}** — ${v.drift!.note}`);
+        lines.push(`  - draft says: "${v.claim.quote.trim()}"`);
+      }
+      lines.push('');
+    }
+  }
+
   const unverifiable = reports.filter(r => r.counts.unverifiable > 0);
   if (unverifiable.length) {
     lines.push('## Partially unverifiable (anchor unresolved)', '');
@@ -444,14 +562,26 @@ async function main(): Promise<void> {
   });
 
   const { totals } = result;
+  const driftCount = result.reports.reduce((n, r) => n + r.verdicts.filter(v => v.drift).length, 0);
+  const snippetCount = result.reports.reduce((n, r) => n + (r.snippets?.length ?? 0), 0);
   console.log(`\nground-claims: ${result.reports.length} drafts, ` +
-    OUTCOMES.map(o => `${totals[o]} ${o}`).join(', '));
+    OUTCOMES.map(o => `${totals[o]} ${o}`).join(', ') +
+    `, ${driftCount} stale-as-written, ${snippetCount} unmatched-snippet`);
   console.log(`report: ${path.relative(REPO_ROOT, result.outDir)}/REPORT.md`);
   for (const r of result.reports.filter(x => x.counts.ungrounded > 0)) {
     console.log(`  ✗ ${r.file} — ${r.counts.ungrounded} ungrounded`);
   }
-  if (totals.ungrounded > 0) process.exit(1);
-  if (totals.unverifiable > 0 || totals['anchor-unusable'] > 0) process.exit(3);
+  for (const r of result.reports.filter(x => x.verdicts.some(v => v.drift))) {
+    console.log(`  ~ ${r.file} — ${r.verdicts.filter(v => v.drift).length} stale-as-written`);
+  }
+  for (const r of result.reports.filter(x => x.snippets?.length)) {
+    console.log(`  ~ ${r.file} — ${r.snippets?.length} unmatched snippet(s)`);
+  }
+  // 1 = the draft says something false. 3 = needs attention but nothing is
+  // disproven (anchor unresolved, or true-but-stale wording). Keeping drift out
+  // of the exit-1 class preserves `ungrounded` as the "this is wrong" signal.
+  if (totals.ungrounded > 0 || snippetCount > 0) process.exit(1);
+  if (totals.unverifiable > 0 || totals['anchor-unusable'] > 0 || driftCount > 0) process.exit(3);
 }
 
 /* istanbul ignore next */
