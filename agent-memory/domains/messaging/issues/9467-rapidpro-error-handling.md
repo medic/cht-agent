@@ -6,7 +6,7 @@ subDomain: rapidpro
 issueNumber: 9467
 issueUrl: https://github.com/medic/cht-core/issues/9467
 title: RapidPro API changes result in mishandling of errors
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-07-28'
 source_prs:
   - "medic/cht-core#9559"
 summary: Fixed error handling for RapidPro SMS gateway when it returns 400 errors for invalid phone numbers, preventing infinite message retry loops.
@@ -27,7 +27,7 @@ When RapidPro SMS gateway responded with a 400 error for invalid phone numbers (
 
 This caused message flooding and filled logs with repeated errors. One deployment reported needing to manually clear 62,000 scheduled messages.
 
-Separately, a distinct duplication facet: when the RapidPro `api/v2/broadcast` endpoint returned a 200 *without* a status update, valid messages were re-sent and duplicated in TextIt/RapidPro (PR #9559; forum report t/4047/19).
+Separately, a distinct duplication facet: when the RapidPro broadcasts endpoint (`/api/v2/broadcasts.json`) returned a 200 *without* a status update, valid messages were re-sent and duplicated in TextIt/RapidPro (PR #9559; forum report t/4047/19).
 
 ## Root Cause
 
