@@ -6,7 +6,7 @@ subDomain: scheduled-tasks
 issueNumber: 10802
 issueUrl: https://github.com/medic/cht-core/issues/10802
 title: Message getting sent to pending state even after it is sent
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-07-28'
 summary: Fixed scheduled task processing to check task status before adding messages to pending queue, preventing duplicate SMS sends when documents have multiple tasks with same due date.
 services:
   - api
@@ -43,9 +43,9 @@ The code only checked the task's computed due value (`task.due || task.timestamp
 
 ## Solution
 
-Modified the task processing logic to check BOTH the due date AND the task status before adding messages to the pending queue:
+Modified the task processing logic to check BOTH the due date AND the task state before adding messages to the pending queue:
 
-1. Added status check to filter tasks: only process tasks in `scheduled` state
+1. Added a state check to filter tasks: only process tasks in `scheduled` state
 2. Prevents already-processed messages from being re-queued
 3. Ensures each task is processed only once per due date window
 
@@ -67,9 +67,9 @@ The fix is a single guard: an early `return` that skips any `scheduled_task` who
 
 ## Code Patterns
 
-- Always check task status alongside due dates when processing scheduled tasks
+- Always check the task `state` alongside due dates when processing scheduled tasks
 - Use proper state management to prevent reprocessing of completed tasks
-- Filter tasks by both `due_date` and `status` fields to avoid duplicate processing
+- Filter tasks by the computed due value (`task.due || task.timestamp || doc.reported_date`) AND the `task.state` field — a due task no longer in the `scheduled` state is skipped rather than reprocessed
 - Pattern: `if (task.state !== SCHEDULED_STATE) { return; }` as the first statement in the `doc.scheduled_tasks.forEach` callback - skip any task not still in the `'scheduled'` state before the due-date comparison runs
 - File: `shared-libs/transitions/src/schedule/due_tasks.js` contains the core scheduling logic
 - File: `shared-libs/transitions/test/unit/due_tasks.js` contains unit tests
@@ -94,7 +94,7 @@ Chose to fix at the library level (`shared-libs/transitions`) rather than in ind
 - Added integration test to verify that only scheduled tasks are processed in each window
 - Test simulates multiple tasks with same due date and different statuses
 - Verified that processed tasks don't get re-added to pending queue
-- Added a sentinel integration test (`tests/integration/sentinel/schedules/due-tasks.spec.js`) asserting scheduled_tasks are only updated to `pending` when still in the `scheduled` state and left untouched otherwise (PR #10803, PR #10811)
+- Added a sentinel integration test case (+69 lines) to the pre-existing `tests/integration/sentinel/schedules/due-tasks.spec.js` asserting scheduled_tasks are only updated to `pending` when still in the `scheduled` state and left untouched otherwise (PR #10803, PR #10811)
 
 ## Related Issues
 
