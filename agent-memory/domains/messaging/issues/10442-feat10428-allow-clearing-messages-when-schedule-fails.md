@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10428
 issueUrl: https://github.com/medic/cht-core/issues/10428
 title: Clear scheduled messages when their due_tasks schedule fails or becomes invalid
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-07-28'
 summary: Scheduled messages (scheduled_tasks) had no mechanism to be cleared when message generation failed or produced an empty message body, so they sat in `scheduled` indefinitely. The due_tasks Sentinel schedule can now set them to `clear`, but only when the new opt-in `sms.clear_failing_schedules` app setting is true; when it is unset or false such a task is simply left in `scheduled` rather than cleared.
 services:
   - sentinel
@@ -40,6 +40,7 @@ concepts:
   - outbound message lifecycle
 related_issues:
   - cht-core-10446
+  - cht-core-10802
 stale: false
 ---
 

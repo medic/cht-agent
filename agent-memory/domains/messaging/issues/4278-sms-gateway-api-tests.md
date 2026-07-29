@@ -1,12 +1,15 @@
 ---
-id: cht-core-4278
+id: cht-core-3738
 category: improvement
 domain: messaging
 subDomain: sms-gateway
-issueNumber: 4278
-issueUrl: https://github.com/medic/cht-core/issues/4278
+issueNumber: 3738
+issueUrl: https://github.com/medic/cht-core/issues/3738
 title: Add tests for SMS gateway API endpoint
-lastUpdated: 2018-03-11
+lastUpdated: 2026-07-28
+source_prs:
+  - "medic/cht-core#4278"
+source_sha: d88f2e256ce684e17b07ead0531fc68f7a9630d5
 summary: Added comprehensive tests for the SMS gateway API endpoint to verify message receiving, validation, and storage functionality.
 services:
   - api

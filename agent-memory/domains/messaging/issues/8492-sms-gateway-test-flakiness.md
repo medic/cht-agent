@@ -1,12 +1,15 @@
 ---
-id: cht-core-8492
+id: cht-core-8414
 category: bug
 domain: messaging
 subDomain: testing
-issueNumber: 8492
-issueUrl: https://github.com/medic/cht-core/issues/8492
+issueNumber: 8414
+issueUrl: https://github.com/medic/cht-core/issues/8414
 title: Fix SMS gateway test flakiness
-lastUpdated: 2023-08-30
+lastUpdated: 2026-07-28
+source_prs:
+  - "medic/cht-core#8492"
+source_sha: 2c740238932da16a73e1541ca1d28d5266039340
 summary: Fixed flaky SMS gateway e2e tests by converting the sms-pregnancy report factory's shared module-level scheduled_tasks array into a function that builds fresh task objects on every call, so per-test mutations no longer leak between tests.
 services:
   - api
