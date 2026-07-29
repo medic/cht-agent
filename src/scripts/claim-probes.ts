@@ -313,6 +313,36 @@ export function pathExistsAt(ctx: ProbeCtx, sha: string, file: string): boolean 
   return git(ctx, ['ls-tree', '--name-only', sha, '--', file]).trim().length > 0;
 }
 
+/** Full blob at `ref:file`, or null when the path is absent there. */
+function fileAt(ctx: ProbeCtx, ref: string, file: string): string | null {
+  try {
+    return ctx.exec('git', ['-C', ctx.chtCorePath, 'show', `${ref}:${file}`]);
+  } catch {
+    return null;
+  }
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * `request.post` spelled as `request\n  .post({` is invisible to line-oriented
+ * git grep, so a TRUE member-chain claim reads as a misattribution (found on
+ * the 10073 draft — the call is wrapped at api/src/services/africas-talking.js:80-81).
+ * Re-check a dotted symbol against the file blob with whitespace tolerated
+ * around the dots, plus the same optional `?.` the -E retry allows. Word-ish
+ * boundaries on both ends keep this as strict as rule 1's -F -w probes.
+ */
+function wrappedMemberHit(ctx: ProbeCtx, ref: string, symbol: string, file: string): string | null {
+  const blob = fileAt(ctx, ref, file);
+  if (blob === null) return null;
+  const pattern = symbol.split('.').map(escapeRe).join('\\s*\\??\\.\\s*');
+  const re = new RegExp(`(?:^|[^\\w$])(${pattern})(?![\\w$])`);
+  const m = re.exec(blob);
+  if (!m) return null;
+  const line = blob.slice(0, m.index).split('\n').length;
+  return `${file}:${line} (whitespace-tolerant match)`;
+}
+
 /** Remote branches containing the commit — settles backport-line claims. */
 export function branchesContaining(ctx: ProbeCtx, sha: string): string[] {
   const raw = git(ctx, ['branch', '-r', '--contains', sha, '--format=%(refname:short)']);
@@ -366,6 +396,14 @@ function checkSymbolInFile(
   const scoped = symbolHits(ctx, ref, claim.symbol, claim.file);
   const cmd = `git grep -nFw ${claim.symbol} ${refLabel(ref)} -- ${claim.file}`;
   if (scoped.length > 0) return verdict(claim, 'grounded', `${cmd} → ${scoped.length} hit(s)`, undefined, prov);
+
+  if (claim.symbol.includes('.')) {
+    const wrapped = wrappedMemberHit(ctx, ref, claim.symbol, claim.file);
+    if (wrapped) {
+      return verdict(claim, 'grounded',
+        `${cmd} → 0 hits line-oriented, but the member chain matches across lines at ${wrapped}`, undefined, prov);
+    }
+  }
 
   const global = symbolHits(ctx, ref, claim.symbol);
   if (global.length === 0) {
@@ -422,9 +460,17 @@ function checkPathExists(
   ctx: ProbeCtx, ref: string, claim: Claim & { kind: 'path-exists' }, prov: Provenance
 ): Verdict {
   const cmd = `git ls-tree ${refLabel(ref)} -- ${claim.file}`;
-  return pathExistsAt(ctx, ref, claim.file)
-    ? verdict(claim, 'grounded', `${cmd} → present`, undefined, prov)
-    : verdict(claim, 'ungrounded', `${cmd} → no such path in this tree`, undefined, prov);
+  if (pathExistsAt(ctx, ref, claim.file)) {
+    return verdict(claim, 'grounded', `${cmd} → present`, undefined, prov);
+  }
+  // Absence at the fallback ref proves nothing about the tree the draft
+  // describes: layouts move (api/ → api/src/, protractor → wdio), so a path
+  // that is real at the draft's own commit is legitimately gone from master.
+  // Three TRUE 2018-era path claims were reported as defects this way.
+  const note = prov === 'fallback'
+    ? ' — but the anchor is unresolved and paths move across layout changes; resolve the anchor to settle'
+    : '';
+  return verdict(claim, absenceOutcome(prov), `${cmd} → no such path in this tree${note}`, undefined, prov);
 }
 
 /**

@@ -155,6 +155,33 @@ describe('ground-claims', () => {
     }
   });
 
+  it('anchors a draft that carries only source_prs (hand-authored shape)', async () => {
+    // 10729/10802/9467: no source_pr, no source_sha — the first source_prs
+    // entry is the canonical PR and must anchor the draft.
+    const ANCHOR = 'a'.repeat(40);
+    const exec: ExecFn = (file, args) => {
+      expect(file).to.equal('git');
+      const a = args.slice(2);
+      if (a[0] === 'cat-file') throw Object.assign(new Error('bad object'), { status: 128 });
+      if (a[0] === 'log' && a.includes('--all')) {
+        const g = a.find(x => x.startsWith('--grep='))?.slice('--grep='.length);
+        if (g === '(#10803)') return `${ANCHOR}\0fix(#10802): check status before a scheduled_task is updated (#10803)`;
+        throw Object.assign(new Error('no match'), { status: 1 });
+      }
+      if (a[0] === 'rev-parse') return `${'d'.repeat(40)}\n`;
+      throw new Error(`unexpected git call: ${a.join(' ')}`);
+    };
+    const dir = tmpCorpus({
+      'only-prs.md': draft(10802, ['source_prs:', '  - "medic/cht-core#10803"', '  - "medic/cht-core#10811"']),
+    });
+    const { reports } = await groundClaims({
+      dir, chtCorePath: '/fake', exec, outDir: path.join(dir, '..', 'out'),
+      extractFn: async () => [], apiResolve: false,
+    });
+    expect(reports[0].anchor?.sha).to.equal(ANCHOR);
+    expect(reports[0].anchor?.subject).to.contain('(#10803)');
+  });
+
   it('writes REPORT.md and claims.json to the output directory', async () => {
     const dir = tmpCorpus({ 'a.md': draft(10802, anchored) });
     const outDir = path.join(dir, '..', 'report-out');

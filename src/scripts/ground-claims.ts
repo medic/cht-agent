@@ -206,9 +206,22 @@ function siblingAnchors(ctx: ProbeCtx, fm: Record<string, unknown>, canonical: A
   return out;
 }
 
-/** Anchor metadata from frontmatter: source_sha first, then the source PR number. */
+/**
+ * Canonical PR ref: `source_pr`, else the first `source_prs[]` entry. The
+ * hand-authored drafts carry only the array (schema: "source_pr remains the
+ * canonical PR" — for them the first entry IS the canonical one), and without
+ * this fallback their anchors never resolve and every commit-scoped claim
+ * degrades to `unverifiable`.
+ */
+function canonicalPrRef(fm: Record<string, unknown>): RegExpExecArray | null {
+  if (typeof fm.source_pr === 'string') return SOURCE_PR_RE.exec(fm.source_pr);
+  const first = Array.isArray(fm.source_prs) ? fm.source_prs[0] : undefined;
+  return typeof first === 'string' ? SOURCE_PR_RE.exec(first) : null;
+}
+
+/** Anchor metadata from frontmatter: source_sha first, then the canonical source PR number. */
 function anchorFor(ctx: ProbeCtx, fm: Record<string, unknown>): Anchor | null {
-  const sourcePr = typeof fm.source_pr === 'string' ? SOURCE_PR_RE.exec(fm.source_pr) : null;
+  const sourcePr = canonicalPrRef(fm);
   return resolveAnchor(ctx, {
     prNumber: sourcePr ? Number.parseInt(sourcePr[2], 10) : undefined,
     sourceSha: typeof fm.source_sha === 'string' ? fm.source_sha : undefined,
