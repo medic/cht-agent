@@ -77,4 +77,4 @@ Appended four mocha cases to the existing api/tests/mocha/services/report/smspar
 
 **Fit:** strong
 
-The change is in smsparser.js, the component that parses incoming SMS message text into structured data; handling invisible/non-printing characters in raw SMS content is squarely a message-processing concern. It borders forms-and-reports since the parser output is a report, but the bug is about sanitizing SMS message content, not form/report logic.
+The change is in smsparser.js, the component that parses incoming SMS message text into structured data; stripping invisible/non-printing characters out of the field values it tokenises from an SMS is squarely a message-processing concern. It borders forms-and-reports since the parser output is a report, but the bug is about sanitizing values parsed from SMS content, not form/report logic.

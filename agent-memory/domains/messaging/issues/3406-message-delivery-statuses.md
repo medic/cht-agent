@@ -1,16 +1,12 @@
 ---
-id: cht-core-3073
+id: cht-core-3406
 category: feature
 domain: messaging
 subDomain: delivery-status
-issueNumber: 3073
-issueUrl: https://github.com/medic/cht-core/issues/3073
+issueNumber: 3406
+issueUrl: https://github.com/medic/cht-core/issues/3406
 title: Message delivery statuses
-lastUpdated: '2026-07-30'
-source_pr: medic/cht-core#3406
-source_prs:
-  - "medic/cht-core#3406"
-source_sha: 45109a5fa10db659c3b5659a743d4d80456d2a94
+lastUpdated: 2017-04-26
 summary: Implemented gateway message delivery statuses, enabling CHT to track SMS message states (sent, delivered, failed) from SMS gateways and expose them via API endpoints.
 services:
   - api
@@ -52,10 +48,11 @@ Implemented comprehensive message delivery status tracking:
 
 ## Code Patterns
 
-- Emit a bare state key rather than a compound one when consumers need to ask for several states at once: this PR changed `emit([task.state, when], val)` to `emit(task.state, val)`, because a `[state, when]` key can only be range-queried one state at a time while a plain `task.state` key can be fetched for many states in a single `keys` request
-- Pattern: when you drop a sort field out of the key, keep it in the view VALUE so callers can still order results — the due date moved into the value as `sending_due_date`
+- Use compound keys in CouchDB views for state-based queries: `emit([task.state, when], val)`
+- Pattern: Keep timestamp in view values for sorting results by age
 - Pattern: `api/controllers/sms-gateway.js` handles state updates from gateway callbacks
 - Pattern: Views support both specific message lookup (`emit(msg.uuid, val)`) and state queries
+- Use string keys instead of array keys for better CouchDB performance
 - Maintain backward compatibility with existing API contracts
 
 ## Design Choices
@@ -86,4 +83,4 @@ Chose to emit both compound key and simple key for flexibility:
 ## Related Issues
 
 - #3073: Original issue for gateway message delivery statuses
-- PR #7105: Message delivery monitoring (builds on this foundation)
+- #7105: Message delivery monitoring (builds on this foundation)

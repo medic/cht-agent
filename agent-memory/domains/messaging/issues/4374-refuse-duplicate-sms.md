@@ -1,16 +1,12 @@
 ---
-id: cht-core-4110
+id: cht-core-4374
 category: bug
 domain: messaging
 subDomain: sms-gateway
-issueNumber: 4110
-issueUrl: https://github.com/medic/cht-core/issues/4110
+issueNumber: 4374
+issueUrl: https://github.com/medic/cht-core/issues/4374
 title: Refuse duplicate webapp-terminating SMS messages in SMS gateway endpoint
-lastUpdated: '2026-07-30'
-source_pr: medic/cht-core#4374
-source_prs:
-  - "medic/cht-core#4374"
-source_sha: c9d030166c0f6412509cc4615e69c7e34982772e
+lastUpdated: 2018-04-05
 summary: Fixed SMS gateway endpoint to reject duplicate incoming messages, preventing the same SMS from being processed multiple times and creating duplicate records.
 services:
   - api
@@ -78,6 +74,6 @@ Chose to use content hashing rather than storing message IDs because:
 
 ## Related Issues
 
-- PR #4355: Tests for bad SMS gateway status updates
-- #3738: Tests for SMS gateway API endpoint (PR #4278)
-- PR #4349: Don't save duplicates in SMS API (related fix)
+- #4355: Tests for bad SMS gateway status updates
+- #4278: Tests for SMS gateway API endpoint
+- #4349: Don't save duplicates in SMS API (related fix)

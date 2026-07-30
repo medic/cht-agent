@@ -1,16 +1,12 @@
 ---
-id: cht-core-6572
+id: cht-core-7105
 category: improvement
 domain: messaging
 subDomain: monitoring
-issueNumber: 6572
-issueUrl: https://github.com/medic/cht-core/issues/6572
+issueNumber: 7105
+issueUrl: https://github.com/medic/cht-core/issues/7105
 title: Adds failed and delivered WO messages count to monitoring API
-lastUpdated: '2026-07-30'
-source_pr: medic/cht-core#7105
-source_prs:
-  - "medic/cht-core#7105"
-source_sha: 67626fff7e69d66a6506bc1997a34946440993d6
+lastUpdated: 2021-05-31
 summary: Enhanced monitoring API to separately track failed and delivered outgoing work outlet messages, providing better visibility into message delivery success rates.
 services:
   - api

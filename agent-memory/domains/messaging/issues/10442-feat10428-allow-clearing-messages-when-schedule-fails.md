@@ -46,7 +46,7 @@ stale: false
 
 ## Problem
 
-When a scheduled message's schedule failed or became invalid, the due_tasks Sentinel schedule left the scheduled_tasks in place, so stale or invalid scheduled messages remained and could still be sent. There was no way to clear them.
+When message generation for a due scheduled_task produced nothing usable, the due_tasks Sentinel schedule had no way to mark the task as cleared. A task that ended up with no `messages` array at all was skipped by the `if (task.messages)` guard and so sat in `scheduled` indefinitely; one that had a `messages` array with an empty body was promoted to `pending` with nothing worth sending. Either way the task lingered in a state nobody wanted, and deployments were left clearing them by hand.
 
 ## Root Cause
 

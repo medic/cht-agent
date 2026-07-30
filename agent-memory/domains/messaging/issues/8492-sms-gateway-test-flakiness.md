@@ -21,7 +21,7 @@ techStack:
 
 ## Problem
 
-SMS gateway e2e tests were failing intermittently due to inconsistent message state setup in test factories. The flakiness made CI unreliable and blocked merges.
+SMS gateway e2e tests were failing intermittently: the message states a test found on its fixture depended on which tests had run before it. The flakiness made CI unreliable and blocked merges.
 
 Tests would sometimes pass and sometimes fail with the same code, particularly around scheduled message state transitions.
 
