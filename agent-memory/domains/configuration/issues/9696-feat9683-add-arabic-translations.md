@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9683
 issueUrl: https://github.com/medic/cht-core/issues/9683
 title: Add Arabic translations and register the ar locale
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-30'
 summary: 'CHT Core had no Arabic translations. This PR adds a new messages-ar.properties translation file and registers the `ar` locale across the API and the webapp/bootstrapper/enketo entry points so the app can be used in Arabic (RTL rendering deferred to #9682).'
 services:
   - api

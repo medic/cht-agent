@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9682
 issueUrl: https://github.com/medic/cht-core/issues/9682
 title: Add right-to-left (RTL) language support via a configurable per-language `rtl` flag, Admin UI toggle, and RTL stylesheet
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-30'
 summary: CHT Core assumed every language renders left-to-right, so RTL languages like Arabic displayed with broken layout. The PR adds a configurable `rtl` boolean on language docs (Arabic defaulted to RTL), an Admin UI checkbox to set it, and an rtl.less stylesheet so the webapp renders correct RTL layouts.
 services:
   - api

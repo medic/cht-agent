@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8026
 issueUrl: https://github.com/medic/cht-core/issues/8026
 title: Validate empty branding doc to prevent exception in admin branding controller
-lastUpdated: '2026-06-22'
-summary: An empty branding JSON uploaded via the cht tool caused the admin branding controller to throw because it assumed certain keys existed when populating $scope; the fix checks for key existence and scaffolds the minimal set of keys the template needs.
+lastUpdated: '2026-07-30'
+summary: An empty branding JSON uploaded via the cht tool caused the admin branding controller to throw because it assumed certain keys existed when populating $scope; the fix guards those reads, scaffolds an empty `resources` object so the submit path has something to write to, and makes the template skip the images that are missing.
 services:
   - admin
 techStack:
@@ -54,11 +54,11 @@ The controller now scaffolds a single empty `resources` object on `$scope.doc` w
 
 ## Code Patterns
 
-Guard branding-doc property access with existence checks and initialize a minimal default object shape before binding to $scope (admin/src/js/controllers/images-branding.js), so the template (admin/src/templates/images_branding.html) renders safely against empty/partial docs.
+Guard branding-doc property access with existence checks rather than faking the missing values: leave `$scope.favicon`/`$scope.icon` undefined when the doc has no attachments or no `resources` (admin/src/js/controllers/images-branding.js), and let the template skip those elements with `ng-if` (admin/src/templates/images_branding.html). The one thing that is scaffolded is an empty `resources` object, because the submit path writes into it. Pairing an undefined-tolerant controller with `ng-if` in the template keeps a partial doc renderable without inventing data for it.
 
 ## Design Choices
 
-Rather than failing on incomplete branding docs, the controller defensively scaffolds the minimum keys the template requires — tolerating empty/partial input from external tooling (cht-conf) instead of assuming a fully-populated document.
+Rather than failing on incomplete branding docs, the controller tolerates them: missing image keys stay undefined instead of being given placeholder values, and the template hides the corresponding elements. Only `resources` is scaffolded, and only because the submit path needs an object to write into — the submit guard still refuses a doc without it. The effect is that empty/partial input from external tooling (cht-conf) renders rather than throwing, without the page implying images that do not exist.
 
 ## Related Files
 
@@ -69,7 +69,7 @@ Rather than failing on incomplete branding docs, the controller defensively scaf
 
 ## Testing
 
-Added a new unit test file (admin/tests/unit/controllers/images-branding.spec.js) for the previously untested controller, following conventions of existing controller tests, exercising the empty-branding-doc scenario. One related case is not covered by the fix.
+Added a new unit test file (admin/tests/unit/controllers/images-branding.spec.js) for the previously untested controller, following conventions of existing controller tests, exercising both the empty-branding-doc and null-resources scenarios.
 
 ## Related Issues
 
