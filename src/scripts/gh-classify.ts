@@ -36,6 +36,24 @@ function errText(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Anonymous fallback for hosts with no `gh`. Returns the parsed body, `null` on a
+ * genuine 404, or throws for anything else — the same three-way answer `gh` gives,
+ * so the caller's "404 means missing, everything else means transient" rule holds.
+ * The status code is appended on its own line so it can be told from the body.
+ */
+function fetchViaCurl(repo: string, n: number, exec: ExecFn): Record<string, unknown> | null {
+  const raw = exec('curl', [
+    '-s', '--max-time', '20', '-w', '\n%{http_code}',
+    `https://api.github.com/repos/${repo}/issues/${n}`,
+  ]);
+  const cut = raw.lastIndexOf('\n');
+  const status = raw.slice(cut + 1).trim();
+  if (status === '404') return null;
+  if (status !== '200') throw new Error(`HTTP ${status}`);
+  return JSON.parse(raw.slice(0, cut)) as Record<string, unknown>;
+}
+
 /** Issues-endpoint record; null on 404; throws GhTransientError on any other failure. */
 function fetchIssueRecord(repo: string, n: number, exec: ExecFn): Record<string, unknown> | null {
   let raw: string;
@@ -44,7 +62,16 @@ function fetchIssueRecord(repo: string, n: number, exec: ExecFn): Record<string,
   } catch (err) {
     const text = errText(err);
     if (/HTTP 404/i.test(text)) return null; // 404 only — never treat a transient "not found" as missing
-    throw new GhTransientError(`classifyNumber(${repo}#${n}): gh api failed: ${text}`, { cause: err });
+    // `gh` absent or unauthenticated is not a verdict about the issue. Retry
+    // anonymously before giving up, so a host without gh still gets checked.
+    try {
+      return fetchViaCurl(repo, n, exec);
+    } catch (curlErr) {
+      throw new GhTransientError(
+        `classifyNumber(${repo}#${n}): gh api failed: ${text}; curl fallback: ${errText(curlErr)}`,
+        { cause: err }
+      );
+    }
   }
   try {
     return JSON.parse(raw) as Record<string, unknown>;

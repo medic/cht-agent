@@ -182,6 +182,38 @@ describe('ground-claims', () => {
     expect(reports[0].anchor?.subject).to.contain('(#10803)');
   });
 
+  it('clears drift when the draft time-scopes the entity elsewhere', async () => {
+    // 10278's shape: one "Note on paths" paragraph qualifies the dead path, and
+    // other sentences then name it plainly. One honest mention settles it.
+    const DEAD = 'webapp/src/ts/services/resource-icons.service.ts';
+    const exec: ExecFn = (file, args) => {
+      expect(file).to.equal('git');
+      const a = args.slice(2);
+      if (a[0] === 'cat-file') return '';                       // every ref resolves
+      if (a[0] === 'log' && a.includes('--diff-filter=D')) return '180c29ecf feat(#10224)';
+      if (a[0] === 'log') return 'fix(#8027): partners doc';
+      if (a[0] === 'rev-parse') return `${'d'.repeat(40)}\n`;
+      if (a[0] === 'ls-tree') {
+        // Present at the anchor sha, absent from origin/master.
+        return a[2] === SHA ? DEAD : '';
+      }
+      throw Object.assign(new Error('no match'), { status: 1 });
+    };
+    const body = [
+      `The Webapp service (${DEAD}) returns an empty array.`,
+      '',
+      `Note on paths: at the time of this fix the webapp service was ${DEAD}; since replaced by #11050.`,
+    ].join('\n');
+    const dir = tmpCorpus({ 'scoped.md': draft(8027, [`source_sha: ${SHA}`], body) });
+    const claims: Claim[] = [{ kind: 'path-exists', file: DEAD, quote: `The Webapp service (${DEAD}) returns an empty array.` }];
+    const { reports } = await groundClaims({
+      dir, chtCorePath: '/fake', exec, outDir: path.join(dir, '..', 'out'),
+      extractFn: async () => claims, apiResolve: false,
+    });
+    expect(reports[0].counts.grounded).to.equal(1);
+    expect(reports[0].verdicts[0].drift).to.equal(undefined);
+  });
+
   it('writes REPORT.md and claims.json to the output directory', async () => {
     const dir = tmpCorpus({ 'a.md': draft(10802, anchored) });
     const outDir = path.join(dir, '..', 'report-out');

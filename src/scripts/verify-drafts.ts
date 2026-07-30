@@ -319,6 +319,15 @@ const contentWords = (s: string): Set<string> =>
   );
 
 /**
+ * A gloss that states how the reference RELATES to this draft rather than what
+ * the referenced issue is about — "Blocker for #10908", "closed by this PR". It
+ * is not a paraphrase of the title and must not be compared to one; the reviewer
+ * verified these by hand and they were correct.
+ */
+const RELATIONSHIP_GLOSS =
+  /^(?:blocker|blocked by|blocks|parent|child|sibling|duplicate|related|follow-?up|closed by|fixed by|superseded|supersedes|precursor|prerequisite|depends on|tracking|epic)\b/i;
+
+/**
  * Does the draft's gloss share any substantive word with the real title? A
  * paraphrase ("privacy policies do not load" vs "privacy policies change page
  * not loading") always will; a wrong reference ("Scheduled task duplicate
@@ -326,6 +335,9 @@ const contentWords = (s: string): Set<string> =>
  * total disjointness is reported, so paraphrasing stays free.
  */
 function glossMatchesTitle(gloss: string, title: string): boolean {
+  // Relationship glosses, and any gloss that explains itself by pointing at
+  // another number, describe linkage rather than content — nothing to compare.
+  if (RELATIONSHIP_GLOSS.test(gloss.trim()) || /#\d{2,7}/.test(gloss)) return true;
   const g = contentWords(gloss);
   const t = contentWords(title);
   if (g.size === 0 || t.size === 0) return true; // nothing to compare — do not guess

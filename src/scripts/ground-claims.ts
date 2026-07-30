@@ -42,8 +42,8 @@ import { z } from 'zod';
 import { REPO_ROOT } from './schema-utils';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import {
-  Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, resolveAnchor, snippetMatches,
-  ExecFn,
+  Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, entityIsTimeScoped,
+  resolveAnchor, snippetMatches, ExecFn,
 } from './claim-probes';
 
 const OUTCOMES: Outcome[] = ['grounded', 'ungrounded', 'unverifiable', 'anchor-unusable'];
@@ -333,7 +333,14 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
     return { ...base, verdicts: [], counts: tally([]), error: `claim extraction failed: ${message}` };
   }
   const siblings = siblingAnchors(ctx, draft.frontmatter, anchor);
-  const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings));
+  const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings)).map(v => {
+    // The probe only saw the claim's own sentence; the draft may time-scope the
+    // entity elsewhere (a "Note on paths" paragraph, an annotated Related File).
+    if (v.drift && entityIsTimeScoped(draft.raw, v.drift.entity)) {
+      return { ...v, drift: undefined };
+    }
+    return v;
+  });
   const snippets = auditSnippets(ctx, draft, anchor);
   return { ...base, verdicts, counts: tally(verdicts), ...(snippets.length && { snippets }) };
 }

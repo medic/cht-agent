@@ -596,6 +596,16 @@ const TIME_SCOPED = new RegExp([
   'postdates', 'predates', '-era\\b', '\\(deleted\\)', '\\(added\\)', '\\(modified\\)',
 ].join('|'), 'i');
 
+/**
+ * Is `entity` time-scoped ANYWHERE in the draft? A draft often qualifies a dead
+ * path once, in a dedicated note or an annotated Related Files entry, and then
+ * refers to it plainly elsewhere. Flagging each unqualified mention would demand
+ * the same caveat in every sentence, so one honest mention settles the entity.
+ */
+export function entityIsTimeScoped(text: string, entity: string): boolean {
+  return text.split('\n').some(line => line.includes(entity) && TIME_SCOPED.test(line));
+}
+
 /** The entity a claim asserts exists, if it names one checkable in a tree. */
 function claimEntity(claim: Claim): { kind: 'path' | 'symbol'; value: string } | null {
   switch (claim.kind) {

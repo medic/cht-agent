@@ -340,6 +340,19 @@ describe('verifyDrafts', () => {
         .findings.some(x => x.check === 'related-ref-is-pr')).to.equal(false);
     });
 
+    it('exempts a relationship gloss from the title comparison', () => {
+      // "Blocker for #10908" describes linkage, not the issue's subject.
+      const dir = tmpCorpus({ 'a.md': withRefs(['- #10901: Blocker for #10908']) });
+      const report = verifyDrafts({
+        dir, online: true,
+        exec: fakeGh({
+          issues: [9000, 10901],
+          titles: { 10901: 'Add `webapp` support for showing `app_drawer_tab` in legacy header menu' },
+        }),
+      });
+      expect(report.findings.some(x => x.check === 'related-ref-gloss-mismatch')).to.equal(false);
+    });
+
     it('blocks a reference to a number that does not exist', () => {
       const dir = tmpCorpus({ 'a.md': withRefs(['- #99999: Something invented']) });
       const report = verifyDrafts({ dir, online: true, exec: fakeGh({ issues: [9000] }) });
