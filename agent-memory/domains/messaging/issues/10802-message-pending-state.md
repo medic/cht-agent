@@ -6,8 +6,8 @@ subDomain: scheduled-tasks
 issueNumber: 10802
 issueUrl: https://github.com/medic/cht-core/issues/10802
 title: Message getting sent to pending state even after it is sent
-lastUpdated: '2026-07-28'
-summary: Fixed scheduled task processing to check task status before adding messages to pending queue, preventing duplicate SMS sends when documents have multiple tasks with same due date.
+lastUpdated: '2026-07-30'
+summary: Fixed scheduled task processing to check each task's `state` before adding messages to the pending queue, preventing duplicate SMS sends when a document has multiple tasks sharing a due date.
 services:
   - api
   - sentinel
@@ -15,9 +15,11 @@ techStack:
   - javascript
   - nodejs
   - couchdb
+source_pr: medic/cht-core#10803
 source_prs:
   - "medic/cht-core#10803"
   - "medic/cht-core#10811"
+source_sha: 6a5867bb8b30d7e8bfb25187aabe44f6ac11a4c0
 related_issues:
   - cht-core-10428
 ---
@@ -39,7 +41,7 @@ The scheduled task processing logic in `shared-libs/transitions/src/schedule/due
 2. When a document had multiple `scheduled_tasks` with identical due dates and one was stuck in `scheduled` state, the system continuously added already-processed messages back to the pending queue
 3. Created a feedback loop where the same message was resent every processing cycle (every 5 minutes) regardless of its current status
 
-The code only checked the task's computed due value (`task.due || task.timestamp || doc.reported_date`) against the collected due dates, without checking whether the task was already processed or had moved to a different `state`. More precisely, `due_tasks.js` trusted the (eventually-consistent) `messages_by_state` CouchDB view results and did not re-verify each message's current state on the freshly loaded/hydrated document before mutating it; a message already transitioned out of the schedulable state (muted, cleared, or already sent) still appeared in the view and was reprocessed (PR #10803, PR #10811).
+The code only checked the task's computed due value (`task.due || task.timestamp || doc.reported_date`) against the collected due dates, without checking whether the task had moved to a different `state`. More precisely, the view vouches for one task while the update loop acts on all of them: `execute()` queries `messages_by_state` with `startkey`/`endkey` keyed on `['scheduled', due]`, so only still-scheduled tasks are returned; `processBatch` groups those rows by document and collects their due values into a single per-document `dueDates` list; and `updateScheduledTasks` then iterates every entry in `doc.scheduled_tasks`, promoting any whose computed due value appears in that list. A task that had already moved out of `scheduled` was therefore never returned by the view at all. It was reached because it shared a due date with a still-scheduled sibling on the same document, which is why the fix is a per-task state guard inside that loop rather than a change to the view or the query (PR #10803, PR #10811).
 
 ## Solution
 
@@ -63,7 +65,7 @@ doc.scheduled_tasks.forEach(task => {
 });
 ```
 
-The fix is a single guard: an early `return` that skips any `scheduled_task` whose `state` is not `'scheduled'`, so only still-scheduled tasks can be transitioned to `'pending'`. It landed twice as byte-identical patches — PR #10803 (6a5867bb) on master and 5.2.x, and PR #10811 (b87a025f), the cherry-pick onto the 5.1.x release line, which is the only line carrying it. There is no second, separate guard.
+The fix is a single guard: an early `return` that skips any `scheduled_task` whose `state` is not `'scheduled'`, so only still-scheduled tasks can be transitioned to `'pending'`. It landed twice as byte-identical patches, each reaching a different set of release lines: PR #10803 (6a5867bb) on master and 5.2.x, and PR #10811 (b87a025f), the cherry-pick that carries it onto 5.1.x. There is no second, separate guard.
 
 ## Code Patterns
 
@@ -99,5 +101,3 @@ Chose to fix at the library level (`shared-libs/transitions`) rather than in ind
 ## Related Issues
 
 - #10428: Send message state clearing (related improvement)
-- #10754: Scheduled task duplicate processing (similar issue)
-- Multiple issues related to scheduled task processing and state management

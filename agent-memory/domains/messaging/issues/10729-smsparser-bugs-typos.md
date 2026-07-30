@@ -6,7 +6,7 @@ subDomain: sms-parsing
 issueNumber: 10729
 issueUrl: https://github.com/medic/cht-core/issues/10729
 title: Fix bugs and typos in smsparser.js and related files
-lastUpdated: 2026-07-16
+lastUpdated: '2026-07-30'
 summary: "Fixed two critical bugs in SMS parser: string list iteration bug causing fields to never match, and parseArray crash when def is null. Also fixed typos in code comments."
 services:
   - api
@@ -14,8 +14,10 @@ services:
 techStack:
   - javascript
   - nodejs
+source_pr: medic/cht-core#10730
 source_prs:
   - "medic/cht-core#10730"
+source_sha: 393b9d6a19f09b3c3a62e3c139943da886798630
 related_issues:
   - cht-core-10802
 ---
@@ -26,7 +28,7 @@ The SMS parsing system had two critical bugs affecting message processing:
 
 1. **String list parser bug**: The code used `for (const i of field.list)` which yields array items, not indices. Then it used `field.list[i]` treating `i` as an index, making `item` `undefined`. With the conventional `[[value, label], ...]` list shape the very next line, `item[0] === cleaned`, therefore threw `TypeError: Cannot read properties of undefined (reading '0')`, which propagated out of `smsparser.parse` uncaught — the loop crashed rather than falling through to the "Option not available" warning. That warning was effectively unreachable: it required `field.list` to be empty (or to hold entries that coincidentally stringify to valid indices).
 
-2. **parseArray null crash**: The function called `getParser(def, doc)` before checking if `def` was null. When `def` is null/undefined, `getParser()` returns `undefined`, and calling `parser(def, doc)` threw `TypeError: parser is not a function`, crashing the SMS parsing process.
+2. **parseArray null crash**: `parseArray` called `getParser(def, doc)` and invoked the returned parser before its `if (!def || !def.fields) return []` guard ran. For message shapes where `getParser` returns `undefined` (a non-string `doc.message`, or an unrecognized Muvuku format code), `parser(def, doc)` threw `TypeError: parser is not a function` before the guard could return. `getParser` does not return `undefined` merely because `def` is null; for an ordinary text message it returns `textformsParser.parse`.
 
 Additionally, there were two spelling typos: "becuase" → "because" in comments in api/src/services/report/smsparser.js and api/src/controllers/infodoc.js, and "succesfully" → "successfully" in a `logger.debug` format string in sentinel/src/schedule/reminders.js (a log message, not a comment).
 
@@ -59,7 +61,6 @@ The fix merged as PR #10730.
 
 Chose to fix the bugs directly rather than refactoring the entire parsing system because:
 - The bugs were isolated and well-understood
-- Existing unit tests already covered the functionality
 - Minimal changes reduce risk of introducing new bugs
 - Maintains backward compatibility with existing SMS workflows
 

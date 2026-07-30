@@ -1,12 +1,16 @@
 ---
-id: cht-core-6995
+id: cht-core-6532
 category: feature
 domain: messaging
 subDomain: rapidpro
-issueNumber: 6995
-issueUrl: https://github.com/medic/cht-core/issues/6995
+issueNumber: 6532
+issueUrl: https://github.com/medic/cht-core/issues/6532
 title: Adds RapidPro as an SMS Gateway
-lastUpdated: 2021-04-09
+lastUpdated: '2026-07-30'
+source_pr: medic/cht-core#6995
+source_prs:
+  - "medic/cht-core#6995"
+source_sha: e9e305d2eefed68c3602b2ad69c98e5e0649442d
 summary: Integrated RapidPro as an SMS gateway option, enabling CHT to send and receive SMS messages through RapidPro's API in addition to existing gateway options.
 services:
   - api
@@ -74,6 +78,6 @@ Chose to implement RapidPro as a separate gateway module rather than modifying e
 
 ## Related Issues
 
-- #5717: Africa's Talking integration (similar gateway pattern)
+- PR #5717: Africa's Talking integration (similar gateway pattern)
 - #9467: RapidPro API error handling bug fix
 - #6532: Original issue for RapidPro integration

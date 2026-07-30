@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 6383
 issueUrl: https://github.com/medic/cht-core/issues/6383
 title: Use correct SMS template context (including patient info) when generating message content in webapp and Sentinel due tasks
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-30'
 summary: SMS content generated for due/scheduled tasks in the webapp and Sentinel omitted patient information from its template context, so messages referencing patient fields rendered with missing data. Fixed by building the correct context (with patient data) in both the webapp's format-data-record service and Sentinel's due_tasks schedule, matching the behavior admin already had.
 services:
   - webapp

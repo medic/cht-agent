@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10846
 issueUrl: https://github.com/medic/cht-core/issues/10846
 title: Add local_phone Mustache helper to message-utils to strip country code from phone numbers in outgoing SMS
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-30'
 summary: SMS reminders rendered facility phone numbers in full international format (+977…), which local clients found confusing. Added a local_phone Mustache helper that strips the default_country_code prefix at render time without altering stored contact data.
 services:
   - sentinel

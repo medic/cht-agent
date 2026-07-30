@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9341
 issueUrl: https://github.com/medic/cht-core/issues/9341
 title: Strip invisible characters inside standardiseDigits so digit-normalised SMS fields (Bikram Sambat dates, phone numbers) are sanitised too
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-30'
 summary: smsparser.js already stripped zero-width characters in its `integer`/`string`/`date`/`bsDate`/`boolean`/`month` field parsers, but the shared `standardiseDigits` helper used by the `bsYear`/`bsMonth`/`bsDay` and `phone_number` parsers (and by the Muvuku aggregate-BS-date assembly) did not, so those field values kept their invisible characters. The one-line fix wraps `standardiseDigits`' output in the existing `stripInvisibleCharacters`, and four `parseField` cases were appended to the already ~1670-line smsparser spec.
 services:
   - api

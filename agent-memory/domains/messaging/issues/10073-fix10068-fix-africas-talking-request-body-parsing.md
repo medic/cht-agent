@@ -6,14 +6,13 @@ domainFit: strong
 issueNumber: 10068
 issueUrl: https://github.com/medic/cht-core/issues/10068
 title: Fix Africa's Talking SMS gateway double-parsing of the outbound send response body
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-07-30'
 summary: The Africa's Talking SMS integration JSON-parsed the response body of its own outbound send request, which `@medic/couch-request` had already parsed, so every send failed to produce a message state change. The fix removes the redundant `parseResponseBody` helper and appends a CI-only e2e case (gated on `AFRICAS_TALKING_SANDBOX_API_KEY`) to the pre-existing Africa's Talking wdio spec, exercising the Sandbox server.
 services:
   - api
 techStack:
   - javascript
   - nodejs
-  - express
   - mocha
   - webdriverio
 tags:
@@ -80,10 +79,10 @@ Updated unit-test fixtures in api/tests/mocha/services/africas-talking.spec.js (
 
 ## Related Issues
 
-- #10068: Africa's Talking integration tries to parse an already-parsed request body
+- #10068: CHT SMS message sent via Africa's Talking stuck in "pending" state (the service re-parsed the already-parsed response body of its own send request)
 
 ## Domain Rationale
 
 **Fit:** strong
 
-Africa's Talking is an SMS gateway CHT uses to send and receive messages, and the bug is in the inbound request-parsing code of that messaging transport service. The build.yml change only wires the new e2e test into CI, so the PR's substance is messaging behavior, not infrastructure or gateway setup/config.
+Africa's Talking is an SMS gateway CHT uses to send and receive messages, and the bug is in the outbound send path of that messaging transport service: the service double-parsed the response body of its own POST to the gateway. The build.yml change only wires the new e2e test into CI, so the PR's substance is messaging behavior, not infrastructure or gateway setup/config.

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10944
 issueUrl: https://github.com/medic/cht-core/issues/10944
 title: Handle missing/not_found documents in updateMessageTaskStates to prevent a crash
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-30'
 summary: 'updateMessageTaskStates could throw when db.medic.allDocs({ include_docs: true }) returned rows lacking a doc (not_found or deleted rows). The fix sanitizes the allDocs rows with `.map(r => r?.doc).filter(Boolean)` so doc-less rows are dropped before task state changes are applied, and adds a regression test.'
 services:
   - api

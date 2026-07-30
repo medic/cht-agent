@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10459
 issueUrl: https://github.com/medic/cht-core/issues/10459
 title: Allow multiple SMS recipients to be specified and resolved in order in message-utils
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-30'
 summary: SMS message configurations could previously name only a single recipient definition. This PR lets an array of recipient definitions be specified and uses the first one that resolves to a phone number, giving deployments an ordered fallback chain. It does not deliver the message to multiple recipients.
 services:
   - sentinel
@@ -67,7 +67,7 @@ Recipients are resolved in the order they are declared to give deployments predi
 
 ## Testing
 
-Unit tests added/updated in shared-libs/message-utils/test/index.js for multi-recipient resolution, plus an integration test for sentinel scheduled-message recipients in tests/integration/sentinel/schedules/schedules-recipients.spec.js. Review feedback was limited to minor stylistic comments.
+Unit tests added/updated in shared-libs/message-utils/test/index.js for multi-recipient resolution, plus an integration test for sentinel scheduled-message recipients in tests/integration/sentinel/schedules/schedules-recipients.spec.js.
 
 ## Related Issues
 

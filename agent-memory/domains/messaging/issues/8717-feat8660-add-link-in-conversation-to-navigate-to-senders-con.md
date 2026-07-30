@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 8660
 issueUrl: https://github.com/medic/cht-core/issues/8660
 title: Add link in SMS conversation to navigate to the sender's contact page
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-30'
 summary: The SMS conversation view displayed the sender's identity but offered no way to jump to their contact record. This adds a clickable link in the sender component that navigates to the sender's contact page.
 services:
   - webapp
@@ -54,7 +54,7 @@ The sender component only rendered sender display data and lacked a navigation l
 
 ## Solution
 
-Added a link in sender.component.html plus supporting navigation logic in sender.component.ts to route to the sender's contact page when the sender resolves to a known contact, with accompanying unit and e2e coverage.
+Added a link in sender.component.html that routes to the sender's contact page when the sender resolves to a known contact, with accompanying unit and e2e coverage. The routing itself is declarative — a `[routerLink]` on the anchor — so sender.component.ts only gained the two accessors the template needs to decide whether to render a link and where to point it.
 
 ## Code Patterns
 

@@ -6,9 +6,11 @@ subDomain: rapidpro
 issueNumber: 9467
 issueUrl: https://github.com/medic/cht-core/issues/9467
 title: RapidPro API changes result in mishandling of errors
-lastUpdated: '2026-07-28'
+lastUpdated: '2026-07-30'
+source_pr: medic/cht-core#9559
 source_prs:
   - "medic/cht-core#9559"
+source_sha: da4b50f71468b2576636e4c588c0c962c76689bc
 summary: Fixed error handling for RapidPro SMS gateway when it returns 400 errors for invalid phone numbers, preventing infinite message retry loops.
 services:
   - api
@@ -25,7 +27,7 @@ When RapidPro SMS gateway responded with a 400 error for invalid phone numbers (
 2. Threw `StatusCodeError: 400 - {"urns":{"0":["Invalid URN: tel:********. Ensure phone numbers contain country codes."]}}`
 3. Separately, on a 200 whose body carried no (or an unmapped) `status`, `remoteStatusToLocalState()` returned `undefined` and `getStateUpdate()` threw `TypeError: Cannot read property 'state' of undefined` at `rapidpro.js:79` (`state: status.state`). This is a different code path from the 400 above, which rejects into `.catch` and never reaches line 79.
 
-This caused message flooding and filled logs with repeated errors. One deployment reported needing to manually clear 62,000 scheduled messages.
+This caused message flooding and filled logs with repeated errors.
 
 Separately, a distinct duplication facet: when the RapidPro broadcasts endpoint (`/api/v2/broadcasts.json`) returned a 200 *without* a status update, valid messages were re-sent and duplicated in TextIt/RapidPro (PR #9559; forum report t/4047/19).
 
@@ -40,7 +42,7 @@ The service read the RapidPro status as `result.status` and mapped it through `S
 
 Updated the RapidPro error handling to:
 
-1. In `sendMessage`'s existing `.catch`, test exactly `err?.statusCode === 400` (the added comment cites https://rapidpro.io/api/v2/ — "Do not retry with the same values")
+1. In `sendMessage`'s existing `.catch`, test exactly `err?.statusCode === 400` (the added comment cites https://rapidpro.io/api/v2/ — "Do not retry with the same values"). `statusCode` is the property shape at the time of this fix; current master reads `err?.status === 400` (api/src/services/rapidpro.js:109), and the Testing bullet's `.rejects({ statusCode: 400 })` stub is of the same vintage
 2. Return `getStateUpdate(STATUS_MAP.failed, message.id, undefined)` so the message becomes `state: 'failed'`, `details: 'Failed'`, with no gatewayRef — the error body (the `urns` validation detail) is never parsed, only logged verbatim by the pre-existing `logger.error('Error thrown when trying to send message: %o', err)` that was moved above the new branch
 3. Once the task state is `failed` it no longer matches the `pending-or-forwarded` key of `medic/messages_by_state` that `getOutgoingMessages()` uses, so the outgoing sweep stops re-sending it; and because `STATUS_MAP.failed` carries `final: true`, it also drops out of `NON_FINAL_STATES` so the `gateway_messages_by_state` status poll skips it
 4. Give the status mapper a default: `(result.status && STATUS_MAP[result.status]) || STATUS_MAP.queued`, so a 200 without a usable status no longer yields `undefined` (which threw in `getStateUpdate`) and no longer leaves the message eligible for re-broadcast
@@ -81,5 +83,5 @@ Chose to mark messages as failed rather than retrying because:
 ## Related Issues
 
 - #10428: Send message state clearing improvement
-- #9559: fix(#9467): better handling of RapidPro error codes
+- PR #9559: fix(#9467): better handling of RapidPro error codes
 - Forum discussion: https://forum.communityhealthtoolkit.org/t/duplication-of-messages-in-text-it/4047/6

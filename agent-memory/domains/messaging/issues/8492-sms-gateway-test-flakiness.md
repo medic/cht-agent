@@ -6,7 +6,8 @@ subDomain: testing
 issueNumber: 8414
 issueUrl: https://github.com/medic/cht-core/issues/8414
 title: Fix SMS gateway test flakiness
-lastUpdated: 2026-07-28
+lastUpdated: '2026-07-30'
+source_pr: medic/cht-core#8492
 source_prs:
   - "medic/cht-core#8492"
 source_sha: 2c740238932da16a73e1541ca1d28d5266039340
@@ -66,4 +67,4 @@ Chose to fix the test factory rather than adding retry logic or increasing timeo
 ## Related Issues
 
 - #8414: Original issue tracking SMS gateway test flakiness
-- #6995: RapidPro SMS gateway integration (related testing improvements)
+- PR #6995: RapidPro SMS gateway integration (related testing improvements)
