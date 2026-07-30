@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10852
 issueUrl: https://github.com/medic/cht-core/issues/10852
 title: Null-check optional `messages` property in accept_patient_reports transition
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-30'
 summary: The accept_patient_reports transition threw a TypeError when a form configuration omitted the documented-optional `messages` property. The fix guards against an undefined `messages` array so the field can be safely absent.
 services:
   - sentinel
