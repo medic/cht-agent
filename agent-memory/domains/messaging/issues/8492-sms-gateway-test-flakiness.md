@@ -51,7 +51,7 @@ Chose to fix the test factory rather than adding retry logic or increasing timeo
 - Root cause fix is better than masking symptoms
 - Deterministic tests are more maintainable
 - Retry logic hides real bugs
-- Proper state setup makes tests faster and more reliable
+- Giving each build its own task objects makes the tests order-independent, so they stay fast instead of needing retries or longer waits
 
 ## Related Files
 
