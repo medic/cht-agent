@@ -155,6 +155,25 @@ describe('ground-claims', () => {
     }
   });
 
+  it('refuses to report "clean" when the diff matches no draft', async () => {
+    // --dir outside the tool's own repo: git reports paths relative to THAT
+    // repo, display paths are relative to this one, so nothing matches and a
+    // silent empty selection would read as a passing run.
+    const dir = tmpCorpus({ 'a.md': draft(7100) });
+    let message = '';
+    try {
+      await groundClaims({
+        dir, chtCorePath: '/fake', base: 'origin/main',
+        exec: fakeGit({ changed: ['some/other/repo/path.md'] }),
+        outDir: path.join(dir, '..', 'out'), extractFn: extractorFor([]),
+      });
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).to.match(/matched none of the 1 drafts/);
+    expect(message).to.contain('outside the repo running the tool');
+  });
+
   it('anchors a draft that carries only source_prs (hand-authored shape)', async () => {
     // 10729/10802/9467: no source_pr, no source_sha — the first source_prs
     // entry is the canonical PR and must anchor the draft.

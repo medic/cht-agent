@@ -630,9 +630,12 @@ export function entityIsTimeScoped(text: string, entity: string): boolean {
  * response to review — the act of dating a claim created a second, forward claim.
  */
 const FORWARD_SCOPED = new RegExp([
-  'replaced by', 'renamed to', 'superseded by', 'since renamed', 'moved to',
+  'replaced by', 'renamed to', 'superseded by', 'since renamed',
   'current master', 'on master', 'today',
   'now (?:lives|reads|tests|uses|is|are|called|spelled)',
+  // NOT 'moved to': anchor-era prose says "the guard moved to the top of the
+  // function", meaning the PR moved it — not that the current tree differs.
+  // Rescuing on that could excuse a genuinely wrong anchor-era claim.
 ].join('|'), 'i');
 
 /** The entity a claim asserts exists, if it names one checkable in a tree. */

@@ -386,6 +386,18 @@ function selectDrafts(opts: GroundOptions, dir: string, exec: ExecFn): DraftInpu
     throw new Error(`--changed-only produced an empty diff against ${opts.base} (shallow checkout?)`);
   }
   const picked = all.filter(d => changed.has(d.file));
+  // A non-empty diff that matches no draft means the two sides are speaking
+  // different path languages: `--dir` points outside this repo, so git reports
+  // paths relative to THAT repo root while display paths are relative to this
+  // one. Selecting nothing would then be reported as "all clean", which is the
+  // worst possible failure for a verification tool.
+  if (picked.length === 0) {
+    throw new Error(
+      `--changed-only matched none of the ${all.length} drafts under ${dir}, though ${changed.size} ` +
+        'file(s) changed. This happens when --dir points outside the repo running the tool: run a ' +
+        'full scan without --changed-only, or run the tool from the repo that owns those drafts.'
+    );
+  }
   return opts.limit ? picked.slice(0, opts.limit) : picked;
 }
 
