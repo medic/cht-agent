@@ -67,4 +67,4 @@ Chose to fix the test factory rather than adding retry logic or increasing timeo
 ## Related Issues
 
 - #8414: Original issue tracking SMS gateway test flakiness
-- PR #6995: RapidPro SMS gateway integration (related testing improvements)
+- PR #6995: Adds RapidPro as an SMS Gateway — the feature whose e2e specs share this gateway test surface

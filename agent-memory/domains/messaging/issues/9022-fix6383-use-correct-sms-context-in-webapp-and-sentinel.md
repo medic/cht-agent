@@ -74,7 +74,7 @@ Fixed the two divergent paths to match admin's correct context construction. Con
 
 ## Testing
 
-Added/updated unit tests for the Sentinel due_tasks schedule (shared-libs/transitions/test/unit/due_tasks.js) and the webapp format-data-record service (webapp/tests/karma/ts/services/format-data-record.service.spec.ts), plus an e2e spec for SMS messages (tests/e2e/default/reports/sms-messages.wdio-spec.js) and a Sentinel integration spec for due-tasks schedules (tests/integration/sentinel/schedules/due-tasks.spec.js).
+Updated unit tests for the Sentinel due_tasks schedule (shared-libs/transitions/test/unit/due_tasks.js) and the webapp format-data-record service (webapp/tests/karma/ts/services/format-data-record.service.spec.ts), and extended the existing Sentinel integration spec for due-tasks schedules (tests/integration/sentinel/schedules/due-tasks.spec.js, +160/−90). The only test file this PR adds is the SMS-messages e2e spec, tests/e2e/default/reports/sms-messages.wdio-spec.js.
 
 ## Related Issues
 
