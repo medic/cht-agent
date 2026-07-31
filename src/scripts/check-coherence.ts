@@ -24,7 +24,22 @@
  * about it, so the same split as ground-claims applies: the model may only
  * IDENTIFY candidate pairs and must quote both sides verbatim; this script then
  * verifies mechanically that each quote really occurs in the draft and drops any
- * pair that does not. A hallucinated contradiction cannot survive that gate.
+ * pair that does not.
+ *
+ * Be precise about what that gate does and does not buy. It kills a FABRICATED
+ * QUOTE — the model cannot invent a sentence and attribute it to the file. It
+ * does NOT establish that the two real quotes actually contradict each other;
+ * that judgement is still the model's, and a reader has to confirm it. Nor does
+ * it establish which side is wrong, which needs the source tree.
+ *
+ * Two limits worth knowing before trusting a green run:
+ *
+ * - IT SAMPLES, IT DOES NOT EXHAUST. Three passes over the same 22 drafts
+ *   returned 2, 3 and 2 pairs with different membership each time. A robust
+ *   contradiction recurs; a subtle one may surface in one pass of three. Run it
+ *   repeatedly and treat one clean pass as weak evidence, not proof.
+ * - IT ONLY SEES ONE DRAFT. Two drafts contradicting each other, or a draft
+ *   contradicting the corpus, are invisible here.
  *
  * Usage:
  *   LLM_PROVIDER=claude-cli npm run check-coherence -- --dir agent-memory
@@ -84,11 +99,15 @@ export function coherencePrompt(draft: DraftInput): string {
 
 These documents are produced in passes. A later pass often corrects the technical sections (title, summary, Root Cause, Solution, Code Patterns, Testing) against the real source code, but forgets the interpretive sections (Problem, Design Choices, Domain Rationale, Related Issues), leaving them asserting the very thing that was just corrected. Your job is to find those leftovers.
 
+Check the \`summary:\` field against EVERY section before anything else. It is one sentence written early, it is the most-read line in the document, and it is routinely left behind when a later pass corrects the body — two of the three contradictions found in the last audit had one side in \`summary:\`. Treat it as a section like any other, not as a preamble that cannot be wrong.
+
 Report a pair ONLY when both sides make a factual assertion and they cannot both be true of the same pull request. Real examples of what to report:
 - Solution says template safety comes from "ng-if" attributes "not from scaffolded keys", while Design Choices says the controller "scaffolds the minimum keys the template requires".
 - Root Cause says the endpoint "was not untested" and lists its existing coverage, while Problem opens with "the endpoint had no test coverage".
 - Testing says "neither fix is covered by existing tests", while Design Choices says "existing unit tests already covered the functionality".
 - Root Cause says the bug is in outbound response parsing and that nothing inbound is involved, while Domain Rationale says the bug is in the inbound request-parsing code.
+- The summary says failing tasks "sat in scheduled indefinitely", while Problem says such a task "was promoted to pending".
+- The summary calls a set of typo fixes "typos in code comments", while Problem says one of them was in a log message and not a comment.
 
 Do NOT report:
 - Differences of emphasis, detail, abstraction or wording where both statements can be true at once.

@@ -353,6 +353,50 @@ describe('verifyDrafts', () => {
       expect(report.findings.some(x => x.check === 'related-ref-gloss-mismatch')).to.equal(false);
     });
 
+    it('warns when a long gloss shares only one word with the title', () => {
+      // #10446 is "Dont send empty messages"; the draft described #10428's
+      // concern instead and slipped through on the shared word "messages".
+      const dir = tmpCorpus({
+        'a.md': withRefs(['- #10446: bug fixed — failed/invalid scheduled messages were not being cleared']),
+      });
+      const report = verifyDrafts({
+        dir, online: true,
+        exec: fakeGh({ issues: [9000, 10446], titles: { 10446: 'Dont send empty messages' } }),
+      });
+      const f = report.findings.find(x => x.check === 'related-ref-gloss-weak');
+      expect(f?.severity).to.equal('warning');
+      expect(report.findings.some(x => x.check === 'related-ref-gloss-mismatch')).to.equal(false);
+    });
+
+    it('does not warn on a short gloss that shares a word', () => {
+      // "Original issue for SMS gateway testing" vs "Write e2e tests against
+      // medic-api for medic-gateway endpoint" — same subject, few words.
+      const dir = tmpCorpus({ 'a.md': withRefs(['- #3738: Original issue for SMS gateway testing']) });
+      const report = verifyDrafts({
+        dir, online: true,
+        exec: fakeGh({
+          issues: [9000, 3738],
+          titles: { 3738: 'Write e2e tests against medic-api for medic-gateway endpoint' },
+        }),
+      });
+      expect(report.findings.some(x => x.check.startsWith('related-ref-gloss'))).to.equal(false);
+    });
+
+    it('still checks the claim after a relationship prefix', () => {
+      // "parent improvement — <claim>": the prefix is linkage, the claim is not.
+      const dir = tmpCorpus({
+        'a.md': withRefs(['- #10428: parent improvement — cookies are not sent when secure is true']),
+      });
+      const report = verifyDrafts({
+        dir, online: true,
+        exec: fakeGh({
+          issues: [9000, 10428],
+          titles: { 10428: 'Send message state to clear if they are not good to mark for pending' },
+        }),
+      });
+      expect(report.findings.some(x => x.check === 'related-ref-gloss-mismatch')).to.equal(true);
+    });
+
     it('blocks a reference to a number that does not exist', () => {
       const dir = tmpCorpus({ 'a.md': withRefs(['- #99999: Something invented']) });
       const report = verifyDrafts({ dir, online: true, exec: fakeGh({ issues: [9000] }) });

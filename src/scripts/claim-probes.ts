@@ -551,6 +551,11 @@ const TREE_SCOPED = new Set<Claim['kind']>(['symbol', 'symbol-in-file', 'path-ex
  * segment by segment, so only genuinely invented code fails.
  *
  * Returns null when the snippet is too short to judge or the file is absent.
+ *
+ * Known gaps, none closed: only tagged js/ts fences are checked (an untagged
+ * fence is skipped entirely), comments are stripped so comment text inside a
+ * fence is never verified, and a match against ANY file the draft names counts —
+ * so a snippet attributed to the wrong one of the draft's own files passes.
  */
 export function snippetMatches(
   ctx: ProbeCtx, sha: string, file: string, snippet: string
@@ -593,7 +598,11 @@ const TIME_SCOPED = new RegExp([
   'at the time', 'as of ', 'no longer', 'used to', 'former', 'then-',
   'has since', 'since (?:replaced|renamed|removed|deleted)',
   '(?:was|were|later) (?:replaced|renamed|removed|deleted)',
-  'postdates', 'predates', '-era\\b', '\\(deleted\\)', '\\(added\\)', '\\(modified\\)',
+  'postdates', 'predates', '-era\\b', '\\(deleted\\)',
+  // NOT '(added)' or '(modified)': those annotate what the PR did to a file,
+  // which says nothing about whether the path still exists today. Treating them
+  // as time-scoping let a draft mark a path "(added)" in Related Files and then
+  // recommend it in the present tense elsewhere, unflagged.
 ].join('|'), 'i');
 
 /**
@@ -605,6 +614,10 @@ const TIME_SCOPED = new RegExp([
 export function entityIsTimeScoped(text: string, entity: string): boolean {
   return text.split('\n').some(line => line.includes(entity) && TIME_SCOPED.test(line));
 }
+// Gap: this matches the literal path only. A draft that qualifies "the webapp
+// service" in prose and names the dead path elsewhere still flags, and one
+// qualifying the path once can then discuss it loosely anywhere. Deliberate —
+// erring toward flagging is cheap, and a prose alias is not machine-resolvable.
 
 /** The entity a claim asserts exists, if it names one checkable in a tree. */
 function claimEntity(claim: Claim): { kind: 'path' | 'symbol'; value: string } | null {

@@ -334,19 +334,62 @@ const RELATIONSHIP_GLOSS =
  * processing" vs "Cookies not being sent with `secure: true`") will not. Only
  * total disjointness is reported, so paraphrasing stays free.
  */
-function glossMatchesTitle(gloss: string, title: string): boolean {
-  // Relationship glosses, and any gloss that explains itself by pointing at
-  // another number, describe linkage rather than content — nothing to compare.
-  if (RELATIONSHIP_GLOSS.test(gloss.trim()) || /#\d{2,7}/.test(gloss)) return true;
-  const g = contentWords(gloss);
+/**
+ * The part of a gloss that makes a claim about the referenced issue. A
+ * relationship prefix ("parent improvement — allow clearing messages…") is
+ * linkage, but what follows the dash is a content claim and must still be
+ * checked; exempting the whole string let a wrong description ride along behind
+ * one relationship word.
+ */
+function claimPart(gloss: string): string {
+  const [head, ...rest] = gloss.split(/\s+[—–-]\s+/);
+  if (rest.length && RELATIONSHIP_GLOSS.test(head.trim())) return rest.join(' - ');
+  return gloss;
+}
+
+const overlapCount = (gloss: string, title: string): number => {
   const t = contentWords(title);
-  if (g.size === 0 || t.size === 0) return true; // nothing to compare — do not guess
-  for (const w of g) {
-    if (t.has(w)) return true;
-    // Cheap stem tolerance: "policies"/"policy", "loading"/"load".
-    for (const tw of t) if (w.startsWith(tw.slice(0, 5)) || tw.startsWith(w.slice(0, 5))) return true;
+  let n = 0;
+  for (const w of contentWords(gloss)) {
+    // Cheap stem tolerance: "policies"/"policy", "testing"/"tests".
+    if (t.has(w) || [...t].some(tw => w.startsWith(tw.slice(0, 4)) || tw.startsWith(w.slice(0, 4)))) n++;
   }
-  return false;
+  return n;
+};
+
+/**
+ * Does the draft's gloss share substantive words with the real title? A
+ * paraphrase ("privacy policies do not load" vs "privacy policies change page
+ * not loading") always will; a wrong reference ("Scheduled task duplicate
+ * processing" vs "Cookies not being sent with `secure: true`") will not.
+ *
+ * Only TOTAL disjointness is reported as a defect, which keeps precision high
+ * at the cost of recall: a gloss sharing one incidental word with the title
+ * passes even when it describes a different issue, which is how a draft citing
+ * #10446 ("Dont send empty messages") as "failed/invalid scheduled messages were
+ * not being cleared" survived — the shared word was "messages". `glossIsWeak`
+ * exists to surface that case for a human without blocking on it.
+ */
+function glossMatchesTitle(gloss: string, title: string): boolean {
+  if (skipGloss(gloss)) return true;
+  const claim = claimPart(gloss);
+  if (contentWords(claim).size === 0 || contentWords(title).size === 0) return true;
+  return overlapCount(claim, title) > 0;
+}
+
+/** Linkage-only glosses, and ones that explain themselves by citing another number. */
+const skipGloss = (gloss: string): boolean =>
+  RELATIONSHIP_GLOSS.test(claimPart(gloss).trim()) || /#\d{2,7}/.test(gloss);
+
+/**
+ * A gloss long enough to be making a real claim that shares exactly one word
+ * with the title. Not proof of anything — it is where a wrong reference hides
+ * from the disjointness test, so it is reported as a warning for a human to read.
+ */
+function glossIsWeak(gloss: string, title: string): boolean {
+  if (skipGloss(gloss)) return false;
+  const claim = claimPart(gloss);
+  return contentWords(claim).size >= 4 && overlapCount(claim, title) === 1;
 }
 
 /**
@@ -386,6 +429,10 @@ function checkRelatedIssueRefs(d: Draft, gh: GhCtx): { findings: Finding[]; unve
       out.push(finding(d.file, 'related-ref-gloss-mismatch', 'blocking',
         `#${n} is "${described.title}" — the draft glosses it as "${gloss}", which describes ` +
           'something else entirely', i + 1));
+    } else if (described.title && glossIsWeak(gloss, described.title)) {
+      out.push(finding(d.file, 'related-ref-gloss-weak', 'warning',
+        `#${n} is "${described.title}" — the gloss "${gloss}" shares only one word with it; ` +
+          'read it to confirm it describes this issue and not a neighbouring one', i + 1));
     }
   }
   return { findings: out, unverified };
@@ -396,6 +443,10 @@ function checkRelatedIssueRefs(d: Draft, gh: GhCtx): { findings: Finding[]; unve
  * substantive rewrite that leaves the old stamp makes the corpus look older than
  * it is, and reviewers use the stamp to decide what to re-read.
  */
+// Note: "last edited" counts every commit touching the file, including one that
+// only bumps this stamp, and including a revert. That is why the working rule is
+// "touch the file, stamp it today" rather than "stamp it with the date of the
+// last content change" — the latter fails its own check on the next commit.
 function checkTimestampFreshness(d: Draft, dir: string, exec: ExecFn): Finding[] {
   const stamp = str(d.fm.lastUpdated) ?? (d.fm.lastUpdated instanceof Date
     ? d.fm.lastUpdated.toISOString().slice(0, 10)
