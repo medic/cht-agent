@@ -7,7 +7,7 @@ issueNumber: 10729
 issueUrl: https://github.com/medic/cht-core/issues/10729
 title: Fix bugs and typos in smsparser.js and related files
 lastUpdated: '2026-07-30'
-summary: "Fixed two critical bugs in SMS parser: string list iteration bug causing fields to never match, and a parseArray crash when getParser returns no parser. Also fixed typos in two code comments and one logger.debug format string."
+summary: "Fixed two critical bugs in SMS parser, both of which threw rather than degrading: a string-list loop that iterated values as if they were indices and crashed on `item[0]`, and a parseArray call that invoked the parser before its null guard, crashing when getParser returned none. Also fixed typos in two code comments and one logger.debug format string."
 services:
   - api
   - sentinel

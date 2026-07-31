@@ -7,7 +7,7 @@ issueNumber: 10428
 issueUrl: https://github.com/medic/cht-core/issues/10428
 title: Clear scheduled messages when their due_tasks schedule fails or becomes invalid
 lastUpdated: '2026-07-30'
-summary: Scheduled messages (scheduled_tasks) had no mechanism to be cleared when message generation failed or produced an empty message body, so they sat in `scheduled` indefinitely. The due_tasks Sentinel schedule can now set them to `clear`, but only when the new opt-in `sms.clear_failing_schedules` app setting is true; when it is unset or false such a task is simply left in `scheduled` rather than cleared.
+summary: Scheduled messages (scheduled_tasks) had no mechanism to be marked cleared when message generation failed or produced an empty message body — such a task either sat in `scheduled` (no `messages` array) or was promoted to `pending` with nothing to send (empty body). The due_tasks Sentinel schedule can now set them to `clear`, but only when the new opt-in `sms.clear_failing_schedules` app setting is true; when it is unset or false an empty-bodied task is left in `scheduled` instead, which is itself a change from the old promote-to-`pending` behaviour.
 services:
   - sentinel
 techStack:
@@ -62,7 +62,7 @@ In shared-libs/transitions/src/schedule/due_tasks.js, iterate a document's sched
 
 ## Design Choices
 
-Clearing invalid/failed scheduled messages (preventing erroneous future delivery) was made opt-in via the new `sms.clear_failing_schedules` setting, which defaults to false — so existing deployments keep leaving such messages indefinitely scheduled unless an admin turns it on. The behavior was folded into the existing due_tasks schedule rather than introduced as a separate transition or schedule.
+Clearing invalid/failed scheduled messages (preventing erroneous future delivery) was made opt-in via the new `sms.clear_failing_schedules` setting, which defaults to false — so an admin must turn it on before anything is set to `clear`. Note what the default does change: an empty-bodied due task that the old code promoted to `pending` is now left in `scheduled`, so the message stops being handed to the sender either way, and only the opt-in decides whether it is additionally marked `clear`. The behavior was folded into the existing due_tasks schedule rather than introduced as a separate transition or schedule.
 
 ## Related Files
 
@@ -77,7 +77,7 @@ Updated unit tests in shared-libs/transitions/test/unit/due_tasks.js and added a
 ## Related Issues
 
 - #10428: parent improvement — allow clearing messages when a schedule fails
-- #10446: bug fixed — failed/invalid scheduled messages were not being cleared
+- #10446: Dont send empty messages — the empty-body case this PR's `hasValidMessage` guard stops handing to the sender
 
 ## Domain Rationale
 
