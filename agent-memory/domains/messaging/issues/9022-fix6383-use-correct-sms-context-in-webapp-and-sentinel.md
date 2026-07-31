@@ -45,7 +45,7 @@ stale: false
 
 ## Problem
 
-When generating SMS content for due/scheduled tasks, the webapp (format-data-record service) and Sentinel (due_tasks schedule) added the patient/place to the template context only when a shortcode id was present on the report's `fields`. Reports that had been hydrated with `doc.patient`/`doc.place` but carried no `fields.patient_id`/`fields.place_id` got a context with no patient (Sentinel: an entirely `undefined` context), so templates referencing patient fields rendered with missing data.
+When generating SMS content for due/scheduled tasks, the webapp (format-data-record service) and Sentinel (due_tasks schedule) added the patient/place to the template context only when a shortcode id was present on the report itself — at the top level or under `fields` — and never looked at the hydrated `doc.patient` / `doc.place` where that shortcode often lives. Reports that had been hydrated with `doc.patient`/`doc.place` but carried no `fields.patient_id`/`fields.place_id` got a context with no patient (Sentinel: an entirely `undefined` context), so templates referencing patient fields rendered with missing data.
 
 ## Root Cause
 
