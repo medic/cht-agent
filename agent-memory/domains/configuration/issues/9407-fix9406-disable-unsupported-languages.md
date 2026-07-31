@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9406
 issueUrl: https://github.com/medic/cht-core/issues/9406
 title: Disable unsupported languages in default and demo app_settings configuration
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-07-30'
 summary: Unsupported (incompletely translated/non-official) languages were selectable to users via the app_settings language configuration; this PR disables them in the default and demo app_settings.json so only supported languages are offered.
 services:
   - api

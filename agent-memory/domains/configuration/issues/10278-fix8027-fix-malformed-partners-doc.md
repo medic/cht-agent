@@ -36,7 +36,7 @@ confidence: medium
 entities:
   - admin/src/js/controllers/images-partners.js
   - admin/src/js/services/resource-icons.js
-  - webapp/src/ts/services/resource-icons.service.ts (replaced by custom-resource.service.ts in #11050)
+  - webapp/src/ts/services/resource-icons.service.ts
 concepts:
   - defensive null-checking
   - graceful degradation
