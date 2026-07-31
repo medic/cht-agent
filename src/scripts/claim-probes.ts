@@ -619,6 +619,22 @@ export function entityIsTimeScoped(text: string, entity: string): boolean {
 // qualifying the path once can then discuss it loosely anywhere. Deliberate —
 // erring toward flagging is cheap, and a prose alias is not machine-resolvable.
 
+/**
+ * Wording that scopes a claim FORWARD — to the current tree rather than to the
+ * draft's own commit. "X was replaced by Y in #11050" asserts that Y exists
+ * *now*, so probing Y at the anchor, where it does not yet exist, refutes a true
+ * sentence. This is drift's mirror image: there the prose was too present-tense
+ * for an anchor-era fact, here it is too past-tense for a current-tree fact.
+ *
+ * Both of the false positives this fixes came from time-scoping notes added in
+ * response to review — the act of dating a claim created a second, forward claim.
+ */
+const FORWARD_SCOPED = new RegExp([
+  'replaced by', 'renamed to', 'superseded by', 'since renamed', 'moved to',
+  'current master', 'on master', 'today',
+  'now (?:lives|reads|tests|uses|is|are|called|spelled)',
+].join('|'), 'i');
+
 /** The entity a claim asserts exists, if it names one checkable in a tree. */
 function claimEntity(claim: Claim): { kind: 'path' | 'symbol'; value: string } | null {
   switch (claim.kind) {
@@ -721,6 +737,22 @@ export function checkClaim(
     return checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
   };
   const settled = settleAtAnchor();
+
+  // A claim the draft explicitly scopes to the current tree must be judged
+  // there. Failing it at the anchor is checking the wrong commit, not a defect.
+  if (settled.outcome === 'ungrounded' && TREE_SCOPED.has(claim.kind) && FORWARD_SCOPED.test(claim.quote)) {
+    const ref = ctx.fallbackRef ?? DEFAULT_FALLBACK_REF;
+    if (commitExists(ctx, ref)) {
+      const atCurrent = checkAtRef(ctx, ref, claim, 'fallback');
+      if (atCurrent.outcome === 'grounded') {
+        return {
+          ...atCurrent,
+          evidence: `${atCurrent.evidence} — absent at the anchor, but the draft scopes this to the ` +
+            'current tree ("replaced by", "on master", …), so it was checked there',
+        };
+      }
+    }
+  }
 
   // Drift is only meaningful for a claim that HELD at its anchor: the sentence
   // is true about its own PR, and stale only as read against today's tree.
