@@ -41,7 +41,7 @@ reviewed_at: null
 confidence: medium
 entities:
   - webapp/src/ts/modules/analytics/analytics-target-aggregates.component.ts
-  - webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.ts (since replaced on master: the #10140 previous-month-targets epic, squashed as #10423/622c625427, folded this component into the shared analytics sidebar filter)
+  - webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.ts
   - webapp/src/ts/modules/analytics/analytics-target-aggregates-detail.component.ts
   - webapp/src/ts/components/filters/analytics-filter/analytics-filter.component.ts
   - webapp/src/ts/services/target-aggregates.service.ts
@@ -90,7 +90,7 @@ The Filter button and sidebar are shown to all non-admin users on the aggregate-
 
 - webapp/src/ts/modules/analytics/analytics-target-aggregates.component.ts
 - webapp/src/ts/modules/analytics/analytics-target-aggregates.component.html
-- webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.ts
+- webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.ts (since replaced on master: the #10140 previous-month-targets epic, squashed as #10423/622c625427, folded this component into the shared analytics sidebar filter)
 - webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.html
 - webapp/src/ts/modules/analytics/analytics-target-aggregates-detail.component.ts
 - webapp/src/ts/modules/analytics/analytics-target-aggregates-detail.component.html
