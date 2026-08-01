@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9431
 issueUrl: https://github.com/medic/cht-core/issues/9431
 title: Always aggregate and store targets and recalculate tasks automatically on state/document changes, with a 1s debounce
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: Targets and tasks were only computed lazily when visiting specific pages, leaving them stale and unstored. The rules engine now always aggregates and persists targets and recalculates tasks automatically whenever rules state or documents change, with a 1s debounce to batch bursts of changes.
 services:
   - webapp
@@ -60,7 +60,7 @@ stale: false
 
 ## Problem
 
-Target aggregation and task recalculation were only triggered when the user navigated to certain pages (e.g. the targets/tasks views). This left targets and tasks stale until a page visit, did not persist aggregated targets, and meant newly created or freshly synced documents did not update targets/tasks until the user navigated.
+Target aggregation and task recalculation only produced up-to-date results when the user navigated to certain pages (e.g. the targets/tasks views): a change-feed hook already marked contacts dirty as documents arrived, but nothing aggregated or persisted targets until a view asked for them. This left targets and tasks stale until a page visit, did not persist aggregated targets, and meant newly created or freshly synced documents did not update targets/tasks until the user navigated.
 
 ## Root Cause
 

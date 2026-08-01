@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9704
 issueUrl: https://github.com/medic/cht-core/issues/9704
 title: Throw PouchDB errors when saving target documents in the rules-engine pouchdb-provider
-lastUpdated: '2026-07-31'
-summary: A catch-all on the PouchDB READ that precedes a target-doc write swallowed every error into a synthesised default document, so a real failure was indistinguishable from a missing doc. The provider now rethrows any non-404 error from the target-doc read so the errors propagate.
+lastUpdated: '2026-08-01'
+summary: The catch-all on the PouchDB READ that precedes a target-doc write handled only `err.status === 404`, returning a freshly-built target doc; every other rejection fell through silently, so a real PouchDB failure produced neither a document nor an error. The provider now rethrows any non-404 error from the target-doc read so the errors propagate.
 services:
   - webapp
 techStack:
@@ -56,7 +56,7 @@ When a `.catch` on a PouchDB read exists only to synthesise a default document, 
 
 ## Design Choices
 
-Chose to rethrow unexpected errors from the target-doc READ rather than let a catch-all swallow them into a synthesised default, so a real failure cannot masquerade as a fresh document. Writes were left as they were — the one `bulkDocs` in this file, `commitTaskDocs`, still only `console.error`s — aligning target persistence with proper error-propagation semantics.
+Chose to rethrow unexpected errors from the target-doc READ rather than let a catch-all drop them, so a real PouchDB failure surfaces instead of vanishing — previously only a 404 produced a usable result and every other rejection fell through returning nothing. Writes were left as they were — the one `bulkDocs` in this file, `commitTaskDocs`, still only `console.error`s — aligning target persistence with proper error-propagation semantics.
 
 ## Related Files
 

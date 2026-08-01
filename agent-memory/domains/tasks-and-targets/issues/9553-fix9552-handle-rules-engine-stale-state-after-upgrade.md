@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9552
 issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Reconcile rules-engine persisted target state after an upgrade so newly configured target aggregates are not dropped
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: After a CHT upgrade that changes target configuration, the rules engine's persisted target state became stale and omitted newly configured target aggregates, yielding inaccurate or missing targets. The fix detects the stale blob by its shape — `isStale` requires both a `targets` and an `aggregate` key, never reading the configured targets — and rebuilds state that fails the check; a related follow-up also migrates stale target state on reporting-interval turnover.
 services:
   - webapp
@@ -75,7 +75,7 @@ A follow-up added interval-turnover handling. It is not triggered by comparing i
 
 Validate the shape of persisted state on load: `target-state.isStale` checks only that the stored blob has both a `targets` and an `aggregate` key — it never reads the configured targets — and `rules-state-store.load` ORs that check with the `rulesConfigHash` mismatch to set `state.stale`, which forces a full rebuild rather than a partial repair.
 
-The interval-turnover follow-up reuses the same shape check rather than an interval comparison: `rules-state-store.load` calls `state.targetState = targetState.migrateStaleState(state.targetState)` inside the existing `rulesConfigHash`/`isStale` branch, and `migrateStaleState` — added by the #9569/#9570 follow-up rather than by #9553 itself, and on master at target-state.js:124 — wraps a pre-#9486 bare targets map into `{ targets: <old map>, aggregate: {} }` when `isStale` is true. Emissions are preserved, not cleared; the wrap exists so `handleIntervalTurnover` in provider-wireup.js can read the migrated state before the rebuild (PR #9569, #9570).
+The interval-turnover follow-up reuses the same shape check rather than an interval comparison: `rules-state-store.load` calls `state.targetState = targetState.migrateStaleState(state.targetState)` inside the existing `rulesConfigHash`/`isStale` branch, and `migrateStaleState` — added by the #9569/#9570 follow-up rather than by #9553 itself, and on master at target-state.js:124 — wraps a pre-#9486 bare targets map into `{ targets: <old map>, aggregate: {} }` when `isStale` is true. Emissions are preserved, not cleared; the wrap exists so `handleIntervalTurnover` in provider-wireup.js (the function has since been removed from master by #9714, which took out interval turnover altogether) can read the migrated state before the rebuild (PR #9569, #9570).
 
 ## Design Choices
 
