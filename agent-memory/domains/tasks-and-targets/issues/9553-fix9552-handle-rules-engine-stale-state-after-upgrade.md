@@ -67,7 +67,7 @@ For the interval-turnover facet, the persisted state stored target emissions wit
 
 ## Solution
 
-Updated target-state.js and rules-state-store.js to detect that the persisted target state is in the pre-#9486 shape — the new `targetState.isStale` is `(state) => !state || !state.targets || !state.aggregate`, called from `load` as `targetState.isStale(state.targetState)` — and, when it fires, to mark the whole rules state stale so `provider-wireup.initialize` discards it and calls `rulesStateStore.build()`, rebuilding contact and target state from scratch. Added unit coverage for the stale-state scenario and an e2e target-accuracy spec to confirm correct target values after the configuration change.
+Updated target-state.js and rules-state-store.js to detect that the persisted target state is in the pre-#9486 shape — the new `targetState.isStale` is `(state) => !state || !state.targets || !state.aggregate`, called from `load` as `targetState.isStale(state.targetState)` — and, when it fires, to mark the whole rules state stale so `provider-wireup.initialize` discards it and calls `rulesStateStore.build()`, rebuilding contact and target state from scratch. Added unit coverage for the stale-state scenario, and extended the existing e2e target-accuracy spec to confirm correct target values after the configuration change.
 
 A follow-up added interval-turnover handling. It is not triggered by comparing intervals: on every hydration `rules-state-store.load` runs the same shape check, and state failing it is migrated in place — emissions are preserved, not cleared, and simply rewrapped so `handleIntervalTurnover` can read them against the active interval — while staying compatible with documents written by older versions (PR #9569, #9570).
 

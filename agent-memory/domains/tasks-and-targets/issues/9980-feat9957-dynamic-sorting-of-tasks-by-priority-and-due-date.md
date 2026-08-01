@@ -64,7 +64,7 @@ Layered comparator pattern in webapp/src/ts/reducers/tasks.ts: compare priority 
 
 ## Design Choices
 
-Chose frontend recomputation of effective priority/order over Alternative 1 (storing priority as a precomputed [not-due, due, overdue] array on the task), keeping changes confined to the webapp and avoiding a task-schema change. Selected 'priority then due date' ordering over the alternative orderings (due date first, or split strategies for due vs not-due tasks) for predictable urgency-first ranking. Maintains backwards compatibility with existing task structures.
+Chose frontend recomputation of effective priority/order over Alternative 1 (storing priority as a precomputed [not-due, due, overdue] array on the task), avoiding a task-schema change; the only edit outside the webapp is the two `priority` functions added to the default config at config/default/tasks.js. Selected 'priority then due date' ordering over the alternative orderings (due date first, or split strategies for due vs not-due tasks) for predictable urgency-first ranking. Maintains backwards compatibility with existing task structures.
 
 ## Related Files
 
