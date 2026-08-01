@@ -72,8 +72,8 @@ Updated existing rules-engine tests — test/integration.spec.js and test/provid
 ## Related Issues
 
 - #9714: Evidence that interval turnover causes incorrect values in target docs (the motivating issue)
-- #9486: Prior work improving recalculation that suggests interval turnover is no longer needed and shrinks the reopened gap
-- #6209: Documents the recalculation gap that removing interval turnover reopens
+- PR #9486: feat(#9431): always aggregate and store targets — the prior work that shrinks the gap reopened by removing interval turnover
+- #6209: Update aggregate target doc after the reporting interval to ensure accuracy — the original statement of the staleness gap that removing interval turnover reopens
 
 ## Domain Rationale
 

@@ -123,9 +123,9 @@ Karma unit tests added/updated for the new and modified code: analytics-filter.c
 ## Related Issues
 
 - #9231: enable place filter aggregate targets for users with multiple facility_ids (tracking issue)
-- #9267: Filter target aggregate data using sidebar filter
-- #9283: Filter aggregate targets by period
-- #9305: e2e tests for aggregate targets (place, period)
+- PR #9267: Filter target aggregate data using sidebar filter
+- PR #9283: Filter aggregate targets by period
+- PR #9305: e2e tests for aggregate targets (place, period)
 
 ## Domain Rationale
 

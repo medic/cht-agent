@@ -101,7 +101,7 @@ Updated unit tests across the rules engine (integration.spec.js, pouchdb-provide
 ## Related Issues
 
 - #9431: always aggregate and store targets (the feature implemented by this PR)
-- #9432: companion issue — recalculate tasks/targets automatically on document or state changes (debounced)
+- #9432: Merge ensureTaskFreshness and ensureTargetFreshness into single event — the companion performance issue folding the two 120s background refreshes into one
 
 ## Domain Rationale
 
