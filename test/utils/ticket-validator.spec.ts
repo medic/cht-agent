@@ -83,7 +83,7 @@ describe('Ticket Validation', () => {
       },
       {
         file: 'invalid-domain.md',
-        error: 'Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability, infrastructure',
+        error: 'Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability, infrastructure, data-access',
       },
       {
         file: 'invalid-missing-domain.md',

@@ -36,6 +36,7 @@ const DOMAIN_DESCRIPTIONS: Record<CHTDomain, string> = {
   configuration: 'App configuration, settings, translations, admin features',
   interoperability: 'FHIR, OpenHIM, DHIS2, outbound push, external system integration',
   infrastructure: 'CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling — operational lifecycle',
+  'data-access': 'cht-datasource library API surface — entity modules, local/remote implementations, qualifiers, and the api controllers/routes that back the remote path. Use when the work extends the data-access layer itself, not when it merely consumes it',
 };
 
 /** Numbered domain roster injected into the inference prompt, derived from CHT_DOMAINS. */

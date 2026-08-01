@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-05-14T09:30:21Z",
+  "last_updated": "2026-08-17T19:14:39Z",
   "domains": {
     "contacts": {
       "description": "Contact management - people, places, hierarchies, muting",
@@ -403,12 +403,75 @@
     },
     "interoperability": {
       "description": "FHIR / OpenHIM / external integration",
-      "api": { "controllers": [], "services": [] },
-      "webapp": { "modules": [], "services": [] },
-      "sentinel": { "transitions": [] },
+      "api": {
+        "controllers": [],
+        "services": []
+      },
+      "webapp": {
+        "modules": [],
+        "services": []
+      },
+      "sentinel": {
+        "transitions": []
+      },
       "shared_libs": [],
-      "tests": { "unit": [], "integration": [], "e2e": [] },
-      "ngrx": { "actions": [], "reducers": [], "effects": [], "selectors": [] }
+      "tests": {
+        "unit": [],
+        "integration": [],
+        "e2e": []
+      },
+      "ngrx": {
+        "actions": [],
+        "reducers": [],
+        "effects": [],
+        "selectors": []
+      }
+    },
+    "data-access": {
+      "description": "cht-datasource library API - entity modules, local/remote implementations, qualifiers, and the api controllers backing the remote path",
+      "api": {
+        "controllers": [
+          "api/src/controllers/person.js",
+          "api/src/controllers/place.js",
+          "api/src/controllers/contact.js",
+          "api/src/controllers/report.js",
+          "api/src/controllers/target.js"
+        ],
+        "services": [
+          "api/src/services/data-context.js"
+        ]
+      },
+      "webapp": {
+        "modules": [],
+        "services": [
+          "webapp/src/ts/services/cht-datasource.service.ts"
+        ]
+      },
+      "sentinel": {
+        "transitions": []
+      },
+      "shared_libs": [
+        {
+          "name": "cht-datasource",
+          "path": "shared-libs/cht-datasource",
+          "critical": true
+        }
+      ],
+      "tests": {
+        "unit": [
+          "shared-libs/cht-datasource/test/"
+        ],
+        "integration": [
+          "tests/integration/shared-libs/cht-datasource/"
+        ],
+        "e2e": []
+      },
+      "ngrx": {
+        "actions": [],
+        "reducers": [],
+        "effects": [],
+        "selectors": []
+      }
     }
   }
 }

@@ -398,6 +398,7 @@ export class DocumentationSearchAgent {
       configuration: ['config', 'settings', 'cht-conf'],
       interoperability: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability', 'mediator'],
       infrastructure: ['docker', 'helm', 'kubernetes', 'haproxy', 'ci', 'build', 'deploy', 'upgrade', 'infrastructure'],
+      'data-access': ['cht-datasource', 'datasource', 'qualifier', 'data-access'],
     };
 
     const relatedDomains: CHTDomain[] = [];
@@ -537,6 +538,15 @@ export class DocumentationSearchAgent {
           topics: ['docker', 'helm', 'kubernetes', 'haproxy', 'ci', 'upgrade', 'deployment'],
           relevantSections: ['Self Hosting', 'Upgrading', 'Docker Compose'],
           codeExamples: ['docker-compose setup', 'helm chart values'],
+        },
+      ],
+      'data-access': [
+        {
+          url: 'https://docs.communityhealthtoolkit.org/technical-overview/architecture/',
+          title: 'cht-datasource Data Access Layer',
+          topics: ['cht-datasource', 'qualifier', 'local', 'remote', 'data-access'],
+          relevantSections: ['Architecture', 'Shared Libraries'],
+          codeExamples: ['getDatasource().v1.person.getByUuid', 'Qualifier.byUuid'],
         },
       ],
     };
