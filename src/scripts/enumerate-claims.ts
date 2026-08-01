@@ -139,6 +139,16 @@ function section(raw: string, heading: string): string {
 const looksLikePath = (s: string): boolean => new RegExp(PATH_RE.source).test(s);
 
 /**
+ * Does `text` name this exact file, rather than merely containing its letters?
+ * A plain substring test says `index.js` mentions `x.js`, which would let an
+ * invented path be "rescued" onto an unrelated file.
+ */
+function mentionsName(text: string, name: string): boolean {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^\\w./-])${esc}(?![\\w-])`).test(text);
+}
+
+/**
  * Sections that describe the state the PR CHANGED rather than the state it
  * produced. A claim from here is about the tree *before* the fix, so probing it
  * at the post-fix anchor refutes a correct sentence: 10604's Root Cause says the
@@ -197,6 +207,29 @@ export function normaliseClaim<T extends { kind: string; quote: string }>(
   raw: string, claim: T
 ): T | null {
   const section = sectionOfQuote(raw, claim.quote);
+
+  // A PATH THE DRAFT NEVER WRITES WAS INVENTED BY THE EXTRACTOR. 10390 says
+  // "bespoke code in target-aggregates.service.ts" and "via
+  // analytics.getTargetDocs"; the model supplied
+  // webapp/src/ts/modules/analytics/target-aggregates.service.ts and
+  // webapp/src/ts/services/analytics.service.ts, neither of which occurs
+  // anywhere in the file. Probing an invented path proves nothing about the
+  // draft. Fall back to the basename the draft DOES write — the basename
+  // resolvers settle it — and drop the attribution entirely when even that is
+  // absent.
+  const file = (claim as { file?: unknown }).file;
+  if (typeof file === 'string' && file && !raw.includes(file)) {
+    const base = file.split('/').pop() ?? '';
+    if (base && mentionsName(raw, base)) {
+      claim = { ...claim, file: base };
+    } else if ('symbol' in claim) {
+      claim = { ...claim, kind: 'symbol' } as T;          // check the symbol, not the guess
+      delete (claim as { file?: unknown }).file;
+    } else {
+      return null;
+    }
+  }
+
   if (!('symbol' in claim)) return claim;
 
   const tok = stripCall(String((claim as { symbol: string }).symbol).trim());

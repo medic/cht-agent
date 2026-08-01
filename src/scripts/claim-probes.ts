@@ -559,6 +559,22 @@ function prFileList(ctx: ProbeCtx, repo: string, prNumber: number): Map<string, 
 const CHANGE_VERB =
   /\b(?:add(?:s|ed)?|creat(?:e|es|ed)|modif(?:y|ies|ied)|updat(?:e|es|ed)|edit(?:s|ed)?|remov(?:e|es|ed)|delet(?:e|es|ed)|renam(?:e|es|ed)|touch(?:es|ed)?|introduc(?:e|es|ed)|extend(?:s|ed)?|rewr(?:ite|ites|ote)|refactor(?:s|ed)?)\b/i;
 
+/**
+ * Is the sentence claiming the PR CHANGED this file, or merely mentioning it?
+ * Scanning the whole quote is too coarse: 4278's Root Cause names the endpoint
+ * and then, 200 characters later, says the lack of tests made it "risky to
+ * modify or extend" — a statement about risk, not about what the PR did, yet
+ * enough to block the existence rescue. Only a verb NEAR the file mention
+ * counts.
+ */
+function changeVerbNearFile(quote: string, file: string): boolean {
+  const base = file.split('/').pop() ?? file;
+  const at = quote.indexOf(file) >= 0 ? quote.indexOf(file) : quote.indexOf(base);
+  if (at < 0) return CHANGE_VERB.test(quote);          // cannot locate it — be strict
+  const WINDOW = 70;
+  return CHANGE_VERB.test(quote.slice(Math.max(0, at - WINDOW), at + base.length + WINDOW));
+}
+
 function checkFileTouched(
   ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' },
   siblings: Anchor[] = [], clusterPrs: Array<{ repo: string; prNumber: number }> = []
@@ -630,7 +646,7 @@ function checkFileTouched(
   // PR did to it — 4278's "was not untested: api/tests/unit/... covered it"
   // names the endpoint under test. If such a path exists at the anchor, the
   // draft is right and the claim kind was simply mis-inferred.
-  if (status === undefined && !CHANGE_VERB.test(claim.quote) && !claim.status
+  if (status === undefined && !changeVerbNearFile(claim.quote, claim.file) && !claim.status
       && pathExistsAt(ctx, a.sha, claim.file)) {
     return verdict(claim, 'grounded',
       `${claim.file} is not in this PR's diff, but the sentence names it without any change verb ` +

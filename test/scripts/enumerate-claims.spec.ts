@@ -160,9 +160,41 @@ describe('enumerate-claims', () => {
       expect(normaliseClaim(raw, claim('getDocResources', q))?.symbol).to.equal('getDocResources');
     });
 
-    it('leaves non-symbol claims alone', () => {
-      const c = { kind: 'file-touched', file: 'api/src/x.js', quote: 'touched api/src/x.js' };
-      expect(normaliseClaim(raw, c)).to.deep.equal(c);
+    it('leaves a path the draft really writes alone', () => {
+      const withPath = `${raw}\n- api/src/x.js\n`;
+      const c = { kind: 'file-touched', file: 'api/src/x.js', quote: '- api/src/x.js' };
+      expect(normaliseClaim(withPath, c)).to.deep.equal(c);
+    });
+
+    it('falls back to the basename when the model invented the directory', () => {
+      // 10390: the draft says "bespoke code in target-aggregates.service.ts";
+      // the model supplied webapp/src/ts/modules/analytics/… , which occurs nowhere.
+      const draft = '## Root Cause\n\nloaded via bespoke code in target-aggregates.service.ts\n';
+      const out = normaliseClaim(draft, {
+        kind: 'path-exists',
+        file: 'webapp/src/ts/modules/analytics/target-aggregates.service.ts',
+        quote: 'loaded via bespoke code in target-aggregates.service.ts',
+      });
+      expect((out as { file: string }).file).to.equal('target-aggregates.service.ts');
+    });
+
+    it('does not rescue a basename onto a merely-similar filename', () => {
+      // `index.js` contains the letters of `x.js`; a substring test would match.
+      const draft = '## Root Cause\n\nindex.js selected the emitter.\n';
+      expect(normaliseClaim(draft, {
+        kind: 'path-exists', file: 'api/src/x.js', quote: 'index.js selected the emitter.',
+      })).to.equal(null);
+    });
+
+    it('downgrades symbol-in-file to symbol when the file was invented', () => {
+      const draft = '## Root Cause\n\nsurfaced via `analytics.getTargetDocs`\n';
+      const out = normaliseClaim(draft, {
+        kind: 'symbol-in-file', symbol: 'getTargetDocs',
+        file: 'webapp/src/ts/services/analytics.service.ts',
+        quote: 'surfaced via `analytics.getTargetDocs`',
+      });
+      expect(out?.kind).to.equal('symbol');
+      expect(out).to.not.have.property('file');
     });
   });
 });
