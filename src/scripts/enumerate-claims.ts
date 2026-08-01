@@ -75,8 +75,14 @@ const OWN_SCHEMA_KEYS = new Set([
 // `->` and `→` sit outside the \b group on purpose: neither character is a word
 // character, so \b can never match beside them and the alternative was dead.
 const ABSENCE_CONTEXT = new RegExp([
+  // NOT 'instead of' / 'rather than': those are comparison, not absence.
+  // Design Choices is full of "chose X rather than Y" and "reused X instead of
+  // building Y", and both name real symbols worth checking. Measured on the
+  // configuration batch they suppressed 13 code-bearing lines — more than every
+  // genuine absence pattern combined — which is pure lost coverage. A sentence
+  // that really removes something says so with a verb the next line catches.
   '\\b(?:removed?|deleted?|dropped|drops|superseded|supersedes|renamed|replaced?|no longer',
-  '|used to|formerly|former|obsolete|stale|deprecated|instead of|rather than)\\b',
+  '|used to|formerly|former|obsolete|stale|deprecated)\\b',
   '|->|→',
   '|\\bstill (?:queried|used|referenced|pointed)\\b',
 ].join(''), 'i');

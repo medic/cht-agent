@@ -533,8 +533,13 @@ function prFileList(ctx: ProbeCtx, repo: string, prNumber: number): Map<string, 
   return out;
 }
 
+/** Verbs that make a sentence a claim about a CHANGE rather than about existence. */
+const CHANGE_VERB =
+  /\b(?:add(?:s|ed)?|creat(?:e|es|ed)|modif(?:y|ies|ied)|updat(?:e|es|ed)|chang(?:e|es|ed)|edit(?:s|ed)?|remov(?:e|es|ed)|delet(?:e|es|ed)|renam(?:e|es|ed)|touch(?:es|ed)?|introduc(?:e|es|ed)|extend(?:s|ed)?|rewr(?:ite|ites|ote)|refactor(?:s|ed)?)\b/i;
+
 function checkFileTouched(
-  ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' }, siblings: Anchor[] = []
+  ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' },
+  siblings: Anchor[] = [], clusterPrs: Array<{ repo: string; prNumber: number }> = []
 ): Verdict {
   // A draft that collapsed a duplicate cluster covers several commits, and its
   // Related Files legitimately spans all of them. Checking only the canonical
@@ -549,12 +554,24 @@ function checkFileTouched(
     for (const [f, s] of m) if (!changed.has(f)) changed.set(f, s);
   };
 
-  // 1. an epic child's OWN file list, which the squash cannot supply
+  // 1. an epic child's OWN file list, which the squash cannot supply — plus
+  //    every PR in a collapsed cluster, since a sibling whose merge commit is
+  //    unreachable resolves to no anchor at all and would otherwise be lost.
+  //    9553's Related Files span four PRs; only one sibling resolved locally.
   let usedApi = false;
-  for (const anch of [a, ...siblings]) {
-    if (!anch.viaEpic || !anch.repo || anch.prNumber === undefined) continue;
-    const own = prFileList(ctx, anch.repo, anch.prNumber);
-    if (own) { absorb(own); usedApi = true; sources.push(`${anch.repo}#${anch.prNumber} files`); }
+  const asked = new Set<string>();
+  const wanted: Array<{ repo: string; prNumber: number }> = [
+    ...[a, ...siblings]
+      .filter(x => x.viaEpic && x.repo && x.prNumber !== undefined)
+      .map(x => ({ repo: x.repo as string, prNumber: x.prNumber as number })),
+    ...clusterPrs,
+  ];
+  for (const { repo, prNumber } of wanted) {
+    const key = `${repo}#${prNumber}`;
+    if (asked.has(key)) continue;
+    asked.add(key);
+    const own = prFileList(ctx, repo, prNumber);
+    if (own) { absorb(own); usedApi = true; sources.push(`${key} files`); }
   }
   // 2. the anchor commit's diff, and 3. each sibling commit's diff
   absorb(changedPaths(ctx, a.sha));
@@ -586,6 +603,16 @@ function checkFileTouched(
       return verdict(claim, 'grounded',
         `${cmd} → named by basename; resolves to ${hits[0]} (${word})`);
     }
+  }
+  // A sentence with no change verb is describing what a file WAS, not what the
+  // PR did to it — 4278's "was not untested: api/tests/unit/... covered it"
+  // names the endpoint under test. If such a path exists at the anchor, the
+  // draft is right and the claim kind was simply mis-inferred.
+  if (status === undefined && !CHANGE_VERB.test(claim.quote) && !claim.status
+      && pathExistsAt(ctx, a.sha, claim.file)) {
+    return verdict(claim, 'grounded',
+      `${claim.file} is not in this PR's diff, but the sentence names it without any change verb ` +
+        `and it exists at ${refLabel(a.sha)} — read as an existence claim, not a modification`);
   }
   if (status === undefined) {
     return verdict(claim, 'ungrounded', `${cmd} → ${claim.file} is not in this PR's diff (${changed.size} files changed)`);
@@ -857,7 +884,8 @@ function checkAtRef(
  * changed, which release lines carry it).
  */
 export function checkClaim(
-  ctx: ProbeCtx, anchor: Anchor | null, claim: Claim, siblings: Anchor[] = []
+  ctx: ProbeCtx, anchor: Anchor | null, claim: Claim, siblings: Anchor[] = [],
+  clusterPrs: Array<{ repo: string; prNumber: number }> = []
 ): Verdict {
   if (anchor?.isRevert) {
     return verdict(claim, 'anchor-unusable',
@@ -878,7 +906,7 @@ export function checkClaim(
 
   const settleAtAnchor = (): Verdict => {
     if (TREE_SCOPED.has(claim.kind)) return checkAtRef(ctx, anchor.sha, claim, 'anchor', anchor);
-    if (claim.kind === 'file-touched') return checkFileTouched(ctx, anchor, claim, siblings);
+    if (claim.kind === 'file-touched') return checkFileTouched(ctx, anchor, claim, siblings, clusterPrs);
     return checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
   };
   const settled = settleAtAnchor();
