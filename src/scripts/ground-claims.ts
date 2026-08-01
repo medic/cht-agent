@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import matter from 'gray-matter';
 import { z } from 'zod';
 import { REPO_ROOT } from './schema-utils';
-import { enumerateClaims } from './enumerate-claims';
+import { enumerateClaims, quoteDisclaims, quoteIsPreFix } from './enumerate-claims';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import {
   Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, entityIsTimeScoped,
@@ -322,7 +322,7 @@ function auditSnippets(ctx: ProbeCtx, draft: DraftInput, anchor: Anchor | null):
  * the model adds semantic claims it cannot express. Dedup is by claim identity,
  * so a claim both produce is probed once.
  */
-function mergeClaims(deterministic: Claim[], modelled: Claim[]): Claim[] {
+function mergeClaims(deterministic: Claim[], modelled: Claim[], raw: string): Claim[] {
   const key = (c: Claim): string =>
     `${c.kind}|${'symbol' in c ? c.symbol : ''}|${'file' in c ? c.file : ''}`;
   const out = [...deterministic];
@@ -332,7 +332,14 @@ function mergeClaims(deterministic: Claim[], modelled: Claim[]): Claim[] {
     seen.add(key(c));
     out.push(c);
   }
-  return out;
+  // Apply the context filters to EVERY claim, not just enumerated ones. The
+  // model read 4278's "was not untested" sentence and produced a file-touched
+  // claim from it; the enumerator would have skipped that line.
+  return out
+    .filter(c => !quoteDisclaims(raw, c.quote))
+    .map(c => (
+      'scope' in c || !quoteIsPreFix(raw, c.quote) ? c : { ...c, scope: 'pre-fix' as const }
+    ));
 }
 
 /** Ground one draft: extract claims, then probe each. */
@@ -351,7 +358,7 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
   const enumerated = enumerateClaims(draft.raw);
   let claims: Claim[];
   try {
-    claims = mergeClaims(enumerated, await extract(draft));
+    claims = mergeClaims(enumerated, await extract(draft), draft.raw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const verdicts = enumerated.map(c => checkClaim(ctx, anchor, c, siblingAnchors(ctx, draft.frontmatter, anchor)));

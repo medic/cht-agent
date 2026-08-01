@@ -60,15 +60,23 @@ export interface Anchor {
   viaEpic?: boolean;
 }
 
+/**
+ * Set on a claim drawn from a Problem / Root Cause section, which describes the
+ * tree the PR CHANGED. Such a claim is checked at the anchor's parent when it
+ * fails at the anchor itself — otherwise every accurate description of a bug the
+ * fix removed reads as a fabrication.
+ */
+export type ClaimScope = 'pre-fix';
+
 export type Claim =
   /** `symbol` must exist somewhere in the tree. */
-  | { kind: 'symbol'; symbol: string; quote: string }
+  | { kind: 'symbol'; symbol: string; quote: string; scope?: ClaimScope }
   /** `symbol` must exist AND be findable in `file` — catches misattribution. */
-  | { kind: 'symbol-in-file'; symbol: string; file: string; quote: string }
+  | { kind: 'symbol-in-file'; symbol: string; file: string; quote: string; scope?: ClaimScope }
   /** `file` must appear in the PR's own diff, optionally with a given status. */
   | { kind: 'file-touched'; file: string; status?: 'added' | 'modified' | 'deleted'; quote: string }
   /** `file` must exist in the tree at the anchor. */
-  | { kind: 'path-exists'; file: string; quote: string }
+  | { kind: 'path-exists'; file: string; quote: string; scope?: ClaimScope }
   /** A claimed backport line must exist and contain the anchor commit. */
   | { kind: 'release-branch'; branch: string; quote: string };
 
@@ -874,6 +882,25 @@ export function checkClaim(
     return checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
   };
   const settled = settleAtAnchor();
+
+  // A Problem / Root Cause claim describes the tree the PR CHANGED. When it
+  // fails at the anchor, ask the parent before calling it a fabrication — the
+  // fix removing the thing the bug report named is the expected outcome, not a
+  // defect. Absent from BOTH trees is still ungrounded.
+  const preFix = TREE_SCOPED.has(claim.kind) && 'scope' in claim && claim.scope === 'pre-fix';
+  if (settled.outcome === 'ungrounded' && preFix) {
+    const parent = `${anchor.sha}^`;
+    if (commitExists(ctx, parent)) {
+      const before = checkAtRef(ctx, parent, claim, 'anchor', anchor);
+      if (before.outcome === 'grounded') {
+        return {
+          ...before,
+          evidence: `${before.evidence} — checked at ${refLabel(anchor.sha)}^ because the claim sits in a ` +
+            'Problem/Root Cause section, which describes the state this PR changed',
+        };
+      }
+    }
+  }
 
   // A claim the draft explicitly scopes to the current tree must be judged
   // there. Failing it at the anchor is checking the wrong commit, not a defect.

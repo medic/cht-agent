@@ -132,6 +132,46 @@ function section(raw: string, heading: string): string {
 /** `PATH_RE` carries /g/, whose lastIndex makes `.test()` stateful. */
 const looksLikePath = (s: string): boolean => new RegExp(PATH_RE.source).test(s);
 
+/**
+ * Sections that describe the state the PR CHANGED rather than the state it
+ * produced. A claim from here is about the tree *before* the fix, so probing it
+ * at the post-fix anchor refutes a correct sentence: 10604's Root Cause says the
+ * service "queried `medic-client/doc_by_type`", which is exactly what the fix
+ * removed, and 10073's names the `parseResponseBody` helper the PR deleted.
+ */
+const PRE_FIX_SECTIONS = new Set(['Problem', 'Root Cause']);
+
+/** Which `## Heading` a verbatim quote sits under, or '' if it cannot be placed. */
+export function sectionOfQuote(raw: string, quote: string): string {
+  const needle = (quote || '').trim().slice(0, 60);
+  if (!needle) return '';
+  const at = raw.indexOf(needle);
+  if (at < 0) return '';
+  let current = '';
+  for (const m of raw.matchAll(/^## (.+)$/gm)) {
+    if (m.index !== undefined && m.index < at) current = m[1].trim();
+  }
+  return current;
+}
+
+/** True when the quote sits in a section describing the pre-fix tree. */
+export const quoteIsPreFix = (raw: string, quote: string): boolean =>
+  PRE_FIX_SECTIONS.has(sectionOfQuote(raw, quote));
+
+/**
+ * True when the line a quote came from disclaims the thing it names — it was
+ * removed, renamed, superseded, or explicitly not touched. Exported so the
+ * filter applies to MODEL-extracted claims too, not just enumerated ones: the
+ * model read 4278's "was not untested" sentence and produced a file-touched
+ * claim from it.
+ */
+export function quoteDisclaims(raw: string, quote: string): boolean {
+  const needle = (quote || '').trim().slice(0, 60);
+  if (!needle) return false;
+  const line = raw.split('\n').find(l => l.includes(needle)) ?? quote;
+  return ABSENCE_CONTEXT.test(line) || NOT_TOUCHED.test(line);
+}
+
 export interface EnumerateOptions {
   /** Cap per draft; a runaway regex should not produce thousands of probes. */
   max?: number;
