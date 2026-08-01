@@ -446,7 +446,9 @@ export async function groundClaims(opts: GroundOptions = {}): Promise<GroundResu
     throw new Error('cht-core checkout required: pass --cht-core <path> or set CHT_CORE_PATH');
   }
   const exec = opts.exec ?? defaultExec;
-  const ctx: ProbeCtx = { chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve };
+  const ctx: ProbeCtx = {
+    chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve, prFiles: new Map(),
+  };
   const dir = path.resolve(REPO_ROOT, opts.dir ?? 'agent-memory');
   const extract = opts.extractFn ?? cliExtractor();
 

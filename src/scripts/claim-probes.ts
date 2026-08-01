@@ -54,6 +54,10 @@ export interface Anchor {
   isRevert: boolean;
   /** How a not-locally-derivable anchor was located — the report's audit trail. */
   note?: string;
+  /** owner/repo, set when the anchor came from the API — lets probes ask it more. */
+  repo?: string;
+  /** True when `sha` is an epic squash standing in for this PR's own commit. */
+  viaEpic?: boolean;
 }
 
 export type Claim =
@@ -122,6 +126,8 @@ export interface ProbeCtx {
    * crash. Set false for a fully offline run.
    */
   apiResolve?: boolean;
+  /** Per-run cache of PR file lists, so an epic's children cost one call each. */
+  prFiles?: Map<string, Map<string, string> | null>;
 }
 
 export const DEFAULT_FALLBACK_REF = 'origin/master';
@@ -278,7 +284,7 @@ function resolveViaApi(ctx: ProbeCtx, repo: string, prNumber: number): Anchor | 
     if (!c.merged_at || !c.merge_commit_sha) continue;
     const viaEpic = anchorAt(ctx, c.merge_commit_sha, prNumber,
       `resolved via GitHub API: ${repo}#${prNumber} merged into ${base}; anchored at the squash of #${c.number}`);
-    if (viaEpic) return viaEpic;
+    if (viaEpic) return { ...viaEpic, repo, viaEpic: true };
   }
   return null;
 }
@@ -492,12 +498,64 @@ function checkSymbolInFile(
     `${cmd} → 0 hits, but ${global.length} elsewhere: attributed to the wrong file`, where, prov);
 }
 
+/**
+ * Files the PR itself changed, from the API. Only meaningful for an epic child:
+ * its own merge commit is unreachable in a clone, so the anchor is the epic's
+ * squash — whose diff is a DIFFERENT set. The squash contains every sibling's
+ * work and, where the epic renamed things before landing, may not contain the
+ * child's files under the names the draft (correctly) records.
+ *
+ * Without this, an accurate Related Files list on an epic child reads as 27
+ * fabricated paths. Cached per PR; any transport failure returns null and the
+ * caller falls back to the squash diff.
+ */
+function prFileList(ctx: ProbeCtx, repo: string, prNumber: number): Map<string, string> | null {
+  const cacheKey = `${repo}#${prNumber}`;
+  const cached = ctx.prFiles?.get(cacheKey);
+  if (cached !== undefined) return cached;
+  const raw = githubApi(ctx, `repos/${repo}/pulls/${prNumber}/files?per_page=100`);
+  let out: Map<string, string> | null = null;
+  if (Array.isArray(raw)) {
+    out = new Map();
+    for (const f of raw as Array<{ filename?: string; status?: string }>) {
+      if (f.filename) out.set(f.filename, (f.status ?? 'modified')[0].toUpperCase());
+    }
+  }
+  ctx.prFiles?.set(cacheKey, out);
+  return out;
+}
+
 function checkFileTouched(
   ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' }, siblings: Anchor[] = []
 ): Verdict {
   // A draft that collapsed a duplicate cluster covers several commits, and its
   // Related Files legitimately spans all of them. Checking only the canonical
   // source_sha reports the sibling PRs' files as untouched.
+  // An epic child's own file list is authoritative for what IT changed; the
+  // squash it is anchored at describes the whole epic.
+  if (a.viaEpic && a.repo && a.prNumber !== undefined) {
+    const own = prFileList(ctx, a.repo, a.prNumber);
+    if (own) {
+      const cmd = `GET ${a.repo}/pulls/${a.prNumber}/files`;
+      const status = own.get(claim.file)
+        ?? (claim.file.includes('/')
+          ? undefined
+          : own.get([...own.keys()].find(p => p.endsWith(`/${claim.file}`)) ?? ''));
+      if (status === undefined) {
+        return verdict(claim, 'ungrounded',
+          `${cmd} → ${claim.file} is not among the ${own.size} files this PR changed ` +
+            `(checked against the PR itself, not the epic squash ${refLabel(a.sha)})`);
+      }
+      const word = STATUS_WORD[status] ?? status;
+      if (claim.status && claim.status !== word) {
+        return verdict(claim, 'ungrounded', `${cmd} → ${claim.file} was ${word}, not ${claim.status}`,
+          `the draft describes it as ${claim.status}`);
+      }
+      return verdict(claim, 'grounded',
+        `${cmd} → ${claim.file} ${word} (this PR's own diff; its merge commit is unreachable in a clone)`);
+    }
+  }
+
   const changed = changedPaths(ctx, a.sha);
   for (const sib of siblings) {
     for (const [file, status] of changedPaths(ctx, sib.sha)) {
