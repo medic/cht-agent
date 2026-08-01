@@ -81,7 +81,7 @@ Reused the existing cht-datasource local/remote split and qualifier convention i
 
 ## Testing
 
-Added mocha unit tests for the new datasource module (test/target-interval.spec.ts, test/local/target-interval.spec.ts, test/remote/target-interval.spec.ts, test/qualifier.spec.ts, test/index.spec.ts) and for the API controller (api/tests/mocha/controllers/target-interval.spec.js), plus end-to-end integration tests (tests/integration/api/controllers/target-interval.spec.js and tests/integration/shared-libs/cht-datasource/target-interval.spec.js).
+Added mocha unit tests for the new datasource module (test/target-interval.spec.ts, test/local/target-interval.spec.ts, test/remote/target-interval.spec.ts) and extended the existing test/qualifier.spec.ts and test/index.spec.ts and for the API controller (api/tests/mocha/controllers/target-interval.spec.js), plus end-to-end integration tests (tests/integration/api/controllers/target-interval.spec.js and tests/integration/shared-libs/cht-datasource/target-interval.spec.js).
 
 ## Related Issues
 

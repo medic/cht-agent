@@ -92,7 +92,7 @@ Chose per-day local PouchDB plus deferred meta-DB aggregation over writing per-e
 
 ## Testing
 
-Added webapp/tests/karma/ts/services/interaction-tracking.service.spec.ts plus updated karma specs for app.component and the tasks, tasks-content, tasks-group, and tasks-sidebar-filter components; added sentinel replications.spec.js and mocha purger.spec.js coverage; added an end-to-end WebdriverIO spec (tests/e2e/default/tasks/interaction-tracking.wdio-spec.js) with supporting page-object and breadcrumbs-config updates. The feature was verified end-to-end on a local dev instance (logged in as a CHW, exercising the tasks tab and inspecting the per-day IndexedDB and meta DB), including PII narrowing on task.title and the deployment gap on can_track_task_interactions.
+Added webapp/tests/karma/ts/services/interaction-tracking.service.spec.ts plus updated karma specs for app.component and the tasks, tasks-content, tasks-group, and tasks-sidebar-filter components; extended the existing sentinel replications.spec.js and mocha purger.spec.js coverage; added an end-to-end WebdriverIO spec (tests/e2e/default/tasks/interaction-tracking.wdio-spec.js) with supporting page-object and breadcrumbs-config updates. The feature was verified end-to-end on a local dev instance (logged in as a CHW, exercising the tasks tab and inspecting the per-day IndexedDB and meta DB), including PII narrowing on task.title and the deployment gap on can_track_task_interactions.
 
 ## Related Issues
 
