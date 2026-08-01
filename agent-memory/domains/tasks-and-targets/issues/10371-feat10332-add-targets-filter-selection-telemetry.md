@@ -66,7 +66,9 @@ Recorded a distinct selection event alongside the existing open event rather tha
 
 ## Related Files
 
-- tests/e2e/default/analytics/analytics.wdio-spec.js
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. The e2e suite moved from analytics/ to targets/.
+
+- tests/e2e/default/analytics/analytics.wdio-spec.js (PR-era path; on master the suite is tests/e2e/default/targets/analytics.wdio-spec.js after the epic renamed the directory)
 - tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js
 - tests/e2e/default/targets/target-aggregates.wdio-spec.js
 - tests/utils/telemetry.js

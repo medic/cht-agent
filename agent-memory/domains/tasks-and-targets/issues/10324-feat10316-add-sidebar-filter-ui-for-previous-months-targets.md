@@ -57,7 +57,7 @@ The analytics targets view only showed the current reporting month's data. The t
 
 ## Root Cause
 
-Feature gap on the analytics targets page specifically: the target-aggregates page had carried a reporting-period sidebar filter (This month / Last month radios) since #9317 (analytics-target-aggregates-sidebar-filter.component.ts, 2024-08-14) and target-aggregates.service.ts already resolved its interval tag from a ReportingPeriod, but the targets view had no month-selection control and RulesEngineService.fetchTargets() took no reporting-period argument.
+Feature gap on the analytics targets page specifically: the target-aggregates page had carried a reporting-period sidebar filter (This month / Last month radios) since #9317 (analytics-target-aggregates-sidebar-filter.component.ts, 2024-08-14) and target-aggregates.service.ts already resolved its interval tag from a ReportingPeriod, but the targets view had no month-selection control and `fetchTargets()` on webapp/src/ts/services/rules-engine.service.ts took no reporting-period argument (it gained one in this work: `fetchTargets(reportingPeriod = ReportingPeriod.CURRENT)`).
 
 ## Solution
 
@@ -73,6 +73,8 @@ Reused the established sidebar-filter pattern for UI consistency; radio buttons 
 
 ## Related Files
 
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. The e2e suite moved from analytics/ to targets/.
+
 - webapp/src/ts/modules/analytics/analytics-sidebar-filter.component.ts
 - webapp/src/ts/modules/analytics/analytics-sidebar-filter.component.html
 - webapp/src/ts/modules/analytics/analytics-targets.component.ts
@@ -86,7 +88,7 @@ Reused the established sidebar-filter pattern for UI consistency; radio buttons 
 - webapp/src/ts/modules/analytics/analytics.routes.ts
 - webapp/src/css/targets.less
 - webapp/src/css/inbox.less
-- tests/e2e/default/analytics/analytics.wdio-spec.js
+- tests/e2e/default/analytics/analytics.wdio-spec.js (PR-era path; the suite lives at tests/e2e/default/targets/analytics.wdio-spec.js on master, the e2e directory having been renamed analytics/ -> targets/ inside the epic)
 - tests/page-objects/default/analytics/analytics.wdio.page.js
 
 ## Testing

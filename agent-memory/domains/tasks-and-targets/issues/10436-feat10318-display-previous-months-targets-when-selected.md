@@ -73,6 +73,8 @@ Reused the existing shared analytics sidebar filter framework and ngrx global st
 
 ## Related Files
 
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. webapp/src/ts/libs/config.ts and the two mocha tsconfigs are not on master.
+
 - webapp/src/ts/modules/analytics/analytics-targets.component.ts
 - webapp/src/ts/modules/analytics/analytics-targets.component.html
 - webapp/src/ts/modules/analytics/analytics-target-aggregates.component.ts
@@ -89,7 +91,7 @@ Reused the existing shared analytics sidebar filter framework and ngrx global st
 
 ## Testing
 
-Broad test coverage added/updated. Karma unit specs updated for analytics-targets, analytics-target-aggregates, analytics-sidebar-filter, analytics-filter, rules-engine.service, and target-aggregates.service. A new Mocha unit-test harness was added for the webapp (webapp/tests/mocha/.mocharc.js, tsconfig.mocha.json, tsconfig.spec.json) specifically to unit-test webapp/src/ts/libs/config.ts (config.spec.ts). WDIO e2e specs were updated for targets analytics and target-aggregates, including new page objects (analytics, target-aggregates) and helper functions (aggregates-helper-functions.js, targets-helper-functions.js) plus updated e2e target-aggregates config.
+Broad test coverage added/updated. Karma unit specs updated for analytics-targets, analytics-target-aggregates, analytics-sidebar-filter, analytics-filter, rules-engine.service, and target-aggregates.service. A new Mocha unit-test harness was added for the webapp (webapp/tests/mocha/.mocharc.js, tsconfig.mocha.json, tsconfig.spec.json) specifically to unit-test webapp/src/ts/libs/config.ts (config.spec.ts). Of that harness only `.mocharc.js` survives on master: the two tsconfigs and `libs/config.ts` itself were removed or folded elsewhere before the epic squashed. WDIO e2e specs were updated for targets analytics and target-aggregates, including new page objects (analytics, target-aggregates) and helper functions (aggregates-helper-functions.js, targets-helper-functions.js) plus updated e2e target-aggregates config.
 
 ## Related Issues
 

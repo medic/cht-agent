@@ -50,7 +50,7 @@ The target subtitle was treated as a static configuration value (a fixed transla
 
 ## Solution
 
-Extended the target configuration handling so the subtitle can be supplied as a function that is evaluated at runtime, in addition to a static value. webapp/src/ts/libs/config.ts was updated to support resolving a function-typed subtitle, and webapp/src/ts/services/rules-engine.service.ts was updated to pass through/evaluate it when building target cards. package.json was bumped (rules-engine dependency) to enable the function-based subtitle support.
+Extended the target configuration handling so the subtitle can be supplied as a function that is evaluated at runtime, in addition to a static value. webapp/src/ts/libs/config.ts — a helper this PR introduced — was updated to support resolving a function-typed subtitle, and webapp/src/ts/services/rules-engine.service.ts was updated to pass through/evaluate it when building target cards. Note `libs/config.ts` did not survive the epic: on master the subtitle handling sits in rules-engine.service.ts itself (`subtitle_translation_key`, and the last-month subtitle at :594). package.json was bumped (rules-engine dependency) to enable the function-based subtitle support.
 
 ## Code Patterns
 
@@ -61,6 +61,8 @@ Configuration value that may be either a static value or a function evaluated at
 Allowing the subtitle to be a function (rather than just adding more fixed subtitle options) lets config authors compute the label from runtime context such as the active reporting period, solving the misleading 'All Time' label generically instead of with another hardcoded string.
 
 ## Related Files
+
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. webapp/src/ts/libs/config.ts is not on master.
 
 - webapp/package.json
 - webapp/src/ts/libs/config.ts
