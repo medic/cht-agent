@@ -81,7 +81,7 @@ Implemented as a dedicated client-side webapp service — it subscribes to `Rule
 
 ## Testing
 
-Unit tests added/updated: webapp/tests/karma/ts/services/task-notification.service.spec.ts (new service), rules-engine.service.spec.ts and app.component.spec.ts (integration of the service), and shared-libs/task-utils/test/order-by-due-date-and-priority.js for the ordering utility. Review notes indicate additional Sonar cleanup and unit tests were requested and addressed before merge.
+Unit tests added/updated: webapp/tests/karma/ts/services/task-notification.service.spec.ts (new service), rules-engine.service.spec.ts and app.component.spec.ts (integration of the service), and shared-libs/task-utils/test/order-by-due-date-and-priority.js (since removed from master by #10701, which reorganised task-utils test coverage) for the ordering utility. Review notes indicate additional Sonar cleanup and unit tests were requested and addressed before merge.
 
 ## Related Issues
 

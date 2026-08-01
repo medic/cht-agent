@@ -75,7 +75,7 @@ Chose frontend recomputation of effective priority/order over Alternative 1 (sto
 
 ## Testing
 
-Added comprehensive Karma unit tests in webapp/tests/karma/ts/reducers/tasks.spec.ts covering edge cases: invalid date formats (null, false, undefined), invalid priority values (strings, negative numbers), duplicate priorities and dates, and missing fields, verifying both the priority→due-date ordering and the invalid-value-to-end / original-order fallback behavior.
+Extended the existing Karma unit tests in webapp/tests/karma/ts/reducers/tasks.spec.ts (modified, not created) with edge cases: invalid date formats (null, false, undefined), invalid priority values (strings, negative numbers), duplicate priorities and dates, and missing fields, verifying both the priority→due-date ordering and the invalid-value-to-end / original-order fallback behavior.
 
 ## Related Issues
 

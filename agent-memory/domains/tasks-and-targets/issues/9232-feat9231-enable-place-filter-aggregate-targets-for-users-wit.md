@@ -41,7 +41,7 @@ reviewed_at: null
 confidence: medium
 entities:
   - webapp/src/ts/modules/analytics/analytics-target-aggregates.component.ts
-  - webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.ts
+  - webapp/src/ts/modules/analytics/analytics-target-aggregates-sidebar-filter.component.ts (since replaced on master: the #10140 previous-month-targets epic, squashed as #10423/622c625427, folded this component into the shared analytics sidebar filter)
   - webapp/src/ts/modules/analytics/analytics-target-aggregates-detail.component.ts
   - webapp/src/ts/components/filters/analytics-filter/analytics-filter.component.ts
   - webapp/src/ts/services/target-aggregates.service.ts
@@ -84,7 +84,7 @@ Gate UI affordances on user settings shape — render the filter button/sidebar 
 
 ## Design Choices
 
-The Filter button and sidebar are shown to all non-admin users on the aggregate-targets module (single-facility users included), because the sidebar always offers the reporting-period filter; only the facility radio group inside the sidebar and the per-aggregate facility indicator are conditional on `userFacilities.length > 1`, so a single-facility user's data view is unchanged. The sidebar-filter pattern was reused for visual/interaction consistency with other analytics filters (and with Reports/Contacts) rather than building a bespoke filter, and the change was validated against the legacy filter design (`can_view_old_filter_and_search`, alongside `can_view_old_action_bar`) so the older UI still renders correctly. An explicit return type was added to the aggregate targets service method so callers know whether they receive an object, array, or null (PR #9282). Period math was delegated to the calendar-interval shared lib so year transitions and leap years are handled correctly (PR #9317).
+The Filter button and sidebar are shown to all non-admin users on the aggregate-targets module (single-facility users included), because the sidebar always offers the reporting-period filter; only the facility radio group inside the sidebar and the per-aggregate facility indicator are conditional on `userFacilities.length > 1`, so a single-facility user's data view is unchanged. The sidebar-filter pattern was reused for visual/interaction consistency with other analytics filters (and with Reports/Contacts) rather than building a bespoke filter, and the change was validated against the legacy filter design (`can_view_old_filter_and_search`, alongside `can_view_old_action_bar` — both permissions have since been retired from master) so the older UI of the day still rendered correctly. An explicit return type was added to the aggregate targets service method so callers know whether they receive an object, array, or null (PR #9282). Period math was delegated to the calendar-interval shared lib so year transitions and leap years are handled correctly (PR #9317).
 
 ## Related Files
 
@@ -102,7 +102,7 @@ The Filter button and sidebar are shown to all non-admin users on the aggregate-
 - webapp/src/ts/services/calendar-interval.service.ts
 - webapp/src/ts/services/rules-engine.service.ts
 - webapp/src/ts/modules/analytics/analytics.routes.ts
-- webapp/src/ts/modules/modules.module.ts
+- webapp/src/ts/modules/modules.module.ts (since removed: the Angular 19 standalone-components migration, #9759, dissolved this NgModule)
 - shared-libs/calendar-interval/src/index.js
 - api/resources/translations/messages-en.properties
 - webapp/src/css/inbox.less

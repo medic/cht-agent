@@ -75,7 +75,7 @@ A follow-up added interval-turnover handling: when the rules state store is hydr
 
 Validate the shape of persisted state on load: `target-state.isStale` checks only that the stored blob has both a `targets` and an `aggregate` key — it never reads the configured targets — and `rules-state-store.load` ORs that check with the `rulesConfigHash` mismatch to set `state.stale`, which forces a full rebuild rather than a partial repair.
 
-The interval-turnover follow-up reuses the same shape check rather than an interval comparison: `rules-state-store.load` calls `state.targetState = targetState.migrateStaleState(state.targetState)` inside the existing `rulesConfigHash`/`isStale` branch, and `migrateStaleState` wraps a pre-#9486 bare targets map into `{ targets: <old map>, aggregate: {} }` when `isStale` is true. Emissions are preserved, not cleared; the wrap exists so `handleIntervalTurnover` in provider-wireup.js can read the migrated state before the rebuild (PR #9569, #9570).
+The interval-turnover follow-up reuses the same shape check rather than an interval comparison: `rules-state-store.load` calls `state.targetState = targetState.migrateStaleState(state.targetState)` inside the existing `rulesConfigHash`/`isStale` branch, and `migrateStaleState` — added by the #9569/#9570 follow-up rather than by #9553 itself, and on master at target-state.js:124 — wraps a pre-#9486 bare targets map into `{ targets: <old map>, aggregate: {} }` when `isStale` is true. Emissions are preserved, not cleared; the wrap exists so `handleIntervalTurnover` in provider-wireup.js can read the migrated state before the rebuild (PR #9569, #9570).
 
 ## Design Choices
 
@@ -94,7 +94,7 @@ The interval-turnover follow-up migrates the persisted blob in place but does no
 
 ## Testing
 
-Added/updated unit tests in rules-state-store.spec.js and target-state.spec.js covering the stale-state-after-upgrade case (missing target aggregate), plus an e2e WebdriverIO spec (target-accuracy.wdio-spec.js) validating that targets compute accurately after the configuration/upgrade scenario. The interval-turnover facet added/updated unit coverage in target-state.spec.js, rules-state-store.spec.js, and provider-wireup.spec.js exercising turnover detection and migration of stale target state into the current interval (PR #9569, #9570).
+Added/updated unit tests in rules-state-store.spec.js and target-state.spec.js covering the stale-state-after-upgrade case (missing target aggregate), plus additions to the existing e2e WebdriverIO spec (tests/e2e/default/targets/target-accuracy.wdio-spec.js, modified not created) validating that targets compute accurately after the configuration/upgrade scenario. The interval-turnover facet added/updated unit coverage in target-state.spec.js, rules-state-store.spec.js, and provider-wireup.spec.js exercising turnover detection and migration of stale target state into the current interval (PR #9569, #9570).
 
 ## Backports
 
