@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10140
 issueUrl: https://github.com/medic/cht-core/issues/10140
 title: Show previous month targets in the analytics tab and add a target resource to cht-datasource (local + remote) so online users can fetch aggregates
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: CHWs could only see the current month's target indicators, which reset at the start of each month, leaving them unavailable for the monthly presentation meetings held days into the new month. This PR adds an analytics filter to view the previous month's targets/aggregates and, in the process, fixes aggregate targets returning 0 in non-English locales and not working for online users.
 services:
   - api
@@ -83,7 +83,7 @@ Target docs are typed 'target' (their true type) instead of 'target-interval'. T
 
 ## Testing
 
-Added/updated mocha unit tests for the API target controller (api/tests/mocha/controllers/target.spec.js) and the datasource target modules (shared-libs/cht-datasource/test/target.spec.ts, test/local/target.spec.ts, test/remote/target.spec.ts); integration tests for the API controller and datasource (tests/integration/api/controllers/target.spec.js, tests/integration/shared-libs/cht-datasource/target.spec.js); and e2e WDIO tests for analytics/target aggregates (tests/e2e/default/targets/analytics.wdio-spec.js, target-aggregates.wdio-spec.js) with updated page objects and helper functions. Telemetry test util was also updated.
+Added/updated mocha unit tests for the API target controller (api/tests/mocha/controllers/target.spec.js) and the datasource target modules (the new shared-libs/cht-datasource/test/target.spec.ts, test/local/target.spec.ts, test/remote/target.spec.ts); integration tests for the API controller and datasource (tests/integration/api/controllers/target.spec.js, tests/integration/shared-libs/cht-datasource/target.spec.js); and e2e WDIO tests for analytics/target aggregates (tests/e2e/default/targets/analytics.wdio-spec.js, target-aggregates.wdio-spec.js) with updated page objects and helper functions. Telemetry test util was also updated.
 
 ## Related Issues
 
