@@ -78,4 +78,51 @@ describe('enumerate-claims', () => {
   it('honours the max cap', () => {
     expect(enumerateClaims(DRAFT, { max: 2 })).to.have.lengthOf(2);
   });
+
+  describe('precision filters — every case here was a real false positive', () => {
+    const syms = (raw: string): string[] =>
+      enumerateClaims(raw).filter(c => c.kind === 'symbol').map(c => (c as { symbol: string }).symbol);
+    const paths = (raw: string): string[] =>
+      enumerateClaims(raw).map(c => ('file' in c ? (c as { file: string }).file : '')).filter(Boolean);
+
+    it('does not treat a bare filename as a symbol', () => {
+      const s = syms('The bug was in `smsparser.js` and `sender.component.ts`.');
+      expect(s).to.not.include('smsparser.js');
+      expect(s).to.not.include('sender.component.ts');
+    });
+
+    it('skips a symbol the draft says was removed, renamed or superseded', () => {
+      expect(syms('Removed the `parseResponseBody` helper.')).to.be.empty;
+      expect(syms('the original `can_hide_target_count_past_goal` permission was superseded')).to.be.empty;
+      expect(syms('widened the predicate (`isTelemetryOrFeedback` -> `isReplicableDoc`)')).to.be.empty;
+    });
+
+    it('keeps a symbol on an ordinary line', () => {
+      expect(syms('The guard calls `getDocResources` before iterating.')).to.include('getDocResources');
+    });
+
+    it('downgrades a Related Files entry the draft says was not modified', () => {
+      const raw = ['## Related Files', '',
+        '- api/controllers/sms-gateway.js (the endpoint under test; not modified — this commit adds only the spec)',
+        '- tests/protractor/e2e/api/controllers/sms-gateway.spec.js', ''].join('\n');
+      const cs = enumerateClaims(raw);
+      const touched = cs.filter(c => c.kind === 'file-touched').map(c => (c as { file: string }).file);
+      const exists = cs.filter(c => c.kind === 'path-exists').map(c => (c as { file: string }).file);
+      expect(touched).to.not.include('api/controllers/sms-gateway.js');
+      expect(exists).to.include('api/controllers/sms-gateway.js');
+      expect(touched).to.include('tests/protractor/e2e/api/controllers/sms-gateway.spec.js');
+    });
+
+    it('ignores a remote API endpoint that looks like a repo path', () => {
+      expect(paths('posts to `api/v2/broadcasts.json` on RapidPro')).to.not.include('api/v2/broadcasts.json');
+    });
+
+    it("ignores this corpus's own frontmatter keys", () => {
+      expect(syms('`source_sha` is the merge commit and `domainFit` is strong.')).to.be.empty;
+    });
+
+    it('ignores prose with ellipses', () => {
+      expect(syms('rewrote the `for...of` loop')).to.not.include('for...of');
+    });
+  });
 });

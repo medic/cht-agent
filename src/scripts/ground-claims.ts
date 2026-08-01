@@ -151,6 +151,7 @@ Extract a claim for each of these, and nothing else:
 - Every release line the draft says the change was backported to. Use kind "release-branch" with just the branch name, e.g. "4.13.x".
 
 Rules:
+- Use a path EXACTLY as the draft spells it. If the draft names only a bare filename ("rendered from analytics.component.html"), do NOT invent a directory for it — emit the bare string or nothing. A guessed prefix turns a correct sentence into a phantom path claim.
 - Do NOT extract a "symbol" or "path-exists" claim for something the draft says the PR REMOVED, deleted, renamed away, or replaced ("removed the parseResponseBody helper", "the old add-branding-doc.js was deleted"). The draft is asserting the thing is GONE at that commit, so probing for its existence inverts the claim. Where the draft names the file such a removal happened in, extract "file-touched" with status "deleted" instead, and nothing else.
 - "quote" must be a verbatim span from the draft (one sentence is ideal) so a human can find it.
 - For a dotted field reference like \`task.state\`, use the whole dotted token as the symbol.

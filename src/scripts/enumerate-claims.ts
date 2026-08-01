@@ -39,6 +39,55 @@ import { Claim } from './claim-probes';
 const REPO_DIRS = '(?:api|webapp|admin|sentinel|shared-libs|tests|ddocs|config|scripts)';
 const PATH_RE = new RegExp(`\\b${REPO_DIRS}/[A-Za-z0-9_./-]+\\.[A-Za-z0-9]{1,6}\\b`, 'g');
 
+/**
+ * `api/v2/broadcasts.json` is a RapidPro endpoint, not a file in this repo, but
+ * it starts with `api/` and ends in `.json` like everything else.
+ */
+const URL_PATH_RE = /^api\/v\d+\//;
+
+/** A filename is not a symbol. Real repo paths are already caught by PATH_RE. */
+const FILE_EXT_RE =
+  /\.(?:js|ts|tsx|jsx|mjs|cjs|json|html|less|css|scss|md|properties|sh|ya?ml|ico|png|svg|xml)$/i;
+
+/**
+ * Frontmatter keys of THIS corpus. A draft discussing its own metadata
+ * (`source_sha`, `domainFit`) is not claiming a cht-core symbol exists.
+ */
+const OWN_SCHEMA_KEYS = new Set([
+  'source_pr', 'source_prs', 'source_sha', 'issueNumber', 'issueUrl', 'domainFit', 'subDomain',
+  'lastUpdated', 'distilled_at', 'reviewed_by', 'reviewed_at', 'related_issues', 'related_workflows',
+  'secondaryDomains', 'techStack', 'related_domains',
+]);
+
+/**
+ * Prose that says the thing named on this line is GONE, RENAMED or was never
+ * adopted. Probing such a name for existence inverts the claim: the draft is
+ * asserting its absence. Deliberately broad — skipping a real claim costs a
+ * missed check, while reporting one of these costs a false "fabricated symbol",
+ * which is what three review rounds were spent disproving.
+ *
+ * Real examples this silences, all previously hand-adjudicated:
+ *   "the original `can_hide_target_count_past_goal` permission was superseded"
+ *   "`isTelemetryOrFeedback` -> `isReplicableDoc`"
+ *   "Removed the `parseResponseBody` helper"
+ *   "the languages service still queried `doc_by_type`" (the fix removed it)
+ */
+// `->` and `→` sit outside the \b group on purpose: neither character is a word
+// character, so \b can never match beside them and the alternative was dead.
+const ABSENCE_CONTEXT = new RegExp([
+  '\\b(?:removed?|deleted?|dropped|drops|superseded|supersedes|renamed|replaced?|no longer',
+  '|used to|formerly|former|obsolete|stale|deprecated|instead of|rather than)\\b',
+  '|->|→',
+  '|\\bstill (?:queried|used|referenced|pointed)\\b',
+].join(''), 'i');
+
+/**
+ * A Related Files line that disclaims the file was touched — a draft listing the
+ * endpoint under test, or a spec it explicitly did not modify.
+ */
+const NOT_TOUCHED =
+  /\b(?:not modified|unchanged|pre-existing|existing spec|not added or edited|under test|not in this PR)\b/i;
+
 /** Inline-code spans: `foo`. */
 const BACKTICK_RE = /`([^`\n]+)`/g;
 
@@ -106,25 +155,40 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
     out.push(c);
   };
 
+  const usable = (p: string, quote: string): boolean =>
+    !URL_PATH_RE.test(p) && !ABSENCE_CONTEXT.test(quote);
+
   const related = section(raw, 'Related Files');
-  const touched = new Set((related.match(PATH_RE) ?? []));
-  for (const p of touched) {
-    add({ kind: 'file-touched', file: p, quote: lineContaining(lines, p).quote });
+  const touched = new Set<string>();
+  for (const p of new Set(related.match(PATH_RE) ?? [])) {
+    const { quote } = lineContaining(lines, p);
+    if (URL_PATH_RE.test(p)) continue;
+    // A line that disclaims the edit is not asserting the PR touched the file;
+    // it still asserts the path exists, so downgrade rather than drop.
+    if (NOT_TOUCHED.test(quote)) {
+      if (!ABSENCE_CONTEXT.test(quote)) add({ kind: 'path-exists', file: p, quote });
+      touched.add(p);                                  // claimed here; do not re-add below
+      continue;
+    }
+    if (!ABSENCE_CONTEXT.test(quote)) add({ kind: 'file-touched', file: p, quote });
+    touched.add(p);
   }
 
   // entities: frontmatter — paths the draft asserts exist, not necessarily touched
   const fmEnd = raw.indexOf('\n---', 4);
   const fm = fmEnd > 0 ? raw.slice(0, fmEnd) : '';
   for (const key of PATH_LIST_KEYS) {
-    const block = new RegExp(`^${key}:\\s*$([\\s\\S]*?)(?=^\\S|\\Z)`, 'm').exec(fm);
+    const block = new RegExp(`^${key}:\\s*$([\\s\\S]*?)(?=^\\S)`, 'm').exec(fm);
     for (const p of block?.[1].match(PATH_RE) ?? []) {
-      if (!touched.has(p)) add({ kind: 'path-exists', file: p, quote: lineContaining(lines, p).quote });
+      const { quote } = lineContaining(lines, p);
+      if (!touched.has(p) && usable(p, quote)) add({ kind: 'path-exists', file: p, quote });
     }
   }
 
   // every other path mentioned in the prose
   for (const p of raw.match(PATH_RE) ?? []) {
-    if (!touched.has(p)) add({ kind: 'path-exists', file: p, quote: lineContaining(lines, p).quote });
+    const { quote } = lineContaining(lines, p);
+    if (!touched.has(p) && usable(p, quote)) add({ kind: 'path-exists', file: p, quote });
   }
 
   // backticked identifiers
@@ -132,8 +196,13 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
     const tok = stripCall(m[1].trim());
     if (tok.length < 3 || tok.length > 80) continue;
     if (!IDENT_RE.test(tok) || !CODE_SIGNAL.test(tok)) continue;
+    if (tok.includes('..')) continue;                // `for...of` and friends
+    if (FILE_EXT_RE.test(tok)) continue;             // a filename is not a symbol
+    if (OWN_SCHEMA_KEYS.has(tok)) continue;          // this corpus's own frontmatter
     if (looksLikePath(tok)) continue;                // already covered as a path
-    add({ kind: 'symbol', symbol: tok, quote: lineContaining(lines, m[1]).quote });
+    const { quote } = lineContaining(lines, m[1]);
+    if (ABSENCE_CONTEXT.test(quote)) continue;       // the draft says it is gone
+    add({ kind: 'symbol', symbol: tok, quote });
   }
 
   return opts.max ? out.slice(0, opts.max) : out;
