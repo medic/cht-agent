@@ -309,7 +309,16 @@ function resolveViaApi(ctx: ProbeCtx, repo: string, prNumber: number): Anchor | 
  * be a prefix of one.
  */
 export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?: string): string[] {
-  const scope = pathspec ? ['--', pathspec] : [];
+  // Prose attributes a symbol to a file by its bare name ("`handleIntervalTurnover`
+  // in provider-wireup.js"), which no pathspec resolves. Expand it to the real
+  // path first, or the symbol reads as misattributed to a file that has no hits
+  // simply because git was handed a name it could not find.
+  let scoped = pathspec;
+  if (scoped && !scoped.includes('/')) {
+    const [resolved] = basenameMatches(ctx, sha, scoped);
+    if (resolved) scoped = resolved;
+  }
+  const scope = scoped ? ['--', scoped] : [];
   const search = (needle: string): string[] =>
     git(ctx, ['grep', '-n', '-F', '-w', needle, sha, ...scope])
       .split('\n').map(l => l.trim()).filter(Boolean);
@@ -543,8 +552,12 @@ function prFileList(ctx: ProbeCtx, repo: string, prNumber: number): Map<string, 
 }
 
 /** Verbs that make a sentence a claim about a CHANGE rather than about existence. */
+// "change" is excluded on purpose: it is overwhelmingly a NOUN in this corpus
+// ("the `api/src/` layout postdates this change"), and including it blocked the
+// existence rescue on exactly the sentence that rescue exists for. Every other
+// entry here is unambiguously verbal.
 const CHANGE_VERB =
-  /\b(?:add(?:s|ed)?|creat(?:e|es|ed)|modif(?:y|ies|ied)|updat(?:e|es|ed)|chang(?:e|es|ed)|edit(?:s|ed)?|remov(?:e|es|ed)|delet(?:e|es|ed)|renam(?:e|es|ed)|touch(?:es|ed)?|introduc(?:e|es|ed)|extend(?:s|ed)?|rewr(?:ite|ites|ote)|refactor(?:s|ed)?)\b/i;
+  /\b(?:add(?:s|ed)?|creat(?:e|es|ed)|modif(?:y|ies|ied)|updat(?:e|es|ed)|edit(?:s|ed)?|remov(?:e|es|ed)|delet(?:e|es|ed)|renam(?:e|es|ed)|touch(?:es|ed)?|introduc(?:e|es|ed)|extend(?:s|ed)?|rewr(?:ite|ites|ote)|refactor(?:s|ed)?)\b/i;
 
 function checkFileTouched(
   ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'file-touched' },
