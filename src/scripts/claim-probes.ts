@@ -531,45 +531,43 @@ function checkFileTouched(
   // A draft that collapsed a duplicate cluster covers several commits, and its
   // Related Files legitimately spans all of them. Checking only the canonical
   // source_sha reports the sibling PRs' files as untouched.
-  // An epic child's own file list is authoritative for what IT changed; the
-  // squash it is anchored at describes the whole epic.
-  if (a.viaEpic && a.repo && a.prNumber !== undefined) {
-    const own = prFileList(ctx, a.repo, a.prNumber);
-    if (own) {
-      const cmd = `GET ${a.repo}/pulls/${a.prNumber}/files`;
-      const status = own.get(claim.file)
-        ?? (claim.file.includes('/')
-          ? undefined
-          : own.get([...own.keys()].find(p => p.endsWith(`/${claim.file}`)) ?? ''));
-      if (status === undefined) {
-        return verdict(claim, 'ungrounded',
-          `${cmd} → ${claim.file} is not among the ${own.size} files this PR changed ` +
-            `(checked against the PR itself, not the epic squash ${refLabel(a.sha)})`);
-      }
-      const word = STATUS_WORD[status] ?? status;
-      if (claim.status && claim.status !== word) {
-        return verdict(claim, 'ungrounded', `${cmd} → ${claim.file} was ${word}, not ${claim.status}`,
-          `the draft describes it as ${claim.status}`);
-      }
-      return verdict(claim, 'grounded',
-        `${cmd} → ${claim.file} ${word} (this PR's own diff; its merge commit is unreachable in a clone)`);
-    }
-  }
+  // Build the full set of paths this draft's PR(s) touched. Three sources, and
+  // a draft can need all three at once: 9232 is a collapsed cluster (three PRs)
+  // whose canonical PR is ALSO an epic child, so its Related Files span sibling
+  // PRs while its anchor is the epic squash of a different PR entirely.
+  const changed = new Map<string, string>();
+  const sources: string[] = [];
+  const absorb = (m: Map<string, string>): void => {
+    for (const [f, s] of m) if (!changed.has(f)) changed.set(f, s);
+  };
 
-  const changed = changedPaths(ctx, a.sha);
-  for (const sib of siblings) {
-    for (const [file, status] of changedPaths(ctx, sib.sha)) {
-      if (!changed.has(file)) changed.set(file, status);
-    }
+  // 1. an epic child's OWN file list, which the squash cannot supply
+  let usedApi = false;
+  for (const anch of [a, ...siblings]) {
+    if (!anch.viaEpic || !anch.repo || anch.prNumber === undefined) continue;
+    const own = prFileList(ctx, anch.repo, anch.prNumber);
+    if (own) { absorb(own); usedApi = true; sources.push(`${anch.repo}#${anch.prNumber} files`); }
   }
-  const scope = siblings.length ? ` (+${siblings.length} sibling commit(s))` : '';
-  const cmd = `git diff-tree --name-status -r ${refLabel(a.sha)}${scope}`;
+  // 2. the anchor commit's diff, and 3. each sibling commit's diff
+  absorb(changedPaths(ctx, a.sha));
+  sources.push(`diff ${refLabel(a.sha)}`);
+  for (const sib of siblings) {
+    absorb(changedPaths(ctx, sib.sha));
+    sources.push(`diff ${refLabel(sib.sha)}`);
+  }
+  const describeScope = (): string => {
+    if (usedApi) return ` [${sources.join(' + ')}]`;
+    return siblings.length ? ` (+${siblings.length} sibling commit(s))` : '';
+  };
+  const cmd = `git diff-tree --name-status -r ${refLabel(a.sha)}${describeScope()}`;
   let status = changed.get(claim.file);
 
-  // A basename named in prose ("integration.spec.js") is a real file the diff
-  // stores under its full path. Resolve it rather than calling it fabricated —
-  // but only when the draft gave no directory at all.
-  if (status === undefined && !claim.file.includes('/')) {
+  // Prose names files by basename ("integration.spec.js") and sub-packages name
+  // them relative to their own root ("test/qualifier.spec.ts" inside
+  // shared-libs/cht-datasource). Both are proper suffixes of the real path, so a
+  // suffix match resolves them — while a WRONG directory (components/ where the
+  // tree has modules/) is not a suffix and stays a defect.
+  if (status === undefined) {
     const hits = [...changed.keys()].filter(p => p.endsWith(`/${claim.file}`) || p === claim.file);
     if (hits.length) {
       const word = STATUS_WORD[changed.get(hits[0]) as string] ?? changed.get(hits[0]);
@@ -595,11 +593,23 @@ function checkFileTouched(
 }
 
 function checkPathExists(
-  ctx: ProbeCtx, ref: string, claim: Claim & { kind: 'path-exists' }, prov: Provenance
+  ctx: ProbeCtx, ref: string, claim: Claim & { kind: 'path-exists' }, prov: Provenance,
+  anchor?: Anchor | null
 ): Verdict {
   const cmd = `git ls-tree ${refLabel(ref)} -- ${claim.file}`;
   if (pathExistsAt(ctx, ref, claim.file)) {
     return verdict(claim, 'grounded', `${cmd} → present`, undefined, prov);
+  }
+  // An epic child's new files are absent from the squash tree when the epic
+  // renamed them before landing, yet the PR demonstrably created them.
+  if (anchor?.viaEpic && anchor.repo && anchor.prNumber !== undefined) {
+    const own = prFileList(ctx, anchor.repo, anchor.prNumber);
+    const hit = own && [...own.keys()].find(p => p === claim.file || p.endsWith(`/${claim.file}`));
+    if (hit) {
+      return verdict(claim, 'grounded',
+        `absent from the epic squash ${refLabel(ref)}, but ${anchor.repo}#${anchor.prNumber} ` +
+          `itself ${STATUS_WORD[own.get(hit) as string] ?? 'touched'} ${hit}`, undefined, prov);
+    }
   }
   // Absence at the fallback ref proves nothing about the tree the draft
   // describes: layouts move (api/ → api/src/, protractor → wdio), so a path
@@ -817,11 +827,13 @@ export function driftFor(
 }
 
 /** Dispatch a tree-scoped claim at `ref`. */
-function checkAtRef(ctx: ProbeCtx, ref: string, claim: Claim, prov: Provenance): Verdict {
+function checkAtRef(
+  ctx: ProbeCtx, ref: string, claim: Claim, prov: Provenance, anchorForPath?: Anchor | null
+): Verdict {
   switch (claim.kind) {
     case 'symbol': return checkSymbol(ctx, ref, claim, prov);
     case 'symbol-in-file': return checkSymbolInFile(ctx, ref, claim, prov);
-    case 'path-exists': return checkPathExists(ctx, ref, claim, prov);
+    case 'path-exists': return checkPathExists(ctx, ref, claim, prov, anchorForPath);
     default: throw new Error(`checkAtRef called with non-tree-scoped claim: ${claim.kind}`);
   }
 }
@@ -857,7 +869,7 @@ export function checkClaim(
   }
 
   const settleAtAnchor = (): Verdict => {
-    if (TREE_SCOPED.has(claim.kind)) return checkAtRef(ctx, anchor.sha, claim, 'anchor');
+    if (TREE_SCOPED.has(claim.kind)) return checkAtRef(ctx, anchor.sha, claim, 'anchor', anchor);
     if (claim.kind === 'file-touched') return checkFileTouched(ctx, anchor, claim, siblings);
     return checkReleaseBranch(ctx, anchor, claim as Claim & { kind: 'release-branch' });
   };
