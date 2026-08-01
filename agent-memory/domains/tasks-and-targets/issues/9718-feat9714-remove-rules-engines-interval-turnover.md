@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9714
 issueUrl: https://github.com/medic/cht-core/issues/9714
 title: Remove rules-engine interval turnover to address incorrect target document values
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: 'The rules-engine''s interval turnover — which saved a snapshot of the last calculation when a reporting interval (e.g. month) rolled over — was implicated in producing incorrect values in target docs. This PR removes the turnover logic and relies on accurate recalculation (improved by #9486) instead.'
 services:
   - webapp

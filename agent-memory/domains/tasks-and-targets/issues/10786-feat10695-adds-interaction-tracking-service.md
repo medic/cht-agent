@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10695
 issueUrl: https://github.com/medic/cht-core/issues/10695
 title: Add opt-in InteractionTrackingService to record CHW behavior on the tasks tab (list/task/group/filter events) for workflow analytics
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: There was no way to measure whether recent tasks-tab improvements (filtering, priority sorting, search) actually improved task-list navigation for CHWs. This PR adds an opt-in InteractionTrackingService that buffers tasks-tab interaction events, persists them in batches to per-day local PouchDB databases, and aggregates them into a single per-(user,day,device) doc in the user-meta DB that replicates to the server for analysts to study.
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 3943
 issueUrl: https://github.com/medic/cht-core/issues/3943
 title: Add overdue task bubble counter to the navigation bar (counts Overdue + due Today tasks)
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: The nav bar had unread counters for reports and messages but no equivalent indicator for tasks needing attention. This PR adds a bubble counter in the tasks nav item that shows the number of overdue and due-today tasks, mirroring the existing unread-count pattern.
 services:
   - webapp

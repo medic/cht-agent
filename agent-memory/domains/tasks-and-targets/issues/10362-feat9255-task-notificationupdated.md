@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9255
 issueUrl: https://github.com/medic/cht-core/issues/9255
 title: 'Add Android device notifications for pending tasks (feat #9255)'
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: Users could only learn about pending tasks by opening the app's Tasks tab, so critical updates were missed. This PR adds a task-notifications service that surfaces notifications for pending tasks (ordered by due date and priority), wired into the rules engine and task state, with localized notification text and a default app_settings toggle.
 services:
   - webapp

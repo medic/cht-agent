@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10438
 issueUrl: https://github.com/medic/cht-core/issues/10438
 title: Add `tasks:all-tasks` telemetry recorded on every task recalculation in TasksComponent
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: There was no client-side way to know how many tasks a user can see without expensive server-side analysis of all user tasks and their statuses. This adds a `tasks:all-tasks` telemetry entry recorded in refreshTasks(), capturing the count on initial load and every recalculation.
 services:
   - webapp

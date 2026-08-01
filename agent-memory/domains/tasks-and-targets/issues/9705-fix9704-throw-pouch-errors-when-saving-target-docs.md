@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9704
 issueUrl: https://github.com/medic/cht-core/issues/9704
 title: Throw PouchDB errors when saving target documents in the rules-engine pouchdb-provider
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: Errors returned by PouchDB while saving target documents were being silently swallowed, so callers could not detect failed writes. The provider now rethrows any non-404 error from the target-doc read so the errors propagate.
 services:
   - webapp

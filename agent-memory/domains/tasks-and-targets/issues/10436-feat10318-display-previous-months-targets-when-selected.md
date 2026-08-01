@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10318
 issueUrl: https://github.com/medic/cht-core/issues/10318
 title: Display previous month's targets and aggregates with dynamic subtitle, mobile back button, and selected-filter count
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: When the 'previous month' reporting period was selected, the analytics targets and target-aggregates pages didn't surface the right context (they showed the previous month name and lacked navigation/filter affordances). This PR wires the selected reporting period through the components, derives the target subtitle dynamically, adds a mobile back button for the previous-month view, and shows a count of how many filters are selected.
 services:
   - webapp

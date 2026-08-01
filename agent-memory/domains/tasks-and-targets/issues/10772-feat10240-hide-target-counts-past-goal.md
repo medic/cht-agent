@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10240
 issueUrl: https://github.com/medic/cht-core/issues/10240
 title: 'Hide target count past goal: show the goal as the big number when count reaches/exceeds goal, and fix count/goal-label layout overlap'
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: Large target counts (e.g. currency figures) overlapped the 'Goal X' label once the count exceeded the goal, making the analytics targets tiles unreadable. Fixed by centering the goal/count in a stacked flex layout and adding an opt-in target field that displays the goal as the big number once the count reaches or exceeds it.
 services:
   - webapp

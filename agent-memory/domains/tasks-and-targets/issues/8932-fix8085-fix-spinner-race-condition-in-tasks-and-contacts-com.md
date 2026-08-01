@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 8085
 issueUrl: https://github.com/medic/cht-core/issues/8085
 title: Fix spinner race condition that briefly flashed 'No more tasks'/'No more people' empty states in tasks and contacts components
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-07-31'
 summary: The tasks and contacts list views momentarily displayed empty-state messages before rendering loaded items, due to a race between the loading flag dropping to false and the data refresh actually completing. Fixed by moving `this.loading = false;` out of the mid-function success and error paths into the `finally` block in both tasks.component.ts and contacts.component.ts, so the loading flag stays true until the whole load has settled.
 services:
   - webapp

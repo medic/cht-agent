@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10577
 issueUrl: https://github.com/medic/cht-core/issues/10577
 title: Add task list filtering by due date, task type, and area; centralize lineage filtering in the message pipe
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: CHWs struggled to find specific follow-up tasks while scrolling long task lists. This PR adds a sidebar filter to the tasks module — a due-date radio (overdue/due-today vs future), task-type checkboxes, and a place filter reused from Reports — and refactors duplicated per-component lineage filtering into the shared LineagePipe (declared in webapp/src/ts/pipes/message.pipe.ts) backed by the ngrx store of user facilities.
 services:
   - webapp

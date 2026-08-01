@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10694
 issueUrl: https://github.com/medic/cht-core/issues/10694
 title: Add free text search to the Tasks page to filter tasks by contact name, lineage, or title via a client-side NgRx selector
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: The Tasks page had no free text search, so users could not quickly narrow their task list. This enables the previously-disabled freetext search input and reactively filters the already-loaded task list client-side via a memoized NgRx selector matching contact name, lineage, and task title.
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9231
 issueUrl: https://github.com/medic/cht-core/issues/9231
 title: Enable place filter for aggregate targets for users with multiple facility_ids
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-07-31'
 summary: Users assigned to multiple facilities had no way to scope the aggregate targets analytics view by place. Added a sidebar place filter that appears only for multi-facility users, letting them filter aggregate targets to a selected facility while single-facility users see no change.
 services:
   - webapp

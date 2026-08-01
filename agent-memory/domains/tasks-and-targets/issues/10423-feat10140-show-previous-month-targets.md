@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10140
 issueUrl: https://github.com/medic/cht-core/issues/10140
 title: Show previous month targets in the analytics tab and add a target resource to cht-datasource (local + remote) so online users can fetch aggregates
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: CHWs could only see the current month's target indicators, which reset at the start of each month, leaving them unavailable for the monthly presentation meetings held days into the new month. This PR adds an analytics filter to view the previous month's targets/aggregates and, in the process, fixes aggregate targets returning 0 in non-English locales and not working for online users.
 services:
   - api

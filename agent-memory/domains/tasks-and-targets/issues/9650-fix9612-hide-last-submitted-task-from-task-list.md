@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9612
 issueUrl: https://github.com/medic/cht-core/issues/9612
 title: Hide last submitted task immediately and run rules-engine and tasks-component debounces in parallel to speed up task list refresh
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: After a debounce was added for marking contacts dirty, reloading tasks waited on two sequential debounce delays, making the task list slow to update and leaving the just-completed task visible. The fix emits the rules-engine change notification early so the debounces run in parallel and hides the last submitted task immediately after submission.
 services:
   - webapp

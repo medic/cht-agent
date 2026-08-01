@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10317
 issueUrl: https://github.com/medic/cht-core/issues/10317
 title: Support reporting periods in rules engine service to return targets for the previous month
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: The rules engine service could only return targets for the current reporting period. This PR adds support for reporting periods so the service can return targets for the previous month, including handling of not-found targets.
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9957
 issueUrl: https://github.com/medic/cht-core/issues/9957
 title: Dynamically sort tasks by priority score and then due date in the task list
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: Tasks were previously sorted only by due date, forcing users to manually spot the most urgent ones. This adds a comparator that sorts primarily by priority (higher first), then by due date (earlier first) within equal priorities, with consistent handling of invalid/missing values.
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10439
 issueUrl: https://github.com/medic/cht-core/issues/10439
 title: Support loading target card subtitle from a function for dynamic, reporting-period-aware labels
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: Target cards displaying all-time metrics had a static 'All Time' subtitle that became misleading when users filtered targets to a reporting period (the value is really 'up to' that period). This PR adds support for loading the target subtitle from a function so it can be computed dynamically.
 services:
   - webapp

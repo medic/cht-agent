@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10332
 issueUrl: https://github.com/medic/cht-core/issues/10332
 title: Add telemetry for analytics target aggregates sidebar filter selection
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-31'
 summary: Telemetry previously only recorded when the analytics target-aggregates sidebar filter was opened, not when a user actually applied a selection (e.g. 'Previous month'). This PR adds telemetry collection for the filter selection/change event on target aggregates.
 services:
   - webapp
