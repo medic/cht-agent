@@ -326,7 +326,23 @@ export function changedPaths(ctx: ProbeCtx, sha: string): Map<string, string> {
 
 /** True when the path exists in the tree at `sha`. */
 export function pathExistsAt(ctx: ProbeCtx, sha: string, file: string): boolean {
-  return git(ctx, ['ls-tree', '--name-only', sha, '--', file]).trim().length > 0;
+  if (git(ctx, ['ls-tree', '--name-only', sha, '--', file]).trim().length > 0) return true;
+  return basenameMatches(ctx, sha, file).length > 0;
+}
+
+/**
+ * Prose names files by basename constantly — "Updated unit tests across the
+ * rules engine (integration.spec.js, pouchdb-provider.spec.js)". Those are real
+ * files, but an exact-path probe cannot see them and reporting them as
+ * fabricated would be flatly wrong. Resolve a bare name against the tree.
+ *
+ * Returns [] for anything already containing a slash, so a wrong directory is
+ * still a defect rather than being rescued by its basename.
+ */
+export function basenameMatches(ctx: ProbeCtx, sha: string, file: string): string[] {
+  if (file.includes('/')) return [];
+  return git(ctx, ['ls-tree', '-r', '--name-only', sha, '--', `*/${file}`, file])
+    .split('\n').map(l => l.trim()).filter(Boolean);
 }
 
 /** Full blob at `ref:file`, or null when the path is absent there. */
@@ -490,10 +506,27 @@ function checkFileTouched(
   }
   const scope = siblings.length ? ` (+${siblings.length} sibling commit(s))` : '';
   const cmd = `git diff-tree --name-status -r ${refLabel(a.sha)}${scope}`;
-  const status = changed.get(claim.file);
+  let status = changed.get(claim.file);
+
+  // A basename named in prose ("integration.spec.js") is a real file the diff
+  // stores under its full path. Resolve it rather than calling it fabricated —
+  // but only when the draft gave no directory at all.
+  if (status === undefined && !claim.file.includes('/')) {
+    const hits = [...changed.keys()].filter(p => p.endsWith(`/${claim.file}`) || p === claim.file);
+    if (hits.length) {
+      const word = STATUS_WORD[changed.get(hits[0]) as string] ?? changed.get(hits[0]);
+      if (claim.status && claim.status !== word) {
+        return verdict(claim, 'ungrounded', `${cmd} → ${hits[0]} was ${word}, not ${claim.status}`,
+          `the draft describes it as ${claim.status}`);
+      }
+      return verdict(claim, 'grounded',
+        `${cmd} → named by basename; resolves to ${hits[0]} (${word})`);
+    }
+  }
   if (status === undefined) {
     return verdict(claim, 'ungrounded', `${cmd} → ${claim.file} is not in this PR's diff (${changed.size} files changed)`);
   }
+  status = status as string;
   const word = STATUS_WORD[status] ?? status;
   if (claim.status && claim.status !== word) {
     return verdict(claim, 'ungrounded',
