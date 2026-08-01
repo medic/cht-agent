@@ -83,7 +83,7 @@ Target docs are typed 'target' (their true type) instead of 'target-interval'. T
 
 ## Testing
 
-Added/updated mocha unit tests for the API target controller (api/tests/mocha/controllers/target.spec.js) and the datasource target modules (the new shared-libs/cht-datasource/test/target.spec.ts, test/local/target.spec.ts, test/remote/target.spec.ts); integration tests for the API controller and datasource (tests/integration/api/controllers/target.spec.js, tests/integration/shared-libs/cht-datasource/target.spec.js); and e2e WDIO tests for analytics/target aggregates (tests/e2e/default/targets/analytics.wdio-spec.js, target-aggregates.wdio-spec.js) with updated page objects and helper functions. Telemetry test util was also updated.
+Added mocha unit tests for the API target controller (the new api/tests/mocha/controllers/target.spec.js) and the datasource target modules (the new shared-libs/cht-datasource/test/target.spec.ts, test/local/target.spec.ts, test/remote/target.spec.ts); integration tests for the API controller and datasource (tests/integration/api/controllers/target.spec.js, tests/integration/shared-libs/cht-datasource/target.spec.js); and e2e WDIO tests for analytics/target aggregates (tests/e2e/default/targets/analytics.wdio-spec.js, target-aggregates.wdio-spec.js) with updated page objects and helper functions. Telemetry test util was also updated.
 
 ## Related Issues
 

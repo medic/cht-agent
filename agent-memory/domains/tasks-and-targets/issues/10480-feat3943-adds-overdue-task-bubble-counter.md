@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 3943
 issueUrl: https://github.com/medic/cht-core/issues/3943
 title: Add overdue task bubble counter to the navigation bar (counts Overdue + due Today tasks)
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: The nav bar had unread counters for reports and messages but no equivalent indicator for tasks needing attention. This PR adds a bubble counter in the tasks nav item that shows the number of overdue and due-today tasks, generalising the existing unread-count flow to carry either count rather than duplicating it.
 services:
   - webapp
@@ -59,7 +59,7 @@ Feature gap rather than a defect: the existing nav-bar bubble pattern only cover
 
 ## Solution
 
-Added a single `showTask(taskDoc)` predicate to the rules engine (shared-libs/rules-engine/src/index.js) returning `taskDoc.state === taskStates.states.Ready` — the rules engine does not compute the count. In rules-engine.service.ts the background freshness debounce was shortened from 120s to 1s (ENSURE_FRESHNESS_MILLIS) and now calls fetchOverdueTasksForAllContacts(), which pulls all task docs and dispatches setTasksList with their emissions; it also registers a changes watcher (monitorTaskChanges) filtered by `change.doc.type === 'task' && this.rulesEngineCore.showTask(change.doc)` that dispatches setOverdueTasks with the hydrated task docs. hydrateTaskDocs sets `emission.overdue = dueDate.isBefore(moment())`; reducers/tasks.ts keeps an `overdue` array of those emissions; and the count is derived in the selector, `Selectors.getBubbleCounter` returning `task: taskState.overdue?.length || 0`. The header component reads the selected count and renders a bubble next to the tasks tab, reusing the existing unread-count bubble pattern. Tasks due in the future are intentionally excluded from the count.
+Added a single `showTask(taskDoc)` predicate to the rules engine (shared-libs/rules-engine/src/index.js) returning `taskDoc.state === taskStates.states.Ready` — the rules engine does not compute the count. In rules-engine.service.ts the background freshness debounce was shortened from 120s to 1s (ENSURE_FRESHNESS_MILLIS) and now calls fetchOverdueTasksForAllContacts(), which pulls all task docs and dispatches setTasksList with their emissions; it also registers a changes watcher (monitorTaskChanges) filtered by `change.doc.type === 'task' && this.rulesEngineCore.showTask(change.doc)` that dispatches setOverdueTasks with the hydrated task docs. hydrateTaskDocs sets `emission.overdue = dueDate.isBefore(moment())`; reducers/tasks.ts keeps an `overdue` array of those emissions; and the count is derived in the selector, `Selectors.getBubbleCounter` returning `task: taskState.overdue?.length || 0`. The header component reads the selected count and renders a bubble next to the tasks tab, reusing the existing unread-count bubble pattern. Tasks due after today are intentionally excluded from the count; a task due later today still counts.
 
 ## Code Patterns
 
