@@ -253,6 +253,33 @@ function anchorFor(ctx: ProbeCtx, fm: Record<string, unknown>): Anchor | null {
 // Orchestration
 // ---------------------------------------------------------------------------
 
+/**
+ * GitHub responses survive between runs. Anonymous access allows 60 requests an
+ * hour; a single sweep of three branches spends most of it, so the re-run after
+ * a fix — the thing this workflow does constantly — used to come back with
+ * inflated `unverifiable` counts that look like regressions. Immutable data
+ * (a merged PR's file list, a closed PR's base branch) is safe to keep.
+ */
+const API_CACHE_PATH = path.resolve(REPO_ROOT, 'outputs', 'verification', '.api-cache.json');
+
+function loadApiCache(): Map<string, unknown> {
+  try {
+    return new Map(Object.entries(JSON.parse(fs.readFileSync(API_CACHE_PATH, 'utf8')) as object));
+  } catch {
+    return new Map();
+  }
+}
+
+function saveApiCache(cache: Map<string, unknown> | undefined): void {
+  if (!cache?.size) return;
+  try {
+    fs.mkdirSync(path.dirname(API_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(API_CACHE_PATH, JSON.stringify(Object.fromEntries(cache)), 'utf8');
+  } catch {
+    // A cache we cannot write is a slow next run, not a failed this one.
+  }
+}
+
 const tally = (verdicts: Verdict[]): Record<Outcome, number> => {
   const counts = Object.fromEntries(OUTCOMES.map(o => [o, 0])) as Record<Outcome, number>;
   for (const v of verdicts) counts[v.outcome]++;
@@ -456,7 +483,8 @@ export async function groundClaims(opts: GroundOptions = {}): Promise<GroundResu
   }
   const exec = opts.exec ?? defaultExec;
   const ctx: ProbeCtx = {
-    chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve, prFiles: new Map(), treeCache: new Map(),
+    chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve,
+    prFiles: new Map(), treeCache: new Map(), apiCache: loadApiCache(),
   };
   const dir = path.resolve(REPO_ROOT, opts.dir ?? 'agent-memory');
   const extract = opts.extractFn ?? cliExtractor();
@@ -467,6 +495,7 @@ export async function groundClaims(opts: GroundOptions = {}): Promise<GroundResu
   const totals = Object.fromEntries(OUTCOMES.map(o => [o, 0])) as Record<Outcome, number>;
   for (const r of reports) for (const o of OUTCOMES) totals[o] += r.counts[o];
 
+  saveApiCache(ctx.apiCache);
   const chtCoreSha = exec('git', ['-C', chtCorePath, 'rev-parse', 'HEAD']).trim();
   const outDir = path.resolve(REPO_ROOT, opts.outDir ?? path.join('outputs', 'verification', opts.label ?? 'local'));
   writeReports(outDir, reports, { chtCorePath, chtCoreSha, totals });

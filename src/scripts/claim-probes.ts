@@ -138,6 +138,15 @@ export interface ProbeCtx {
   prFiles?: Map<string, Map<string, string> | null>;
   /** Per-run cache of `ls-tree -r` output, keyed by ref — ~10k paths per entry. */
   treeCache?: Map<string, string[]>;
+  /**
+   * GitHub responses keyed by API path. Anonymous access allows 60 requests an
+   * hour and one sweep of three branches spends most of that on anchor
+   * resolution and PR file lists, so a second sweep in the same hour returned
+   * inflated `unverifiable` counts. Persisted across runs by ground-claims,
+   * which makes re-gating after a fix nearly free — the thing this workflow
+   * does constantly.
+   */
+  apiCache?: Map<string, unknown>;
 }
 
 export const DEFAULT_FALLBACK_REF = 'origin/master';
@@ -248,17 +257,24 @@ interface PrRecord {
  * never throw mid-run.
  */
 function githubApi(ctx: ProbeCtx, apiPath: string): unknown {
+  const cached = ctx.apiCache?.get(apiPath);
+  if (cached !== undefined) return cached;
   const transports: Array<[string, string[]]> = [
     ['gh', ['api', apiPath]],
     ['curl', ['-sf', '--max-time', '15', `https://api.github.com/${apiPath}`]],
   ];
   for (const [file, args] of transports) {
     try {
-      return JSON.parse(ctx.exec(file, args));
+      const parsed: unknown = JSON.parse(ctx.exec(file, args));
+      ctx.apiCache?.set(apiPath, parsed);
+      return parsed;
     } catch {
       // Try the next transport; callers treat null as "could not resolve".
     }
   }
+  // Deliberately NOT cached: a null here is usually the 60/hour budget running
+  // out, and persisting that would bake a transient failure into every later
+  // run as though the PR did not exist.
   return null;
 }
 
