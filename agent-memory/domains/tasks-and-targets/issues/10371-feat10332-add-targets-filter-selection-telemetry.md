@@ -62,7 +62,7 @@ Instrument filter usage via `telemetryService.record('sidebar_filter:analytics:t
 
 ## Design Choices
 
-Recorded a distinct selection event alongside the existing open event rather than replacing it, so both 'opened' and 'applied' signals are captured separately. Added e2e telemetry assertions and a reusable telemetry test util.
+Recorded a distinct selection event alongside the existing open event rather than replacing it, so both 'opened' and 'applied' signals are captured separately. Added e2e telemetry assertions on top of the pre-existing tests/utils/telemetry.js helper, which this PR extended rather than introduced.
 
 ## Related Files
 

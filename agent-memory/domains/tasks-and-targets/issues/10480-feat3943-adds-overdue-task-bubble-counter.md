@@ -7,7 +7,7 @@ issueNumber: 3943
 issueUrl: https://github.com/medic/cht-core/issues/3943
 title: Add overdue task bubble counter to the navigation bar (counts Overdue + due Today tasks)
 lastUpdated: '2026-07-31'
-summary: The nav bar had unread counters for reports and messages but no equivalent indicator for tasks needing attention. This PR adds a bubble counter in the tasks nav item that shows the number of overdue and due-today tasks, mirroring the existing unread-count pattern.
+summary: The nav bar had unread counters for reports and messages but no equivalent indicator for tasks needing attention. This PR adds a bubble counter in the tasks nav item that shows the number of overdue and due-today tasks, generalising the existing unread-count flow to carry either count rather than duplicating it.
 services:
   - webapp
 techStack:
@@ -89,7 +89,7 @@ The bubble counts only 'Overdue' and due 'Today' tasks (not tasks due tomorrow o
 
 ## Testing
 
-Added Karma unit tests covering the header component, tasks component, tasks and global reducers, selectors, rules-engine.service, header-tabs.service, reports.effects, and app.component. Added an integration test in shared-libs/rules-engine/test/integration.spec.js for the count computation. Added WDIO e2e coverage (tests/e2e/default/tasks/overdue-bubble.wdio-spec.js) with dedicated configs for overdue tasks (overdue-bubble-config.js) and the no-overdue case (no-overdue-tasks-config.js), plus the pre-existing targets analytics e2e spec and configs, which were not added or edited but moved unchanged (three 100% renames) from tests/e2e/default/analytics/ to tests/e2e/default/targets/, with the now-dead `./analytics/**/*.wdio-spec.js` glob dropped from tests/e2e/default/suites.js to follow.
+Added Karma unit tests covering the header component, tasks component, tasks and global reducers, selectors, rules-engine.service, header-tabs.service, reports.effects, and app.component. Added an integration test in shared-libs/rules-engine/test/integration.spec.js (+37 lines) for the `showTask` predicate the counter relies on; the count itself is computed in the webapp. Added WDIO e2e coverage (tests/e2e/default/tasks/overdue-bubble.wdio-spec.js) with dedicated configs for overdue tasks (overdue-bubble-config.js) and the no-overdue case (no-overdue-tasks-config.js), plus the pre-existing targets analytics e2e spec and configs, which were not added or edited but moved unchanged (three 100% renames) from tests/e2e/default/analytics/ to tests/e2e/default/targets/, with the now-dead `./analytics/**/*.wdio-spec.js` glob dropped from tests/e2e/default/suites.js to follow.
 
 ## Related Issues
 

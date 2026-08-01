@@ -7,7 +7,7 @@ issueNumber: 9255
 issueUrl: https://github.com/medic/cht-core/issues/9255
 title: 'Add Android device notifications for pending tasks (feat #9255)'
 lastUpdated: '2026-07-31'
-summary: Users could only learn about pending tasks by opening the app's Tasks tab, so critical updates were missed. This PR adds a task-notifications service that surfaces notifications for pending tasks (ordered by due date and priority), wired into the rules engine and task state, with localized notification text and a default app_settings toggle.
+summary: Users could only learn about pending tasks by opening the app's Tasks tab, so critical updates were missed. This PR adds a task-notifications service that surfaces notifications for pending tasks (ordered by due date and priority), driven by rules-engine change signals rather than by NgRx state, with localized notification text and a default app_settings toggle.
 services:
   - webapp
   - api
@@ -66,7 +66,7 @@ A dedicated Angular service (webapp/src/ts/services/task-notifications.service.t
 
 ## Design Choices
 
-Implemented as a dedicated client-side webapp service (consuming rules-engine and task state) rather than a server-side push pipeline; tasks are ordered by priority descending, with due date (ascending) used only as the tie-breaker between equal priorities; tasks with no valid numeric priority sort after all prioritised tasks, and tasks with no parseable due date sort last within their group; the feature is driven by a default app_settings.json entry (configurable) and all notification text is internationalized across the supported locales.
+Implemented as a dedicated client-side webapp service — it subscribes to `RulesEngineService.contactsMarkedAsDirty` and fetches task docs itself, reading no NgRx state — rather than a server-side push pipeline; tasks are ordered by priority descending, with due date (ascending) used only as the tie-breaker between equal priorities; tasks with no valid numeric priority sort after all prioritised tasks, and tasks with no parseable due date sort last within their group; the feature is driven by a default app_settings.json entry (configurable) and all notification text is internationalized across the supported locales.
 
 ## Related Files
 

@@ -71,7 +71,7 @@ New task-specific filter components (overdue-filter, task-type-filter) plus reus
 
 ## Design Choices
 
-Reused existing Reports filter components rather than building task-specific filters from scratch, keeping UI and behavior consistent. The place filter's facility list is lazy-loaded — FacilityFilterComponent (inherited unchanged by this PR) only calls loadFacilities() once Selectors.getSidebarFilter reports isOpen. TasksSidebarFilterComponent does, however, eagerly call placeHierarchyService.get() in ngOnInit to count places (hasMultiplePlaces) so it can hide the whole place panel (showPlaceFilter) when the user's hierarchy holds no more than one place. Lineage filtering was moved into the pipe (DRY) so the store of user facilities is the single source rather than per-component logic.
+Built the two task-specific filters (overdue-filter, task-type-filter) new, and reused the Reports place filter (FacilityFilterComponent, unchanged here) rather than duplicating it, keeping UI and behavior consistent. The place filter's facility list is lazy-loaded — FacilityFilterComponent (inherited unchanged by this PR) only calls loadFacilities() once Selectors.getSidebarFilter reports isOpen. TasksSidebarFilterComponent does, however, eagerly call placeHierarchyService.get() in ngOnInit to count places (hasMultiplePlaces) so it can hide the whole place panel (showPlaceFilter) when the user's hierarchy holds no more than one place. Lineage filtering was moved into the pipe (DRY) so the store of user facilities is the single source rather than per-component logic.
 
 ## Related Files
 

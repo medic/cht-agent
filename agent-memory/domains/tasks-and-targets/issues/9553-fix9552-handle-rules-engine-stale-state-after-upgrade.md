@@ -7,7 +7,7 @@ issueNumber: 9552
 issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Reconcile rules-engine persisted target state after an upgrade so newly configured target aggregates are not dropped
 lastUpdated: '2026-07-31'
-summary: After a CHT upgrade that changes target configuration, the rules engine's persisted target state became stale and omitted newly configured target aggregates, yielding inaccurate or missing targets. The fix reconciles stored target state against the current configuration so missing aggregates are backfilled rather than silently dropped; a related follow-up also migrates stale target state on reporting-interval turnover.
+summary: After a CHT upgrade that changes target configuration, the rules engine's persisted target state became stale and omitted newly configured target aggregates, yielding inaccurate or missing targets. The fix detects the stale blob by its shape — `isStale` requires both a `targets` and an `aggregate` key, never reading the configured targets — and rebuilds state that fails the check; a related follow-up also migrates stale target state on reporting-interval turnover.
 services:
   - webapp
 techStack:
@@ -69,7 +69,7 @@ For the interval-turnover facet, the persisted state stored target emissions wit
 
 Updated target-state.js and rules-state-store.js to detect that the persisted target state is in the pre-#9486 shape — the new `targetState.isStale` is `(state) => !state || !state.targets || !state.aggregate`, called from `load` as `targetState.isStale(state.targetState)` — and, when it fires, to mark the whole rules state stale so `provider-wireup.initialize` discards it and calls `rulesStateStore.build()`, rebuilding contact and target state from scratch. Added unit coverage for the stale-state scenario and an e2e target-accuracy spec to confirm correct target values after the configuration change.
 
-A follow-up added interval-turnover handling: when the rules state store is hydrated and the persisted reporting interval no longer matches the current `CalendarInterval`, the stale target state is migrated in place — stored target emissions are re-scoped/reset to the active interval before aggregation — while staying compatible with documents written by older versions (PR #9569, #9570).
+A follow-up added interval-turnover handling: when the rules state store is hydrated and the persisted reporting interval no longer matches the current `CalendarInterval`, the stale target state is migrated in place — emissions are preserved, not cleared, and simply rewrapped so `handleIntervalTurnover` can read them against the active interval — while staying compatible with documents written by older versions (PR #9569, #9570).
 
 ## Code Patterns
 

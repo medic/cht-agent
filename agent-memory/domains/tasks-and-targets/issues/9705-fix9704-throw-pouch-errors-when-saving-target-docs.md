@@ -56,7 +56,7 @@ When a `.catch` on a PouchDB read exists only to synthesise a default document, 
 
 ## Design Choices
 
-Chose to throw on write error rather than log-and-continue so that failures are not silently swallowed and callers can react to a failed target-doc save, aligning target persistence with proper error-propagation semantics.
+Chose to rethrow unexpected errors from the target-doc READ rather than let a catch-all swallow them into a synthesised default, so a real failure cannot masquerade as a fresh document. Writes were left as they were — the one `bulkDocs` in this file, `commitTaskDocs`, still only `console.error`s — aligning target persistence with proper error-propagation semantics.
 
 ## Related Files
 

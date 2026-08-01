@@ -7,7 +7,7 @@ issueNumber: 10316
 issueUrl: https://github.com/medic/cht-core/issues/10316
 title: Add sidebar filter UI for viewing previous months' targets in analytics
 lastUpdated: '2026-07-31'
-summary: Targets analytics only displayed the current month with no way to review prior periods. Added a sidebar filter (filter icon on the green bar with This month / Previous month radio buttons) wired into the analytics targets and target-aggregates views.
+summary: The analytics targets view only displayed the current month, with no way to review prior periods — unlike the target-aggregates view, which had carried a This month / Last month sidebar filter since #9317. Added a sidebar filter (filter icon on the green bar with This month / Previous month radio buttons) wired into the analytics targets and target-aggregates views.
 services:
   - webapp
 techStack:
