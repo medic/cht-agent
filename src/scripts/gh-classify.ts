@@ -28,6 +28,14 @@ export class GhTransientError extends Error {
 /** Per-run classification cache, keyed `repo#number`. */
 export type ClassifyCache = Map<string, NumberKind>;
 
+/**
+ * Memoises the full record, not just the kind. Anonymous GitHub allows 60
+ * requests an hour, and a corpus cites the same issue from many drafts — without
+ * this, a 25-draft scan spends its whole budget re-fetching a handful of numbers
+ * and reports the rest as "unverified", which reads like a clean run.
+ */
+export type DescribeCache = Map<string, { kind: NumberKind; title: string | null }>;
+
 function errText(err: unknown): string {
   if (err instanceof Error) {
     const stderr = (err as { stderr?: unknown }).stderr;
@@ -109,14 +117,17 @@ export function classifyNumber(repo: string, n: number, exec: ExecFn, cache?: Cl
  * @throws {GhTransientError} on a non-404 gh failure.
  */
 export function describeNumber(
-  repo: string, n: number, exec: ExecFn
+  repo: string, n: number, exec: ExecFn, cache?: DescribeCache
 ): { kind: NumberKind; title: string | null } {
+  const key = `${repo}#${n}`;
+  const hit = cache?.get(key);
+  if (hit) return hit;
   const obj = fetchIssueRecord(repo, n, exec);
-  if (obj === null) return { kind: 'missing', title: null };
-  return {
-    kind: recordKind(obj, repo),
-    title: typeof obj.title === 'string' ? obj.title : null,
-  };
+  const out = obj === null
+    ? { kind: 'missing' as NumberKind, title: null }
+    : { kind: recordKind(obj, repo), title: typeof obj.title === 'string' ? obj.title : null };
+  cache?.set(key, out);
+  return out;
 }
 
 /** Same-repo issues a PR closes (cross-repo closing-refs dropped). */

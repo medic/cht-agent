@@ -49,7 +49,7 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import matter from 'gray-matter';
 import { REPO_ROOT } from './schema-utils';
-import { classifyNumber, describeNumber, ClassifyCache, ExecFn, NumberKind } from './gh-classify';
+import { describeNumber, ClassifyCache, DescribeCache, ExecFn, NumberKind } from './gh-classify';
 import { loadVocab, nearMiss, Vocab, VOCAB_PATH } from './vocab';
 
 export type { ExecFn };
@@ -275,6 +275,8 @@ function checkProcessLeakage(d: Draft): Finding[] {
 interface GhCtx {
   exec: ExecFn;
   cache: ClassifyCache;
+  /** Shared record cache — see DescribeCache on why the 60/hour budget needs it. */
+  describeCache: DescribeCache;
   repo: string;
 }
 
@@ -287,7 +289,10 @@ function checkIssueIsNotPr(d: Draft, gh: GhCtx): { findings: Finding[]; unverifi
   if (issueNumber === undefined) return { findings: [], unverified: false };
   const repo = parseSourcePr(d.fm.source_pr)?.repo ?? gh.repo;
   try {
-    const kind = classifyNumber(repo, issueNumber, gh.exec, gh.cache);
+    // describeNumber, not classifyNumber: a draft almost always cites its own
+    // issue in Related Issues too, so sharing one cached record halves the
+    // requests this scan needs.
+    const kind = describeNumber(repo, issueNumber, gh.exec, gh.describeCache).kind;
     if (kind === 'issue') return { findings: [], unverified: false };
     const detail = kind === 'pr'
       ? `${repo}#${issueNumber} is a PULL REQUEST, not an issue`
@@ -411,7 +416,7 @@ function checkRelatedIssueRefs(d: Draft, gh: GhCtx): { findings: Finding[]; unve
     if (n === self) continue; // the draft's own issue, already checked by identity
     let described: { kind: NumberKind; title: string | null };
     try {
-      described = describeNumber(repo, n, gh.exec);
+      described = describeNumber(repo, n, gh.exec, gh.describeCache);
     } catch {
       unverified = true;
       continue;
@@ -602,7 +607,9 @@ export function verifyDrafts(opts: VerifyOptions = {}): VerifyReport {
   const dir = path.resolve(REPO_ROOT, opts.dir ?? 'agent-memory');
   const exec = opts.exec ?? defaultExec;
   const vocab = loadVocab(opts.vocabPath);
-  const gh: GhCtx = { exec, cache: new Map(), repo: opts.repo ?? DEFAULT_REPO };
+  const gh: GhCtx = {
+    exec, cache: new Map(), describeCache: new Map(), repo: opts.repo ?? DEFAULT_REPO,
+  };
 
   const drafts: Draft[] = [];
   const skipped: string[] = [];
