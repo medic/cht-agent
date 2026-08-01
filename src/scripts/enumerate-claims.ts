@@ -217,6 +217,21 @@ export function normaliseClaim<T extends { kind: string; quote: string }>(
   // draft. Fall back to the basename the draft DOES write — the basename
   // resolvers settle it — and drop the attribution entirely when even that is
   // absent.
+  // A "file" that is not shaped like a file. The model produced
+  // symbol-in-file with file = "analytics.getTargetDocs" — the dotted symbol
+  // itself, which git then searched for as a pathspec and unsurprisingly did
+  // not find, reporting the symbol as misattributed to a path that never was
+  // one. No slash and no file extension means it is not a path.
+  const rawFile = (claim as { file?: unknown }).file;
+  if (typeof rawFile === 'string' && rawFile && !rawFile.includes('/') && !FILE_EXT_RE.test(rawFile)) {
+    if ('symbol' in claim) {
+      claim = { ...claim, kind: 'symbol' } as T;
+      delete (claim as { file?: unknown }).file;
+    } else {
+      return null;
+    }
+  }
+
   const file = (claim as { file?: unknown }).file;
   if (typeof file === 'string' && file && !raw.includes(file)) {
     const base = file.split('/').pop() ?? '';

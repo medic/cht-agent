@@ -886,10 +886,16 @@ function removalCommit(ctx: ProbeCtx, ref: string, file: string): string | undef
  * true; the tense is not.
  */
 export function driftFor(
-  ctx: ProbeCtx, claim: Claim, currentRef: string, anchorSha: string
+  ctx: ProbeCtx, claim: Claim, currentRef: string, anchorSha: string, draft = ''
 ): Drift | undefined {
   const entity = claimEntity(claim);
-  if (!entity || TIME_SCOPED.test(claim.quote)) return undefined;
+  if (!entity) return undefined;
+  // Time-scoping is a property of the DRAFT, not of whichever sentence the
+  // extractor happened to quote. 9232 annotates its dead sidebar-filter
+  // component in Related Files and its retired permissions in Design Choices,
+  // yet kept being flagged because the quoted line was a different mention.
+  // A reader warned once is warned.
+  if (draft ? entityIsTimeScoped(draft, entity.value) : TIME_SCOPED.test(claim.quote)) return undefined;
   if (!commitExists(ctx, currentRef)) return undefined;
 
   if (entity.kind === 'path') {
@@ -939,7 +945,7 @@ function checkAtRef(
  */
 export function checkClaim(
   ctx: ProbeCtx, anchor: Anchor | null, claim: Claim, siblings: Anchor[] = [],
-  clusterPrs: Array<{ repo: string; prNumber: number }> = []
+  clusterPrs: Array<{ repo: string; prNumber: number }> = [], draft = ''
 ): Verdict {
   if (anchor?.isRevert) {
     return verdict(claim, 'anchor-unusable',
@@ -1003,6 +1009,6 @@ export function checkClaim(
   // Drift is only meaningful for a claim that HELD at its anchor: the sentence
   // is true about its own PR, and stale only as read against today's tree.
   if (settled.outcome !== 'grounded') return settled;
-  const drift = driftFor(ctx, claim, ctx.fallbackRef ?? DEFAULT_FALLBACK_REF, anchor.sha);
+  const drift = driftFor(ctx, claim, ctx.fallbackRef ?? DEFAULT_FALLBACK_REF, anchor.sha, draft);
   return drift ? { ...settled, drift } : settled;
 }
