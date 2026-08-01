@@ -136,6 +136,8 @@ export interface ProbeCtx {
   apiResolve?: boolean;
   /** Per-run cache of PR file lists, so an epic's children cost one call each. */
   prFiles?: Map<string, Map<string, string> | null>;
+  /** Per-run cache of `ls-tree -r` output, keyed by ref — ~10k paths per entry. */
+  treeCache?: Map<string, string[]>;
 }
 
 export const DEFAULT_FALLBACK_REF = 'origin/master';
@@ -355,8 +357,15 @@ export function pathExistsAt(ctx: ProbeCtx, sha: string, file: string): boolean 
  */
 export function basenameMatches(ctx: ProbeCtx, sha: string, file: string): string[] {
   if (file.includes('/')) return [];
-  return git(ctx, ['ls-tree', '-r', '--name-only', sha, '--', `*/${file}`, file])
-    .split('\n').map(l => l.trim()).filter(Boolean);
+  // A `*/name` pathspec silently matches NOTHING in ls-tree — it returned empty
+  // for a file a plain scan finds — so list the tree once per ref and filter
+  // here. Cached because the tree is ~10k paths and every draft asks repeatedly.
+  let all = ctx.treeCache?.get(sha);
+  if (!all) {
+    all = git(ctx, ['ls-tree', '-r', '--name-only', sha]).split('\n').map(l => l.trim()).filter(Boolean);
+    ctx.treeCache?.set(sha, all);
+  }
+  return all.filter(p => p === file || p.endsWith(`/${file}`));
 }
 
 /** Full blob at `ref:file`, or null when the path is absent there. */

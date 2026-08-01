@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import matter from 'gray-matter';
 import { z } from 'zod';
 import { REPO_ROOT } from './schema-utils';
-import { enumerateClaims, quoteDisclaims, quoteIsPreFix } from './enumerate-claims';
+import { enumerateClaims, normaliseClaim, quoteDisclaims, quoteIsPreFix } from './enumerate-claims';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import {
   Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, entityIsTimeScoped,
@@ -336,6 +336,8 @@ function mergeClaims(deterministic: Claim[], modelled: Claim[], raw: string): Cl
   // model read 4278's "was not untested" sentence and produced a file-touched
   // claim from it; the enumerator would have skipped that line.
   return out
+    .map(c => normaliseClaim(raw, c))
+    .filter((c): c is Claim => c !== null)
     .filter(c => !quoteDisclaims(raw, c.quote))
     .map(c => (
       'scope' in c || !quoteIsPreFix(raw, c.quote) ? c : { ...c, scope: 'pre-fix' as const }
@@ -454,7 +456,7 @@ export async function groundClaims(opts: GroundOptions = {}): Promise<GroundResu
   }
   const exec = opts.exec ?? defaultExec;
   const ctx: ProbeCtx = {
-    chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve, prFiles: new Map(),
+    chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve, prFiles: new Map(), treeCache: new Map(),
   };
   const dir = path.resolve(REPO_ROOT, opts.dir ?? 'agent-memory');
   const extract = opts.extractFn ?? cliExtractor();

@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { enumerateClaims } from '../../src/scripts/enumerate-claims';
+import { enumerateClaims, normaliseClaim } from '../../src/scripts/enumerate-claims';
 
 const DRAFT = [
   '---',
@@ -123,6 +123,46 @@ describe('enumerate-claims', () => {
 
     it('ignores prose with ellipses', () => {
       expect(syms('rewrote the `for...of` loop')).to.not.include('for...of');
+    });
+  });
+
+  describe('normaliseClaim — the same rules applied to MODEL claims', () => {
+    // The enumerator filtered these while extracting; the model's claims never
+    // passed through them, so every filter leaked on the LLM half.
+    const raw = [
+      '## Root Cause', '',
+      'index.js selected between `emitter.nools.js` and `emitter.javascript.js`.',
+      'numeric strings go through `Number()`.', '',
+      '## Related Issues', '',
+      '- #9432: Merge `ensureTaskFreshness` and `ensureTargetFreshness` into single event', '',
+    ].join('\n');
+    const claim = (symbol: string, quote: string): { kind: string; symbol: string; quote: string } =>
+      ({ kind: 'symbol', symbol, quote });
+
+    it('drops a bare filename the model extracted as a symbol', () => {
+      expect(normaliseClaim(raw, claim('emitter.nools.js',
+        'index.js selected between `emitter.nools.js` and `emitter.javascript.js`.'))).to.equal(null);
+    });
+
+    it('drops symbols lifted out of a Related Issues gloss', () => {
+      // #9432's title is about ANOTHER issue's code, not this draft's PR.
+      expect(normaliseClaim(raw, claim('ensureTaskFreshness',
+        '- #9432: Merge `ensureTaskFreshness` and `ensureTargetFreshness` into single event'))).to.equal(null);
+    });
+
+    it('strips a call suffix rather than dropping the symbol', () => {
+      const out = normaliseClaim(raw, claim('Number()', 'numeric strings go through `Number()`.'));
+      expect(out?.symbol).to.equal('Number');
+    });
+
+    it('keeps an ordinary symbol untouched', () => {
+      const q = 'index.js selected between `emitter.nools.js` and `emitter.javascript.js`.';
+      expect(normaliseClaim(raw, claim('getDocResources', q))?.symbol).to.equal('getDocResources');
+    });
+
+    it('leaves non-symbol claims alone', () => {
+      const c = { kind: 'file-touched', file: 'api/src/x.js', quote: 'touched api/src/x.js' };
+      expect(normaliseClaim(raw, c)).to.deep.equal(c);
     });
   });
 });

@@ -178,6 +178,37 @@ export function quoteDisclaims(raw: string, quote: string): boolean {
   return ABSENCE_CONTEXT.test(line) || NOT_TOUCHED.test(line);
 }
 
+/**
+ * Sections whose prose is about OTHER issues, not this PR's tree. A Related
+ * Issues gloss quotes another ticket's title — 9486 cites #9432, "Merge
+ * ensureTaskFreshness and ensureTargetFreshness into single event", and the
+ * model dutifully produced two symbol claims that were never about 9486.
+ */
+const FOREIGN_SECTIONS = new Set(['Related Issues']);
+
+/**
+ * Normalise a claim from ANY source, or drop it. The enumerator applies these
+ * rules while extracting; the model's claims never passed through them, so
+ * every filter leaked on the LLM half — bare filenames probed as symbols
+ * (`emitter.nools.js`, `provider-wireup.js`), `Number()` with its parens still
+ * attached, and symbols lifted out of a Related Issues gloss.
+ */
+export function normaliseClaim<T extends { kind: string; quote: string }>(
+  raw: string, claim: T
+): T | null {
+  const section = sectionOfQuote(raw, claim.quote);
+  if (!('symbol' in claim)) return claim;
+
+  const tok = stripCall(String((claim as { symbol: string }).symbol).trim());
+  if (!tok || tok.length < 3 || tok.length > 80) return null;
+  if (tok.includes('..')) return null;
+  if (FILE_EXT_RE.test(tok)) return null;          // a filename is not a symbol
+  if (OWN_SCHEMA_KEYS.has(tok)) return null;       // this corpus's own frontmatter
+  if (looksLikePath(tok)) return null;
+  if (FOREIGN_SECTIONS.has(section)) return null;  // describes a different issue
+  return { ...claim, symbol: tok };
+}
+
 export interface EnumerateOptions {
   /** Cap per draft; a runaway regex should not produce thousands of probes. */
   max?: number;
