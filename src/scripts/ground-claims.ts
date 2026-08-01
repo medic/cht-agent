@@ -40,6 +40,7 @@ import { createHash } from 'node:crypto';
 import matter from 'gray-matter';
 import { z } from 'zod';
 import { REPO_ROOT } from './schema-utils';
+import { enumerateClaims } from './enumerate-claims';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import {
   Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, entityIsTimeScoped,
@@ -314,6 +315,25 @@ function auditSnippets(ctx: ProbeCtx, draft: DraftInput, anchor: Anchor | null):
   return out;
 }
 
+/**
+ * Merge the deterministic enumeration with whatever the model noticed. The
+ * enumerator is exhaustive over code-shaped claims and identical run to run;
+ * the model adds semantic claims it cannot express. Dedup is by claim identity,
+ * so a claim both produce is probed once.
+ */
+function mergeClaims(deterministic: Claim[], modelled: Claim[]): Claim[] {
+  const key = (c: Claim): string =>
+    `${c.kind}|${'symbol' in c ? c.symbol : ''}|${'file' in c ? c.file : ''}`;
+  const out = [...deterministic];
+  const seen = new Set(deterministic.map(key));
+  for (const c of modelled) {
+    if (seen.has(key(c))) continue;
+    seen.add(key(c));
+    out.push(c);
+  }
+  return out;
+}
+
 /** Ground one draft: extract claims, then probe each. */
 async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): Promise<DraftReport> {
   const anchor = anchorFor(ctx, draft.frontmatter);
@@ -325,12 +345,19 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
       ...(anchor.note !== undefined && { note: anchor.note }),
     },
   };
+  // The deterministic half never fails and never varies, so a model outage
+  // degrades coverage to "code-shaped claims only" instead of to nothing.
+  const enumerated = enumerateClaims(draft.raw);
   let claims: Claim[];
   try {
-    claims = await extract(draft);
+    claims = mergeClaims(enumerated, await extract(draft));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { ...base, verdicts: [], counts: tally([]), error: `claim extraction failed: ${message}` };
+    const verdicts = enumerated.map(c => checkClaim(ctx, anchor, c, siblingAnchors(ctx, draft.frontmatter, anchor)));
+    return {
+      ...base, verdicts, counts: tally(verdicts),
+      error: `semantic extraction failed (${message}); ${enumerated.length} enumerated claims still checked`,
+    };
   }
   const siblings = siblingAnchors(ctx, draft.frontmatter, anchor);
   const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings)).map(v => {

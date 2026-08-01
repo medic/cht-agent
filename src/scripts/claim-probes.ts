@@ -388,11 +388,35 @@ function absenceOutcome(prov: Provenance): Outcome {
   return prov === 'anchor' ? 'ungrounded' : 'unverifiable';
 }
 
+/**
+ * A dotted token that prose writes whole but code never spells that way: an app
+ * settings key reached as `config.get('sms')?.clear_failing_schedules`, an
+ * export a caller sees as `smsparser.parse` but the file declares as
+ * `exports.parse`, a method written `RulesEngineService.fetchTargets` and
+ * defined as a bare `fetchTargets`. Every one of these was hand-adjudicated as
+ * a false positive during review; resolving the last segment turns the whole
+ * class into a grounded verdict that says how it was reached.
+ */
+function lastSegmentHit(ctx: ProbeCtx, ref: string, symbol: string, pathspec?: string): string | null {
+  if (!symbol.includes('.')) return null;
+  const tail = symbol.split('.').filter(Boolean).pop();
+  if (!tail || tail.length < 3) return null;
+  const hits = symbolHits(ctx, ref, tail, pathspec);
+  return hits.length ? `${tail} at ${hits[0]}` : null;
+}
+
 function checkSymbol(ctx: ProbeCtx, ref: string, claim: Claim & { kind: 'symbol' }, prov: Provenance): Verdict {
   const hits = symbolHits(ctx, ref, claim.symbol);
   const cmd = `git grep -nFw ${claim.symbol} ${refLabel(ref)}`;
   if (hits.length > 0) {
     return verdict(claim, 'grounded', `${cmd} → ${hits.length} hit(s), e.g. ${hits[0]}`, undefined, prov);
+  }
+  const tail = lastSegmentHit(ctx, ref, claim.symbol);
+  if (tail) {
+    return verdict(claim, 'grounded',
+      `${cmd} → 0 hits for the dotted form, but its final segment resolves: ${tail}. ` +
+        'Prose writes the qualified name; the code reaches it through an accessor, import or receiver.',
+      undefined, prov);
   }
   const note = prov === 'fallback'
     ? ' — but the anchor is unresolved, so this tree predates the change and the PR may have introduced it; fetch cht-core to settle'
@@ -419,6 +443,13 @@ function checkSymbolInFile(
       return verdict(claim, 'grounded',
         `${cmd} → 0 hits line-oriented, but the member chain matches across lines at ${wrapped}`, undefined, prov);
     }
+  }
+
+  const tailInFile = lastSegmentHit(ctx, ref, claim.symbol, claim.file);
+  if (tailInFile) {
+    return verdict(claim, 'grounded',
+      `${cmd} → 0 hits for the dotted form, but its final segment resolves in this file: ${tailInFile}`,
+      undefined, prov);
   }
 
   const global = symbolHits(ctx, ref, claim.symbol);
