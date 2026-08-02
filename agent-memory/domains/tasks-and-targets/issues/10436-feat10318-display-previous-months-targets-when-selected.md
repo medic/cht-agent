@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10318
 issueUrl: https://github.com/medic/cht-core/issues/10318
 title: Display previous month's targets and aggregates with dynamic subtitle, mobile back button, and selected-filter count
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: When the 'previous month' reporting period was selected, the analytics pages didn't surface the right context — the target-aggregates page showed the previous month's name instead of a meaningful subtitle, and neither page offered a mobile back button or a selected-filter count. This PR wires the selected reporting period through the components, derives the target subtitle dynamically, adds a mobile back button for the previous-month view, and shows a count of how many filters are selected.
 services:
   - webapp
@@ -61,11 +61,11 @@ The analytics targets / target-aggregates components and the shared analytics fi
 
 ## Solution
 
-Threaded the selected reporting period (current/previous) through analytics-targets and analytics-target-aggregates components down to the rules-engine target fetch; derived the monthly target subtitle dynamically in webapp/src/ts/libs/config.ts so it works for both current and previous periods (instead of showing the previous month's name on the aggregates page); added a back button in the mobile title bar when the previous month is selected; and added a selected-filter count badge to both the targets and target-aggregates pages via the shared analytics filter / sidebar-filter components, backed by global state in reducers/global.ts.
+Threaded the selected reporting period (current/previous) through analytics-targets and analytics-target-aggregates components down to the rules-engine target fetch; derived the monthly target subtitle dynamically in webapp/src/ts/libs/config.ts (the PR-era location; the epic folded that helper into rules-engine.service.ts, so it is not on master) so it works for both current and previous periods (instead of showing the previous month's name on the aggregates page); added a back button in the mobile title bar when the previous month is selected; and added a selected-filter count badge to both the targets and target-aggregates pages via the shared analytics filter / sidebar-filter components, backed by global state in reducers/global.ts.
 
 ## Code Patterns
 
-Pass ReportingPeriod (CURRENT | PREVIOUS) from the analytics sidebar filter through the component into target-fetch logic (rules-engine.service.ts / target-aggregates.service.ts). Derive display subtitle from config in webapp/src/ts/libs/config.ts rather than hardcoding period/month strings. Compute and render a selected-filter count badge in the reusable analytics-filter.component for cross-view reuse.
+Pass ReportingPeriod (CURRENT | PREVIOUS) from the analytics sidebar filter through the component into target-fetch logic (rules-engine.service.ts / target-aggregates.service.ts). Derive display subtitle from config rather than hardcoding period/month strings — at the time of this PR in webapp/src/ts/libs/config.ts, on master in rules-engine.service.ts (see Related Files). Compute and render a selected-filter count badge in the reusable analytics-filter.component for cross-view reuse.
 
 ## Design Choices
 
@@ -91,7 +91,7 @@ Reused the existing shared analytics sidebar filter framework and ngrx global st
 
 ## Testing
 
-Broad test coverage added/updated. Karma unit specs updated for analytics-targets, analytics-target-aggregates, analytics-sidebar-filter, analytics-filter, rules-engine.service, and target-aggregates.service. A new Mocha unit-test harness was added for the webapp (webapp/tests/mocha/.mocharc.js, tsconfig.mocha.json, tsconfig.spec.json) specifically to unit-test webapp/src/ts/libs/config.ts (config.spec.ts). Of that harness only `.mocharc.js` survives on master: the two tsconfigs and `libs/config.ts` itself were removed or folded elsewhere before the epic squashed. WDIO e2e specs were updated for targets analytics and target-aggregates, including new page objects (analytics, target-aggregates) and helper functions (aggregates-helper-functions.js, targets-helper-functions.js) plus updated e2e target-aggregates config.
+Broad test coverage added/updated. Karma unit specs updated for analytics-targets, analytics-target-aggregates, analytics-sidebar-filter, analytics-filter, rules-engine.service, and target-aggregates.service. A new Mocha unit-test harness was added for the webapp (webapp/tests/mocha/.mocharc.js, tsconfig.mocha.json, tsconfig.spec.json) specifically to unit-test webapp/src/ts/libs/config.ts (config.spec.ts). Of that harness only `.mocharc.js` survives on master: the two tsconfigs and `libs/config.ts` itself were removed or folded elsewhere before the epic squashed. WDIO e2e specs were updated for targets analytics and target-aggregates, updating the analytics and target-aggregates page objects, adding one helper (targets-helper-functions.js) and extending another (aggregates-helper-functions.js), plus updated e2e target-aggregates config.
 
 ## Related Issues
 

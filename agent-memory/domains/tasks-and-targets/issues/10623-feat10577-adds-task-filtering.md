@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10577
 issueUrl: https://github.com/medic/cht-core/issues/10577
 title: Add task list filtering by due date, task type, and area; centralize lineage filtering in the message pipe
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: CHWs struggled to find specific follow-up tasks while scrolling long task lists. This PR adds a sidebar filter to the tasks module — a due-date radio (overdue/due-today vs future), task-type checkboxes, and a place filter reused from Reports — and refactors duplicated per-component lineage filtering into the shared LineagePipe (declared in webapp/src/ts/pipes/message.pipe.ts) backed by the ngrx store of user facilities.
 services:
   - webapp
@@ -67,7 +67,7 @@ Added three filters to the tasks module via a tasks-sidebar-filter component, mo
 
 ## Code Patterns
 
-New task-specific filter components (overdue-filter, task-type-filter) plus reuse of the Reports place filter (FacilityFilterComponent, unchanged by this PR) for the tasks domain via a shared sidebar-filter component (webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.ts). Centralizing cross-component transformation in an Angular pipe (webapp/src/ts/pipes/message.pipe.ts) that reads user facilities from the ngrx store instead of each consuming component (reports.component.ts, messages.component.ts) duplicating the filtering.
+New task-specific filter components (overdue-filter, task-type-filter) plus reuse of the Reports place filter (FacilityFilterComponent, unchanged by this PR) for the tasks domain via a shared sidebar-filter component (webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.ts). Centralizing cross-component transformation in an Angular pipe (webapp/src/ts/pipes/message.pipe.ts) that reads user facilities from the ngrx store instead of each consuming component (reports.component.ts, messages.component.ts and tasks.component.ts, all of which dropped their own ExtractLineageService.removeUserFacility call) duplicating the filtering.
 
 ## Design Choices
 

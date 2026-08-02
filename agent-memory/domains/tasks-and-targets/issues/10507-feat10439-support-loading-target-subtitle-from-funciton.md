@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10439
 issueUrl: https://github.com/medic/cht-core/issues/10439
 title: Support loading target card subtitle from a function for dynamic, reporting-period-aware labels
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: Target cards displaying all-time metrics had a static 'All Time' subtitle that became misleading when users filtered targets to a reporting period (the value is really 'up to' that period). This PR adds support for loading the target subtitle from a function so it can be computed dynamically.
 services:
   - webapp
@@ -50,11 +50,11 @@ The target subtitle was treated as a static configuration value (a fixed transla
 
 ## Solution
 
-Extended the target configuration handling so the subtitle can be supplied as a function that is evaluated at runtime, in addition to a static value. webapp/src/ts/libs/config.ts — a helper this PR introduced — was updated to support resolving a function-typed subtitle, and webapp/src/ts/services/rules-engine.service.ts was updated to pass through/evaluate it when building target cards. Note `libs/config.ts` did not survive the epic: on master the subtitle handling sits in rules-engine.service.ts itself (`subtitle_translation_key`, and the last-month subtitle at :594). package.json was bumped (rules-engine dependency) to enable the function-based subtitle support.
+Extended the target configuration handling so the subtitle can be supplied as a function that is evaluated at runtime, in addition to a static value. webapp/src/ts/libs/config.ts — a helper this PR added — resolves a function-typed subtitle, and webapp/src/ts/services/rules-engine.service.ts was updated to pass through/evaluate it when building target cards. Note `libs/config.ts` did not survive the epic: on master the subtitle handling sits in rules-engine.service.ts itself (`subtitle_translation_key`, and the last-month subtitle at :594). package.json was bumped (rules-engine dependency) to enable the function-based subtitle support.
 
 ## Code Patterns
 
-Configuration value that may be either a static value or a function evaluated at runtime — a reusable dynamic-config pattern centralized in webapp/src/ts/libs/config.ts and consumed by webapp/src/ts/services/rules-engine.service.ts.
+Configuration value that may be either a static value or a function evaluated at runtime — a reusable dynamic-config pattern. As of this PR it was centralized in webapp/src/ts/libs/config.ts and consumed by webapp/src/ts/services/rules-engine.service.ts; the epic later folded it into rules-engine.service.ts itself, so on master there is no separate helper (see Related Files).
 
 ## Design Choices
 

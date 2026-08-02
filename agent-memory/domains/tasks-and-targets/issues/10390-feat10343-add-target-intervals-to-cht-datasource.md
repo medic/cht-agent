@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10343
 issueUrl: https://github.com/medic/cht-core/issues/10343
 title: Add target intervals (target docs) to cht-datasource with local and remote implementations plus an API controller and route
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: Target docs ("target intervals") could only be read through bespoke DB-loading code in the target-aggregates service and analytics.getTargetDocs, with no reusable access path. This PR adds a target-interval module to cht-datasource (local + remote implementations, new qualifier) and a matching API controller/route to expose them.
 services:
   - api
@@ -68,6 +68,8 @@ Standard cht-datasource feature shape: define the domain type and getter API in 
 Reused the existing cht-datasource local/remote split and qualifier convention instead of extending the bespoke target-aggregates DB-loading code, giving a consistent, typed, reusable access layer that works in both offline (local) and online (remote/API) contexts and centralizes target-doc retrieval for future migration of analytics.getTargetDocs and aggregate-target consumers.
 
 ## Related Files
+
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed the whole `target-interval.*` set to `target.*`. Ten of the 21 files this PR touched were named `target-interval.*`; none of those names exist on master. The draft's API and file vocabulary still needs rewriting to the landed `target.*` names.
 
 - shared-libs/cht-datasource/src/target-interval.ts
 - shared-libs/cht-datasource/src/local/target-interval.ts

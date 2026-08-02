@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10332
 issueUrl: https://github.com/medic/cht-core/issues/10332
 title: Add telemetry for analytics target aggregates sidebar filter selection
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: Telemetry previously only recorded when the analytics target-aggregates sidebar filter was opened, not when a user actually applied a selection (e.g. 'Previous month'). This PR adds telemetry collection for the filter selection/change event on target aggregates.
 services:
   - webapp
@@ -58,7 +58,7 @@ Added selection telemetry in analytics-sidebar-filter.component.ts (collectFilte
 
 ## Code Patterns
 
-Instrument filter usage via `telemetryService.record('sidebar_filter:analytics:target_aggregates:...')` for both open and selection events; assert emitted telemetry entries in e2e using the shared helper at tests/utils/telemetry.js (pattern mirrored from tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js).
+Instrument filter usage with a `sidebar_filter:analytics:<tab>:<action>` telemetry key, split across the two components that own each half — analytics-filter.component.ts records the `:open` events when the sidebar is opened, and the sidebar filter component records the selection events (`:facility`, `:reporting`); assert emitted telemetry entries in e2e using the shared helper at tests/utils/telemetry.js (pattern mirrored from tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js).
 
 ## Design Choices
 

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9231
 issueUrl: https://github.com/medic/cht-core/issues/9231
 title: Enable place filter for aggregate targets for users with multiple facility_ids
-lastUpdated: '2026-07-31'
-summary: Users assigned to multiple facilities had no way to scope the aggregate targets analytics view by place. Added a sidebar place filter letting users scope aggregate targets to a selected facility. The button and sidebar are gated on being a non-admin without the legacy filter/action-bar permissions — not on facility count — so single-facility users see them too; only the facility radio group inside the sidebar and the per-aggregate facility indicator are conditional on `userFacilities.length > 1`.
+lastUpdated: '2026-08-01'
+summary: The 4.9.0 multiple-facilities change temporarily blocked users assigned to more than one facility from viewing aggregate targets at all, and nothing let anyone scope that view by place. Restored access for those users and added a sidebar place filter letting users scope aggregate targets to a selected facility. The button and sidebar are gated on being a non-admin without the legacy filter/action-bar permissions — not on facility count — so single-facility users see them too; only the facility radio group inside the sidebar and the per-aggregate facility indicator are conditional on `userFacilities.length > 1`.
 services:
   - webapp
   - api

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10694
 issueUrl: https://github.com/medic/cht-core/issues/10694
 title: Add free text search to the Tasks page to filter tasks by contact name, lineage, or title via a client-side NgRx selector
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: The Tasks page had no free text search, so users could not quickly narrow their task list. This enables the previously-disabled freetext search input and reactively filters the already-loaded task list client-side via a memoized NgRx selector matching contact name, lineage, and task title.
 services:
   - webapp
@@ -57,7 +57,7 @@ The freetext search input in the shared search bar was explicitly disabled for t
 
 ## Solution
 
-Enabled the freetext input on the Tasks page. Typed queries are written into the global filters state by the shared `FreetextFilterComponent` (`applyFilter()` calls `globalActions.setFilter({ search: this.inputText })`); reducers/global.ts only gains a `search?: string` field on the `TasksFilters` interface. The memoized NgRx selector `getFilteredTasksList` (selectors/index.ts) then reactively re-filters the already-loaded task list by matching the query against contact name, lineage, and task title — with no extra query round-trip or page reload.
+Enabled the freetext input on the Tasks page. Typed queries are written into the global filters state by the shared `FreetextFilterComponent` (webapp/src/ts/components/filters/freetext-filter/freetext-filter.component.ts, not the tasks module) (`applyFilter()` calls `globalActions.setFilter({ search: this.inputText })`); reducers/global.ts only gains a `search?: string` field on the `TasksFilters` interface. The memoized NgRx selector `getFilteredTasksList` (selectors/index.ts) then reactively re-filters the already-loaded task list by matching the query against contact name, lineage, and task title — with no extra query round-trip or page reload.
 
 ## Code Patterns
 
