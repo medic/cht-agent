@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9255
 issueUrl: https://github.com/medic/cht-core/issues/9255
 title: 'Add Android device notifications for pending tasks (feat #9255)'
-lastUpdated: '2026-08-01'
+lastUpdated: '2026-08-02'
 summary: Users could only learn about pending tasks by opening the app's Tasks tab, so critical updates were missed. This PR adds a task-notifications service that surfaces notifications for pending tasks (ordered by due date and priority), driven by rules-engine change signals rather than by NgRx state, with localized notification text and a default app_settings toggle.
 services:
   - webapp
@@ -91,4 +91,4 @@ Unit tests added/updated: webapp/tests/karma/ts/services/task-notification.servi
 
 **Fit:** strong
 
-The PR adds local/device notifications for pending tasks; the implementation centers on the task pipeline (new task-notifications service, tasks reducer, rules-engine integration, ordering by due date and priority). This is Android device notification of task state driven by the task pipeline, not SMS communication (the messaging domain), so tasks-and-targets is the squarely correct domain.
+The PR adds local/device notifications for pending tasks; the implementation centers on the task pipeline (new task-notifications service, rules-engine integration, ordering by due date and priority). The tasks reducer is only incidentally involved — see Solution. This is Android device notification of task state driven by the task pipeline, not SMS communication (the messaging domain), so tasks-and-targets is the squarely correct domain.
