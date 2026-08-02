@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9552
 issueUrl: https://github.com/medic/cht-core/issues/9552
 title: Reconcile rules-engine persisted target state after an upgrade so newly configured target aggregates are not dropped
-lastUpdated: '2026-08-01'
+lastUpdated: '2026-08-02'
 summary: After a CHT upgrade across the #9486 change to the persisted target-state shape, the rules engine rehydrated a blob written by the older build without checking that shape, so the top-level aggregate key was missing and targets came out inaccurate or absent. The trigger is the upgrade itself, not a change to target configuration. The fix detects the stale blob by its shape — `isStale` requires both a `targets` and an `aggregate` key, never reading the configured targets — and rebuilds state that fails the check; a related follow-up also migrates stale target state on reporting-interval turnover.
 services:
   - webapp
