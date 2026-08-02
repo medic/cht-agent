@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10316
 issueUrl: https://github.com/medic/cht-core/issues/10316
 title: Add sidebar filter UI for viewing previous months' targets in analytics
-lastUpdated: '2026-07-31'
+lastUpdated: '2026-08-01'
 summary: The analytics targets view only displayed the current month, with no way to review prior periods — unlike the target-aggregates view, which had carried a This month / Last month sidebar filter since #9317. Added a sidebar filter (filter icon on the green bar with This month / Previous month radio buttons) wired into the analytics targets and target-aggregates views.
 services:
   - webapp
@@ -93,7 +93,7 @@ Reused the established sidebar-filter pattern for UI consistency; radio buttons 
 
 ## Testing
 
-Added an e2e WebdriverIO spec (analytics.wdio-spec.js) plus page-object methods for opening and closing the sidebar, and Karma unit specs (mocha + chai + sinon, per webapp/tests/karma/karma-unit.base.conf.js) for the sidebar-filter, targets, target-aggregates, target-aggregates-detail, and analytics-filter components and the target-aggregates service.
+This PR added no test files. It extended the existing e2e WebdriverIO spec (tests/e2e/default/analytics/analytics.wdio-spec.js) and its page object with methods for opening and closing the sidebar, and extended the existing Karma unit specs (mocha + chai + sinon, per webapp/tests/karma/karma-unit.base.conf.js) for the targets, target-aggregates, target-aggregates-detail, analytics and analytics-filter components and the target-aggregates service. The sidebar-filter spec was renamed, not created.
 
 ## Related Issues
 
