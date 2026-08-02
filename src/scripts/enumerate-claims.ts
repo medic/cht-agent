@@ -253,6 +253,13 @@ export function normaliseClaim<T extends { kind: string; quote: string }>(
   if (FILE_EXT_RE.test(tok)) return null;          // a filename is not a symbol
   if (OWN_SCHEMA_KEYS.has(tok)) return null;       // this corpus's own frontmatter
   if (looksLikePath(tok)) return null;
+  // A NOUN PHRASE IS NOT AN IDENTIFIER. 9718's Root Cause reads "The interval
+  // turnover mechanism in provider-wireup.js …" and the model offered
+  // "interval turnover" as the symbol. git grep -F -w then reports it missing
+  // from the file the sentence names, which reads as a misattributed symbol
+  // rather than what it is — prose. No identifier in any language this corpus
+  // covers contains whitespace.
+  if (/\s/.test(tok)) return null;
   if (FOREIGN_SECTIONS.has(section)) return null;  // describes a different issue
   return { ...claim, symbol: tok };
 }

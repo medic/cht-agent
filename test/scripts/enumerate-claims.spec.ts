@@ -155,6 +155,21 @@ describe('enumerate-claims', () => {
       expect(out?.symbol).to.equal('Number');
     });
 
+    // 9718: "The interval turnover mechanism in provider-wireup.js snapshotted
+    // the last calculation…". The model offered "interval turnover" as a symbol,
+    // and git reported it missing from the file the sentence names — which reads
+    // as a misattribution rather than as prose.
+    it('drops a multi-word noun phrase the model extracted as a symbol', () => {
+      const q = 'The interval turnover mechanism in provider-wireup.js snapshotted the last calculation.';
+      expect(normaliseClaim(raw, claim('interval turnover', q))).to.equal(null);
+    });
+
+    it('keeps a dotted member chain, which has no whitespace', () => {
+      const q = 'numeric strings go through `Number()`.';
+      expect(normaliseClaim(raw, claim('rulesEngineCore.showTask', q))?.symbol)
+        .to.equal('rulesEngineCore.showTask');
+    });
+
     it('keeps an ordinary symbol untouched', () => {
       const q = 'index.js selected between `emitter.nools.js` and `emitter.javascript.js`.';
       expect(normaliseClaim(raw, claim('getDocResources', q))?.symbol).to.equal('getDocResources');
