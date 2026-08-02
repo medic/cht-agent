@@ -164,6 +164,28 @@ describe('enumerate-claims', () => {
       expect(normaliseClaim(raw, claim('interval turnover', q))).to.equal(null);
     });
 
+    // 10230: "Added a dedicated api/src/services/nepal-doit-sms.js service".
+    // Extraction asked whether nepal-doit-sms.js contains `nepal-doit-sms`.
+    it('drops a symbol that is just the stem of the file it is checked against', () => {
+      const q = 'Added a dedicated api/src/services/nepal-doit-sms.js service that encapsulates the gateway';
+      const c = {
+        kind: 'symbol-in-file', symbol: 'nepal-doit-sms',
+        file: 'api/src/services/nepal-doit-sms.js', quote: q,
+      };
+      expect(normaliseClaim(`${raw}\n## Solution\n\n${q}\n`, c)).to.equal(null);
+    });
+
+    it('keeps a hyphenated symbol when it is NOT the file stem', () => {
+      // Angular selectors really are kebab-case; only self-reference is bogus.
+      const q = 'the new `overdue-filter` component sits in tasks-sidebar-filter.component.ts';
+      const c = {
+        kind: 'symbol-in-file', symbol: 'overdue-filter',
+        file: 'webapp/src/ts/modules/tasks/tasks-sidebar-filter.component.ts', quote: q,
+      };
+      expect((normaliseClaim(`${raw}\n## Solution\n\n${q}\n`, c) as { symbol: string } | null)?.symbol)
+        .to.equal('overdue-filter');
+    });
+
     it('keeps a dotted member chain, which has no whitespace', () => {
       const q = 'numeric strings go through `Number()`.';
       expect(normaliseClaim(raw, claim('rulesEngineCore.showTask', q))?.symbol)

@@ -260,6 +260,16 @@ export function normaliseClaim<T extends { kind: string; quote: string }>(
   // rather than what it is — prose. No identifier in any language this corpus
   // covers contains whitespace.
   if (/\s/.test(tok)) return null;
+  // A FILE DOES NOT CONTAIN ITS OWN NAME. 10230 says "Added a dedicated
+  // api/src/services/nepal-doit-sms.js service"; extraction produced the
+  // symbol `nepal-doit-sms` inside api/src/services/nepal-doit-sms.js, and
+  // git reported the service missing from itself. Whatever the draft is
+  // asserting there, it is the file-touched claim it already makes elsewhere.
+  const own = (claim as { file?: unknown }).file;
+  if (typeof own === 'string' && own) {
+    const stem = (own.split('/').pop() ?? '').replace(/\.[^.]+$/, '');
+    if (stem && stem === tok) return null;
+  }
   if (FOREIGN_SECTIONS.has(section)) return null;  // describes a different issue
   return { ...claim, symbol: tok };
 }
