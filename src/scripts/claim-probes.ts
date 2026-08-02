@@ -329,8 +329,17 @@ export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?
   // in provider-wireup.js"), which no pathspec resolves. Expand it to the real
   // path first, or the symbol reads as misattributed to a file that has no hits
   // simply because git was handed a name it could not find.
+  // Prose also shortens a path to its tail ("reducers/global.ts only gains a
+  // `search?: string` field"), which is just as unresolvable as a bare name.
+  // Resolve whenever the literal pathspec is not itself in the tree —
+  // basenameMatches already suffix-matches, so it handles both forms.
+  // Prose also shortens a path to its tail ("reducers/global.ts only gains a
+  // `search?: string` field"), which is just as unresolvable as a bare name.
+  // Resolve whenever the pathspec is not LITERALLY in the tree — note this
+  // cannot use pathExistsAt, which already suffix-matches and would report
+  // every shortened path as present, skipping the resolution it needs.
   let scoped = pathspec;
-  if (scoped && !scoped.includes('/')) {
+  if (scoped && !git(ctx, ['ls-tree', '--name-only', sha, '--', scoped]).trim()) {
     const [resolved] = basenameMatches(ctx, sha, scoped);
     if (resolved) scoped = resolved;
   }
@@ -381,7 +390,11 @@ export function pathExistsAt(ctx: ProbeCtx, sha: string, file: string): boolean 
  * still a defect rather than being rescued by its basename.
  */
 export function basenameMatches(ctx: ProbeCtx, sha: string, file: string): string[] {
-  if (file.includes('/')) return [];
+  // Tails resolve on the same rule as bare names: prose writes "reducers/global.ts"
+  // as readily as "global.ts", and both are unresolvable as pathspecs. The
+  // `/`-prefixed suffix test below anchors on a path segment, so `api/src/foo.js`
+  // still cannot match `webapp/src/foo.js`.
+  //
   // A `*/name` pathspec silently matches NOTHING in ls-tree — it returned empty
   // for a file a plain scan finds — so list the tree once per ref and filter
   // here. Cached because the tree is ~10k paths and every draft asks repeatedly.
