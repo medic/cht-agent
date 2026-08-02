@@ -84,6 +84,31 @@ describe('check-coherence', () => {
       expect(kept).to.have.lengthOf(0);
       expect(discarded).to.equal(1);
     });
+
+    // Observed on 10371: the model filed a pair and used `why` to clear it,
+    // and the run counted it. Two clean passes then looked like one dirty one.
+    ['These do not conflict.',
+      'This is not a contradiction — the draft flags the rename explicitly.',
+      'They are consistent: one states the rename, the other applies it.',
+      'Both can be true at once.',
+      'The two statements do not contradict each other.',
+    ].forEach(why => {
+      it(`discards a pair the model withdraws in its own rationale: "${why}"`, () => {
+        const { kept, discarded } = verifyContradictions(draftInput(), [
+          { quoteA: SOLUTION, quoteB: DESIGN, why },
+        ]);
+        expect(kept).to.have.lengthOf(0);
+        expect(discarded).to.equal(1);
+      });
+    });
+
+    it('still keeps a real finding whose rationale merely mentions conflict', () => {
+      const { kept, discarded } = verifyContradictions(draftInput(), [
+        { quoteA: SOLUTION, quoteB: DESIGN, why: 'These conflict: one denies what the other asserts.' },
+      ]);
+      expect(discarded).to.equal(0);
+      expect(kept).to.have.lengthOf(1);
+    });
   });
 
   describe('coherencePrompt', () => {

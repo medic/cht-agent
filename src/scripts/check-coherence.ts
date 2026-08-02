@@ -126,6 +126,20 @@ ${draft.raw}`;
 const flatten = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
 /**
+ * The model sometimes files a pair and then uses `why` to say it is not one
+ * ("These do not conflict."). Left in, such a pair is counted as a finding and
+ * a human is sent to adjudicate two statements the model already cleared —
+ * noise that looks exactly like a real, non-recurring contradiction.
+ */
+const SELF_NEGATING =
+  /\b(?:do(?:es)?\s+not|don't|doesn't|no|not\s+a|aren't|are\s+not|is\s+not|isn't)\s+(?:\w+\s+){0,3}?(?:conflict|contradict|contradiction|contradictory|inconsistent|incompatible)/i;
+
+/** True when the model's own rationale withdraws the pair it just filed. */
+export const whyWithdrawsPair = (why: string): boolean =>
+  SELF_NEGATING.test(why) || /\b(?:both\s+can\s+be|can\s+both\s+be)\s+true\b/i.test(why)
+  || /\b(?:these|they)\s+are\s+consistent\b/i.test(why);
+
+/**
  * Keep only contradictions whose BOTH quotes really occur in the draft, and
  * locate them. This is the guard that makes an LLM finding safe to act on: a
  * fabricated quote is dropped rather than filed as a defect.
@@ -156,6 +170,10 @@ export function verifyContradictions(
       continue;
     }
     if (a === b) {          // a "contradiction" with itself is a model artefact
+      discarded++;
+      continue;
+    }
+    if (whyWithdrawsPair(c.why)) {  // filed, then withdrawn in the same breath
       discarded++;
       continue;
     }
