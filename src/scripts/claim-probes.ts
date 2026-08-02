@@ -987,6 +987,24 @@ export function checkClaim(
             'Problem/Root Cause section, which describes the state this PR changed',
         };
       }
+
+      // A pre-fix claim pinned to a file the PR CREATED cannot be judged against
+      // that file: it did not exist in the tree the sentence describes. The file
+      // is an extraction artefact — prose naming a symbol rarely names its home,
+      // so the model borrows a path from elsewhere in the draft. Re-probe the
+      // symbol repo-wide at the parent and judge the substance, not the binding.
+      if (claim.kind === 'symbol-in-file' && changedPaths(ctx, anchor.sha).get(claim.file) === 'A') {
+        const bare: Claim = { kind: 'symbol', symbol: claim.symbol, quote: claim.quote, scope: 'pre-fix' };
+        const anywhere = checkAtRef(ctx, parent, bare, 'anchor', anchor);
+        if (anywhere.outcome === 'grounded') {
+          return {
+            ...anywhere,
+            claim,
+            evidence: `${anywhere.evidence} — searched the whole tree at ${refLabel(anchor.sha)}^ because ` +
+              `${claim.file} was ADDED by this PR, so a Problem/Root Cause claim cannot be about it`,
+          };
+        }
+      }
     }
   }
 
