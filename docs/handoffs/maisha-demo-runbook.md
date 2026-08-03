@@ -143,15 +143,47 @@ back from the instance (divergence holds).
 them out. **Re-run the seeder after every §4 restore** (idempotent, ~2s —
 refreshes the DOBs) and any time the snapshot is older than ~a week.
 
-**M3 — what stays manual (by design):** the duplicate-emitting reports
-cannot be doc-seeded (`needs_immunization_follow_up` /
-`immunization_follow_up_date` are form-calculated). That IS the live demo
-(§5.4). The RED click-path, grounded in the form XML: as `demo_chv`, open
-**Baby Njoki (M3 Seed)** → **"Newborn PNC Home Visit Service"** → "Is Baby
-Njoki available?" → **Yes** → PNC Danger Signs (Child): "Is Baby Njoki's
-immunization upto date?" → **No** (this calculates the follow-up need +
-date) → answer the remaining danger signs normally → **Submit**. Repeat ×3
-→ duplicate immunization-follow-up tasks accumulate, none resolve.
+**M3 — the visible pile is seeded; the live submission shows the mechanism.**
+
+⚠️ **Task-visibility mechanic (read this or the demo looks broken).** The
+task event is `{start: 0, end: 14}` with `dueDate` = the form-calculated
+`immunization_follow_up_date` = **today + 3** (`tasks.js:1355-1366`;
+form bind `immunization_follow_up_date`). `start: 0` means `startDate ==
+dueDate`, so a freshly-submitted visit's task sits in state **`Draft` —
+invisible in the Tasks tab — for three days.** Confirmed on a real
+submission: `state: Draft, startDate: 2026-08-06`. That is why the seeder
+plants three reports whose follow-up is due **today** (`M3_DUPLICATES=3`):
+their tasks are `Ready` immediately, so the pile is visible in the demo.
+Only the DATE is shifted — form id, fields and emission path are exactly
+what Enketo produces (verified in the partner rules engine: 3 reports → 3
+unresolved `PNC newborn immunization referral` tasks, each keyed to its own
+source report).
+
+**Live RED click-path** (grounded in the form XML + a real run; use it to
+show a 4th task being emitted, and for the M3 story generally). As
+`demo_chv`, open **Baby Njoki (M3 Seed)** → New action → **"Newborn PNC
+Home Visit Service"**:
+
+| Page | Question | Answer |
+|---|---|---|
+| Newborn PNC Home Visit | Who is the caregiver today? | **Mother** |
+| | Place of delivery | **Home** (pre-filled from the contact) |
+| | Have you referred Baby Njoki to the health facility? | **No** |
+| PNC Danger Signs (Child) | Ask for the following danger signs of newborn | **None** ← check ONLY this |
+| | Is Baby Njoki's immunization upto date? | **No** ← this calculates the follow-up need + date |
+| Summary | — | **Submit** |
+
+- **Check "None", not a real danger sign.** Any danger sign (e.g. "Severe
+  chest in-drawing") also emits a *danger-signs referral* task due
+  tomorrow and opens a red "refer immediately" branch — noise that muddies
+  a demo about immunization duplicates.
+- The immunization question only appears because
+  `is_immunization_defaulter='yes'` (its `relevant` gate) — i.e. M3's
+  reproduction rides on the M4 bug flag. Baby Njoki has no immunization
+  reports at all, so she reads as a defaulter under BOTH the buggy and the
+  corrected predicate; the path is safe regardless of M4's state.
+- The submitted task lands as `Draft` (due in 3 days) — expected; the
+  visible pile is the seeded set.
 
 Note: seeded contacts have no sentinel shortcodes (`patient_id`) — they
 render fine by name and reports link by UUID; harmless for the demo.
@@ -433,14 +465,31 @@ curl -sk -u medic:password https://localhost:10443/api/v1/settings \
 # match ⇒ the broken resolver is live
 ```
 
-**RED (browser, the showpiece):** on the seeded newborn (**Baby Njoki**,
-`maisha-seed-hh-m3`): run the §3b click-path — "Newborn PNC Home Visit
-Service" → available? **Yes** → "Is Baby Njoki's immunization upto date?"
-→ **No** (this calculates the follow-up need + date) → submit — **three
-times** → the Tasks tab accumulates **duplicate immunization-follow-up
-tasks**; submitting the follow-up form **does not resolve them** (the
-resolver looks for a form id that can never exist). Narrate: "in
-production this reached ten."
+**RED (task docs — proof without waiting three days):**
+
+```bash
+curl -sk -u medic:password 'https://localhost:10443/medic/_all_docs?include_docs=true&limit=3000' \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      JSON.parse(s).rows.map(r=>r.doc).filter(d=>d&&d.type==="task"&&JSON.stringify(d).includes("maisha-seed-m3-newborn"))
+        .forEach(t=>console.log(t.state,"| due",t.emission.dueDate,"|",t.emission.title,"|",t.emission._id));})'
+# THREE Ready `task.pnc_newborn_immunization.title` rows, each keyed by a
+# DIFFERENT source report (`<reportId>~newborn-immunization-follow-up~…`) —
+# one per home visit, none resolved. That IS the pile-up.
+```
+
+**RED (browser, the showpiece):** as `demo_chv`, **Tasks** tab (or Baby
+Njoki's profile → Tasks) → **three identical "PNC newborn immunization
+referral" cards** for the same baby. Then the mechanism, live: run the §3b
+click-path on Baby Njoki once more → a FOURTH task is emitted (verify with
+the curl above — it will be `state: Draft`, due in 3 days; see the
+visibility note in §3b).
+
+**The over-resolution half — the strongest visible RED.** Open ONE of the
+three cards → complete its immunization referral → **all three cards
+disappear**. One referral silently closed three separate visits'
+follow-ups. (Verified in the partner rules engine: 3 open → complete #2 →
+0 remain.) Restore the snapshot + re-seed (§4) before the fix so the pile
+is back.
 
 **Agent:** expected diff in `tasks.js` newborn report-based templates:
 `posnatal_` → `postnatal_` at `:1368`, plus `report._id` passed as the
@@ -454,13 +503,24 @@ mother-side pattern at `:207-215`.
 ```
 
 **GREEN:**
-1. Settings-grep again → **no match** (typo gone).
-2. Browser: **Sync now** → the config change makes the rules engine
-   recalculate → the accumulated duplicates **resolve/clear** (rehearsal
-   fallback: fresh incognito login shows the recomputed task list). Submit
-   one more newborn PNC report → exactly ONE task; submit its follow-up →
-   it resolves.
-3. Partner suite: `npx mocha test/tasks/<newborn spec>` red→green as in §5.3.
+1. Settings-grep again → **no match** (typo gone). This is also exactly
+   what QA's compiled-settings oracle asserts automatically (P4).
+2. Browser: **Sync now** (fresh incognito login is the deterministic
+   fallback — the rules engine must recompute against the new settings).
+   ⚠️ **The three cards do NOT vanish** — they are still three unresolved
+   follow-ups, which is correct: each visit needs its own referral. The
+   visible change is the resolution behaviour:
+   **open ONE card → complete its immunization referral → only THAT card
+   clears; the other two remain.** Pre-fix the same action cleared all
+   three. (Both halves verified in the partner rules engine: pre-fix
+   3→0, post-fix 3→2 with `#1`/`#3` remaining.)
+3. Partner suite: the ticket's `qaSpecs` specs run automatically under
+   `--qa-tier2`; manually it's
+   `npx mocha test/tasks/postnatal_care_service_newborn.spec.js test/tasks/immunization_service.spec.js`.
+   **Ordering note:** the harness reads the COMPILED `app_settings.json`,
+   not `tasks.js` — so the specs only exercise the fix after a
+   `compile-app-settings` (QA's `app-settings` apply bucket does this, which
+   is why tier-2 runs after GREEN).
 
 Capture the branch (§4-A) — done; the demo closes with four `fix/maisha-m*`
 branches in the config repo as the partner handback.

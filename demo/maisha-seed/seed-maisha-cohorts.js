@@ -19,6 +19,11 @@
  *     NODE_TLS_REJECT_UNAUTHORIZED=0 node demo/maisha-seed/seed-maisha-cohorts.js
  *   (env vars shown are the defaults; TLS reject-unauthorized is force-disabled
  *    below for the self-signed throwaway instance.)
+ *
+ * M3_DUPLICATES=N (default 3) also seeds N newborn-PNC reports whose
+ * immunization follow-up is due TODAY, so the duplicate-task pile is visible
+ * in the Tasks tab immediately instead of three days out. M3_DUPLICATES=0
+ * skips them (live-submission-only demo).
  */
 'use strict';
 
@@ -149,6 +154,64 @@ async function main() {
       group_delivery_outcome: { babies_delivered: '1', babies_alive: '1' },
     },
   });
+
+  // --- HH-M3 duplicate pile (M3_DUPLICATES, default 3) ---------------------
+  //  The reported symptom is N unresolved "PNC newborn immunization referral"
+  //  tasks on ONE baby. Each newborn-PNC report emits its own task, keyed by
+  //  the SOURCE REPORT id (emission `<reportId>~newborn-immunization-follow-up`),
+  //  and the broken resolvedIf (typo'd form id, no sourceID) never clears them.
+  //
+  //  Why seed these at all: the task event is `{start: 0, end: 14}` with
+  //  dueDate = the form-calculated `immunization_follow_up_date` = today + 3,
+  //  so a LIVE submission's task sits in state `Draft` (invisible in the Tasks
+  //  tab) for three days. These seeded reports are byte-shaped like a real
+  //  submission (captured from one) but carry `immunization_follow_up_date`
+  //  = TODAY, so their tasks are `Ready` — the pile is visible immediately.
+  //  DATE-SHIFT IS THE ONLY SYNTHETIC PART: form id, fields and the emission
+  //  path are exactly what Enketo produces. Set M3_DUPLICATES=0 to skip.
+  //
+  //  Each report also sets needs_danger_signs_follow_up='no' so the pile is
+  //  PURE immunization duplicates (no danger-signs referral noise).
+  const dupCount = Number.parseInt(process.env.M3_DUPLICATES ?? '3', 10);
+  const todayIso = new Date().toISOString().slice(0, 10) + 'T00:00:00.000-06:00';
+  const newbornSnapshot = {
+    _id: M3_NEWBORN, name: 'Baby Njoki (M3 Seed)', date_of_birth: daysAgo(10),
+    sex: 'female', place_of_birth: 'home',
+    parent: { _id: HH.m3, parent: { link_facility_code: '', link_facility_name: '', chu_code: '', chu_name: '' } },
+  };
+  for (let i = 1; i <= (Number.isFinite(dupCount) ? dupCount : 3); i += 1) {
+    docs.push({
+      _id: `maisha-seed-m3-pncdup-${i}`,
+      form: 'postnatal_care_service_newborn',
+      type: 'data_record',
+      content_type: 'xml',
+      // staggered so the pile reads as three separate home visits
+      reported_date: NOW - (dupCount - i + 1) * 24 * 3600 * 1000,
+      contact: { _id: chvContactId, parent: chvPerson.parent },
+      hidden_fields: ['meta'],
+      fields: {
+        inputs: { source: 'contact', source_id: '', contact: newbornSnapshot },
+        patient_id: M3_NEWBORN,
+        patient_name: 'Baby Njoki (M3 Seed)',
+        patient_age_in_years: '0', patient_age_in_months: '0', patient_age_in_days: '10',
+        place_of_birth: 'home',
+        is_immunization_defaulter: 'yes',
+        is_patient_available: 'true',
+        // exactly ONE task per report: immunization follow-up, due TODAY
+        needs_immunization_follow_up: 'yes',
+        immunization_follow_up_date: todayIso,
+        needs_danger_signs_follow_up: 'no', danger_signs_follow_up_date: '',
+        needs_missed_visit_follow_up: 'no', missed_visit_follow_up_date: '',
+        newborn_home_visit_count: String(i - 1),
+        delivery_uuid: 'maisha-seed-m3-delivery',
+        visited_contact_uuid: HH.m3,
+        group_danger_signs: {
+          newborn_danger_signs: 'none',
+          has_updated_immunization_status: 'no', // the field that calculates the follow-up need
+        },
+      },
+    });
+  }
 
   // 3. Idempotent upsert: fetch current _rev per id, then _bulk_docs.
   const ids = docs.map((d) => d._id);
