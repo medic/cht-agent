@@ -52,7 +52,14 @@ import { deriveSettingsSections } from '../utils/compiled-settings';
 import { guardConfigFix } from '../utils/config-type';
 import { resolveDeploymentConfigRoot } from '../utils/canonical-diff';
 import { canonicalDiffLines } from '../utils/xlsform-apply';
-import { runTier2, tier2PassLine, tier2TailExcerpt } from '../utils/cht-conf-tier2';
+import {
+  runTier2,
+  runTier2Baseline,
+  tier2BaselineLine,
+  tier2FailuresArePreExisting,
+  tier2PassLine,
+  tier2TailExcerpt,
+} from '../utils/cht-conf-tier2';
 import { askYesNo } from '../utils/prompt';
 
 /** The four settings artifacts the compiled-settings oracle verifies. */
@@ -183,6 +190,8 @@ export interface CreateQaInputArgs {
   provision?: ProvisionOptions;
   testDataPath?: string;
   autoApprove?: boolean;
+  /** Config-relative paths the development phase wrote (the fix), for the tier-2 baseline. */
+  fixFiles?: string[];
   /**
    * F5: the target-bind delta from the development phase's XLSForm apply
    * (`XlsformApplyResult.bindDiff`). Threaded into the verify expectation set so
@@ -223,6 +232,7 @@ export const createQaInput = (args: CreateQaInputArgs): QaInput | null => {
     provision: args.provision ?? buildProvisionFromEnv(),
     ...(args.testDataPath ? { testDataPath: args.testDataPath } : {}),
     ...(args.autoApprove ? { autoApprove: args.autoApprove } : {}),
+    ...(args.fixFiles && args.fixFiles.length > 0 ? { fixFiles: args.fixFiles } : {}),
     // F6: carry the bindDiff onto the input so executeQaWorkflow activates the
     // whole-document oracle (deployed-vs-local RED-exact-target / GREEN-identity).
     ...(args.bindDiff ? { bindDiff: args.bindDiff } : {}),
@@ -558,7 +568,6 @@ export const executeQaWorkflow = async (
       ...(input.qaSpecs ? { qaSpecs: input.qaSpecs } : {}),
     });
     if (tier2.ran) {
-      succeeded = succeeded && tier2.passed === true;
       if (tier2.specs && tier2.specs.length > 0) {
         messages.push(`tier-2 specs: ${tier2.specs.join(', ')}`);
       }
@@ -566,12 +575,28 @@ export const executeQaWorkflow = async (
         // F9: carry the parsed passing count in the transition, not a bare label.
         messages.push(tier2PassLine(tier2.outputTail));
       } else {
+        // Attribute the failure before blaming the fix: run the SAME specs
+        // against the pre-fix sources. Without this every pre-existing red spec
+        // reads as a regression, and the retry loop chases it.
+        tier2.baseline = await runTier2Baseline({
+          configRoot: input.configPath,
+          configArtifact: input.verify.configArtifact,
+          artifactName: artifact,
+          specs: tier2.specs ?? [],
+          // Revert only the fix, so unrelated working-copy state (harness args,
+          // docs, translations) survives into the baseline run.
+          ...(input.fixFiles ? { fixFiles: input.fixFiles } : {}),
+        });
+        messages.push(tier2BaselineLine(tier2));
         // F9: carry the bounded output excerpt in the transition instead of the
         // useless "see outputTail" (the diagnosis needed a manual rerun before).
         messages.push(
           `tier-2 FAILED — last output:\n${tier2TailExcerpt(tier2.outputTail)}`,
         );
       }
+      // Only NEW failures condemn the loop. Unknown attribution stays strict —
+      // absent a baseline we must not excuse a real regression.
+      succeeded = succeeded && (tier2.passed === true || tier2FailuresArePreExisting(tier2));
     } else {
       messages.push(`tier-2: skipped — ${tier2.reason}`);
     }

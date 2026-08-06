@@ -427,3 +427,165 @@ describe('cht-conf-tier2 (F7 runner)', () => {
     });
   });
 });
+
+describe('tier-2 failure classification and cause extraction', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { isTier2EnvironmentalFailure, tier2TailExcerpt } = require('../../src/utils/cht-conf-tier2');
+
+  // Chromium prints its diagnosis first, then ~40 stack frames and a register
+  // dump. A plain tail shows the operator register values instead of the cause.
+  const CHROMIUM_CRASH = [
+    'Error: Failed to launch the browser process!',
+    '[0805/192020.615918:FATAL:zygote_host_impl_linux.cc(117)] No usable sandbox!',
+    '#0 0x5b6ec534af49 base::debug::CollectStackTrace()',
+    '#1 0x5b6ec52b4933 base::debug::StackTrace::StackTrace()',
+    '  r8: 0000000000000000  r9: 0000000000000000 r10: 0000000000000008',
+    ' trp: 0000000000000000 msk: 0000000000000000 cr2: 0000000000000000',
+    '[end of stack trace]',
+    '    at onClose (node_modules/puppeteer-core/lib/cjs/puppeteer/node/BrowserRunner.js:197:20)',
+  ].join('\n');
+
+  const ASSERTION_FAILURE = [
+    '  1) PNC task resolves',
+    '  0 passing (2s)',
+    '  1 failing',
+    '  AssertionError: expected 2 tasks to equal 1',
+  ].join('\n');
+
+  describe('isTier2EnvironmentalFailure', () => {
+    it('detects a Chromium sandbox crash', () => {
+      expect(isTier2EnvironmentalFailure(CHROMIUM_CRASH)).to.equal(true);
+    });
+
+    it('does not misread a genuine assertion failure as environmental', () => {
+      expect(isTier2EnvironmentalFailure(ASSERTION_FAILURE)).to.equal(false);
+    });
+
+    it('is false when there is no output', () => {
+      expect(isTier2EnvironmentalFailure(undefined)).to.equal(false);
+    });
+  });
+
+  describe('tier2TailExcerpt cause preference', () => {
+    it('surfaces the launch failure instead of the register dump', () => {
+      const excerpt = tier2TailExcerpt(CHROMIUM_CRASH);
+      expect(excerpt).to.contain('No usable sandbox!');
+      expect(excerpt).to.contain('Failed to launch the browser process');
+      expect(excerpt).to.not.contain('r8: 0000');
+      expect(excerpt).to.not.contain('[end of stack trace]');
+    });
+
+    it('surfaces the assertion for a genuine spec failure', () => {
+      const excerpt = tier2TailExcerpt(ASSERTION_FAILURE);
+      expect(excerpt).to.contain('1 failing');
+      expect(excerpt).to.contain('AssertionError');
+    });
+
+    it('falls back to the tail when no line names a cause', () => {
+      const excerpt = tier2TailExcerpt('alpha\nbravo\ncharlie', 2);
+      expect(excerpt).to.contain('bravo');
+      expect(excerpt).to.contain('charlie');
+    });
+  });
+});
+
+describe('tier-2 baseline attribution', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const t2 = require('../../src/utils/cht-conf-tier2');
+  const { parseMochaFailing, newTier2Failures, tier2FailuresArePreExisting, tier2BaselineLine } = t2;
+
+  const result = (over: Record<string, unknown> = {}) => ({
+    ran: true, passed: false, outputTail: '129 passing\n4 failing', ...over,
+  });
+
+  describe('parseMochaFailing', () => {
+    it('reads the failing count from the epilogue', () => {
+      expect(parseMochaFailing('  129 passing (2m)\n  4 failing')).to.equal(4);
+    });
+
+    it('is undefined when the summary never printed (a crash)', () => {
+      expect(parseMochaFailing('No usable sandbox!')).to.equal(undefined);
+    });
+  });
+
+  describe('newTier2Failures', () => {
+    it('subtracts pre-existing failures from the post-fix count', () => {
+      expect(newTier2Failures(result({ baseline: { ran: true, passed: false, failing: 1 } }))).to.equal(3);
+    });
+
+    it('is 0 when the same failures were already there', () => {
+      expect(newTier2Failures(result({ baseline: { ran: true, passed: false, failing: 4 } }))).to.equal(0);
+    });
+
+    it('counts every failure as new when the baseline passed', () => {
+      expect(newTier2Failures(result({ baseline: { ran: true, passed: true, failing: 0 } }))).to.equal(4);
+    });
+
+    // Unknown must never be reported as "no new failures", or a real regression
+    // would be silently excused.
+    it('is undefined — not 0 — when no baseline could be established', () => {
+      expect(newTier2Failures(result({ baseline: { ran: false, reason: 'no git' } }))).to.equal(undefined);
+      expect(tier2FailuresArePreExisting(result({ baseline: { ran: false } }))).to.equal(false);
+    });
+
+    it('is undefined when the post-fix count is unparseable', () => {
+      const crashed = result({ outputTail: 'No usable sandbox!', baseline: { ran: true, passed: false, failing: 1 } });
+      expect(newTier2Failures(crashed)).to.equal(undefined);
+    });
+  });
+
+  describe('tier2BaselineLine', () => {
+    it('says every failure is new when the baseline passed', () => {
+      expect(tier2BaselineLine(result({ baseline: { ran: true, passed: true, failing: 0 } })))
+        .to.contain('every failure below is new');
+    });
+
+    it('names the pre-existing and new split', () => {
+      expect(tier2BaselineLine(result({ baseline: { ran: true, passed: false, failing: 1 } })))
+        .to.contain('1 pre-existing failure(s), 3 NEW');
+    });
+
+    it('says NO new failures when the counts match', () => {
+      expect(tier2BaselineLine(result({ baseline: { ran: true, passed: false, failing: 4 } })))
+        .to.contain('NO new failures');
+    });
+
+    it('is explicit when attribution was impossible', () => {
+      expect(tier2BaselineLine(result({ baseline: { ran: false, reason: 'no HEAD' } })))
+        .to.contain('NOT attributed');
+    });
+  });
+});
+
+describe('tier-2 baseline scoping (filesToRevert)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { filesToRevert } = require('../../src/utils/cht-conf-tier2');
+
+  const DIRTY = [
+    'common-extras.js', 'tasks.js',           // the fix
+    'harness.defaults.json',                  // environment: Chromium --no-sandbox args
+    'README.md', 'translations/messages-en.properties',
+  ];
+  const FIX = ['common-extras.js', 'tasks.js'];
+
+  // Reverting harness.defaults.json stripped the harness's --no-sandbox args, so
+  // the baseline's Chromium could not launch and measured nothing.
+  it('reverts only the fix, leaving environment and unrelated files alone', () => {
+    const reverted = filesToRevert(DIRTY, FIX);
+    expect(reverted).to.deep.equal(FIX);
+    expect(reverted).to.not.include('harness.defaults.json');
+    expect(reverted).to.not.include('README.md');
+  });
+
+  it('falls back to every tracked change when the fix list is unknown', () => {
+    expect(filesToRevert(DIRTY, undefined)).to.deep.equal(DIRTY);
+    expect(filesToRevert(DIRTY, [])).to.deep.equal(DIRTY);
+  });
+
+  it('does not mutate the caller\'s fix list', () => {
+    const fix = [...FIX];
+    filesToRevert(DIRTY, fix).push('injected.js');
+    expect(fix).to.deep.equal(FIX);
+  });
+
+});

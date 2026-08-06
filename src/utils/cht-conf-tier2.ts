@@ -20,10 +20,11 @@
  * script sets), matching the runner env cht-conf-runner uses.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { QaTier2Result } from '../types';
+import { QaTier2Result, QaTier2Baseline } from '../types';
+import { createConvertSandbox } from './cht-conf-runner';
 
 /** Generous default: the harness boots headless Chromium + Enketo per file. */
 const DEFAULT_TIER2_TIMEOUT_MS = 300_000;
@@ -293,10 +294,44 @@ export const parseMochaPassing = (outputTail: string | undefined): number | unde
 };
 
 /**
+ * Signatures of a tier-2 run that never got as far as asserting anything —
+ * the browser the harness drives failed to start. The specs did not fail; they
+ * did not run.
+ */
+const TIER2_ENVIRONMENTAL_RE =
+  /No usable sandbox!|Failed to launch the browser process|Running as root without --no-sandbox|error while loading shared libraries|ENOENT.*chrome|Target closed/i;
+
+/**
+ * True when the failure is the harness's Chromium refusing to launch rather
+ * than a spec assertion.
+ *
+ * The distinction decides what a human should do next: an assertion failure
+ * says the fix is wrong, an environmental failure says nothing about the fix at
+ * all. Conflating them sends the operator back to rewrite working code.
+ */
+export const isTier2EnvironmentalFailure = (outputTail: string | undefined): boolean =>
+  outputTail !== undefined && TIER2_ENVIRONMENTAL_RE.test(outputTail);
+
+/**
+ * Lines that name a cause, as opposed to stack-unwind noise.
+ *
+ * Chromium prints its diagnosis FIRST and then dumps ~40 frames and a register
+ * table, so a plain tail shows the least informative part of the failure — the
+ * observed case was an operator staring at register values while
+ * "No usable sandbox!" sat above the fold.
+ */
+const TIER2_CAUSE_RE =
+  /No usable sandbox!|Failed to launch the browser process|Error:|AssertionError|expected .* to |\d+ failing|Running as root without/i;
+
+/** Frames, register dumps and other post-mortem noise — never the cause. */
+const TIER2_NOISE_RE = /^\s*(#\d+\s+0x|at\s+|\w{2,3}:\s+[0-9a-f]{16})/;
+
+/**
  * A bounded, prefixed excerpt of the tier-2 output for the QA panel on failure
- * (F9): the last `maxLines` non-blank lines, each prefixed so it reads as quoted
- * child output rather than the workbench's own log. The stored `outputTail` is
- * already char-bounded; this bounds it by LINES for a readable panel.
+ * (F9). Prefers the lines that name a cause; falls back to the last `maxLines`
+ * non-blank lines when nothing matches. Each line is prefixed so it reads as
+ * quoted child output rather than the workbench's own log. The stored
+ * `outputTail` is already char-bounded; this bounds it by LINES.
  */
 export const tier2TailExcerpt = (
   outputTail: string | undefined,
@@ -313,11 +348,205 @@ export const tier2TailExcerpt = (
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
     lines.pop();
   }
-  const tail = lines.slice(-maxLines);
-  if (tail.length === 0) {
+
+  const causes = lines.filter(
+    (l) => l.trim() !== '' && TIER2_CAUSE_RE.test(l) && !TIER2_NOISE_RE.test(l),
+  );
+  // Cause lines are ordered as emitted, so the FIRST ones are the diagnosis.
+  const chosen = causes.length > 0 ? causes.slice(0, maxLines) : lines.slice(-maxLines);
+  if (chosen.length === 0) {
     return `${TIER2_TAIL_PREFIX}(no tier-2 output captured)`;
   }
-  return tail.map((l) => `${TIER2_TAIL_PREFIX}${l}`).join('\n');
+  return chosen.map((l) => `${TIER2_TAIL_PREFIX}${l}`).join('\n');
+};
+
+/**
+ * Build a sandbox of the config project with every tracked modification
+ * reverted to HEAD — i.e. the sources as they were before this run's fix.
+ *
+ * A copy, never the mount: the mount holds the approved fix and QA must not
+ * disturb it. node_modules is symlinked rather than copied (the harness needs
+ * to resolve cht-conf-test-harness and ~300MB is not worth duplicating).
+ * Returns undefined when the baseline cannot be built, which callers must treat
+ * as "attribution unknown".
+ */
+/**
+ * Which files the baseline reverts to HEAD.
+ *
+ * The fix's own file list when known, so unrelated working-copy state survives
+ * into the baseline run. Reverting every dirty file instead undid the harness's
+ * `--no-sandbox` args along with the fix, which crashed the baseline's Chromium
+ * and reported the failure as "counts unparseable" rather than measuring
+ * anything. Falls back to all tracked modifications when the fix list is absent
+ * (standalone QA), which is still better than no baseline.
+ */
+export const filesToRevert = (trackedChanged: string[], fixFiles?: string[]): string[] =>
+  fixFiles && fixFiles.length > 0 ? [...fixFiles] : trackedChanged;
+
+const buildPreFixSandbox = (configRoot: string, fixFiles?: string[]): string | undefined => {
+  const git = (args: string[]): string =>
+    execFileSync('git', args, { cwd: configRoot, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+
+  let changed: string[];
+  try {
+    const tracked = git(['diff', '--name-only', 'HEAD']).split('\n').map(l => l.trim()).filter(Boolean);
+    changed = filesToRevert(tracked, fixFiles);
+  } catch {
+    return undefined; // not a git repo, or no HEAD — no baseline to compare against
+  }
+
+  const sandbox = createConvertSandbox(configRoot);
+  try {
+    for (const rel of changed) {
+      const target = path.join(sandbox, rel);
+      let original: string;
+      try {
+        original = git(['show', `HEAD:${rel}`]);
+      } catch {
+        // Added-but-staged file with no HEAD version: absent pre-fix.
+        fs.rmSync(target, { force: true });
+        continue;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, original, 'utf8');
+    }
+    const nodeModules = path.join(sandbox, 'node_modules');
+    if (!fs.existsSync(nodeModules)) {
+      fs.symlinkSync(path.join(configRoot, 'node_modules'), nodeModules, 'dir');
+    }
+    return sandbox;
+  } catch {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+    return undefined;
+  }
+};
+
+/**
+ * Run the SAME specs against the pre-fix sources, so a post-fix failure can be
+ * attributed to the change or exonerated as pre-existing.
+ *
+ * Never throws: a baseline is diagnostic, and failing to obtain one must not
+ * take down a QA run that otherwise succeeded.
+ */
+export const runTier2Baseline = async (
+  options: Tier2RunOptions & { specs: string[]; fixFiles?: string[] },
+): Promise<QaTier2Baseline> => {
+  const { configRoot, specs, fixFiles } = options;
+  let sandbox: string | undefined;
+  try {
+    sandbox = buildPreFixSandbox(configRoot, fixFiles);
+    if (!sandbox) {
+      return { ran: false, reason: 'could not reconstruct the pre-fix sources (not a git repo, or no HEAD)' };
+    }
+    console.log(`[tier-2] baseline: same specs against pre-fix sources (sandbox=${sandbox})`);
+    const result = await runTier2({
+      ...options,
+      configRoot: sandbox,
+      // The sandbox has no .bin of its own when node_modules is a symlink to a
+      // relative install; resolve mocha from the real project.
+      mochaBin: options.mochaBin ?? resolveRepoMocha(configRoot),
+      qaSpecs: specs,
+    });
+    if (!result.ran) {
+      return { ran: false, reason: result.reason ?? 'baseline run did not start' };
+    }
+    // A baseline whose browser never launched measured nothing. Reporting that
+    // as "ran, counts unparseable" reads like a flaky parser; it is really an
+    // environment failure, and naming it is what lets an operator fix it.
+    if (isTier2EnvironmentalFailure(result.outputTail)) {
+      return {
+        ran: false,
+        reason: 'the baseline run could not launch the harness browser, so the pre-fix state was never measured',
+      };
+    }
+    // Mocha omits the "N failing" line entirely when everything passes, so a
+    // clean baseline must be recorded as 0 rather than left undefined —
+    // undefined means "unattributable" downstream and would wrongly suppress
+    // attribution for the case where the fix caused every failure.
+    const passed = result.passed === true;
+    const failing = passed ? 0 : parseMochaFailing(result.outputTail);
+    return {
+      ran: true,
+      passed,
+      ...(failing !== undefined ? { failing } : {}),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ran: false, reason: `baseline failed: ${message}` };
+  } finally {
+    if (sandbox) {
+      fs.rmSync(sandbox, { recursive: true, force: true });
+    }
+  }
+};
+
+/**
+ * Mocha's failing count from the epilogue, or undefined when absent (a crash
+ * before the summary prints, for instance).
+ */
+export const parseMochaFailing = (outputTail: string | undefined): number | undefined => {
+  if (!outputTail) {
+    return undefined;
+  }
+  const re = /(\d+)\s+failing\b/g;
+  let last: number | undefined;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(outputTail)) !== null) {
+    last = Number(m[1]);
+  }
+  return last;
+};
+
+/**
+ * How many of a post-fix run's failures are NEW relative to the baseline.
+ *
+ * Returns undefined when attribution is impossible (no baseline, or either side
+ * lacks a parseable count) — callers must treat that as "unknown", never as
+ * "none", or a real regression would be silently excused.
+ */
+export const newTier2Failures = (tier2: QaTier2Result | undefined): number | undefined => {
+  if (!tier2?.ran || tier2.passed !== false) {
+    return undefined;
+  }
+  const baseline = tier2.baseline;
+  if (!baseline?.ran || baseline.failing === undefined) {
+    return undefined;
+  }
+  const after = parseMochaFailing(tier2.outputTail);
+  if (after === undefined) {
+    return undefined;
+  }
+  return Math.max(0, after - baseline.failing);
+};
+
+/**
+ * True when tier-2 failed but every failure was already failing before the fix.
+ * Distinct from `newTier2Failures() === undefined`, which means unknown.
+ */
+export const tier2FailuresArePreExisting = (tier2: QaTier2Result | undefined): boolean =>
+  newTier2Failures(tier2) === 0;
+
+/**
+ * The transition line that attributes a tier-2 failure: how many failures are
+ * new versus already present before the fix, or an honest "attribution unknown"
+ * when no baseline could be established.
+ */
+export const tier2BaselineLine = (tier2: QaTier2Result): string => {
+  const baseline = tier2.baseline;
+  if (!baseline?.ran) {
+    return `tier-2 baseline: unavailable — ${baseline?.reason ?? 'not attempted'} (failures NOT attributed)`;
+  }
+  if (baseline.passed) {
+    return 'tier-2 baseline: pre-fix specs PASSED — every failure below is new in this change';
+  }
+  const fresh = newTier2Failures(tier2);
+  if (fresh === undefined) {
+    return `tier-2 baseline: pre-fix specs also failed (${baseline.failing ?? '?'} failing), but counts were unparseable — failures NOT attributed`;
+  }
+  if (fresh === 0) {
+    return `tier-2 baseline: pre-fix specs already failed the same count (${baseline.failing}) — NO new failures introduced by this change`;
+  }
+  return `tier-2 baseline: ${baseline.failing} pre-existing failure(s), ${fresh} NEW failure(s) introduced by this change`;
 };
 
 /**

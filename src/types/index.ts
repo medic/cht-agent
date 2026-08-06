@@ -845,6 +845,17 @@ export interface QaInput {
   /** Skip the interactive HC3 gate (automated / CI runs). */
   autoApprove?: boolean;
   /**
+   * Config-relative paths this run's development phase wrote — i.e. THE FIX.
+   *
+   * The tier-2 baseline reverts exactly these to reconstruct the pre-fix
+   * sources. Reverting everything dirty instead would also undo unrelated
+   * working-copy state: observed wiping the harness's `--no-sandbox` args out of
+   * harness.defaults.json, which crashed the baseline's Chromium and left the
+   * failure unattributable. When absent the baseline falls back to reverting all
+   * tracked modifications and says so.
+   */
+  fixFiles?: string[];
+  /**
    * F6: the target-bind delta from the development phase's XLSForm apply
    * (`XlsformApplyResult.bindDiff`). Its presence ACTIVATES the whole-document QA
    * oracle: reproduce (RED) additionally requires deployed-vs-local to differ
@@ -892,6 +903,28 @@ export interface QaTier2Result {
    * is true; useful for the report ("which specs constituted the proof").
    */
   specs?: string[];
+  /**
+   * The same specs run against the PRE-FIX sources, so a failure can be
+   * attributed.
+   *
+   * Tier-2 only runs after green, which left no way to tell "this change broke
+   * the spec" from "the spec was already red". Every failure was therefore
+   * blamed on the change: observed sending a retry to rewrite a shared date
+   * primitive to chase a pre-existing failure. Absent when the baseline could
+   * not be established (no git, no HEAD, sandbox failure) — in which case
+   * attribution is unknown and nothing is suppressed.
+   */
+  baseline?: QaTier2Baseline;
+}
+
+/** Outcome of the pre-fix tier-2 run used to attribute post-fix failures. */
+export interface QaTier2Baseline {
+  ran: boolean;
+  passed?: boolean;
+  /** Mocha's failing count for the pre-fix sources, when parseable. */
+  failing?: number;
+  /** Why the baseline could not be established. */
+  reason?: string;
 }
 
 /**
@@ -1279,6 +1312,17 @@ export interface GeneratedFile {
 /**
  * Code Generation Agent input
  */
+/**
+ * One line of a code-gen plan. Lives here (not in the code-gen interface) so
+ * CodeGenerationInput can reference it without types -> layers -> types cycling;
+ * `layers/code-gen/interface` re-exports it for existing importers.
+ */
+export interface PlanSummaryItem {
+  action: string;
+  filePath: string;
+  rationale: string;
+}
+
 export interface CodeGenerationInput {
   issue: IssueTemplate;
   orchestrationPlan: OrchestrationPlan;
@@ -1292,6 +1336,11 @@ export interface CodeGenerationInput {
   passingFiles?: GeneratedFile[];
   /** Files that the validator flagged — only regenerate these (preserves original action) */
   failingFiles?: FailingFileRef[];
+  /**
+   * The previous iteration's plan, carried forward so the planner refines that
+   * approach instead of re-deriving a new one against the rolled-back workspace.
+   */
+  previousPlan?: PlanSummaryItem[];
 }
 
 export type FailingFileRef = { path: string; action: 'create' | 'modify' };
@@ -1338,6 +1387,12 @@ export interface CodeGenerationResult {
   compileGateSkipped?: boolean;
   /** Human-readable reason associated with {@link compileGateSkipped}. */
   compileGateSkipReason?: string;
+  /**
+   * The plan this generation executed. The supervisor stores it and feeds it
+   * back as {@link CodeGenerationInput.previousPlan} on the next iteration so
+   * refinement builds on the same approach instead of re-deriving one.
+   */
+  plan?: PlanSummaryItem[];
 }
 
 /**
@@ -1396,13 +1451,90 @@ export interface FileValidationFeedback {
 }
 
 /**
+ * How severely a validation recommendation is treated by the refinement loop.
+ *
+ * 'blocking' — it names a correctness defect; it may buy ONE extra refinement
+ * pass even when the score cleared REFINEMENT_THRESHOLD (the m4 regression).
+ * 'advisory' — style / naming / comments / docs; recorded and reported, never
+ * worth an iteration.
+ */
+export type RecommendationSeverity = 'blocking' | 'advisory';
+
+/**
+ * A recommendation as the validator emitted it. The prompt asks for the object
+ * form (so severity comes free from a call we already pay for), but a bare
+ * string is still accepted — the heuristic fallback validator emits strings, and
+ * so does any model that ignores the shape.
+ */
+export type RawRecommendation =
+  | string
+  | {
+    text: string;
+    /** The validator's own severity call. Advisory here can still be overruled
+     * to blocking by the deterministic classifier; it is a vote, not a veto. */
+    severity?: RecommendationSeverity;
+    /** The generated file the recommendation applies to, when the validator knows. */
+    filePath?: string;
+  };
+
+/** Terminal disposition of a recommendation. There is deliberately no third state. */
+export type RecommendationDisposition = 'applied' | 'deferred';
+
+/**
+ * One recommendation with its triage outcome (m4). INVARIANT: `disposition` is
+ * always set, `deferralReason` is present whenever it is 'deferred', and
+ * `evidence` is present whenever it is 'applied'. Nothing is ever left blank —
+ * that is the whole point of the ledger.
+ */
+export interface TriagedRecommendation {
+  /** The recommendation, verbatim. */
+  text: string;
+  severity: RecommendationSeverity;
+  /** Which rule decided the severity — the audit trail for a human reviewer. */
+  signal: string;
+  /** Code anchors found in the text (identifiers, quoted spans, file paths). */
+  anchors: string[];
+  /** Generated files the anchors resolved to — the regeneration target set. */
+  targetFiles: string[];
+  disposition: RecommendationDisposition;
+  /** Present exactly when disposition === 'deferred'. */
+  deferralReason?: string;
+  /** Present exactly when disposition === 'applied'. */
+  evidence?: string;
+  /** Iteration this text was first raised on. */
+  firstRaisedOnIteration: number;
+  /** Iteration it was most recently raised on. */
+  lastRaisedOnIteration: number;
+}
+
+/**
+ * The ONE recommendation-driven refinement pass a development run is allowed
+ * (m4). Written by the validation node, read by resolveValidateImplEdge. Its
+ * state channel is sticky, so once it is set no second escalation can be
+ * requested — that is what bounds the mechanism to a single extra pass.
+ */
+export interface BlockingEscalation {
+  /** The iterationCount at request time; the resolver loops only for THIS pass. */
+  requestedOnIteration: number;
+  /** The blocking recommendation texts fed back to code generation. */
+  recommendations: string[];
+  /** Files marked failing so selective regeneration has real work to do. */
+  files: string[];
+}
+
+/**
  * Implementation validation result
  */
 export interface ImplementationValidation {
   requirementsMet: RequirementValidation[];
   acceptanceCriteriaPassed: AcceptanceCriteriaValidation[];
   overallScore: number; // 0-100
-  recommendations: string[];
+  /**
+   * Recommendations, string or {text, severity, filePath} (see RawRecommendation).
+   * Read the text via `recommendationText()` from utils/recommendation-triage —
+   * never assume a string.
+   */
+  recommendations: RawRecommendation[];
   feedbackForCodeGen?: string; // Actionable feedback for refinement loop retry
   perFileFeedback?: FileValidationFeedback[]; // Per-file pass/fail for selective regeneration
 }
@@ -1441,6 +1573,17 @@ export interface DevelopmentState {
   iterationCount?: number;
   validationFeedback?: string;
   perFileFeedback?: FileValidationFeedback[];
+  /**
+   * m4: every validation recommendation with its disposition — 'applied' or
+   * 'deferred' WITH a reason. Consumed by the HC2 banner, the development-results
+   * display, and the PR bundle, so a dropped recommendation is impossible to miss.
+   */
+  recommendationLedger?: TriagedRecommendation[];
+  /**
+   * m4: the one recommendation-driven refinement pass this run spent (if any).
+   * Present means it is spent; the validation node will not request another.
+   */
+  blockingEscalation?: BlockingEscalation;
   /**
    * Result of the deterministic XLSForm-fix node (mission 05). Present only for
    * a cht-conf form ticket whose descriptor applied + converted + asserted
@@ -1534,6 +1677,29 @@ export interface DevelopmentInput {
   codeContextFindings?: CodeContextFindings;
   options: DevelopmentOptions;
   additionalContext?: string;
+  /**
+   * The plan the last development pass executed, when this run is a QA-driven
+   * retry.
+   *
+   * A retry starts a fresh graph, so the in-graph carry-forward (which reads
+   * state.codeGeneration) sees nothing and the planner re-derives from scratch —
+   * observed reverting the previous pass's defensive fixes. Seeding it here
+   * makes a retry refine the same approach rather than pick a new one.
+   */
+  previousPlan?: PlanSummaryItem[];
+  /**
+   * Development iterations already spent before this run, so a QA retry's
+   * counter continues (`iteration 2`) instead of restarting at 1.
+   */
+  priorIterations?: number;
+  /**
+   * m4: the recommendation ledger from the previous development pass, when this
+   * run is a QA-driven retry. A retry starts a fresh graph, so without this seed
+   * the first pass's deferrals vanish from the final state and never reach the PR
+   * body. Note that the escalation marker is deliberately NOT carried: a retry is
+   * a new run and may spend its own single escalation pass.
+   */
+  priorRecommendationLedger?: TriagedRecommendation[];
 }
 
 /**
