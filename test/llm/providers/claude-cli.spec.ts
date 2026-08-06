@@ -145,6 +145,39 @@ describe('createClaudeCLIProvider (v9a.7) — spawn-arg construction', () => {
     expect(list).to.include('Read');
   });
 
+  // Regression: --disallowedTools denies at call time without hiding the tools,
+  // so the model still reaches for one, spends the single turn, and the run dies
+  // with error_max_turns. --tools "" empties the set so it cannot.
+  it('empties the tool set with --tools when options.disableTools=true', async () => {
+    const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
+    await provider.invoke('p', { disableTools: true });
+    const idx = spawnArgs[0].args.indexOf('--tools');
+    expect(idx).to.be.greaterThan(-1);
+    expect(spawnArgs[0].args[idx + 1]).to.equal('');
+  });
+
+  it('does NOT pass --tools when disableTools is not set', async () => {
+    const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
+    await provider.invoke('p');
+    expect(spawnArgs[0].args).to.not.include('--tools');
+  });
+
+  // With the tools gone the model can still narrate a fake tool call as text,
+  // which exits 0 and is accepted as the result. The prompt instruction is what
+  // prevents that, so it must actually reach stdin.
+  it('appends the no-tools instruction to the prompt when disableTools=true', async () => {
+    const { provider, getStdin } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
+    await provider.invoke('PROMPT_BODY', { disableTools: true });
+    expect(getStdin()).to.contain('PROMPT_BODY');
+    expect(getStdin()).to.contain('You have no tools and no filesystem access');
+  });
+
+  it('leaves the prompt untouched when tools stay enabled', async () => {
+    const { provider, getStdin } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
+    await provider.invoke('PROMPT_BODY');
+    expect(getStdin()).to.equal('PROMPT_BODY');
+  });
+
   it('honors per-invoke maxTurns override', async () => {
     const { provider, spawnArgs } = loadProvider([{ stdout: cliResultJson(), closeCode: 0 }]);
     await provider.invoke('p', { maxTurns: 75 });

@@ -45,9 +45,10 @@ export interface ClaudeCLIConfig {
 /**
  * Tools to deny when running the CLI in text-only mode.
  *
- * The CLI does not currently support a wildcard or empty-allow-list flag through
- * spawn without a shell, so we maintain an explicit deny list. Re-evaluate this
- * with each major CLI release.
+ * Kept as a defence-in-depth guard alongside `--tools ""` (see below): if a
+ * future CLI release changes what the empty tool set means, the deny list still
+ * blocks the write-capable tools under --dangerously-skip-permissions.
+ * Re-evaluate this with each major CLI release.
  */
 export const DISALLOWED_TOOLS = [
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -55,12 +56,30 @@ export const DISALLOWED_TOOLS = [
 ] as const;
 
 /**
+ * Appended to the prompt whenever tools are disabled.
+ *
+ * `--tools ""` removes the tools, but the model can still *narrate* a tool call
+ * — emitting a plausible-looking "Tool use: Bash" block as ordinary text. That
+ * exits 0 with is_error=false, so the caller accepts the narration as its
+ * result. Observed on the plan-generation prompt, which is dense with file
+ * paths: a 521-char fake tool transcript in place of a plan. Stating the
+ * constraint in the prompt is what actually stops it.
+ */
+const NO_TOOLS_INSTRUCTION = `
+
+IMPORTANT: You have no tools and no filesystem access in this environment. Do not call, invoke, or simulate any tool (no Read, Bash, Grep, or similar), and do not emit tool-call blocks. Every fact you need is in the context above; where something is unverifiable, state the assumption and continue. Respond with the requested output only.`;
+
+/**
  * Response structure from Claude CLI JSON output
  */
 interface CLIResponse {
   type: 'result';
-  subtype: 'success' | 'error';
-  result: string;
+  /**
+   * 'success' | 'error' | 'error_max_turns' | 'error_during_execution'. The
+   * error_* envelopes omit `result` entirely, so treat it as possibly absent.
+   */
+  subtype: string;
+  result?: string;
   session_id: string;
   total_cost_usd: number;
   duration_ms: number;
@@ -145,10 +164,17 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
         args.push('--dangerously-skip-permissions');
       }
 
+      // `--tools ""` empties the tool set; `--disallowedTools` stays as a
+      // defence-in-depth guard. The deny list alone is not enough: it denies at
+      // call time without hiding the tools, so the model still reaches for one,
+      // burns the single turn, and the run dies with error_max_turns (whose
+      // envelope carries no `result` field). NO_TOOLS_INSTRUCTION then stops the
+      // model narrating a tool call in place of the answer.
+      let effectivePrompt = prompt;
       if (options?.disableTools) {
-        // Disable all tools to force text-only output via an explicit deny list
-        // (see DISALLOWED_TOOLS for the rationale).
+        args.push('--tools', '');
         args.push('--disallowedTools', DISALLOWED_TOOLS.join(','));
+        effectivePrompt = `${prompt}${NO_TOOLS_INSTRUCTION}`;
       }
 
       const promptPreview = prompt.substring(0, 80).replaceAll('\n', ' ');
@@ -171,7 +197,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       // if `prompt.length` exceeds the pipe's high-water mark (typically 16 KiB)
       // and flushes as the kernel drains. No await needed: spawn doesn't read
       // stdout until the child runs.
-      proc.stdin?.end(prompt);
+      proc.stdin?.end(effectivePrompt);
 
       activeProcesses.add(proc);
 
@@ -314,7 +340,10 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
     const parsed = parseResponse(stdout);
 
     if (parsed.is_error) {
-      throw new Error(`Claude CLI error: ${parsed.result}`);
+      // The CLI's error envelopes (error_max_turns, error_during_execution)
+      // carry no `result`, so reporting it alone yields "error: undefined".
+      // `subtype` is the field that actually names the failure.
+      throw new Error(`Claude CLI error: ${parsed.result || parsed.subtype || 'unknown error'}`);
     }
 
     // Ensure result is always a string

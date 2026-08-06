@@ -304,6 +304,55 @@ describe('cht-conf-runner', () => {
       expect(result.commands).to.deep.equal(['convert-app-forms', 'upload-app-forms']);
     });
 
+    // Regression: the app-settings bucket compiles before it uploads, and
+    // cht-conf's eslint-loader resolves .eslintrc PLUGINS relative to the child's
+    // cwd, not --source. Spawning from anywhere else makes eslint-plugin-json
+    // unresolvable, webpack warns, and cht-conf turns that into a hard failure --
+    // the upload silently never runs. runOfflineCompile already pinned cwd for
+    // this reason; runBucket must too.
+    it('spawns with cwd = the config project (eslint-loader plugin resolution)', async () => {
+      const proc = makeFakeProc();
+      const { runBucket, spawnLog } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ action: 'app-settings', configPath: '/mnt/conf' }));
+      proc.emit('close', 0);
+      await promise;
+
+      expect(spawnLog[0].opts.cwd).to.equal('/mnt/conf');
+    });
+
+    // Regression: minimalEnv drops NODE_OPTIONS (not on the allow-list), and the
+    // app-settings bucket compiles with webpack 4, whose md4 hash aborts under
+    // Node>=17 without the legacy provider. runOfflineCompile already injected
+    // it; runBucket did not, so compile-app-settings died before the upload verb
+    // ever ran and the apply reported FAILED.
+    it('injects NODE_OPTIONS=--openssl-legacy-provider for the compile', async () => {
+      const proc = makeFakeProc();
+      const { runBucket, spawnLog } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ action: 'app-settings' }));
+      proc.emit('close', 0);
+      await promise;
+
+      const env = spawnLog[0].opts.env as NodeJS.ProcessEnv;
+      expect(env.NODE_OPTIONS).to.contain('--openssl-legacy-provider');
+    });
+
+    // The reason lived only in cht-conf's stdout and was discarded, so the QA
+    // log said "applied - FAILED" with no cause.
+    it('surfaces a tail of the cht-conf output when the bucket fails', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ action: 'app-settings' }));
+      proc.stdout.emit('data', Buffer.from('INFO packaging\nERROR Webpack warnings when building contact-summary\n'));
+      proc.emit('close', 1);
+
+      const result = await promise;
+      expect(result.status).to.equal('failed');
+      expect(result.warnings.join('\n')).to.contain('Webpack warnings when building contact-summary');
+    });
+
     it('does not pass secret-bearing env vars to the cht-conf child', async () => {
       const proc = makeFakeProc();
       const { runBucket, spawnLog } = loadRunner(proc);

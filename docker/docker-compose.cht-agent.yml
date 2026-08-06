@@ -14,7 +14,11 @@
 #   - NO Docker socket mount. A mounted socket grants host-root; env bring-up
 #     is human-gated instead.
 #   - NO SSH keys, host ~/.gitconfig, or write tokens enter the container.
-#   - Model credentials are mounted READ-ONLY.
+#   - Model credentials never come from the host filesystem. They live in the
+#     agent-claude-config named volume (minted in-container by a one-time
+#     `/login`), or arrive as CLAUDE_CODE_OAUTH_TOKEN. The old read-only
+#     ~/.claude/.credentials.json bind is still available, commented out below,
+#     for operators who prefer supplying them from outside.
 #   - The working copy's .git/config is shadowed by a hardened read-only file,
 #     so the agent cannot edit remotes or undo the push block.
 
@@ -44,10 +48,16 @@ services:
     networks:
       - cht-agent-net
     environment:
-      # Model credentials: runtime auth is the read-only .credentials.json
-      # mount below (claude-code OAuth). ANTHROPIC_API_KEY stays as an optional
-      # fallback for API-key-based runs; leave it unset when using OAuth.
+      # Model credentials: runtime auth is the one-time `/login` persisted in the
+      # agent-claude-config volume (see the volumes block). ANTHROPIC_API_KEY
+      # stays as an optional fallback for API-key-based runs; leave it unset
+      # when using OAuth.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Headless OAuth, for runs where no one can complete an interactive
+      # `/login` (CI, cron, a fresh volume). Mint it outside with
+      # `claude setup-token`. Takes effect without touching the volume, so it
+      # also works when agent-claude-config is empty.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       CHT_CORE_PATH: /workspace/cht-core
       # Deployment config repo (layer: cht-conf tickets are developed HERE,
       # never in cht-core) and the canonical baseline it is diffed against
@@ -119,18 +129,31 @@ services:
       # Defaults to the committed placeholder so core-only sessions need no setup;
       # point CHT_CONF_PATH at a real config working copy for cht-conf tickets.
       - ${CHT_CONF_PATH:-./conf-placeholder}:/workspace/cht-conf-project:rw
-      # Model credentials, read-only. ACTIVE since #134: the image bakes the
-      # Claude Code CLI (docker/Dockerfile) and this mount is its OAuth auth —
-      # the runtime path, replacing ANTHROPIC_API_KEY (kept only as a fallback).
-      # The seeding pipeline still authenticates via its own named volume
-      # (docker-compose.seeder.yml), not this bind.
-      # The file MUST exist as a regular file before `up` (run bootstrap-workspace.sh,
-      # which touches it) — otherwise Docker creates a root-owned directory at the
-      # target. Compose does NOT expand `~`, so the default uses ${HOME}; set
-      # CLAUDE_CREDENTIALS to an absolute path to override. NOTE: whatever is mounted
-      # here is fully readable by the agent's shell — use disposable, narrowly-scoped
-      # credentials, never your personal OAuth credentials (see docs/docker-agent-runbook.md).
-      - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
+      # Claude CLI OAuth credentials persist here — log in ONCE via:
+      #   docker exec -it cht-agent claude     # then /login
+      # (named volume is seeded from the image's baked CLAUDE.md/settings.json,
+      # mirroring docker-compose.seeder.yml's seeder-claude-config)
+      #
+      # Why a volume and not the old read-only .credentials.json bind: `/login`
+      # persists to that file, so a read-only bind made the login succeed in the
+      # interactive process and vanish for every `claude -p` after it. The login
+      # appeared to persist only because the REST of /home/agent/.claude was the
+      # container's writable layer — which `up -d` discards on recreate, so the
+      # first rebuild lost it.
+      #
+      # Trade-off, stated plainly: credentials are now MINTED inside the
+      # container and stored in a Docker volume, rather than supplied read-only
+      # from outside. Anything running in the container can use them. To keep the
+      # supply-from-outside posture instead, comment this volume out and restore
+      # the bind below, or set CLAUDE_CODE_OAUTH_TOKEN (above) and use neither.
+      - agent-claude-config:/home/agent/.claude
+      # Opt-in alternative to the volume above: supply credentials read-only from
+      # the host. `/login` cannot persist against this — mint them elsewhere (a
+      # disposable, narrowly-scoped account) and point CLAUDE_CREDENTIALS at the
+      # file. The file MUST exist as a regular file before `up` (bootstrap-workspace.sh
+      # touches it) or Docker creates a root-owned directory at the target.
+      # Compose does NOT expand `~`, so the default uses ${HOME}.
+      # - ${CLAUDE_CREDENTIALS:-${HOME}/.claude/.credentials.json}:/home/agent/.claude/.credentials.json:ro
       # Local-CA trust for the agent's fetch (pair with NODE_EXTRA_CA_CERTS
       # above, e.g. NODE_EXTRA_CA_CERTS=/workspace/local-ca.crt). Uncomment and
       # point LOCAL_CA_CERT at the CA file the test instance's nginx presents:
@@ -140,3 +163,14 @@ services:
         limits:
           memory: ${AGENT_MEMORY_LIMIT:-4g}
           cpus: "${AGENT_CPU_LIMIT:-2}"
+
+volumes:
+  # Claude CLI OAuth credentials + baked CLAUDE.md/settings.json. Survives
+  # `up -d` recreates and image rebuilds, so the one-time login sticks.
+  # Note: Docker seeds a named volume from the image ONLY when the volume is
+  # first created, so a later image that changes the baked CLAUDE.md/settings.json
+  # will NOT refresh it. To pick those up, remove the volume and log in again:
+  #   docker compose -f docker/docker-compose.cht-agent.yml down
+  #   docker volume rm docker_agent-claude-config   # `docker volume ls | grep agent-claude-config` if the project name differs
+  # Same caveat as seeder-claude-config.
+  agent-claude-config:

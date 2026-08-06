@@ -23,7 +23,12 @@ import { DEFAULT_MCP_SERVER_URL } from '../constants';
  */
 const DEFAULT_CONFIG: MCPClientConfig = {
   serverUrl: DEFAULT_MCP_SERVER_URL,
-  timeout: 30000, // 30 seconds
+  // ask_question is LLM-backed, so latency scales with question length. The
+  // questions buildQuestion() produces (title + 300 chars of description)
+  // measure 30-40s against the live server, which a 30s budget loses to about
+  // half the time. 120s leaves ~3x headroom over the worst observed run.
+  // Override with MCP_TIMEOUT.
+  timeout: 120000, // 2 minutes
 };
 
 /**

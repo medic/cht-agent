@@ -225,6 +225,26 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
  * per-bucket result (never rejects — a non-zero exit or spawn error becomes
  * `status: 'failed'` so the caller can aggregate without try/catch per bucket).
  */
+/** How much of a failed cht-conf run to keep as the diagnostic tail. */
+const FAILURE_TAIL_LINES = 12;
+const FAILURE_TAIL_MAX_CHARS = 2_000;
+
+/**
+ * The last few meaningful lines of a failed cht-conf run.
+ *
+ * Prefers ERROR/Error lines when present — cht-conf's real cause line is
+ * `ERROR <reason>`, which can otherwise be buried under a webpack stack trace.
+ */
+export const chtConfFailureTail = (output: string): string => {
+  const lines = output.split('\n').map(l => l.trimEnd()).filter(l => l.trim() !== '');
+  const errorLines = lines.filter(l => /\bERROR\b|\bError:/.test(l));
+  const chosen = (errorLines.length > 0 ? errorLines : lines).slice(-FAILURE_TAIL_LINES);
+  const text = chosen.join('\n');
+  return text.length > FAILURE_TAIL_MAX_CHARS
+    ? `${text.slice(-FAILURE_TAIL_MAX_CHARS)}\n... (truncated)`
+    : text;
+};
+
 export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActionResult> => {
   const verbs = CONFIG_ACTION_COMMANDS[options.action];
   const warnings: string[] = [];
@@ -242,6 +262,20 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     logLabel: `${options.action}: ${verbs.join(' ')}`,
     bin: options.bin,
     timeoutMs: options.timeoutMs,
+    // Same cwd requirement as runOfflineCompile (see its comment): cht-conf's
+    // eslint-loader resolves .eslintrc PLUGINS relative to the child's cwd, not
+    // --source. The app-settings bucket compiles before it uploads, so from any
+    // other cwd eslint-plugin-json fails to resolve, webpack warns, and cht-conf
+    // makes that a hard failure — the upload never runs and the apply reports
+    // FAILED with no visible reason.
+    cwd: options.configPath,
+    // Same reason runOfflineCompile sets it: minimalEnv drops NODE_OPTIONS
+    // (not on CHT_CONF_ENV_ALLOWLIST), and the app-settings bucket compiles
+    // with webpack 4, whose md4 hash aborts under Node>=17 without the legacy
+    // provider (ERR_OSSL_EVP_UNSUPPORTED). The container sets NODE_OPTIONS for
+    // exactly this, but the scrubbed child env never saw it — so the compile
+    // died before upload-app-settings ever ran.
+    extraEnv: { NODE_OPTIONS: COMPILE_NODE_OPTIONS },
   });
 
   let status: ConfigActionStatus;
@@ -254,6 +288,16 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     status = 'failed';
   } else {
     status = classifyChtConfOutput(run.output, run.exitCode);
+    if (status === 'failed') {
+      // Only the non-zero-exit path reaches here, and cht-conf puts the actual
+      // reason on stdout/stderr — which the classifier reads and drops. Without
+      // this the QA log says "applied — FAILED" with no cause, and the operator
+      // has to re-run the bucket by hand to find out why. Bounded tail: webpack
+      // dumps hundreds of lines, and the reason is always at the end.
+      warnings.push(
+        `cht-conf ${options.action} exited ${run.exitCode}:\n${chtConfFailureTail(run.output)}`,
+      );
+    }
   }
 
   return {

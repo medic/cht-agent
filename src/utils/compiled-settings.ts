@@ -43,6 +43,23 @@ import { ChtConfExecResult, SettingsSection, SettingsSectionCheck } from '../typ
 /** Where cht-conf writes the compiled settings inside the project dir. */
 const APP_SETTINGS_JSON = 'app_settings.json';
 
+/**
+ * Build artifacts that `compile-app-settings` regenerates from JS/JSON source.
+ *
+ * These are never hand-edited: the QA phase recompiles them offline (see
+ * compileSettingsOffline) and the deploy path runs compile+upload. Code
+ * generation therefore must not be held to producing them — the executor has no
+ * shell to run a build with, so a plan item naming one can never be satisfied.
+ */
+const COMPILED_ARTIFACTS = new Set<string>([APP_SETTINGS_JSON]);
+
+/**
+ * True when `filePath` names a compiled artifact rather than editable source.
+ * Matches on basename so it holds for both repo-relative and absolute paths.
+ */
+export const isCompiledArtifact = (filePath: string): boolean =>
+  COMPILED_ARTIFACTS.has(path.basename(filePath));
+
 /** The two sections whose values are minified JS bundle strings (compared ===). */
 const STRING_SECTIONS = new Set<string>(['tasks.rules', 'contact_summary']);
 
