@@ -376,3 +376,90 @@ describe('staging.ts mission-05 artifact helpers', () => {
     expect(await fs.readdir(scratch)).to.deep.equal([]);
   });
 });
+
+describe('generateDiffs — LCS alignment (not index-by-index)', () => {
+  let stagingDir: string;
+  let coreDir: string;
+
+  beforeEach(async () => {
+    stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'diff-stage-'));
+    coreDir = await fs.mkdtemp(path.join(os.tmpdir(), 'diff-core-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(stagingDir, { recursive: true, force: true });
+    await fs.rm(coreDir, { recursive: true, force: true });
+  });
+
+  const write = async (dir: string, name: string, lines: string[]): Promise<void> => {
+    await fs.writeFile(path.join(dir, name), lines.join('\n'), 'utf8');
+  };
+
+  // The old index-based comparison shifted every line after an insertion, so a
+  // one-line change to a large file reported the whole file as rewritten
+  // (observed: a 5-line tasks.js edit displayed as +2490 -2501).
+  it('reports a single inserted line as 1 addition, not a whole-file rewrite', async () => {
+    const original = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const modified = [...original.slice(0, 100), 'INSERTED', ...original.slice(100)];
+    await write(coreDir, 'big.js', original);
+    await write(stagingDir, 'big.js', modified);
+
+    const diffs = await generateDiffs(
+      [mkFile('big.js', '', 'modify')],
+      stagingDir,
+      coreDir,
+    );
+
+    expect(diffs[0].additions).to.equal(1);
+    expect(diffs[0].deletions).to.equal(0);
+  });
+
+  it('reports a single deleted line as 1 deletion', async () => {
+    const original = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const modified = original.filter((_, i) => i !== 50);
+    await write(coreDir, 'big.js', original);
+    await write(stagingDir, 'big.js', modified);
+
+    const diffs = await generateDiffs([mkFile('big.js', '', 'modify')], stagingDir, coreDir);
+    expect(diffs[0].additions).to.equal(0);
+    expect(diffs[0].deletions).to.equal(1);
+  });
+
+  it('counts a replaced line as one addition and one deletion', async () => {
+    const original = ['a', 'b', 'c', 'd', 'e'];
+    const modified = ['a', 'b', 'CHANGED', 'd', 'e'];
+    await write(coreDir, 's.js', original);
+    await write(stagingDir, 's.js', modified);
+
+    const diffs = await generateDiffs([mkFile('s.js', '', 'modify')], stagingDir, coreDir);
+    expect(diffs[0].additions).to.equal(1);
+    expect(diffs[0].deletions).to.equal(1);
+    expect(diffs[0].diff).to.contain('-c');
+    expect(diffs[0].diff).to.contain('+CHANGED');
+  });
+
+  // An unchanged line must never appear as both added and removed.
+  it('never renders an identical line as both + and -', async () => {
+    const original = ['keep', 'old', 'keep2', 'tail'];
+    const modified = ['keep', 'new', 'keep2', 'tail'];
+    await write(coreDir, 's.js', original);
+    await write(stagingDir, 's.js', modified);
+
+    const diffs = await generateDiffs([mkFile('s.js', '', 'modify')], stagingDir, coreDir);
+    const body = diffs[0].diff.split('\n');
+    expect(body).to.not.include('+keep');
+    expect(body).to.not.include('-keep');
+    expect(body).to.not.include('+tail');
+    expect(body).to.not.include('-tail');
+  });
+
+  it('emits no changes for identical content', async () => {
+    const lines = ['x', 'y', 'z'];
+    await write(coreDir, 's.js', lines);
+    await write(stagingDir, 's.js', lines);
+
+    const diffs = await generateDiffs([mkFile('s.js', '', 'modify')], stagingDir, coreDir);
+    expect(diffs[0].additions).to.equal(0);
+    expect(diffs[0].deletions).to.equal(0);
+  });
+});

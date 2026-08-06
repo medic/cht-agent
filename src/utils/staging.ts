@@ -8,6 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { diffArrays } from 'diff';
 import { GeneratedFile, FileDiff } from '../types';
 
 /**
@@ -84,52 +85,120 @@ function appendNewFileDiff(diffLines: string[], newLines: string[]): DiffResult 
   return { diff: diffLines.join('\n'), additions: newLines.length, deletions: 0 };
 }
 
-interface DiffChunk {
-  start: number;
-  lines: string[];
-}
+/**
+ * Lines of unchanged context kept around each change, as in `git diff -U3`.
+ */
+const DIFF_CONTEXT_LINES = 3;
 
+/**
+ * Render a real (LCS-aligned) unified diff.
+ *
+ * This previously compared originalLines[i] to newLines[i] index-by-index with
+ * no alignment, so a single inserted or deleted line shifted every line after
+ * it and the whole file rendered as changed — a 5-line edit to a 2,553-line
+ * tasks.js displayed as "+2490 -2501", with identical lines shown as both added
+ * and removed. HC2 exists so a human can review the change before it is
+ * written; a diff that reports every line as touched defeats that entirely.
+ * `diff` is already a dependency, so use its LCS implementation.
+ */
 function appendModifiedFileDiff(
   diffLines: string[],
   originalLines: string[],
   newLines: string[],
 ): DiffResult {
+  const parts = diffLines_(originalLines, newLines);
   const stats = { additions: 0, deletions: 0 };
-  const maxLines = Math.max(originalLines.length, newLines.length);
-  let chunk: DiffChunk = { start: -1, lines: [] };
-  for (let i = 0; i < maxLines; i++) {
-    chunk = stepDiff({ chunk, origLine: originalLines[i], newLine: newLines[i], i, stats, diffLines });
+  for (const part of parts) {
+    if (part.added) stats.additions += part.lines.length;
+    else if (part.removed) stats.deletions += part.lines.length;
   }
-  flushChunk(chunk, diffLines, stats);
+  renderHunks(diffLines, parts);
   return { diff: diffLines.join('\n'), additions: stats.additions, deletions: stats.deletions };
 }
 
-function stepDiff(args: {
-  chunk: DiffChunk;
-  origLine: string | undefined;
-  newLine: string | undefined;
-  i: number;
-  stats: { additions: number; deletions: number };
-  diffLines: string[];
-}): DiffChunk {
-  const { chunk, origLine, newLine, i, stats, diffLines } = args;
-  if (origLine === newLine) {
-    flushChunk(chunk, diffLines, stats);
-    return { start: -1, lines: [] };
-  }
-  const next = chunk.start === -1 ? { start: i, lines: [] } : chunk;
-  if (origLine !== undefined) { next.lines.push(`-${origLine}`); stats.deletions++; }
-  if (newLine !== undefined) { next.lines.push(`+${newLine}`); stats.additions++; }
-  return next;
+interface DiffPart {
+  added?: boolean;
+  removed?: boolean;
+  lines: string[];
 }
 
-function flushChunk(
-  chunk: DiffChunk,
-  diffLines: string[],
-  stats: { additions: number; deletions: number },
-): void {
-  if (chunk.start === -1 || chunk.lines.length === 0) return;
-  diffLines.push(`@@ -${chunk.start + 1},${stats.deletions} +${chunk.start + 1},${stats.additions} @@`, ...chunk.lines);
+const diffLines_ = (originalLines: string[], newLines: string[]): DiffPart[] =>
+  diffArrays(originalLines, newLines).map(part => ({
+    ...(part.added ? { added: true } : {}),
+    ...(part.removed ? { removed: true } : {}),
+    lines: part.value,
+  }));
+
+/**
+ * Group the LCS parts into hunks with up to DIFF_CONTEXT_LINES of surrounding
+ * context, emitting a `@@` header per hunk with correct 1-based line numbers.
+ */
+function renderHunks(diffLines: string[], parts: DiffPart[]): void {
+  let origLine = 1;
+  let newLine = 1;
+  let pending: { origStart: number; newStart: number; origCount: number; newCount: number; body: string[] } | null = null;
+
+  const flush = (): void => {
+    if (!pending) return;
+    diffLines.push(
+      `@@ -${pending.origStart},${pending.origCount} +${pending.newStart},${pending.newCount} @@`,
+      ...pending.body,
+    );
+    pending = null;
+  };
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part.added && !part.removed) {
+      const isFirst = pending === null;
+      const leading = isFirst ? [] : part.lines.slice(0, DIFF_CONTEXT_LINES);
+      const hasMoreChanges = parts.slice(i + 1).some(p => p.added || p.removed);
+      if (pending) {
+        for (const line of leading) {
+          pending.body.push(` ${line}`);
+          pending.origCount++;
+          pending.newCount++;
+        }
+        // A long unchanged run ends the hunk; a short one stays as inner context.
+        if (part.lines.length > DIFF_CONTEXT_LINES * 2 || !hasMoreChanges) flush();
+        else {
+          for (const line of part.lines.slice(DIFF_CONTEXT_LINES)) {
+            pending.body.push(` ${line}`);
+            pending.origCount++;
+            pending.newCount++;
+          }
+        }
+      }
+      origLine += part.lines.length;
+      newLine += part.lines.length;
+      continue;
+    }
+
+    if (!pending) {
+      // Open a hunk, back-filling trailing context from the previous unchanged run.
+      const prev = parts[i - 1];
+      const context = prev && !prev.added && !prev.removed ? prev.lines.slice(-DIFF_CONTEXT_LINES) : [];
+      pending = {
+        origStart: Math.max(1, origLine - context.length),
+        newStart: Math.max(1, newLine - context.length),
+        origCount: context.length,
+        newCount: context.length,
+        body: context.map(line => ` ${line}`),
+      };
+    }
+    for (const line of part.lines) {
+      if (part.added) {
+        pending.body.push(`+${line}`);
+        pending.newCount++;
+        newLine++;
+      } else {
+        pending.body.push(`-${line}`);
+        pending.origCount++;
+        origLine++;
+      }
+    }
+  }
+  flush();
 }
 
 /**
