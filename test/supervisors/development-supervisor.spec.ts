@@ -78,6 +78,42 @@ describe('resolveValidateImplEdge (R17.4)', () => {
     expect(resolveValidateImplEdge(state)).to.equal('__end__');
   });
 
+  // Regression: the loop can only act through selective regeneration, so an
+  // all-passing per-file feedback set makes the next iteration a no-op replay.
+  it('returns __end__ when below bar but no file is marked failing', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 95 },
+      iterationCount: 2,
+      codeGeneration: { crossFileIssues: [{ issueType: 'plan-adherence-missing' }] },
+      perFileFeedback: [{ passed: true }],
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('__end__');
+  });
+
+  it('still loops when a failing file remains to regenerate', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 95 },
+      iterationCount: 2,
+      codeGeneration: { crossFileIssues: [{ issueType: 'plan-adherence-missing' }] },
+      perFileFeedback: [{ passed: true }, { passed: false }],
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('generateCode');
+  });
+
+  // Iteration 1 has no per-file feedback yet and regenerates everything, so the
+  // guard must not short-circuit the first genuine retry.
+  it('still loops on iteration 1 when there is no per-file feedback', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 50 },
+      iterationCount: 0,
+      codeGeneration: { crossFileIssues: [] },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('generateCode');
+  });
+
   it('loops back to generateCode when score is below threshold and no execute-no-op', () => {
     const state: ValidateImplEdgeState = {
       ...baseState,

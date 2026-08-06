@@ -23,6 +23,12 @@ import {
   XlsformBindDiff,
 } from '../types';
 import { askYesNo } from '../utils/prompt';
+import {
+  tier2TailExcerpt,
+  isTier2EnvironmentalFailure,
+  tier2FailuresArePreExisting,
+} from '../utils/cht-conf-tier2';
+import { writePrBundle } from '../utils/pr-bundle';
 import { formatValidationScore } from '../utils/score-display';
 import {
   executeResearchWorkflow,
@@ -61,6 +67,121 @@ export interface QaOptions {
   /** F7: opt-in tier-2 QA (`--qa-tier2`) — repo-pinned harness spec after GREEN. */
   tier2?: boolean;
 }
+
+/**
+ * Bound on QA-driven development retries within one run.
+ *
+ * Each retry is human-approved, so this is a runaway guard rather than a policy
+ * limit — it stops a wrong-but-plausible fix from cycling the destructive
+ * seed/apply gate indefinitely if the operator keeps saying yes.
+ */
+const MAX_QA_RETRIES = 2;
+
+/**
+ * Render a failed QA run as development feedback.
+ *
+ * QA is the only phase that observes the fix against a real instance, so its
+ * evidence is the highest-signal input the next development iteration can get —
+ * without it the retry re-derives from the same static context that produced
+ * the failing fix. Reaches code generation as `additionalContext`, which the
+ * supervisor stores as `validationFeedback` and the plan prompt renders under
+ * "Validation Feedback from Previous Iteration".
+ */
+export const formatQaFeedback = (qa: QaResult): string => {
+  const lines: string[] = [
+    'The previous fix was applied to a live CHT instance and QA did not pass.',
+    `Reproduced (red baseline): ${qa.reproduced ? 'yes' : 'NO — the symptom never reproduced pre-fix'}`,
+    `Verified (green): ${qa.verified ? 'yes' : 'NO — the deployed artifact still fails the assertion'}`,
+  ];
+  if (qa.abortReason) {
+    lines.push(`Abort reason: ${qa.abortReason}`);
+  }
+  if (qa.redEvidence?.summary) {
+    lines.push(`Red evidence: ${qa.redEvidence.summary}`);
+  }
+  if (qa.greenEvidence?.summary) {
+    lines.push(`Green evidence: ${qa.greenEvidence.summary}`);
+  }
+  // Tier-2 is the only behavioural evidence in the pipeline (repo-pinned mocha
+  // over the harness specs), so its failure tail is the most actionable thing
+  // we can hand back — it names the assertion that broke, not just that one did.
+  if (qa.tier2?.ran && qa.tier2.passed === false) {
+    lines.push(`Tier-2 harness specs FAILED (${(qa.tier2.specs ?? []).join(', ') || 'specs unknown'}):`);
+    lines.push(tier2TailExcerpt(qa.tier2.outputTail));
+  }
+  if (qa.messages.length > 0) {
+    lines.push('QA transition log:', ...qa.messages.map(m => `  - ${m}`));
+  }
+  const blocker = qaRetryBlocker(qa);
+  if (blocker) {
+    lines.push(`NOTE: ${blocker}`);
+  }
+  return lines.join('\n');
+};
+
+/**
+ * Why a development retry cannot help, when that is knowable.
+ *
+ * Every one of these is a QA run that failed for a reason the code cannot fix,
+ * and each was observed steering an operator toward rewriting a correct fix.
+ * Returns undefined when the failure genuinely does implicate the change.
+ */
+export const qaRetryBlocker = (qa: QaResult): string | undefined => {
+  if (!qa.reproduced) {
+    return 'the red baseline did not reproduce, so this run proves nothing about the fix. ' +
+      'Check whether the deployed config already matches the corrected config before changing the implementation.';
+  }
+  if (qa.applyResult && !qa.applyResult.succeeded) {
+    // Verify then re-reads an unchanged instance and echoes the red string, so
+    // "green failed" here is arithmetic, not evidence about the fix.
+    return 'the config apply FAILED, so the fix was never deployed and never tested. ' +
+      'Green repeats red because the instance never changed. Fix the apply failure ' +
+      '(see the cht-conf output above), not the code.';
+  }
+  if (qa.verified && qa.tier2?.ran && qa.tier2.passed === false
+      && isTier2EnvironmentalFailure(qa.tier2.outputTail)) {
+    return 'green PASSED and tier-2 did not fail an assertion — the harness browser ' +
+      'failed to launch, so the specs never ran. This is an environment problem ' +
+      '(Chromium needs --no-sandbox under cap_drop ALL), not a defect in the fix.';
+  }
+  if (qa.verified && tier2FailuresArePreExisting(qa.tier2)) {
+    // The baseline run proved these specs were already red before the change.
+    return 'green PASSED and every tier-2 failure was already failing before this ' +
+      'change (see the baseline line above) — the fix introduced no new failures. ' +
+      'Retrying would send development to chase pre-existing breakage.';
+  }
+  return undefined;
+};
+
+/**
+ * HC4: surface a failed QA run and let the operator decide whether to spend
+ * another development pass on it. Never prompts under --qa-auto-approve; an
+ * unattended run must not sit waiting on stdin.
+ */
+const askQaRetry = async (qa: QaResult, qaOptions?: QaOptions): Promise<boolean> => {
+  console.log('\n╔════════════════════════════════════════════════════════════════╗');
+  console.log('║            HUMAN VALIDATION CHECKPOINT #4                      ║');
+  console.log('╚════════════════════════════════════════════════════════════════╝\n');
+  console.log('❌ QA did not pass. Evidence:\n');
+  console.log(formatQaFeedback(qa));
+  console.log('');
+
+  // Don't offer a retry the evidence already rules out — the prompt itself
+  // reads as a recommendation, and answering yes would rewrite a fix that was
+  // never tested or is already proven.
+  const blocker = qaRetryBlocker(qa);
+  if (blocker) {
+    console.log('⛔ Not offering a development retry — it cannot change this outcome.');
+    console.log(`   ${blocker}\n`);
+    return false;
+  }
+
+  if (qaOptions?.autoApprove) {
+    console.log('ℹ️  Non-interactive run (--qa-auto-approve): not retrying development.\n');
+    return false;
+  }
+  return askYesNo('🔁 Retry development with this QA feedback? [yes/no]: ');
+};
 
 /**
  * Ask user for development options (preview mode, etc.)
@@ -120,7 +241,7 @@ export const executeFullWorkflow = async (
   }
 
   // Execute development workflow (with optional human validation checkpoint #2 in preview mode)
-  const developmentResult = await executeDevelopmentWorkflow(
+  let developmentResult = await executeDevelopmentWorkflow(
     developmentSupervisor,
     developmentInput
   );
@@ -128,18 +249,94 @@ export const executeFullWorkflow = async (
   // Display development completion
   displayDevelopmentCompletion(developmentResult, developmentOptions);
 
+  // Every file THIS ticket wrote, across passes. A QA retry's filesWritten covers
+  // only that pass — the code-gen module captures its diff against a tree the
+  // previous pass's edits were stashed out of — yet those earlier files are still
+  // in the config mount and still part of this change. Both consumers need the
+  // union: the PR bundle scopes its patch to this set, and the tier-2 baseline
+  // reverts it to reconstruct the pre-fix sources.
+  const ticketFiles = new Set<string>(developmentResult.filesWritten ?? []);
+
   // QA phase (closed loop) — only when enabled, development approved, cht-conf.
   // F5: thread the dev phase's XLSForm apply bind-diff (nodeset + corrected
   // relevant) into QA so the fix's OWN bind is asserted red→green — a child bind
   // the group snapshot misses now fires RED against the still-buggy deployed form.
-  const qa = developmentResult.approved
+  let qa = developmentResult.approved
     ? await runQaPhase(
       ticket,
       developmentOptions,
       qaOptions,
-      developmentResult.result?.xlsformApply?.bindDiff
+      developmentResult.result?.xlsformApply?.bindDiff,
+      [...ticketFiles]
     )
     : undefined;
+
+  // HC4: QA is the only phase that tests the fix against a real instance, but
+  // its verdict used to be terminal — a failing fix ended the run with the
+  // evidence printed and nothing consuming it. Offer to spend another
+  // development pass with that evidence as feedback. Human-gated because each
+  // retry re-runs the destructive HC3 seed/apply against the live instance.
+  let qaRetries = 0;
+  while (qa?.ran && !qa.succeeded && qaRetries < MAX_QA_RETRIES) {
+    if (!(await askQaRetry(qa, qaOptions))) {
+      break;
+    }
+    qaRetries++;
+    console.log(`\n🔁 Re-running development with QA feedback (retry ${qaRetries}/${MAX_QA_RETRIES})...\n`);
+
+    const retryInput = createDevelopmentInput(researchResult.result, developmentOptions);
+    if (!retryInput) {
+      console.error('❌ Could not rebuild development input for the QA retry; keeping the current result.');
+      break;
+    }
+    retryInput.additionalContext = formatQaFeedback(qa);
+    // Carry the executed plan and the iteration count across the retry: without
+    // them the fresh graph re-plans from scratch (observed reverting the prior
+    // pass's fixes) and its log restarts at "iteration 1".
+    retryInput.previousPlan = developmentResult.result?.codeGeneration?.plan;
+    retryInput.priorIterations = developmentResult.iterationCount ?? 0;
+    // m4: a QA retry starts a fresh graph; without this the previous pass's
+    // deferrals disappear from the final state and never reach the PR body.
+    retryInput.priorRecommendationLedger = developmentResult.result?.recommendationLedger;
+
+    developmentResult = await executeDevelopmentWorkflow(developmentSupervisor, retryInput);
+    displayDevelopmentCompletion(developmentResult, developmentOptions);
+    for (const rel of developmentResult.filesWritten ?? []) {
+      ticketFiles.add(rel);
+    }
+
+    if (!developmentResult.approved) {
+      // The operator rejected the regenerated diff at HC2 — re-running QA would
+      // test a fix nobody accepted.
+      console.log('ℹ️  Development was not approved on retry; skipping the QA re-run.\n');
+      break;
+    }
+    qa = await runQaPhase(
+      ticket,
+      developmentOptions,
+      qaOptions,
+      developmentResult.result?.xlsformApply?.bindDiff,
+      [...ticketFiles]
+    );
+  }
+  if (qa?.ran && !qa.succeeded && qaRetries >= MAX_QA_RETRIES) {
+    console.log(`\n⚠️  QA still failing after ${MAX_QA_RETRIES} retries — stopping. Review the evidence above.\n`);
+  }
+
+  // Handoff artefact, written last so it can carry the QA verdict. The agent
+  // never pushes or opens PRs, so this is the only thing the operator needs to
+  // copy out of the container to raise the change against the real config repo.
+  const configRoot = developmentOptions.developmentTarget?.repoPath;
+  if (configRoot && developmentResult.approved) {
+    const ledger = developmentResult.result?.recommendationLedger;
+    await writePrBundle({
+      configRoot,
+      ticket,
+      filesWritten: [...ticketFiles],
+      ...(qa ? { qa } : {}),
+      ...(ledger && ledger.length > 0 ? { recommendations: ledger } : {}),
+    });
+  }
 
   return {
     research: researchResult,
@@ -163,7 +360,9 @@ export const runQaPhase = async (
   ticket: IssueTemplate,
   developmentOptions: DevelopmentOptions,
   qaOptions?: QaOptions,
-  bindDiff?: XlsformBindDiff
+  bindDiff?: XlsformBindDiff,
+  /** Files the development phase wrote — the tier-2 baseline reverts exactly these. */
+  fixFiles?: string[]
 ): Promise<QaResult | undefined> => {
   if (!qaOptions?.enabled) {
     return undefined;
@@ -181,6 +380,7 @@ export const runQaPhase = async (
     testDataPath: qaOptions.testDataPath,
     autoApprove: qaOptions.autoApprove,
     ...(bindDiff ? { bindDiff } : {}),
+    ...(fixFiles && fixFiles.length > 0 ? { fixFiles } : {}),
     ...(qaOptions.tier2 ? { tier2: qaOptions.tier2 } : {}),
   });
   if (!qaInput) {

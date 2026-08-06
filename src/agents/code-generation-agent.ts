@@ -355,6 +355,10 @@ export class CodeGenerationAgent {
       crossFileIssues: crossFileIssues.length > 0 ? crossFileIssues : undefined,
       compileGateSkipped: llmResult.compileGateSkipped,
       compileGateSkipReason: llmResult.compileGateSkipReason,
+      // Carried into the next iteration's plan prompt as a continuity anchor.
+      // Falls back to the plan we were given so a module that reports no plan
+      // (or a selective-regen pass that replans nothing) still keeps the thread.
+      plan: llmResult.plan ?? input.previousPlan,
     };
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
@@ -692,6 +696,7 @@ export class CodeGenerationAgent {
     moduleCrossFileIssues?: import('../types').CrossFileIssue[];
     compileGateSkipped?: boolean;
     compileGateSkipReason?: string;
+    plan?: import('../types').PlanSummaryItem[];
   }> {
     const moduleInput = this.buildModuleInput(input, context);
     const session = await this.initBeadsSession(input);
@@ -709,6 +714,7 @@ export class CodeGenerationAgent {
       partialGeneration: moduleOutput.partialGeneration,
       partialGenerationReason: moduleOutput.partialGenerationReason,
       moduleCrossFileIssues: moduleOutput.crossFileIssues,
+      plan: moduleOutput.plan,
       compileGateSkipped: moduleOutput.compileGateSkipped,
       compileGateSkipReason: moduleOutput.compileGateSkipReason,
     };
@@ -754,6 +760,7 @@ export class CodeGenerationAgent {
       listDirectory: (dirPath: string) => listChtCoreDirectory(dirPath, input.chtCorePath),
       directoryListing: context.directoryListing,
       failingFiles: input.failingFiles,
+      previousPlan: input.previousPlan,
     };
   }
 

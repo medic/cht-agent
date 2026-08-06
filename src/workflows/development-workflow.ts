@@ -20,6 +20,7 @@ import {
   GeneratedFile,
   DevelopmentWorkflowResult,
   HumanFeedback,
+  TriagedRecommendation,
 } from '../types';
 import { resolveDevelopmentTarget } from '../utils/dev-target';
 import { askYesNo, askForFeedback } from '../utils/prompt';
@@ -36,8 +37,10 @@ import {
   renderCompileGateSkipBanner,
   renderXlsformBindDiffBanner,
   renderXlsformExhaustedBanner,
+  renderRecommendationLedgerBanner,
 } from '../cli/display-helpers';
 import { formatValidationScore } from '../utils/score-display';
+import { recommendationText, summarizeLedger } from '../utils/recommendation-triage';
 
 const MAX_DEVELOPMENT_ITERATIONS = 3;
 
@@ -49,7 +52,11 @@ export const displayDevelopmentResults = (state: DevelopmentState, duration: str
   if (state.codeGeneration) displayCodeGenerationResults(state.codeGeneration);
   if (state.testGeneration) displayTestGenerationResults(state.testGeneration);
   if (state.validationResult) {
-    displayValidationResults(state.validationResult, state.xlsformApply !== undefined);
+    displayValidationResults(
+      state.validationResult,
+      state.xlsformApply !== undefined,
+      state.recommendationLedger,
+    );
   }
 };
 
@@ -118,6 +125,7 @@ function displayTestGenerationResults(testGen: NonNullable<DevelopmentState['tes
 function displayValidationResults(
   validation: NonNullable<DevelopmentState['validationResult']>,
   hasVerifiedApply: boolean,
+  ledger?: ReadonlyArray<TriagedRecommendation>,
 ): void {
   console.log('✅ VALIDATION RESULTS');
   console.log('─'.repeat(70));
@@ -128,8 +136,31 @@ function displayValidationResults(
   console.log(`Requirements Met: ${metCount}/${validation.requirementsMet.length}`);
   const passedCount = validation.acceptanceCriteriaPassed.filter(c => c.passed).length;
   console.log(`Acceptance Criteria Passed: ${passedCount}/${validation.acceptanceCriteriaPassed.length}`);
-  printNumberedList('💡 Recommendations:', validation.recommendations);
+  // m4: show each recommendation's DISPOSITION, not a flat list a reader can
+  // mistake for "handled". Falls back to the flat list when there is no ledger
+  // (heuristic validation path).
+  if (ledger && ledger.length > 0) {
+    printRecommendationDispositions(ledger);
+  } else {
+    printNumberedList('💡 Recommendations:', validation.recommendations.map(recommendationText));
+  }
   console.log();
+}
+
+function printRecommendationDispositions(ledger: ReadonlyArray<TriagedRecommendation>): void {
+  const counts = summarizeLedger(ledger);
+  console.log(
+    `\n💡 Recommendations: ${counts.applied} applied, ${counts.deferredBlocking} deferred (correctness), ` +
+      `${counts.deferredAdvisory} deferred (advisory)`,
+  );
+  ledger.forEach((entry, i) => {
+    const tag = entry.disposition === 'applied' ? 'APPLIED' : `DEFERRED/${entry.severity}`;
+    console.log(`   ${i + 1}. [${tag}] ${entry.text}`);
+    const detail = entry.disposition === 'applied' ? entry.evidence : entry.deferralReason;
+    if (detail) {
+      console.log(`      ${detail}`);
+    }
+  });
 }
 
 function printNumberedList(heading: string, items: ReadonlyArray<string>): void {
@@ -210,6 +241,13 @@ function displayCheckpointBanners(state: DevelopmentState, chtCorePath: string):
   const banner = renderCrossFileIssueBanner(state.codeGeneration?.crossFileIssues);
   if (banner) {
     console.log(banner);
+    console.log();
+  }
+  // m4: deferred validation recommendations — the human at HC2 is the last
+  // chance to catch a correctness item the loop chose not to spend a pass on.
+  const ledgerBanner = renderRecommendationLedgerBanner(state.recommendationLedger);
+  if (ledgerBanner) {
+    console.log(ledgerBanner);
     console.log();
   }
   // Mission 05: for an XLSForm fix, show the bind-level diff — the regenerated

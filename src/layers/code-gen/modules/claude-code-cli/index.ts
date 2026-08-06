@@ -42,6 +42,7 @@ import {
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
+import { isCompiledArtifact } from '../../../../utils/compiled-settings';
 
 const PLAN_PHASE_TOOLS = ['Read', 'Grep', 'Glob'];
 const EXECUTE_PHASE_TOOLS = ['Read', 'Write', 'Edit', 'Grep', 'Glob'];
@@ -181,6 +182,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       crossFileIssues: moduleIssues.length > 0 ? moduleIssues : undefined,
       compileGateSkipped: compileResult.skipped,
       compileGateSkipReason: compileResult.skipReason,
+      plan: plan as PlanSummaryItem[],
     };
   }
 
@@ -626,6 +628,16 @@ function buildDeclaredPathIssues(
  *
  *  - `plan-adherence-missing`: planned file was not touched in cht-core.
  *  - `plan-adherence-extra`: cht-core file was touched but was not in the plan.
+ *
+ * Compiled artifacts (app_settings.json) are exempt from the `missing` check.
+ * The plan phase reads the repo and correctly concludes they must be
+ * regenerated, but the execute phase has no Bash (EXECUTE_PHASE_TOOLS) so it
+ * cannot run `compile-app-settings`, and hand-editing a minified webpack bundle
+ * is not an option. Flagging that gap produced an unwinnable refinement loop:
+ * replan, re-execute, same issue, until max iterations. The artifact is
+ * regenerated for real by the QA compile, so nothing is lost by not demanding
+ * it here. `extra` still applies — an unplanned write to a build artifact is
+ * genuine drift worth surfacing.
  */
 export function reconcilePlanAdherence(
   plan: PlanItem[],
@@ -634,7 +646,9 @@ export function reconcilePlanAdherence(
   const planPaths = new Set(plan.map(p => p.filePath));
   const generatedPaths = new Set(generatedFiles.map(f => f.path));
 
-  const missing = [...planPaths].filter(p => !generatedPaths.has(p));
+  const missing = [...planPaths].filter(
+    p => !generatedPaths.has(p) && !isCompiledArtifact(p),
+  );
   const extra = [...generatedPaths].filter(p => !planPaths.has(p));
 
   const issues: CrossFileIssue[] = [];

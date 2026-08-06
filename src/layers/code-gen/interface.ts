@@ -1,4 +1,4 @@
-import { IssueTemplate, OrchestrationPlan, ResearchFindings, FailingFileRef, CrossFileIssue } from '../../types';
+import { IssueTemplate, OrchestrationPlan, ResearchFindings, FailingFileRef, CrossFileIssue, PlanSummaryItem } from '../../types';
 import type { CodeContextFindings } from '../../types';
 
 export interface ContextFile {
@@ -19,11 +19,7 @@ export interface GeneratedFile {
 /**
  * Lightweight plan summary surfaced to callbacks. The module is free to use a richer internal shape.
  */
-export interface PlanSummaryItem {
-  action: string;
-  filePath: string;
-  rationale: string;
-}
+export type { PlanSummaryItem } from '../../types';
 
 export interface CodeGenModuleInput {
   ticket: IssueTemplate;
@@ -42,6 +38,17 @@ export interface CodeGenModuleInput {
   directoryListing?: string;
   /** When set, only regenerate these files (selective regeneration on retry) */
   failingFiles?: ReadonlyArray<FailingFileRef>;
+  /**
+   * The plan the previous iteration executed, carried forward as a constraint.
+   *
+   * Each refinement iteration re-plans from a rolled-back workspace, so without
+   * this the planner re-derives the design from scratch and is free to pick a
+   * different approach every round — observed as five mutually inconsistent
+   * designs across five iterations of one ticket. Rendered into the plan prompt
+   * as "keep this approach unless the feedback contradicts it", which turns the
+   * loop into refinement instead of re-litigation.
+   */
+  previousPlan?: ReadonlyArray<PlanSummaryItem>;
 
   // Optional lifecycle callbacks. The agent (or any wrapper) wires these to a tracker
   // such as Beads. Modules invoke them at the documented points. All callbacks are
@@ -82,6 +89,11 @@ export interface CodeGenModuleOutput {
   compileGateSkipped?: boolean;
   /** Human-readable reason associated with {@link compileGateSkipped}. */
   compileGateSkipReason?: string;
+  /**
+   * The plan this run executed. Surfaced so the supervisor can feed it back as
+   * {@link CodeGenModuleInput.previousPlan} on the next refinement iteration.
+   */
+  plan?: PlanSummaryItem[];
 }
 
 export interface CodeGenModule {

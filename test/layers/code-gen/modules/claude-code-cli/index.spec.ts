@@ -1004,3 +1004,39 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     });
   });
 });
+
+describe('reconcilePlanAdherence — compiled-artifact exemption', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { reconcilePlanAdherence } = require('../../../../../src/layers/code-gen/modules/claude-code-cli/index');
+  const item = (filePath: string) => ({ filePath, action: 'MODIFY' as const, rationale: 'r' });
+
+  // The executor has no Bash, so it can never produce app_settings.json.
+  // Flagging it made the refinement loop unwinnable.
+  it('does not flag app_settings.json as missing when the CLI did not write it', () => {
+    const issues = reconcilePlanAdherence(
+      [item('tasks.js'), item('app_settings.json')],
+      [{ path: 'tasks.js' }],
+    );
+    expect(issues).to.have.length(0);
+  });
+
+  it('still flags a non-artifact planned file that was not written', () => {
+    const issues = reconcilePlanAdherence(
+      [item('tasks.js'), item('nools-extras.js')],
+      [{ path: 'tasks.js' }],
+    );
+    expect(issues).to.have.length(1);
+    expect(issues[0].issueType).to.equal('plan-adherence-missing');
+    expect(issues[0].filePath).to.equal('nools-extras.js');
+  });
+
+  // An unplanned write to a build artifact is still real drift.
+  it('still flags app_settings.json as extra when written but unplanned', () => {
+    const issues = reconcilePlanAdherence(
+      [item('tasks.js')],
+      [{ path: 'tasks.js' }, { path: 'app_settings.json' }],
+    );
+    expect(issues).to.have.length(1);
+    expect(issues[0].issueType).to.equal('plan-adherence-extra');
+  });
+});

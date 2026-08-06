@@ -24,6 +24,7 @@ import {
   ContextAnalysisResult,
   CodeContextFindings,
   CodeGenerationResult,
+  PlanSummaryItem,
   TestGenerationResult,
   ImplementationValidation,
   GeneratedFile,
@@ -32,6 +33,8 @@ import {
   CrossFileIssue,
   XlsformApplyResult,
   XlsformApplyExhausted,
+  TriagedRecommendation,
+  BlockingEscalation,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { TestGenerationAgent, TestGenerationInput } from '../agents/test-generation-agent';
@@ -52,6 +55,14 @@ import { generateHarnessSpec, generateContactFormSpec } from '../utils/cht-conf-
 import { createTwoFilesPatch, structuredPatch } from 'diff';
 import { readEnv } from '../utils/env';
 import { REFINEMENT_THRESHOLD, formatValidationScore } from '../utils/score-display';
+import {
+  applyEscalationToLedger,
+  mergeRecommendationLedger,
+  planRecommendationEscalation,
+  recommendationText,
+  summarizeLedger,
+  triageRecommendations,
+} from '../utils/recommendation-triage';
 
 /**
  * The refinement-loop iteration budget. Default 3; overridable via
@@ -105,6 +116,8 @@ export interface ValidateImplEdgeState {
     crossFileIssues?: { issueType?: string }[];
     files?: { relativePath?: string }[];
   };
+  /** Drives selective regeneration; an all-passing set means a retry is a no-op. */
+  perFileFeedback?: { passed?: boolean }[];
 }
 
 /**
@@ -164,6 +177,21 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
     return '__end__';
   }
   const belowBar = score < REFINEMENT_THRESHOLD || issues.length > 0;
+  // From iteration 2 on, code generation only reworks the files the per-file
+  // feedback marked failing (buildSelectiveRegenInput). When that set is empty
+  // the next pass regenerates nothing and just replays an identical
+  // plan+execute cycle, so whatever issue is holding the score down survives
+  // every retry — the same dead end as execute-no-op above, just reached by a
+  // different route. Observed burning three ~4-minute iterations on a single
+  // unsatisfiable plan item.
+  const feedback = state.perFileFeedback ?? [];
+  if (belowBar && iterations >= 1 && feedback.length > 0 && feedback.every(f => f.passed)) {
+    console.log(
+      '[Development Supervisor] No failing files to regenerate; the refinement loop cannot ' +
+        'change the outcome — ending workflow',
+    );
+    return '__end__';
+  }
   if (belowBar && iterations < MAX_ITERATIONS) {
     logRefinementLoop(score, issues, iterations);
     return 'generateCode';
@@ -229,6 +257,27 @@ export function resolveApplyXlsformFixEdge(
     return '__end__';
   }
   return 'generateTests';
+}
+
+/** Reason recorded when recommendation-driven refinement is not wired. */
+const RECORD_ONLY_DEFERRAL =
+  'blocking — recorded for human review; automatic recommendation-driven refinement is off';
+
+/**
+ * m4: paths where a recommendation-driven refinement pass is pointless, with the
+ * reason to record on the deferral. execute-no-op means generation abstained
+ * (another pass replays the same abstain); a descriptor run's verdict belongs to
+ * the deterministic applyXlsformFix (F8 economics), not the LLM's advice.
+ */
+function escalationBlockedReason(codeGeneration: CodeGenerationResult): string | undefined {
+  const issues = codeGeneration.crossFileIssues ?? [];
+  if (issues.some(i => i.issueType === 'execute-no-op')) {
+    return 'blocking — code generation abstained (execute-no-op); another pass cannot help';
+  }
+  if (hasXlsformDescriptor({ codeGeneration })) {
+    return 'blocking — the deterministic XLSForm apply owns the verdict on this path';
+  }
+  return undefined;
 }
 
 function applyFailed(state: ApplyXlsformFixEdgeState): boolean {
@@ -336,6 +385,32 @@ const DevelopmentStateAnnotation = Annotation.Root({
   }),
   /** Per-file validation results for selective regeneration */
   perFileFeedback: Annotation<FileValidationFeedback[] | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  /**
+   * m4: every validation recommendation with its disposition ('applied', or
+   * 'deferred' WITH a reason). Rewritten in full by each validation pass.
+   */
+  recommendationLedger: Annotation<TriagedRecommendation[]>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => [],
+  }),
+  /**
+   * m4: the ONE recommendation-driven refinement pass this run is allowed.
+   * STICKY on purpose (`update ?? current`) — once set, the validation node will
+   * not request a second one, and that is what makes the extra pass
+   * non-repeating rather than an infinite loop.
+   */
+  blockingEscalation: Annotation<BlockingEscalation | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
+  /**
+   * Plan carried in from a previous development run (a QA-driven retry), used
+   * on iteration 1 when there is no in-graph codeGeneration to read it from.
+   */
+  carriedPlan: Annotation<PlanSummaryItem[] | undefined>({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
@@ -461,6 +536,11 @@ export class DevelopmentSupervisor {
         additionalContext: state.validationFeedback || undefined,
         passingFiles: selective.passingFiles,
         failingFiles: selective.failingFiles,
+        // On entry this still holds the PREVIOUS iteration's result, so its plan
+        // is the one to carry forward. On iteration 1 it is empty, and
+        // `carriedPlan` supplies the plan from a prior QA-driven run (undefined
+        // on a first pass, which is correct — nothing to stay consistent with).
+        previousPlan: state.codeGeneration?.plan ?? state.carriedPlan,
       });
 
       this.todos.complete(todoId);
@@ -534,7 +614,7 @@ export class DevelopmentSupervisor {
     if (codeGeneration.files.length === 0) {
       return this.skipValidationForEmptyFiles({ issue, codeGeneration, todoId });
     }
-    return await this.runValidationWithTodo({ issue, codeGeneration, todoId });
+    return await this.runValidationWithTodo({ issue, codeGeneration, todoId, state });
   }
 
   private skipValidationForEmptyFiles(opts: {
@@ -554,6 +634,7 @@ export class DevelopmentSupervisor {
     issue: IssueTemplate;
     codeGeneration: CodeGenerationResult;
     todoId: string;
+    state: typeof DevelopmentStateAnnotation.State;
   }) {
     try {
       const validation = await this.validateImplementation(
@@ -561,7 +642,7 @@ export class DevelopmentSupervisor {
         opts.codeGeneration
       );
       this.todos.complete(opts.todoId);
-      return this.buildValidationStateUpdate(validation, opts.codeGeneration);
+      return this.buildValidationStateUpdate(validation, opts.codeGeneration, opts.state);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.todos.fail(opts.todoId, errorMessage);
@@ -582,6 +663,7 @@ export class DevelopmentSupervisor {
   private buildValidationStateUpdate(
     validation: ImplementationValidation,
     codeGeneration: CodeGenerationResult,
+    state: typeof DevelopmentStateAnnotation.State,
   ): Record<string, unknown> {
     const feedbackUpdate: Record<string, unknown> = {
       validationResult: validation,
@@ -604,8 +686,69 @@ export class DevelopmentSupervisor {
       feedbackUpdate.perFileFeedback = validation.perFileFeedback;
     }
 
+    this.applyRecommendationTriage({ validation, codeGeneration, state, update: feedbackUpdate });
+
     return feedbackUpdate;
   }
+
+  /**
+   * m4: triage this pass's recommendations and, if one of them names a
+   * correctness defect, spend the run's single extra refinement pass on it.
+   *
+   * Deterministic and LLM-free (see utils/recommendation-triage). Mutates the
+   * state update in place:
+   *  - `recommendationLedger` always — every recommendation gets a disposition,
+   *    so nothing is silently dropped even when we do not escalate;
+   *  - on escalation only: `blockingEscalation` (the sticky, once-per-run
+   *    marker the edge resolver reads), a `perFileFeedback` set that marks the
+   *    target files failing while keeping every other generated file passing (so
+   *    selective regeneration has real work AND carry-forward is preserved), and
+   *    `validationFeedback` with the blocking texts folded in — above the score
+   *    threshold deriveValidationFeedback returns undefined, which is why m4's
+   *    recommendations never reached code generation.
+   */
+  private applyRecommendationTriage(args: {
+    validation: ImplementationValidation;
+    codeGeneration: CodeGenerationResult;
+    state: typeof DevelopmentStateAnnotation.State;
+    update: Record<string, unknown>;
+  }): void {
+    const { validation, codeGeneration, state, update } = args;
+    const iteration = state.iterationCount ?? 0;
+    const ledger = mergeRecommendationLedger({
+      previous: state.recommendationLedger ?? [],
+      current: triageRecommendations({
+        recommendations: validation.recommendations ?? [],
+        files: codeGeneration.files,
+        iteration,
+      }),
+      iteration,
+      escalatedTexts: state.blockingEscalation?.recommendations ?? [],
+    });
+    const plan = planRecommendationEscalation({
+      ledger,
+      iteration,
+      maxIterations: MAX_ITERATIONS,
+      // Record-only: escalation is not wired (validator-triage edits 6-8 cut), so
+      // every open blocking item defers with a reason instead of buying a pass.
+      alreadyEscalated: true,
+      blockedReason: escalationBlockedReason(codeGeneration) ?? RECORD_ONLY_DEFERRAL,
+    });
+    const stamped = applyEscalationToLedger(ledger, plan);
+    update.recommendationLedger = stamped;
+    const counts = summarizeLedger(stamped);
+    console.log(
+      `[Development Supervisor] Recommendation triage: ${counts.applied} applied, ` +
+        `${counts.deferredBlocking} deferred (correctness), ${counts.deferredAdvisory} deferred (advisory)`,
+    );
+    if (counts.deferredBlocking > 0) {
+      console.log(
+        `[Development Supervisor] ${counts.deferredBlocking} blocking recommendation(s) DEFERRED — ` +
+          `${plan.blockedReason ?? RECORD_ONLY_DEFERRAL}`,
+      );
+    }
+  }
+
 
   /**
    * Node: apply XLSForm fix (mission 05).
@@ -763,6 +906,11 @@ export class DevelopmentSupervisor {
       orchestrationPlan: state.orchestrationPlan,
       codeGeneration: state.codeGeneration,
       chtCorePath: state.options.chtCorePath,
+      // Test generation was the one consumer of the refinement loop that never
+      // saw why the last attempt failed: the field existed but nothing filled
+      // it, so specs were regenerated blind against QA and validation feedback
+      // that code generation had already acted on.
+      ...(state.validationFeedback ? { additionalContext: state.validationFeedback } : {}),
     };
     return this.runTestGenWithFallback(input, todoId, emptyResult);
   }
@@ -1011,7 +1159,7 @@ export class DevelopmentSupervisor {
     const recs = renderBulletSection(
       'Recommendations',
       validation.recommendations,
-      r => r,
+      recommendationText,
     );
     if (recs) parts.push(recs);
 
@@ -1079,6 +1227,14 @@ Look for:
 Also provide specific, actionable feedback that could be used to improve the code in a retry.
 For each generated file, indicate whether it passed or failed validation, and list specific issues found.
 
+## Recommendation Rules
+- Every recommendation MUST carry a severity. Use "blocking" when NOT doing it leaves a correctness
+  defect: a wrong or missing rule, a wrong unit/threshold, a dropped case, a false positive or false
+  negative. Use "advisory" ONLY for style, naming, comments, or documentation.
+- A recommendation you would phrase with "should" or "must" is blocking, even when the overall score
+  is high. Do not soften severity because most requirements passed.
+- Set "filePath" to the generated file the recommendation applies to whenever you can.
+
 Respond with a JSON object:
 {
   "requirementsMet": [
@@ -1088,7 +1244,9 @@ Respond with a JSON object:
     { "criteria": "...", "passed": true/false, "notes": "..." }
   ],
   "overallScore": 0-100,
-  "recommendations": ["..."],
+  "recommendations": [
+    { "text": "...", "severity": "blocking" | "advisory", "filePath": "path/to/file.ts" }
+  ],
   "feedbackForCodeGen": "Specific actionable feedback for code generation retry, addressing gaps in the implementation",
   "perFileFeedback": [
     { "filePath": "path/to/file.ts", "passed": true/false, "issues": ["specific issue found in this file"] }
@@ -1286,8 +1444,18 @@ Respond with a JSON object:
       validationResult: undefined,
       currentPhase: 'init',
       errors: [],
-      iterationCount: 0,
+      // A QA retry continues the count rather than restarting, so the log reads
+      // "iteration 2" and the MAX_ITERATIONS budget spans the whole ticket.
+      iterationCount: input.priorIterations ?? 0,
       validationFeedback: input.additionalContext,
+      // m4: a QA retry continues the ledger so the first pass's deferrals still
+      // reach HC2 and the PR body. blockingEscalation is deliberately NOT
+      // carried — a retry is a new run and may spend its own single pass.
+      recommendationLedger: input.priorRecommendationLedger ?? [],
+      blockingEscalation: undefined,
+      // Seeds the plan carry-forward for a QA retry; the in-graph path
+      // (state.codeGeneration.plan) takes over from the second iteration on.
+      carriedPlan: input.previousPlan,
       perFileFeedback: undefined,
       xlsformApply: undefined,
       xlsformApplyExhausted: undefined,
@@ -1314,6 +1482,16 @@ Respond with a JSON object:
           overallScore: result.validationResult.overallScore,
           hasVerifiedApply: result.xlsformApply !== undefined,
         })}`,
+      );
+    }
+    // m4: make the disposition of every recommendation visible in the run log,
+    // so a deferral is on the record even when nobody reads the PR bundle.
+    const ledgerCounts = summarizeLedger(result.recommendationLedger ?? []);
+    if (ledgerCounts.total > 0) {
+      console.log(
+        `Recommendations: ${ledgerCounts.applied} applied, ` +
+          `${ledgerCounts.deferredBlocking} deferred (correctness), ` +
+          `${ledgerCounts.deferredAdvisory} deferred (advisory)`,
       );
     }
 

@@ -238,3 +238,54 @@ describe('buildXlsformFixBrief — artifact-aware paths (P1)', () => {
     expect(brief).to.match(/[Ll]egacy.*relevant|relevant.*normalize/);
   });
 });
+
+describe('buildPlanPrompt — previous-plan carry-forward', () => {
+  const prevPlan = [
+    { action: 'MODIFY', filePath: 'tasks.js', rationale: 'fix resolvedIf sourceID' },
+  ];
+
+  it('omits the section entirely on iteration 1', () => {
+    const prompt = buildPlanPrompt(baseInput(), emptyManifest);
+    expect(prompt).to.not.contain("Previous Iteration's Plan");
+  });
+
+  // Without this anchor the planner re-derives the design each iteration and can
+  // land on a different approach every round.
+  it('renders the prior plan as a constraint when present', () => {
+    const prompt = buildPlanPrompt(baseInput({ previousPlan: prevPlan }), emptyManifest);
+    expect(prompt).to.contain("Previous Iteration's Plan");
+    expect(prompt).to.contain('MODIFY tasks.js - fix resolvedIf sourceID');
+    expect(prompt).to.contain('KEEP the same');
+  });
+
+  it('treats an empty prior plan as absent', () => {
+    const prompt = buildPlanPrompt(baseInput({ previousPlan: [] }), emptyManifest);
+    expect(prompt).to.not.contain("Previous Iteration's Plan");
+  });
+});
+
+describe('buildPlanPrompt — compiled-artifact rule is layer-scoped', () => {
+  const withLayer = (layer?: 'cht-conf' | 'cht-core') => {
+    const input = baseInput();
+    return {
+      ...input,
+      ticket: {
+        issue: {
+          ...input.ticket.issue,
+          technical_context: { ...input.ticket.issue.technical_context, layer },
+        },
+      },
+    } as CodeGenModuleInput;
+  };
+
+  it('tells cht-conf plans to leave app_settings.json alone', () => {
+    const prompt = buildPlanPrompt(withLayer('cht-conf'), emptyManifest);
+    expect(prompt).to.contain('Do NOT include app_settings.json as a plan item');
+  });
+
+  // cht-core legitimately hand-edits app_settings.json (permission additions).
+  it('does not add the rule for cht-core', () => {
+    const prompt = buildPlanPrompt(withLayer('cht-core'), emptyManifest);
+    expect(prompt).to.not.contain('Do NOT include app_settings.json as a plan item');
+  });
+});

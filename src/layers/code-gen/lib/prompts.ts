@@ -264,6 +264,34 @@ Use this EXACT format (do NOT wrap file paths in backticks):
 Output ONLY the plan section. Do not generate any file content.`;
 }
 
+/**
+ * Render the previous iteration's plan as a continuity constraint.
+ *
+ * Refinement iterations re-plan against a rolled-back workspace, so the planner
+ * otherwise re-derives the design each round and can legitimately land on a
+ * different-but-defensible approach every time — the loop churns instead of
+ * converging. Anchoring to the prior plan makes divergence a deliberate,
+ * feedback-justified act rather than the default.
+ */
+export function buildPreviousPlanSection(
+  previousPlan: CodeGenModuleInput['previousPlan'],
+): string {
+  if (!previousPlan || previousPlan.length === 0) return '';
+  const items = previousPlan
+    .map((p, i) => `${i + 1}. ${p.action} ${p.filePath} - ${p.rationale}`)
+    .join('\n');
+  return `
+## Previous Iteration's Plan (carry forward)
+This plan was already approved and executed. Its approach is the baseline: KEEP the same
+files and the same design decisions unless the validation feedback above gives a concrete
+reason to change them. Do not re-derive the approach from scratch or switch to an
+alternative design just because one exists — churn between iterations is itself a defect.
+If you do deviate, say which feedback item forced it in that item's rationale.
+
+${items}
+`;
+}
+
 export function buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifest): string {
   if (isXlsformFixTicket(input.ticket)) {
     return buildXlsformFixPlanPrompt(input);
@@ -273,6 +301,18 @@ export function buildPlanPrompt(input: CodeGenModuleInput, manifest: FileManifes
   const existingCodeContext = buildExistingCodeContext(contextFiles);
 
   const manifestSection = buildManifestSection(manifest);
+  const previousPlanSection = buildPreviousPlanSection(input.previousPlan);
+
+  // In a cht-conf project app_settings.json is the webpack-bundled output of
+  // compile-app-settings, not editable source. The execute phase has no shell to
+  // run the build with, so planning it guarantees an unsatisfiable plan item.
+  // The QA phase recompiles it for real. Scoped to cht-conf: in cht-core,
+  // app_settings.json is a legitimate hand-edited file (see the permission
+  // self-check below).
+  const compiledArtifactRule = ticket.issue.technical_context.layer === 'cht-conf'
+    ? `
+Do NOT include app_settings.json as a plan item. It is a build artifact that \`compile-app-settings\` regenerates by bundling tasks.js, targets.js and nools-extras.js; it is recompiled automatically after this phase. Plan the JS/JSON source edits instead and let the build produce the bundle.`
+    : '';
 
   let repoMapSection = '';
   if (input.directoryListing) {
@@ -319,13 +359,13 @@ ${feedbackContext ? `
 ## Validation Feedback from Previous Iteration
 The previous code generation attempt was validated and found lacking. Address ALL issues below in your revised plan:
 ${feedbackContext}
-` : ''}
+` : ''}${previousPlanSection}
 ## Instructions
 List every file you will modify or create as a numbered TODO list.
 Use MODIFY for existing files and CREATE for new files.
 You are NOT limited to the files listed above — if the feature requires changes to other files (e.g. permission configs, shared settings, app_settings), include them.
 Keep the plan focused — only include source files essential for this feature. Do NOT include test files (*.spec.ts, *.spec.js, *.test.ts, *.test.js) in the plan — test generation is handled by a separate agent.
-Each item MUST have a clear rationale explaining what changes are needed.
+Each item MUST have a clear rationale explaining what changes are needed.${compiledArtifactRule}
 
 ## Plan Completeness Self-Check
 After listing your files, verify the plan is complete:

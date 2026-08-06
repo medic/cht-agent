@@ -4,9 +4,11 @@ import {
   IssueTemplate,
   OrchestrationPlan,
   ResearchState,
+  TriagedRecommendation,
   XlsformApplyResult,
   XlsformApplyExhausted,
 } from '../types';
+import { summarizeLedger } from '../utils/recommendation-triage';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
 import { isUsingCLIProvider } from '../llm/factory';
@@ -121,6 +123,70 @@ function appendIssueGroup(lines: string[], type: string, items: CrossFileIssue[]
   }
   lines.push('');
 }
+
+/** Cap on entries per section in the recommendation banner. */
+const MAX_LEDGER_ENTRIES = 10;
+
+/**
+ * Render the HC2 recommendation-disposition banner (m4).
+ *
+ * Every validation recommendation is either applied or deferred WITH a reason.
+ * The deferred CORRECTNESS items are the loud part: on m4 six of them were
+ * dropped silently because the score cleared the bar, and the shipped fix
+ * carried the false negatives they named. Returns '' when there is nothing
+ * deferred, so callers can render it unconditionally.
+ */
+export const renderRecommendationLedgerBanner = (
+  ledger: ReadonlyArray<TriagedRecommendation> | undefined,
+): string => {
+  if (!ledger || ledger.length === 0) {
+    return '';
+  }
+  const counts = summarizeLedger(ledger);
+  if (counts.deferredBlocking === 0 && counts.deferredAdvisory === 0) {
+    return '';
+  }
+  const deferred = ledger.filter(r => r.disposition === 'deferred');
+  const blocking = deferred.filter(r => r.severity === 'blocking');
+  const advisory = deferred.filter(r => r.severity === 'advisory');
+  const lines: string[] = [
+    '',
+    '📋 VALIDATION RECOMMENDATIONS',
+    '─'.repeat(70),
+    `${counts.applied} applied · ${counts.deferredBlocking} deferred (correctness) · ` +
+      `${counts.deferredAdvisory} deferred (advisory)`,
+    '',
+  ];
+  if (blocking.length > 0) {
+    lines.push('❗ Deferred — these name correctness defects and were NOT applied:');
+    for (const entry of blocking.slice(0, MAX_LEDGER_ENTRIES)) {
+      lines.push(`  - ${entry.text}`);
+      lines.push(`      why deferred: ${entry.deferralReason ?? '(no reason recorded)'}`);
+      if (entry.targetFiles.length > 0) {
+        lines.push(`      files: ${entry.targetFiles.join(', ')}`);
+      }
+    }
+    if (blocking.length > MAX_LEDGER_ENTRIES) {
+      lines.push(`  ... and ${blocking.length - MAX_LEDGER_ENTRIES} more`);
+    }
+    lines.push('');
+  }
+  if (advisory.length > 0) {
+    lines.push(`Advisory (not worth a refinement iteration) — ${advisory.length}:`);
+    for (const entry of advisory.slice(0, MAX_LEDGER_ENTRIES)) {
+      lines.push(`  - ${entry.text}`);
+    }
+    if (advisory.length > MAX_LEDGER_ENTRIES) {
+      lines.push(`  ... and ${advisory.length - MAX_LEDGER_ENTRIES} more`);
+    }
+    lines.push('');
+  }
+  lines.push(
+    'Check each deferred correctness item against the diff before approving.',
+    '─'.repeat(70),
+  );
+  return lines.join('\n');
+};
 
 /**
  * Render a separate banner when the compile gate did not run (e.g., tsc

@@ -201,3 +201,145 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
     });
   });
 });
+
+describe('formatQaFeedback (HC4 — QA evidence as development feedback)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { formatQaFeedback } = require('../../src/workflows/orchestrator');
+
+  const baseQa = (over: Record<string, unknown> = {}) => ({
+    ran: true,
+    approved: true,
+    reproduced: true,
+    verified: false,
+    succeeded: false,
+    messages: ['red -> apply -> green'],
+    ...over,
+  });
+
+  it('reports the red/green transition and the abort reason', () => {
+    const text = formatQaFeedback(baseQa({ abortReason: 'verify failed: tasks.rules differs' }));
+    expect(text).to.contain('Reproduced (red baseline): yes');
+    expect(text).to.contain('Verified (green): NO');
+    expect(text).to.contain('verify failed: tasks.rules differs');
+    expect(text).to.contain('red -> apply -> green');
+  });
+
+  // A run whose red baseline never went red proves nothing about the fix, so the
+  // retry must not be steered at the implementation.
+  it('warns when the red baseline did not reproduce', () => {
+    const text = formatQaFeedback(baseQa({ reproduced: false }));
+    expect(text).to.contain('the red baseline did not reproduce');
+    expect(text).to.contain('proves nothing about the fix');
+  });
+
+  it('includes the tier-2 failure tail when the harness specs ran and failed', () => {
+    const text = formatQaFeedback(baseQa({
+      tier2: {
+        ran: true,
+        passed: false,
+        specs: ['test/tasks/pnc.spec.js'],
+        outputTail: '1 failing\nAssertionError: expected 2 tasks to equal 1',
+      },
+    }));
+    expect(text).to.contain('Tier-2 harness specs FAILED');
+    expect(text).to.contain('test/tasks/pnc.spec.js');
+    expect(text).to.contain('AssertionError');
+  });
+
+  it('omits the tier-2 section when the specs passed', () => {
+    const text = formatQaFeedback(baseQa({
+      tier2: { ran: true, passed: true, specs: ['s.js'], outputTail: 'ok' },
+    }));
+    expect(text).to.not.contain('Tier-2 harness specs FAILED');
+  });
+});
+
+describe('qaRetryBlocker (HC4 — when a code retry cannot help)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { qaRetryBlocker, formatQaFeedback } = require('../../src/workflows/orchestrator');
+
+  const qaOf = (over: Record<string, unknown> = {}) => ({
+    ran: true, approved: true, reproduced: true, verified: false,
+    succeeded: false, messages: [], ...over,
+  });
+
+  const CHROMIUM_CRASH = 'Error: Failed to launch the browser process!\nNo usable sandbox!';
+
+  it('blocks when the red baseline never reproduced', () => {
+    expect(qaRetryBlocker(qaOf({ reproduced: false }))).to.contain('proves nothing about the fix');
+  });
+
+  // Verify re-reads an unchanged instance, so "green failed" is arithmetic.
+  it('blocks when the apply failed — the fix was never deployed', () => {
+    const qa = qaOf({ applyResult: { configPath: '/x', actions: [], succeeded: false, warnings: [] } });
+    expect(qaRetryBlocker(qa)).to.contain('never deployed and never tested');
+  });
+
+  // Green proved the fix; the browser simply never started.
+  it('blocks when green passed and tier-2 crashed rather than failed', () => {
+    const qa = qaOf({
+      verified: true,
+      applyResult: { configPath: '/x', actions: [], succeeded: true, warnings: [] },
+      tier2: { ran: true, passed: false, specs: ['s.js'], outputTail: CHROMIUM_CRASH },
+    });
+    expect(qaRetryBlocker(qa)).to.contain('environment problem');
+  });
+
+  // A real assertion failure DOES implicate the change — the retry must be offered.
+  it('does NOT block when tier-2 failed a genuine assertion', () => {
+    const qa = qaOf({
+      verified: true,
+      applyResult: { configPath: '/x', actions: [], succeeded: true, warnings: [] },
+      tier2: { ran: true, passed: false, specs: ['s.js'], outputTail: '1 failing\nAssertionError: expected 2 to equal 1' },
+    });
+    expect(qaRetryBlocker(qa)).to.equal(undefined);
+  });
+
+  it('does NOT block when green simply failed after a successful apply', () => {
+    const qa = qaOf({
+      verified: false,
+      applyResult: { configPath: '/x', actions: [], succeeded: true, warnings: [] },
+    });
+    expect(qaRetryBlocker(qa)).to.equal(undefined);
+  });
+
+  it('surfaces the blocker in the feedback text', () => {
+    const qa = qaOf({ applyResult: { configPath: '/x', actions: [], succeeded: false, warnings: [] } });
+    expect(formatQaFeedback(qa)).to.contain('NOTE: the config apply FAILED');
+  });
+});
+
+describe('qaRetryBlocker — tier-2 baseline attribution', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { qaRetryBlocker } = require('../../src/workflows/orchestrator');
+  const qaOf = (tier2: Record<string, unknown>) => ({
+    ran: true, approved: true, reproduced: true, verified: true, succeeded: false,
+    messages: [], applyResult: { configPath: '/x', actions: [], succeeded: true, warnings: [] },
+    tier2,
+  });
+
+  it('blocks the retry when every tier-2 failure predates the change', () => {
+    const qa = qaOf({
+      ran: true, passed: false, outputTail: '100 passing\n1 failing',
+      baseline: { ran: true, passed: false, failing: 1 },
+    });
+    expect(qaRetryBlocker(qa)).to.contain('already failing before this');
+  });
+
+  it('offers the retry when the change introduced new failures', () => {
+    const qa = qaOf({
+      ran: true, passed: false, outputTail: '97 passing\n4 failing',
+      baseline: { ran: true, passed: false, failing: 1 },
+    });
+    expect(qaRetryBlocker(qa)).to.equal(undefined);
+  });
+
+  // Unattributable must stay strict — never excuse a possible regression.
+  it('offers the retry when no baseline could be established', () => {
+    const qa = qaOf({
+      ran: true, passed: false, outputTail: '97 passing\n4 failing',
+      baseline: { ran: false, reason: 'not a git repo' },
+    });
+    expect(qaRetryBlocker(qa)).to.equal(undefined);
+  });
+});
