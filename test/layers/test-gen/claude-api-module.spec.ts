@@ -301,3 +301,39 @@ describe('ClaudeApiTestGenModule', () => {
     });
   });
 });
+
+describe('pinTestPathsToConfigRoot (cht-conf spec paths)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { pinTestPathsToConfigRoot } = require('../../../src/layers/test-gen/modules/claude-api/index');
+  const item = (filePath: string) => ({
+    filePath, testType: 'unit', targetSourceFile: 'tasks.js', description: 'd',
+  });
+
+  // A cht-conf project IS a config root, so config/<name>/ lands a tree too deep
+  // and tier-2 (driven by qaSpecs) never finds the specs.
+  it('strips a cht-core config/<name>/ prefix', () => {
+    const [out] = pinTestPathsToConfigRoot([item('config/default/test/tasks/a.spec.js')], 'cht-conf');
+    expect(out.filePath).to.equal('test/tasks/a.spec.js');
+  });
+
+  it('prefixes test/ when the path has no test root', () => {
+    const [out] = pinTestPathsToConfigRoot([item('tasks/a.spec.js')], 'cht-conf');
+    expect(out.filePath).to.equal('test/tasks/a.spec.js');
+  });
+
+  it('leaves an already-correct path untouched', () => {
+    const [out] = pinTestPathsToConfigRoot([item('test/tasks/a.spec.js')], 'cht-conf');
+    expect(out.filePath).to.equal('test/tasks/a.spec.js');
+  });
+
+  // cht-core genuinely has config/<name>/ directories.
+  it('is a no-op for cht-core', () => {
+    const [out] = pinTestPathsToConfigRoot([item('config/default/test/tasks/a.spec.js')], 'cht-core');
+    expect(out.filePath).to.equal('config/default/test/tasks/a.spec.js');
+  });
+
+  it('is a no-op when the layer is unset', () => {
+    const [out] = pinTestPathsToConfigRoot([item('config/default/test/a.spec.js')], undefined);
+    expect(out.filePath).to.equal('config/default/test/a.spec.js');
+  });
+});

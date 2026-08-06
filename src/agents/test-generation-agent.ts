@@ -106,7 +106,11 @@ function convertModuleFiles(files: LayerGeneratedFile[]): GeneratedFile[] {
     language: inferLanguageFromPath(file.path),
     type: 'test' as const,
     description: file.purpose ?? '',
-    action: 'create' as const,
+    // A spec is usually new, but test-gen now REWRITES its own `*.agent.spec.js`
+    // from a previous run instead of creating a parallel near-duplicate. Forcing
+    // 'create' there would show a 300-line new file at HC2 instead of the delta.
+    action: file.originalContent ? ('modify' as const) : ('create' as const),
+    ...(file.originalContent ? { originalContent: file.originalContent } : {}),
   }));
 }
 

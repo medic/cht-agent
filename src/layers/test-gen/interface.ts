@@ -22,6 +22,14 @@ export interface TestGenModuleInput {
   targetDirectory: string;
   readFile?: (path: string) => Promise<string | null>;
   listDirectory?: (dirPath: string) => Promise<string[]>;
+  /**
+   * NOTE: neither `directoryListing` nor `existingTestExamples` is populated by
+   * `buildTestGenModuleInput` — verified: nothing in src/ assigns them, so the
+   * planner ran blind against a repo that already held ~94 specs. The module now
+   * gathers its own inventory in `generate()` via the `listDirectory`/`readFile`
+   * closures below (see layers/test-gen/lib/spec-inventory.ts). These two fields
+   * remain honored when a caller does set them.
+   */
   directoryListing?: string;
   /** Existing test patterns from the target codebase for style matching */
   existingTestExamples?: Array<{ path: string; content: string }>;

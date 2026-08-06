@@ -24,6 +24,32 @@ import {
   looksLikeCodeContent as libLooksLikeCodeContent,
 } from '../../../code-gen/lib/output-parsing';
 import { sanitizePath } from '../../../code-gen/lib/plan';
+import {
+  TestGenBudget,
+  applyTestPlanBudget,
+  assertSpecBudget,
+  auditSpecBudget,
+  budgetForExtension,
+  churnRelevantFiles,
+  computeFileChurn,
+  computeTestGenBudget,
+  newLineCount,
+  renderBudgetPromptSection,
+  renderSingleFileBudgetSection,
+} from '../../lib/budget';
+import {
+  EMPTY_SPEC_CONTEXT,
+  ExistingSpec,
+  SpecContext,
+  auditPinCoverage,
+  canonicalizeChtConfSpecPaths,
+  dedupeSpecPlan,
+  findExtensionTarget,
+  gatherSpecContext,
+  renderExtensionSection,
+  renderPinnedSpecSection,
+  renderSpecInventorySection,
+} from '../../lib/spec-inventory';
 
 export const TEST_PLAN_START = '=== TEST PLAN ===';
 export const TEST_PLAN_END = '=== END TEST PLAN ===';
@@ -35,6 +61,40 @@ export interface TestPlanItem {
   targetSourceFile: string;
   description: string;
 }
+
+/** Where specs live in a cht-conf project (and what `qaSpecs` frontmatter points at). */
+const CONFIG_TEST_ROOT = 'test';
+
+/** cht-core keeps configs under `config/<name>/`; a cht-conf project IS that root. */
+const CHT_CORE_CONFIG_PREFIX_RE = /^config\/[^/]+\//;
+
+/**
+ * Force cht-conf spec paths under the config project's `test/` root.
+ *
+ * A cht-conf project is itself a config root, so cht-core-shaped paths like
+ * `config/default/test/tasks/x.spec.js` land one tree too deep — the specs are
+ * then invisible to the existing `test/tasks/` convention and to the ticket's
+ * `qaSpecs` frontmatter, so tier-2 never runs them. Observed live: one run wrote
+ * `test/tasks/...` correctly and the next wrote `config/default/test/tasks/...`,
+ * so the plan prompt alone does not hold this. No-op for cht-core, where
+ * `config/<name>/` is a real location.
+ */
+export const pinTestPathsToConfigRoot = (
+  plan: TestPlanItem[],
+  layer: string | undefined,
+): TestPlanItem[] => {
+  if (layer !== 'cht-conf') return plan;
+  return plan.map(item => {
+    const stripped = item.filePath.replace(CHT_CORE_CONFIG_PREFIX_RE, '');
+    const pinned = stripped.startsWith(`${CONFIG_TEST_ROOT}/`)
+      ? stripped
+      : `${CONFIG_TEST_ROOT}/${stripped.replace(/^\.?\//, '')}`;
+    if (pinned !== item.filePath) {
+      console.log(`[Test Gen Module] Pinned spec path to the config root: ${item.filePath} -> ${pinned}`);
+    }
+    return { ...item, filePath: pinned };
+  });
+};
 
 const READ_FILE_TOOL: LLMToolDefinition = {
   name: 'read_file',
@@ -138,18 +198,29 @@ export class ClaudeApiTestGenModule implements TestGenModule {
 
     this.logGenerateStart(input);
 
-    const planResult = await this.resolvePlan(input, llm.modelName);
+    // Scale to the diff before anything else: the budget shapes the plan prompt,
+    // truncates the plan, gates each file's size and caps per-file maxTokens.
+    const budget = computeTestGenBudget(input.generatedCode);
+    this.logBudget(budget);
+    const specContext = await gatherSpecContext(input);
+    this.logSpecContext(specContext);
+
+    const planResult = await this.resolvePlan(input, llm.modelName, budget, specContext);
     if (planResult.bailout) return planResult.bailout;
     const { plan, planTokens } = planResult;
 
     this.surfacePlan(plan);
 
-    const genResult = await this.generateTestFilesSequentially(plan, input);
+    const genResult = await this.generateTestFilesSequentially(plan, input, budget, specContext);
     const checklistPhase = await this.runChecklistPhase(input, genResult.files);
     const totalTokens = planTokens + genResult.tokensUsed + checklistPhase.tokensUsed;
     const checklist = checklistPhase.checklist;
 
-    const warnings = this.validateAgainstManifest(genResult.files, plan);
+    const warnings = [
+      ...this.validateAgainstManifest(genResult.files, plan),
+      ...auditSpecBudget(genResult.files, budget),
+      ...auditPinCoverage(genResult.files, specContext),
+    ];
     this.logPostCallValidation(warnings);
     this.logGeneratedFiles(genResult.files);
 
@@ -206,6 +277,23 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     );
   }
 
+  private logBudget(budget: TestGenBudget): void {
+    console.log(
+      `[Test Gen Module] Budget: ${budget.churnedLines} changed source line(s) -> ${budget.tier} tier ` +
+      `(<=${budget.maxTestFiles} file(s), <=${budget.maxLinesPerFile} lines/file, ` +
+      `<=${budget.maxCasesPerFile} it()/file, <=${budget.maxTotalLines} new lines total)`
+    );
+  }
+
+  private logSpecContext(ctx: SpecContext): void {
+    console.log(
+      `[Test Gen Module] Existing specs on disk: ${ctx.existing.length}` +
+      (ctx.truncated ? ' (inventory truncated)' : '') +
+      `; ticket pins ${ctx.requestedPins.length}` +
+      (ctx.missingPins.length > 0 ? `; MISSING pins: ${ctx.missingPins.join(', ')}` : '')
+    );
+  }
+
   /**
    * Resolve the plan from one of three sources:
    *  (a) Selective regeneration (failing test files, iteration-3 wiring).
@@ -215,6 +303,8 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   private async resolvePlan(
     input: TestGenModuleInput,
     modelName: string,
+    budget: TestGenBudget,
+    specContext: SpecContext,
   ): Promise<{ plan: TestPlanItem[]; planTokens: number; bailout?: never }
     | { bailout: TestGenModuleOutput; plan: TestPlanItem[]; planTokens: number }> {
     const failingTestFiles = readFailingTestFiles(input);
@@ -226,7 +316,7 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     }
 
     try {
-      const planResult = await this.generateTestPlan(input);
+      const planResult = await this.generateTestPlan(input, budget, specContext);
       if (planResult.plan.length === 0) {
         console.log('[Test Gen Module] Empty plan generated — no test files to produce');
         return {
@@ -286,14 +376,16 @@ export class ClaudeApiTestGenModule implements TestGenModule {
 
   private async generateTestPlan(
     input: TestGenModuleInput,
+    budget: TestGenBudget,
+    specContext: SpecContext,
   ): Promise<{ plan: TestPlanItem[]; tokensUsed: number }> {
     const llm = this.getProvider();
-    const prompt = this.buildTestPlanPrompt(input);
+    const prompt = this.buildTestPlanPrompt(input, budget, specContext);
 
     const response = await llm.invoke(prompt, { temperature: 0.3, maxTokens: 8192, disableTools: true });
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
 
-    const plan = this.parseTestPlan(response.content);
+    const plan = this.shapePlan(this.parseTestPlan(response.content), input, budget, specContext);
 
     const validation = TestPlanSchema.safeParse({ items: plan });
     if (!validation.success) {
@@ -303,6 +395,44 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     }
 
     return { plan, tokensUsed };
+  }
+
+  /**
+   * Deterministic shaping of the raw LLM plan, in order:
+   *   pin to the config root -> canonicalize onto the repo's own convention ->
+   *   fold near-duplicate names -> truncate to the diff-derived file budget.
+   *
+   * Enforced in code, not left to the prompt. The pin helper's own comment
+   * already records that "the plan prompt alone does not hold this"; the m3/m4
+   * bundles show the same for file count (6 specs for a 2-line change, 22 for a
+   * ~56-line change) and for near-duplicate names.
+   */
+  private shapePlan(
+    parsed: TestPlanItem[],
+    input: TestGenModuleInput,
+    budget: TestGenBudget,
+    specContext: SpecContext,
+  ): TestPlanItem[] {
+    const context = input.ticket.issue.technical_context;
+    const pinned = pinTestPathsToConfigRoot(parsed, context.layer);
+    const canonical = canonicalizeChtConfSpecPaths(pinned, {
+      layer: context.layer,
+      configArtifact: context.configArtifact,
+      artifactName: context.artifactName,
+      ctx: specContext,
+    });
+    const deduped = dedupeSpecPlan(canonical.plan, specContext);
+    const capped = applyTestPlanBudget(deduped.plan, budget);
+    for (const note of [...canonical.notes, ...deduped.notes]) {
+      console.log(`[Test Gen Module] ${note}`);
+    }
+    for (const dropped of capped.dropped) {
+      console.log(
+        `[Test Gen Module] Over budget (${budget.tier} tier allows ${budget.maxTestFiles} file(s)); ` +
+        `dropped planned spec ${dropped.filePath}`
+      );
+    }
+    return capped.plan;
   }
 
   parseTestPlan(rawContent: string): TestPlanItem[] {
@@ -332,15 +462,26 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   private async generateTestFilesSequentially(
     plan: TestPlanItem[],
     input: TestGenModuleInput,
+    budget: TestGenBudget,
+    specContext: SpecContext,
   ): Promise<{ files: GeneratedFile[]; tokensUsed: number; warnings: string[] }> {
     const generatedFiles: GeneratedFile[] = [];
     let totalTokens = 0;
+    let newLines = 0;
     const warnings: string[] = [];
     const testGenTools = this.buildTestGenTools(input);
 
     for (let i = 0; i < plan.length; i++) {
       if (isShutdownRequested()) {
         console.log(`[Test Gen Module] Shutdown requested; stopping after ${i} of ${plan.length} files`);
+        break;
+      }
+      if (newLines >= budget.maxTotalLines) {
+        const message =
+          `total spec-line budget reached (${newLines}/${budget.maxTotalLines} new lines for a ` +
+          `${budget.churnedLines}-line source change); skipped ${plan.length - i} planned file(s)`;
+        console.log(`[Test Gen Module] ${message}`);
+        warnings.push(message);
         break;
       }
       const planItem = plan[i];
@@ -352,9 +493,12 @@ export class ClaudeApiTestGenModule implements TestGenModule {
         input,
         previouslyGenerated: generatedFiles,
         testGenTools,
+        budget,
+        specContext,
       });
 
       totalTokens += result.tokensUsed;
+      if (result.file) newLines += newLineCount(result.file);
       this.collectGeneratedFile(result, planItem, generatedFiles, warnings);
     }
 
@@ -386,6 +530,8 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     input: TestGenModuleInput;
     previouslyGenerated: GeneratedFile[];
     testGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
+    budget: TestGenBudget;
+    specContext: SpecContext;
     maxAttempts?: number;
   }): Promise<{ file: GeneratedFile | null; tokensUsed: number }> {
     const maxAttempts = opts.maxAttempts ?? 3;
@@ -404,6 +550,8 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       input: TestGenModuleInput;
       previouslyGenerated: GeneratedFile[];
       testGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
+      budget: TestGenBudget;
+      specContext: SpecContext;
     },
     attempt: number,
     maxAttempts: number,
@@ -419,6 +567,10 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     const attemptResult = await this.runSingleFileAttempt({
       ...opts,
       previousFailures: state.failures.length > 0 ? state.failures : undefined,
+      // The size gate is a retry signal on every attempt but the last; on the
+      // last it degrades to a warning so a slightly over-long file is kept
+      // rather than thrown away after three paid generations.
+      isFinalAttempt: attempt >= maxAttempts,
     });
     state.totalTokens += attemptResult.tokensUsed;
     const decision = decideRetryNext(attemptResult);
@@ -442,6 +594,9 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     previouslyGenerated: GeneratedFile[];
     testGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
     previousFailures?: string[];
+    budget: TestGenBudget;
+    specContext: SpecContext;
+    isFinalAttempt?: boolean;
   }): Promise<RetryAttemptResult> {
     const result = await this.generateSingleTestFile({
       planItem: args.planItem,
@@ -450,6 +605,8 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       previouslyGenerated: args.previouslyGenerated,
       testGenTools: args.testGenTools,
       previousFailures: args.previousFailures,
+      budget: args.budget,
+      specContext: args.specContext,
     });
     let tokensUsed = result.tokensUsed;
 
@@ -459,13 +616,27 @@ export class ClaudeApiTestGenModule implements TestGenModule {
 
     let file = result.file;
     if (result.truncated) {
-      const continuation = await this.completeTruncatedFile(file, args.planItem, args.input);
+      const continuation = await this.completeTruncatedFile(file, args.planItem, args.input, args.budget);
       tokensUsed += continuation.tokensUsed;
       if (continuation.overBudget) return { outcome: 'over-budget', tokensUsed };
       file = continuation.file;
     }
 
-    const failures = this.assertFileContent(file);
+    const budgetFailures = assertSpecBudget(
+      file.content,
+      file.path,
+      budgetForExtension(args.budget, file.originalContent),
+    );
+    if (budgetFailures.length > 0 && args.isFinalAttempt) {
+      console.warn(
+        `[Test Gen Module]   ! Keeping an over-budget file on the final attempt: ` +
+        `${budgetFailures.join('; ')}`
+      );
+    }
+    const failures = [
+      ...this.assertFileContent(file),
+      ...(args.isFinalAttempt ? [] : budgetFailures),
+    ];
     if (failures.length === 0) return { outcome: 'success', file, tokensUsed };
 
     console.log(`[Test Gen Module]   Assertion failures: ${failures.join('; ')}`);
@@ -480,12 +651,13 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     file: GeneratedFile,
     planItem: TestPlanItem,
     input: TestGenModuleInput,
+    budget: TestGenBudget,
   ): Promise<
     | { overBudget: true; tokensUsed: number }
     | { overBudget: false; file: GeneratedFile; tokensUsed: number }
   > {
     console.log(`[Test Gen Module]   Output truncated for ${planItem.filePath}, continuing...`);
-    const contResult = await this.continueTruncatedGeneration(file.content, planItem, input);
+    const contResult = await this.continueTruncatedGeneration(file.content, planItem, input, budget);
     if (contResult.stillTruncated) {
       console.warn(
         `[Test Gen Module]   File "${planItem.filePath}" exceeds the continuation budget; not retrying.`
@@ -525,16 +697,24 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     previouslyGenerated: GeneratedFile[];
     testGenTools?: { tools: LLMToolDefinition[]; toolHandler: ToolHandler };
     previousFailures?: string[];
+    budget: TestGenBudget;
+    specContext: SpecContext;
   }): Promise<{ file: GeneratedFile | null; tokensUsed: number; truncated: boolean }> {
     const { planItem, fullPlan, input, previouslyGenerated, testGenTools, previousFailures } = opts;
+    // Only ever an agent-owned spec from a previous run; a partner-authored file
+    // is redirected to its `.agent.spec.js` sibling during plan shaping and can
+    // never be an extension target.
+    const extending = findExtensionTarget(opts.specContext, planItem.filePath);
     const prompt = this.buildSingleTestFilePrompt({
       planItem,
       fullPlan,
       input,
       previouslyGenerated,
       previousFailures,
+      budget: opts.budget,
+      extending,
     });
-    const response = await this.invokeLLM(prompt, testGenTools, planItem.filePath);
+    const response = await this.invokeLLM(prompt, testGenTools, planItem.filePath, opts.budget);
     if (!response) return { file: null, tokensUsed: 0, truncated: false };
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
     const truncated = response.stopReason === 'max_tokens';
@@ -544,7 +724,15 @@ export class ClaudeApiTestGenModule implements TestGenModule {
       return { file: null, tokensUsed, truncated: false };
     }
     return {
-      file: { path: planItem.filePath, content: rawContent, purpose: planItem.description },
+      file: {
+        path: planItem.filePath,
+        content: rawContent,
+        purpose: planItem.description,
+        // Marks the file as a MODIFY upstream, so HC2 shows the delta against our
+        // previous spec instead of a 300-line "new file", and so the budget audit
+        // charges only the new lines.
+        ...(extending ? { originalContent: extending.content } : {}),
+      },
       tokensUsed,
       truncated,
     };
@@ -554,11 +742,15 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     prompt: string,
     testGenTools: { tools: LLMToolDefinition[]; toolHandler: ToolHandler } | undefined,
     filePath: string,
+    budget: TestGenBudget,
   ): Promise<Awaited<ReturnType<LLMProvider['invoke']>> | null> {
     try {
       return await this.getProvider().invoke(prompt, {
         temperature: 0.3,
-        maxTokens: 65536,
+        // Budget-derived, not 64k: 8,192 tokens is roughly 600 lines of JS, so it
+        // only bites once the model is already past a 120-300 line cap. A run
+        // that truncates here is a run that was violating the budget anyway.
+        maxTokens: budget.maxOutputTokens,
         // A provider that does not honor custom tools (the claude-cli provider)
         // ignores them, appends no deny-list, and runs its own agentic loop with
         // native Write/Edit, writing into the target repo outside staging/HC2.
@@ -607,10 +799,11 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     partialContent: string,
     planItem: TestPlanItem,
     input: TestGenModuleInput,
+    budget: TestGenBudget,
     maxContinuations: number = this.getMaxContinuations(),
   ): Promise<{ continuation: string; tokensUsed: number; stillTruncated: boolean }> {
     const acc = { content: '', tokens: 0, stopReason: undefined as string | undefined };
-    await this.runContinuationLoop({ partialContent, planItem, input, maxContinuations, acc });
+    await this.runContinuationLoop({ partialContent, planItem, input, budget, maxContinuations, acc });
     const stillTruncated = acc.stopReason === 'max_tokens';
     if (stillTruncated) logContinuationOverBudget(planItem.filePath, maxContinuations);
     return { continuation: acc.content, tokensUsed: acc.tokens, stillTruncated };
@@ -620,12 +813,13 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     partialContent: string;
     planItem: TestPlanItem;
     input: TestGenModuleInput;
+    budget: TestGenBudget;
     maxContinuations: number;
     acc: { content: string; tokens: number; stopReason: string | undefined };
   }): Promise<void> {
-    const { partialContent, planItem, input, maxContinuations, acc } = args;
+    const { partialContent, planItem, input, budget, maxContinuations, acc } = args;
     for (let i = 0; i < maxContinuations; i++) {
-      const ok = await this.runOneContinuation({ partialContent, planItem, input, acc, iteration: i });
+      const ok = await this.runOneContinuation({ partialContent, planItem, input, budget, acc, iteration: i });
       if (!ok) return;
       if (acc.stopReason !== 'max_tokens') {
         console.log(`[Test Gen Module]   Continuation complete after ${i + 1} call(s)`);
@@ -639,17 +833,19 @@ export class ClaudeApiTestGenModule implements TestGenModule {
     partialContent: string;
     planItem: TestPlanItem;
     input: TestGenModuleInput;
+    budget: TestGenBudget;
     acc: { content: string; tokens: number; stopReason: string | undefined };
     iteration: number;
   }): Promise<boolean> {
-    const { partialContent, planItem, input, acc, iteration } = args;
+    const { partialContent, planItem, input, budget, acc, iteration } = args;
     const lastLines = (partialContent + acc.content).split('\n').slice(-50).join('\n');
-    const prompt = this.buildContinuationPrompt(lastLines, planItem, input);
+    const linesSoFar = (partialContent + acc.content).split('\n').length;
+    const prompt = this.buildContinuationPrompt(lastLines, planItem, input, budget, linesSoFar);
     let response;
     try {
       response = await this.getProvider().invoke(prompt, {
         temperature: 0.3,
-        maxTokens: 65536,
+        maxTokens: budget.maxOutputTokens,
         disableTools: true,
       });
     } catch (error) {
@@ -706,11 +902,16 @@ export class ClaudeApiTestGenModule implements TestGenModule {
   // Prompt Builders
   // ============================================================================
 
-  buildTestPlanPrompt(input: TestGenModuleInput): string {
+  buildTestPlanPrompt(
+    input: TestGenModuleInput,
+    budget: TestGenBudget = computeTestGenBudget(input.generatedCode),
+    specContext: SpecContext = EMPTY_SPEC_CONTEXT,
+  ): string {
     const { ticket, orchestrationPlan, generatedCode, testTypes, existingTestExamples } = input;
 
-    const sourceFileSummary = generatedCode
-      .map(f => `- ${f.relativePath} (${f.type}): ${f.description}`)
+    const summaryFiles = churnRelevantFiles(generatedCode);
+    const sourceFileSummary = (summaryFiles.length > 0 ? summaryFiles : generatedCode)
+      .map(f => `- ${f.relativePath} (${f.type}, ${computeFileChurn(f)} changed line(s)): ${f.description}`)
       .join('\n');
 
     let existingPatterns = '';
@@ -740,7 +941,7 @@ ${orchestrationPlan.phases.map((p, i) => `${i + 1}. ${p.name}: ${p.description}`
 
 ## Source Files to Test
 ${sourceFileSummary}
-
+${renderBudgetPromptSection(budget)}${renderSpecInventorySection(specContext)}${renderPinnedSpecSection(specContext)}
 ## Test Types Requested
 ${testTypes.join(', ')}
 
@@ -753,8 +954,12 @@ ${testTypes.join(', ')}
 ${existingPatterns}
 ${input.additionalContext ? `\n## Feedback from Previous Iteration\n${input.additionalContext}\n` : ''}
 ## Instructions
-List every test file you will create. Each must target a specific source file.
+List every test file you will create — AT MOST ${budget.maxTestFiles}, and fewer is better. Each must
+target a specific source file. One spec that proves the fix beats three that circle it:
+extra plan items are dropped by the pipeline before generation.
 Only create ${testTypes.join(' and ')} tests as requested.
+Reuse an existing spec's directory and naming (see the inventory above). Never invent a
+directory, and never plan two names for the same subject.
 
 Use this EXACT format:
 
@@ -772,9 +977,13 @@ Output ONLY the plan section. Do not generate any test code.`;
     input: TestGenModuleInput;
     previouslyGenerated: GeneratedFile[];
     previousFailures?: string[];
+    budget?: TestGenBudget;
+    extending?: ExistingSpec;
   }): string {
-    const { planItem, fullPlan, input, previouslyGenerated, previousFailures } = opts;
+    const { planItem, fullPlan, input, previouslyGenerated, previousFailures, extending } = opts;
     const { ticket } = input;
+    const budget = opts.budget ?? computeTestGenBudget(input.generatedCode);
+    const fileBudget = budgetForExtension(budget, extending?.content);
 
     const planSummary = fullPlan
       .map((p, i) => `${i + 1}. ${p.testType} ${p.filePath} -> ${p.targetSourceFile}`)
@@ -804,7 +1013,7 @@ Domain: ${ticket.issue.technical_context.domain}
 
 Requirements:
 ${requirementsList}
-${sourceContext}
+${renderSingleFileBudgetSection(fileBudget, budget.churnedLines)}${renderExtensionSection(extending)}${sourceContext}
 ${patternContext}
 ${previousContext}
 ${failureContext}
@@ -815,7 +1024,11 @@ ${this.getTestConventions(planItem.testType)}
 ## Instructions
 Generate the COMPLETE test file for ${planItem.filePath}.
 - Include all imports, setup/teardown hooks, and test cases
-- Cover happy path, error cases, and edge cases
+- Assert the behavior the diff CHANGED, plus ONE regression case for the nearest behavior
+  that must not change. Skip happy-path scaffolding that would pass on the unfixed code,
+  and skip permutations that differ only in fixture values.
+- Stay within ${fileBudget.maxLinesPerFile} lines and ${fileBudget.maxCasesPerFile} it() blocks — hard limit, an over-long file is
+  rejected and regenerated
 - Follow the CHT test conventions above
 - Use descriptive test names that explain the expected behavior
 
@@ -867,6 +1080,8 @@ NEVER say "I'm unable to" or ask questions. Just output the test code.`;
     lastLines: string,
     planItem: TestPlanItem,
     input: TestGenModuleInput,
+    budget?: TestGenBudget,
+    linesSoFar?: number,
   ): string {
     const { ticket } = input;
     return `You were generating the test file "${planItem.filePath}" for the CHT issue "${ticket.issue.title}".
@@ -883,7 +1098,9 @@ ${lastLines}
 - Do NOT restart from the top of the file.
 - Do NOT add prose, explanations, or markdown code fences.
 - Continue with the same indentation and style.
-- When the test file is complete, simply stop.`;
+- When the test file is complete, simply stop.${budget
+    ? `\n- HARD LIMIT: this file may not exceed ${budget.maxLinesPerFile} lines in total and it is already at\n  ${linesSoFar ?? 0}. Close the open describe/it blocks and stop — an over-long file is rejected.`
+    : ''}`;
   }
 
   private buildRequirementsChecklistPrompt(
