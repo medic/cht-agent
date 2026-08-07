@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9255
 issueUrl: https://github.com/medic/cht-core/issues/9255
 title: 'Add Android device notifications for pending tasks (feat #9255)'
-lastUpdated: '2026-08-02'
+lastUpdated: '2026-08-07'
 summary: Users could only learn about pending tasks by opening the app's Tasks tab, so critical updates were missed. This PR adds a task-notifications service that surfaces notifications for pending tasks (ordered by due date and priority), driven by rules-engine change signals rather than by NgRx state, with localized notification text and a default app_settings toggle.
 services:
   - webapp
@@ -58,11 +58,11 @@ Feature gap rather than a defect: the webapp had no notification subsystem liste
 
 ## Solution
 
-Introduced a new webapp task-notifications.service.ts (class TasksNotificationService) that subscribes to RulesEngineService.contactsMarkedAsDirty (debounced 1s, maxWait 10s), fetches task docs with fetchTaskDocsForAllContacts(), and pushes the top 100 (sorted by the shared comparator) to the Android host app via globalThis.medicmobile_android.updateTaskNotificationStore(), together with a cap read from settings.tasks.max_task_notifications (default 8). It runs only when the rules engine is enabled and the user holds the can_get_task_notifications permission. The tasks reducer is not consumed by the service; it was only changed to import the sorting comparator that moved into shared-libs/task-utils. Added an `orderByDueDateAndPriority` comparator to shared-libs/task-utils/src/task-utils.js so the most urgent tasks surface first, wired the service into app.component.ts, added localized notification strings across all supported language properties files, and added a default app_settings.json entry to configure/enable the feature.
+Introduced a new webapp task-notifications.service.ts (class TasksNotificationService) that subscribes to RulesEngineService.contactsMarkedAsDirty (debounced 1s, maxWait 10s), fetches task docs with fetchTaskDocsForAllContacts(), and pushes the top 100 (sorted by the shared comparator) to the Android host app via globalThis.medicmobile_android.updateTaskNotificationStore(), together with a cap read from settings.tasks.max_task_notifications (default 8). It runs only when the rules engine is enabled and the user holds the can_get_task_notifications permission. The tasks reducer is not consumed by the service; it was only changed to import the sorting comparator this PR relocated: `orderByDueDateAndPriority` (added to the reducer by #9980) moved from webapp/src/ts/reducers/tasks.ts into shared-libs/task-utils/src/task-utils.js so the most urgent tasks surface first. #10701 later reversed that move — its description notes task-utils is for the SMS task state attached to reports, not rules-engine tasks — so on master the comparator lives back in the reducer and task-utils exports only `setTaskState`. Wired the service into app.component.ts, added localized notification strings across all supported language properties files, and added a default app_settings.json entry to configure/enable the feature.
 
 ## Code Patterns
 
-A dedicated Angular service (webapp/src/ts/services/task-notifications.service.ts) that reacts to RulesEngineService.contactsMarkedAsDirty and serialises the resulting task docs into the native Android notification store; it reads no NgRx state; reusable task ordering via the `orderByDueDateAndPriority` export of shared-libs/task-utils/src/task-utils.js for prioritizing what to surface.
+A dedicated Angular service (webapp/src/ts/services/task-notifications.service.ts) that reacts to RulesEngineService.contactsMarkedAsDirty and serialises the resulting task docs into the native Android notification store; it reads no NgRx state; reusable task ordering via the `orderByDueDateAndPriority` comparator for prioritizing what to surface — on master it is exported from webapp/src/ts/reducers/tasks.ts:15, and on master the service imports it from `@mm-reducers/tasks` at task-notifications.service.ts:11; it lived in shared-libs/task-utils only between this PR and #10701.
 
 ## Design Choices
 
@@ -81,7 +81,7 @@ Implemented as a dedicated client-side webapp service — it subscribes to `Rule
 
 ## Testing
 
-Unit tests added/updated: webapp/tests/karma/ts/services/task-notification.service.spec.ts (new service), rules-engine.service.spec.ts and app.component.spec.ts (integration of the service), and shared-libs/task-utils/test/order-by-due-date-and-priority.js (since removed from master by #10701, which reorganised task-utils test coverage) for the ordering utility. Review notes indicate additional Sonar cleanup and unit tests were requested and addressed before merge.
+Unit tests added/updated: webapp/tests/karma/ts/services/task-notification.service.spec.ts (new service), rules-engine.service.spec.ts and app.component.spec.ts (integration of the service), and shared-libs/task-utils/test/order-by-due-date-and-priority.js (since removed from master by #10701, which moved the comparator back to the tasks reducer) for the ordering utility. Review notes indicate additional Sonar cleanup and unit tests were requested and addressed before merge.
 
 ## Related Issues
 

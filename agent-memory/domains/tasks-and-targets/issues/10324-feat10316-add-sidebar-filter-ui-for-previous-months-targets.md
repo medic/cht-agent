@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10316
 issueUrl: https://github.com/medic/cht-core/issues/10316
 title: Add sidebar filter UI for viewing previous months' targets in analytics
-lastUpdated: '2026-08-02'
-summary: The analytics targets view only displayed the current month, with no way to review prior periods — unlike the target-aggregates view, which had carried a This month / Last month sidebar filter since #9317. Added a sidebar filter (filter icon on the green bar with This month / Previous month radio buttons) wired into the analytics targets and target-aggregates views.
+lastUpdated: '2026-08-07'
+summary: The analytics targets view only displayed the current month, with no way to review prior periods — unlike the target-aggregates view, which had carried a This month / Last month sidebar filter since #9317. Added a sidebar filter (filter icon on the green bar with This month / Last month radio buttons, the same labels the aggregates filter shows) wired into the analytics targets and target-aggregates views.
 services:
   - webapp
 techStack:
@@ -61,11 +61,11 @@ Feature gap on the analytics targets page specifically: the target-aggregates pa
 
 ## Solution
 
-Added a new analytics-sidebar-filter Angular component opened by a filter icon on the green action bar, presenting two radio options (This month / Previous month). The selection drives the analytics-targets and analytics-target-aggregates components and the target-aggregates service to load the chosen month's data. Routing, the analytics-modules service, and CSS (inbox.less, targets.less) were updated, with support for both new (default) and old (can_view_old_navigation) navigation designs and RTL layouts.
+Added a new analytics-sidebar-filter Angular component opened by a filter icon on the green action bar, presenting two radio options (This month / Last month — label keys `targets.this_month.subtitle` / `targets.last_month.subtitle`; 'Previous month' is only the `ReportingPeriod.PREVIOUS` enum value, not a UI string). The selection drives the analytics-targets and analytics-target-aggregates components and the target-aggregates service to load the chosen month's data. Routing, the analytics-modules service, and CSS (inbox.less, targets.less) were updated, with support for both new (default) and old (can_view_old_navigation) navigation designs and RTL layouts.
 
 ## Code Patterns
 
-The sidebar filter is the existing analytics target-aggregates sidebar filter generalised: analytics-target-aggregates-sidebar-filter.component.ts/html were replaced by analytics-sidebar-filter.component.ts/html (AnalyticsSidebarFilterComponent), which adds showFacilityFilter and telemetryKey inputs so the targets page can embed it with [showFacilityFilter]="false". Filter trigger is wired through analytics-filter.component.ts; month-scoped data retrieval was added to target-aggregates.service.ts and surfaced via analytics-modules.service.ts.
+The sidebar filter is the existing analytics target-aggregates sidebar filter generalised: analytics-target-aggregates-sidebar-filter.component.ts/html were replaced by analytics-sidebar-filter.component.ts/html (AnalyticsSidebarFilterComponent), which adds the `userFacilities` and `showFacilityFilter` inputs so the targets page can embed it with [showFacilityFilter]="false". The `telemetryKey` input that scopes the sidebar's telemetry per page is not from this PR — #10371 added it later in the same epic. Filter trigger is wired through analytics-filter.component.ts; month-scoped data retrieval was added to target-aggregates.service.ts and surfaced via analytics-modules.service.ts.
 
 ## Design Choices
 
@@ -73,7 +73,7 @@ Reused the established sidebar-filter pattern for UI consistency; radio buttons 
 
 ## Related Files
 
-> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. The e2e suite moved from analytics/ to targets/.
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. The e2e suite lives under tests/e2e/default/targets/ on master — renamed from analytics/ by #10480 (bed454652), not by the epic.
 
 - webapp/src/ts/modules/analytics/analytics-sidebar-filter.component.ts
 - webapp/src/ts/modules/analytics/analytics-sidebar-filter.component.html
@@ -88,7 +88,7 @@ Reused the established sidebar-filter pattern for UI consistency; radio buttons 
 - webapp/src/ts/modules/analytics/analytics.routes.ts
 - webapp/src/css/targets.less
 - webapp/src/css/inbox.less
-- tests/e2e/default/analytics/analytics.wdio-spec.js (PR-era path; the suite lives at tests/e2e/default/targets/analytics.wdio-spec.js on master, the e2e directory having been renamed analytics/ -> targets/ inside the epic)
+- tests/e2e/default/analytics/analytics.wdio-spec.js (PR-era path; the suite lives at tests/e2e/default/targets/analytics.wdio-spec.js on master — the analytics/ -> targets/ rename happened on master in #10480, commit bed454652)
 - tests/page-objects/default/analytics/analytics.wdio.page.js
 
 ## Testing

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10332
 issueUrl: https://github.com/medic/cht-core/issues/10332
 title: Add telemetry for analytics target aggregates sidebar filter selection
-lastUpdated: '2026-08-01'
-summary: Telemetry previously only recorded when the analytics target-aggregates sidebar filter was opened, not when a user actually applied a selection (e.g. 'Previous month'). This PR adds telemetry collection for the filter selection/change event on target aggregates.
+lastUpdated: '2026-08-07'
+summary: Telemetry previously only recorded when the analytics target-aggregates sidebar filter was opened, not when a user actually applied a selection (e.g. 'Previous month'). This PR adds telemetry collection for the filter selection/change event, recorded by the shared sidebar filter so it covers the target-aggregates page by default and the targets page via a per-page key.
 services:
   - webapp
 techStack:
@@ -54,11 +54,11 @@ The analytics filter component recorded a telemetry event only on filter open an
 
 ## Solution
 
-Added selection telemetry in analytics-sidebar-filter.component.ts (collectFilterSelectionTelemetry records sidebar_filter:analytics:<telemetryKey>:<facility|reporting-period>:select), with the key supplied per page via the telemetryKey input set in analytics-targets.component.html; analytics-filter.component.ts still records only open events and gained sidebar_filter:analytics:targets:open alongside the existing target_aggregates one. E2e assertions were added on top of the pre-existing tests/utils/telemetry.js helper.
+Added selection telemetry in the shared analytics-sidebar-filter.component.ts (collectFilterSelectionTelemetry records sidebar_filter:analytics:<telemetryKey>:<facility|reporting-period>:select), so both pages get the new selection events: the telemetryKey input defaults to `target_aggregates`, giving the aggregates page its selection telemetry with no wiring, and the targets page overrides it per-page where it embeds the sidebar in analytics-targets.component.html (`telemetryKey = "targets"` as the epic landed it); analytics-filter.component.ts still records only open events and gained sidebar_filter:analytics:targets:open alongside the existing target_aggregates one. E2e assertions were added on top of the pre-existing tests/utils/telemetry.js helper.
 
 ## Code Patterns
 
-Instrument filter usage with a `sidebar_filter:analytics:<tab>:<action>` telemetry key, split across the two components that own each half — analytics-filter.component.ts records the `:open` events when the sidebar is opened, and the sidebar filter component records the selection events (`:facility`, `:reporting`); assert emitted telemetry entries in e2e using the shared helper at tests/utils/telemetry.js (pattern mirrored from tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js).
+Instrument filter usage with a `sidebar_filter:analytics:<tab>:<action>` telemetry key, split across the two components that own each half — analytics-filter.component.ts records the `:open` events when the sidebar is opened, and the sidebar filter component records the selection events, whose action segment is `:facility` or `:reporting-period` (the code builds the key as a template literal, `` `sidebar_filter:analytics:${this.telemetryKey}:${filter}:select` ``); assert emitted telemetry entries in e2e using the shared helper at tests/utils/telemetry.js (pattern mirrored from tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js).
 
 ## Design Choices
 
@@ -66,9 +66,9 @@ Recorded a distinct selection event alongside the existing open event rather tha
 
 ## Related Files
 
-> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. The e2e suite moved from analytics/ to targets/.
+> **Paths are as of this PR, not as of master.** This change merged into the `10140_previous-month-targets` feature branch and reached master only in that epic's squash, medic/cht-core#10423 (`622c625427`), which renamed and relocated several of the files below. The e2e suite lives under tests/e2e/default/targets/ on master — renamed from analytics/ by #10480 (bed454652), not by the epic.
 
-- tests/e2e/default/analytics/analytics.wdio-spec.js (PR-era path; on master the suite is tests/e2e/default/targets/analytics.wdio-spec.js after the epic renamed the directory)
+- tests/e2e/default/analytics/analytics.wdio-spec.js (PR-era path; on master the suite is tests/e2e/default/targets/analytics.wdio-spec.js — the analytics/ -> targets/ rename happened on master in #10480, commit bed454652)
 - tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js
 - tests/e2e/default/targets/target-aggregates.wdio-spec.js
 - tests/utils/telemetry.js
@@ -90,4 +90,4 @@ Added/updated karma unit tests for the analytics-filter and analytics-sidebar-fi
 
 **Fit:** strong
 
-The change instruments the analytics 'target aggregates' sidebar filter; target aggregates and coverage views are squarely part of the tasks-and-targets domain. The telemetry/observability nature is cross-cutting and captured in relatedWorkflows rather than altering the functional home.
+The change instruments the analytics sidebar filter shared by the target-aggregates and targets views; targets, target aggregates and coverage views are squarely part of the tasks-and-targets domain. The telemetry/observability nature is cross-cutting and captured in relatedWorkflows rather than altering the functional home.
