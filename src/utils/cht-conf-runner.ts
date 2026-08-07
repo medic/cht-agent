@@ -275,7 +275,13 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     // provider (ERR_OSSL_EVP_UNSUPPORTED). The container sets NODE_OPTIONS for
     // exactly this, but the scrubbed child env never saw it — so the compile
     // died before upload-app-settings ever ran.
-    extraEnv: { NODE_OPTIONS: COMPILE_NODE_OPTIONS },
+    //
+    // PYTHONHASHSEED for the same reason runOfflineConvert pins it: the form
+    // buckets run pyxform, whose output is hash-order dependent. Unpinned here,
+    // QA's whole-document RED oracle compares a deployed form against a locally
+    // converted one and aborts ENVIRONMENT DRIFT on convert churn alone —
+    // measured on 13 of 25 pairs for f_client-create.
+    extraEnv: { NODE_OPTIONS: COMPILE_NODE_OPTIONS, PYTHONHASHSEED: '0' },
   });
 
   let status: ConfigActionStatus;
@@ -365,6 +371,19 @@ export const runOfflineConvert = (options: OfflineConvertOptions): Promise<ChtCo
     logLabel: `offline ${CONVERT_VERBS[options.bucket ?? 'app-forms']}: ${options.form}`,
     bin: options.bin,
     timeoutMs: options.timeoutMs,
+    // pyxform-medic iterates hash-ordered containers when emitting bind
+    // attribute order and the secondary-instance <item> children, so Python's
+    // per-process hash randomization makes convert NON-deterministic for
+    // choice-heavy forms. minimalEnv drops PYTHONHASHSEED, so every convert got
+    // a fresh seed — and the apply's collateral oracle diffs a BASELINE convert
+    // against a POST-EDIT convert, two separate processes. Measured: converting
+    // the UNTOUCHED e_household-create workbook twice already yields 55 canonical
+    // diff lines, and f_client-create produced 4 different SHA1s in 4 runs at
+    // identical byte length. A perfect descriptor therefore read as collateral
+    // damage ~36% of the time, and the refinement loop cannot fix an environment
+    // bug by rewriting JSON — m7 ran to exhaustion on it. Pinned: byte-identical
+    // across repeated converts, apply ok 5/5 with the descriptor unchanged.
+    extraEnv: { PYTHONHASHSEED: '0' },
     // instanceUrl omitted -> URL-less convert, no upload verb.
   });
 

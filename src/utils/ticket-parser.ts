@@ -158,10 +158,23 @@ const parseBulletLine = (trimmed: string): string | null => {
 };
 
 const extractBulletList = (text: string): string[] => {
-  return text
-    .split('\n')
-    .map(line => parseBulletLine(line.trim()))
-    .filter((item): item is string => item !== null);
+  const items: string[] = [];
+  let indent = -1;
+  for (const raw of text.split('\n')) {
+    const trimmed = raw.trim();
+    const parsed = parseBulletLine(trimmed);
+    if (parsed !== null) {
+      items.push(parsed);
+      indent = raw.length - raw.trimStart().length;
+      continue;
+    }
+    // Continuation of the previous bullet: a non-empty, non-bullet line indented
+    // strictly deeper than the bullet that opened the item.
+    if (items.length > 0 && trimmed !== '' && raw.length - raw.trimStart().length > indent) {
+      items[items.length - 1] = `${items[items.length - 1]} ${trimmed}`;
+    }
+  }
+  return items;
 };
 
 const extractCodeItem = (trimmed: string): string | null => {
@@ -176,11 +189,34 @@ const extractCodeItem = (trimmed: string): string | null => {
   return null;
 };
 
+/**
+ * Bullet items, with indented continuation lines folded in — the same rule
+ * {@link extractBulletList} applies, for the same reason.
+ *
+ * Line-at-a-time extraction cut every multi-line bullet at its first line, so
+ * `components` arrived as sentence fragments ("The newborn immunization
+ * follow-up task (`tasks.js:1341-1370`) is") and any file path that wrapped onto
+ * a continuation line vanished. m7 names three `is_orphan` sites; the third sits
+ * on a continuation and was invisible to every consumer — the research prompt,
+ * the code-context search terms, and the verify-scope check that reports which
+ * sites tier-1 did NOT deployment-verify.
+ */
 const extractCodeItems = (text: string): string[] => {
-  return text
-    .split('\n')
-    .map(line => extractCodeItem(line.trim()))
-    .filter((item): item is string => item !== null);
+  const items: string[] = [];
+  let indent = -1;
+  for (const raw of text.split('\n')) {
+    const trimmed = raw.trim();
+    const parsed = extractCodeItem(trimmed);
+    if (parsed !== null) {
+      items.push(parsed);
+      indent = raw.length - raw.trimStart().length;
+      continue;
+    }
+    if (items.length > 0 && trimmed !== '' && raw.length - raw.trimStart().length > indent) {
+      items[items.length - 1] = `${items[items.length - 1]} ${trimmed}`;
+    }
+  }
+  return items;
 };
 
 const extractMarkdownLinks = (text: string): string[] => {

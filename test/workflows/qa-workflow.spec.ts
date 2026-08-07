@@ -1078,6 +1078,140 @@ describe('qa-workflow', () => {
     });
   });
 
+  /**
+   * Hardening A/B — the verify oracle is SINGULAR (one artifactName), so a ticket
+   * that names three copies of the same defect gets one of them proven and the
+   * run said nothing about the other two. A makes the choice loud; B stops a
+   * skipped, PINNED tier-2 surface from riding out as a clean green on such a
+   * ticket. Neither changes the single-artifact case.
+   */
+  describe('representative-form scope (hardening A + B)', () => {
+    /**
+     * m7's shape, on this file's form fixture: the ticket names three copies of
+     * the defect and tier-1 verifies exactly one of them (the artifactName).
+     */
+    const multiSiteIssue = (over: Partial<IssueTemplate['issue']['technical_context']> = {}): IssueTemplate =>
+      formIssue({
+        components: [
+          'The `danger_signs` gate is duplicated across three forms:',
+          'forms/app/pregnancy_home_visit.xml:1204 (the reported surface)',
+          'forms/app/postnatal_care.xml:882 — same defect',
+          'forms/contact/f_client-create.xml:19317 — third copy',
+        ],
+        ...over,
+      });
+
+    /** A config root whose harness is runnable, so tier-2 skips only on the pin. */
+    const harnessRoot = (): string => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-scope-'));
+      fs.mkdirSync(path.join(root, 'node_modules', '.bin'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'node_modules', '.bin', 'mocha'), '#!/bin/sh\nexit 0\n');
+      fs.mkdirSync(path.join(root, 'node_modules', 'cht-conf-test-harness'), { recursive: true });
+      return root;
+    };
+
+    it('A: the transition NAMES the sites this ticket declares but tier-1 never verified', async () => {
+      const { agent } = stubbedAgent();
+
+      const result = await executeQaWorkflow(agent, makeQaInput({ issue: multiSiteIssue() }));
+
+      expect(result.succeeded).to.equal(true);
+      const log = result.messages.join('\n');
+      expect(log).to.contain('tier-1 verified pregnancy_home_visit');
+      expect(log).to.contain('2 further site(s) named by this ticket are NOT deployment-verified');
+      expect(log).to.contain('forms/app/postnatal_care.xml');
+      expect(log).to.contain('forms/contact/f_client-create.xml');
+    });
+
+    it('A: says nothing extra for a single-artifact ticket', async () => {
+      const { agent } = stubbedAgent();
+
+      const result = await executeQaWorkflow(agent, makeQaInput());
+
+      expect(result.messages.join('\n')).to.not.contain('NOT deployment-verified');
+    });
+
+    // The scope line must survive an abort — the reader of a failed run needs to
+    // know the run only ever aimed at one of the sites.
+    it('A: carries the scope line even when the loop aborts on no reproduction', async () => {
+      const { agent, stubs } = stubbedAgent();
+      stubs.verifyArtifact.reset();
+      stubs.verifyArtifact.resolves(verifyResult(true));
+
+      const result = await executeQaWorkflow(agent, makeQaInput({ issue: multiSiteIssue() }));
+
+      expect(result.succeeded).to.equal(false);
+      expect(result.messages.join('\n')).to.contain('NOT deployment-verified');
+    });
+
+    it('B: a skipped PINNED tier-2 surface fails the loop when sites went unverified', async () => {
+      const root = harnessRoot();
+      try {
+        const { agent } = stubbedAgent();
+        const input = makeQaInput({
+          issue: multiSiteIssue(),
+          configPath: root,
+          tier2: true,
+          qaSpecs: ['test/forms/f_client-create.spec.js'],
+        });
+
+        const result = await executeQaWorkflow(agent, input);
+
+        // Tier-1 itself is green — this is exactly the silent-skip hole: one site
+        // proven, the rest with zero coverage, previously reported as success.
+        expect(result.verified).to.equal(true);
+        expect(result.tier2?.ran).to.equal(false);
+        expect(result.succeeded).to.equal(false);
+        const log = result.messages.join('\n');
+        expect(log).to.contain('pinned qaSpecs not found');
+        expect(log).to.contain('FAILING the loop');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('B: keeps the honest self-skip when the ticket names no unverified site', async () => {
+      const root = harnessRoot();
+      try {
+        const { agent } = stubbedAgent();
+        const input = makeQaInput({
+          // Single-artifact ticket (no other site named) with the SAME missing pin.
+          configPath: root,
+          tier2: true,
+          qaSpecs: ['test/forms/pregnancy_home_visit.spec.js'],
+        });
+
+        const result = await executeQaWorkflow(agent, input);
+
+        expect(result.tier2?.ran).to.equal(false);
+        expect(result.succeeded).to.equal(true);
+        const log = result.messages.join('\n');
+        expect(log).to.contain('tier-2: skipped');
+        expect(log).to.not.contain('FAILING the loop');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('B: a multi-site ticket with NO pin keeps the honest self-skip', async () => {
+      const root = harnessRoot();
+      try {
+        const { agent } = stubbedAgent();
+        // No qaSpecs: nothing was declared as the regression surface, so the skip
+        // stays free — A's warning is what covers this case.
+        const input = makeQaInput({ issue: multiSiteIssue(), configPath: root, tier2: true });
+
+        const result = await executeQaWorkflow(agent, input);
+
+        expect(result.tier2?.ran).to.equal(false);
+        expect(result.succeeded).to.equal(true);
+        expect(result.messages.join('\n')).to.not.contain('FAILING the loop');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('mission-05 QA seam (bucket untouched + node→verify loop closure)', () => {
     it('leaves the QA app-forms bucket at convert+upload (non-goal: no bucket change)', () => {
       expect(defaultApplyActions('form')).to.deep.equal(['app-forms']);

@@ -247,6 +247,76 @@ describe('pr-bundle', () => {
       expect(md).to.contain('not attributed to pre-existing breakage');
     });
 
+    /**
+     * Hardening A: the verify oracle asserts ONE artifact. When the ticket names
+     * more sites than that, a reviewer reading "Result: PASSED" reads a one-site
+     * proof as a whole-scope one — so the scope is a fact, and a caveat.
+     */
+    it('names the ticket sites QA never deployment-verified, and qualifies the headline', () => {
+      const multiSite = ticket();
+      multiSite.issue.technical_context.configArtifact = 'contact-form';
+      multiSite.issue.technical_context.artifactName = 'e_household-create';
+      multiSite.issue.technical_context.components = [
+        'forms/contact/e_household-create.xml:21441',
+        'forms/contact/f_client-create.xml:19317',
+      ];
+
+      const md = buildPrDescription({ ...base, ticket: multiSite, qa: passingQa() }, patchResult());
+
+      expect(md).to.contain('- Scope: tier-1 verified e_household-create');
+      expect(md).to.contain('1 further site(s) named by this ticket are NOT deployment-verified');
+      expect(md).to.contain('forms/contact/f_client-create.xml');
+      expect(md).to.contain('**Result: PASSED WITH CAVEATS**');
+      expect(md).to.not.contain('**Result: PASSED**');
+    });
+
+    it('says nothing about scope for a single-artifact ticket', () => {
+      const md = buildPrDescription({ ...base, qa: passingQa() }, patchResult());
+
+      expect(md).to.not.contain('NOT deployment-verified');
+      expect(md).to.contain('**Result: PASSED**');
+    });
+
+    /**
+     * Hardening B: a tier-2 skip is free while tier-1 covered the whole scope.
+     * With a pinned regression surface that never ran AND sites tier-1 did not
+     * verify, the document must not call it a pass.
+     */
+    it('fails the verdict when a PINNED tier-2 surface never ran on a multi-site ticket', () => {
+      const multiSite = ticket();
+      multiSite.issue.technical_context.configArtifact = 'contact-form';
+      multiSite.issue.technical_context.artifactName = 'e_household-create';
+      multiSite.issue.technical_context.components = [
+        'forms/contact/e_household-create.xml:21441',
+        'forms/contact/f_client-create.xml:19317',
+      ];
+      multiSite.issue.technical_context.qaSpecs = ['test/forms/f_client-create.spec.js'];
+      const qa = {
+        ...passingQa(),
+        tier2: { ran: false, reason: 'pinned qaSpecs not found under the config root: test/forms/f_client-create.spec.js' },
+      } as unknown as QaResult;
+
+      const md = buildPrDescription({ ...base, ticket: multiSite, qa }, patchResult());
+
+      expect(md).to.contain('DID NOT PASS');
+      expect(md).to.contain('pinned tier-2 specs that never ran');
+      expect(md).to.contain('Review the evidence before opening the PR');
+    });
+
+    it('keeps a tier-2 skip harmless on a single-artifact ticket (unchanged)', () => {
+      const pinned = ticket();
+      pinned.issue.technical_context.qaSpecs = ['test/tasks/a.spec.js'];
+      const qa = {
+        ...passingQa(),
+        tier2: { ran: false, reason: 'cht-conf-test-harness is not installed in the config repo' },
+      } as unknown as QaResult;
+
+      const md = buildPrDescription({ ...base, ticket: pinned, qa }, patchResult());
+
+      expect(md).to.contain('**Result: PASSED**');
+      expect(md).to.contain('- Tier-2 harness specs: not run —');
+    });
+
     it('qualifies the headline when the baseline attributes every tier-2 failure', () => {
       const qa = {
         ...passingQa(),

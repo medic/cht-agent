@@ -85,12 +85,24 @@ const isInsideOpenTag = (buffer: string): boolean => {
       }
       continue;
     }
-    if (ch === '"' || ch === "'") {
-      inQuote = ch;
-    } else if (ch === '<') {
+    if (ch === '<') {
       openIdx = i;
     } else if (ch === '>') {
       openIdx = -1;
+    } else if (openIdx !== -1 && (ch === '"' || ch === "'")) {
+      // A quote only delimits an ATTRIBUTE value, so it counts only INSIDE a
+      // tag. Tracking quotes in text content too made every apostrophe in the
+      // document open a phantom string that ran to the next apostrophe:
+      // `<name>chuka-igambang'ombe</name>`, `<value>MURANG'A</value>`,
+      // "Don't know". e_household-create has 95 such text nodes and
+      // f_client-create 79, so toLogicalLines glued ~144 KB of an 807 KB
+      // document into ONE "logical line". That did two kinds of damage:
+      //   - false FAIL: convert churn anywhere inside a glued chunk made the
+      //     whole chunk mismatch, reported as ~53 lines of collateral damage;
+      //   - false PASS: a chunk spanned BOTH the target nodeset and its
+      //     siblings, so excludeNodeset could not exclude the target and the
+      //     sibling-invariance oracle silently checked nothing.
+      inQuote = ch;
     }
   }
   return openIdx !== -1 || inQuote !== null;

@@ -885,8 +885,10 @@ export interface QaInput {
 /**
  * Outcome of the F7 tier-2 QA hook: the repo-pinned mocha run over the affected
  * form's harness spec(s). `ran: false` (with a `reason`) when the harness/spec
- * is missing — an honest self-skip that does NOT change `succeeded`. When it
- * ran, `succeeded &&= passed`.
+ * is missing — an honest self-skip that does NOT change `succeeded`, EXCEPT on a
+ * ticket that pinned `qaSpecs` AND names sites tier-1 never verified, where the
+ * skip leaves those sites with no coverage and fails the loop (see
+ * `utils/verify-scope.tier2SkipIsFatal`). When it ran, `succeeded &&= passed`.
  */
 export interface QaTier2Result {
   /** True only when a runnable spec was found and mocha was actually spawned. */

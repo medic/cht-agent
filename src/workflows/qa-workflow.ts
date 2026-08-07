@@ -61,6 +61,7 @@ import {
   tier2TailExcerpt,
 } from '../utils/cht-conf-tier2';
 import { askYesNo } from '../utils/prompt';
+import { deriveVerifyScope, representativeScopeLine, tier2SkipIsFatal } from '../utils/verify-scope';
 
 /** The four settings artifacts the compiled-settings oracle verifies. */
 const SETTINGS_ARTIFACTS: readonly string[] = ['task', 'target', 'contact-summary', 'app-settings'];
@@ -382,6 +383,18 @@ export const executeQaWorkflow = async (
   const messages: string[] = [];
   const artifact = input.verify.artifactName;
 
+  // A: the verify oracle is SINGULAR — it asserts `technical_context.artifactName`
+  // and nothing else. When the ticket names other sites of the same defect, say so
+  // BEFORE anything else, so the line rides on every QaResult (aborts included) and
+  // no reader mistakes this green for the whole scope. Silent when the ticket names
+  // no other site (the single-artifact case reads exactly as it did before).
+  const scope = deriveVerifyScope(input.issue);
+  const scopeLine = representativeScopeLine(scope);
+  if (scopeLine) {
+    messages.push(`REPRESENTATIVE scope — ${scopeLine}`);
+    console.log(`\n⚠️  REPRESENTATIVE scope — ${scopeLine}`);
+  }
+
   // Pre-flight: config-type boundary. A fix that needs source the mount cannot
   // yield must not reach the destructive seed/apply.
   const configArtifact: ConfigArtifact = input.issue.issue.technical_context.configArtifact ?? 'form';
@@ -554,8 +567,10 @@ export const executeQaWorkflow = async (
   // 8. F7 tier-2 (opt-in): after the tier-1 GREEN, run the config repo's OWN
   // pinned mocha over the affected form's harness spec(s). It folds into
   // `succeeded` when it ran; a missing harness/spec is an honest self-skip that
-  // leaves `succeeded` unchanged. Only attempted when tier-1 already succeeded —
-  // there is nothing to strengthen about an already-failed loop.
+  // leaves `succeeded` unchanged — EXCEPT on a multi-site ticket that pinned its
+  // regression surface, where the skip is the only thing that could have covered
+  // the unverified sites (B — see tier2SkipIsFatal). Only attempted when tier-1
+  // already succeeded — there is nothing to strengthen about an already-failed loop.
   let tier2;
   if (input.tier2 && succeeded) {
     // P5: select the tier-2 specs per artifact (form/contact-form → the form's
@@ -598,7 +613,24 @@ export const executeQaWorkflow = async (
       // absent a baseline we must not excuse a real regression.
       succeeded = succeeded && (tier2.passed === true || tier2FailuresArePreExisting(tier2));
     } else {
-      messages.push(`tier-2: skipped — ${tier2.reason}`);
+      // B: an honest self-skip on a single-artifact ticket leaves `succeeded`
+      // alone (unchanged). On a ticket that named sites tier-1 never verified AND
+      // pinned its regression surface via `qaSpecs`, the skip is the difference
+      // between "one site proven, the rest untested" and "one site proven, the
+      // rest reported green" — so it condemns the loop.
+      const fatal = tier2SkipIsFatal({
+        pinnedSpecs: (input.qaSpecs?.length ?? 0) > 0,
+        unverifiedSites: scope.unverified.length,
+      });
+      messages.push(
+        fatal
+          ? `tier-2: skipped — ${tier2.reason} — FAILING the loop: this ticket pinned qaSpecs and names ` +
+            `${scope.unverified.length} site(s) tier-1 did not verify, so the skip leaves them with NO coverage`
+          : `tier-2: skipped — ${tier2.reason}`
+      );
+      if (fatal) {
+        succeeded = false;
+      }
     }
   }
 

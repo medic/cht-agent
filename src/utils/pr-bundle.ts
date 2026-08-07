@@ -26,6 +26,7 @@ import {
   tier2FailuresArePreExisting,
   tier2PassLine,
 } from './cht-conf-tier2';
+import { deriveVerifyScope, representativeScopeLine, tier2SkipIsFatal } from './verify-scope';
 
 const execFileAsync = promisify(execFile);
 
@@ -291,15 +292,28 @@ const worstStatus = (facts: ReadonlyArray<QaFact>): QaFact['status'] => {
  * regression), and a failure whose browser never launched is named as the
  * environment problem it is rather than reported as a broken assertion.
  */
-const tier2Facts = (qa: QaResult): QaFact[] => {
+const tier2Facts = (qa: QaResult, unverifiedSites: number, pinnedSpecs: boolean): QaFact[] => {
   const tier2 = qa.tier2;
   if (!tier2) {
     return [];
   }
   if (!tier2.ran) {
+    // B: a skip is free while tier-1 covered the whole scope. When the ticket
+    // pinned a regression surface AND names sites tier-1 never verified, the skip
+    // left those sites with no coverage at all — the document must not call that
+    // a pass (the QA phase fails the same case; this keeps PR.md consistent even
+    // for a QaResult produced before/without that gate).
+    const fatal = tier2SkipIsFatal({ pinnedSpecs, unverifiedSites });
     return [{
       line: `- Tier-2 harness specs: not run — ${tier2.reason ?? 'no reason recorded'}`,
-      status: 'ok',
+      status: fatal ? 'fail' : 'ok',
+      ...(fatal
+        ? {
+          label:
+            'the ticket pinned tier-2 specs that never ran, so the ' +
+            `${unverifiedSites} site(s) tier-1 did not verify have NO coverage`,
+        }
+        : {}),
     }];
   }
   const facts: QaFact[] = [];
@@ -342,8 +356,10 @@ const tier2Facts = (qa: QaResult): QaFact[] => {
  * status present and the headline names the facts that produced it, so the
  * headline cannot contradict the lines under it.
  */
-const qaFacts = (qa: QaResult): QaFact[] => {
+const qaFacts = (qa: QaResult, ticket: IssueTemplate): QaFact[] => {
   const applied = qa.applyResult?.succeeded === true;
+  // A: the ticket's scope versus what the singular oracle actually verified.
+  const scope = deriveVerifyScope(ticket);
   const facts: QaFact[] = [
     {
       line: `- Reproduced (red baseline): ${qa.reproduced ? 'yes' : 'no'}`,
@@ -377,15 +393,28 @@ const qaFacts = (qa: QaResult): QaFact[] => {
   if (qa.abortReason) {
     facts.push({ line: `- Abort reason: ${qa.abortReason}`, status: 'ok' });
   }
-  facts.push(...tier2Facts(qa));
+  // A: the green is REPRESENTATIVE whenever the ticket named more sites than the
+  // oracle asserts. A reviewer who cannot see that reads a one-site proof as a
+  // whole-scope one — so it is a CAVEAT, and it is named in the headline.
+  const scopeLine = representativeScopeLine(scope);
+  if (scopeLine) {
+    facts.push({
+      line: `- Scope: ${scopeLine}`,
+      status: 'caveat',
+      label: `${scope.unverified.length} site(s) this ticket names were NOT deployment-verified`,
+    });
+  }
+  facts.push(
+    ...tier2Facts(qa, scope.unverified.length, (ticket.issue.technical_context.qaSpecs?.length ?? 0) > 0)
+  );
   return facts;
 };
 
-const qaSection = (qa: QaResult | undefined): string => {
+const qaSection = (qa: QaResult | undefined, ticket: IssueTemplate): string => {
   if (!qa?.ran) {
     return '## QA\n\nThe QA closed loop did not run for this change.\n';
   }
-  const facts = qaFacts(qa);
+  const facts = qaFacts(qa, ticket);
   const status = worstStatus(facts);
   const reasons = status === 'ok'
     ? []
@@ -558,7 +587,7 @@ ${bulletList(sourceFiles, '_no source files changed_')}
 
 ${bulletList(testFiles, '_no test files added_')}
 
-${qaSection(qa)}
+${qaSection(qa, ticket)}
 ${recommendationSection(recommendations)}${excludedSection(patch)}## Applying this change
 
 \`\`\`bash
