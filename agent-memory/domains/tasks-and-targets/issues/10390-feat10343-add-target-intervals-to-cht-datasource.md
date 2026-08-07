@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10343
 issueUrl: https://github.com/medic/cht-core/issues/10343
 title: Add target intervals (target docs) to cht-datasource with local and remote implementations plus an API controller and route
-lastUpdated: '2026-08-01'
+lastUpdated: '2026-08-07'
 summary: Target docs ("target intervals") could only be read through bespoke DB-loading code in the target-aggregates service and analytics.getTargetDocs, with no reusable access path. This PR adds a target-interval module to cht-datasource (local + remote implementations, new qualifier) and a matching API controller/route to expose them.
 services:
   - api
@@ -93,4 +93,4 @@ Added mocha unit tests for the new datasource module (test/target-interval.spec.
 
 **Fit:** weak
 
-All changed files are shared-libs/cht-datasource plus one API controller — data-access-layer work tied to tasks only because the docs fetched are targets; tasks-and-targets is the least-bad home rather than a principled fit.
+The change is confined to the cht-datasource library, the thin API surface exposing it (the target-interval controller and its registration in api/src/routing.js), and the unit and integration tests for those two plus the mocha/package wiring they need — data-access-layer work tied to tasks only because the docs fetched are targets; tasks-and-targets is the least-bad home rather than a principled fit.

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9704
 issueUrl: https://github.com/medic/cht-core/issues/9704
 title: Throw PouchDB errors when saving target documents in the rules-engine pouchdb-provider
-lastUpdated: '2026-08-01'
+lastUpdated: '2026-08-07'
 summary: The catch-all on the PouchDB READ that precedes a target-doc write handled only `err.status === 404`, returning a freshly-built target doc; every other rejection fell through silently, so a real PouchDB failure produced neither a document nor an error. The provider now rethrows any non-404 error from the target-doc read so the errors propagate.
 services:
   - webapp
@@ -40,7 +40,7 @@ stale: false
 
 ## Problem
 
-When the rules-engine saved (committed) target documents through the pouchdb-provider, any PouchDB error on the write was silently ignored rather than surfaced to the caller. The failure was swallowed on the read that precedes the write: `commitTargetDoc` caught every rejection from `db.get`, but returned a freshly-built target doc only when `err.status === 404` and returned `undefined` for anything else — so a genuine store error was never reported as itself, surfacing at best as a downstream `TypeError` when the `undefined` document was dereferenced.
+When the rules-engine saved (committed) target documents through the pouchdb-provider, a PouchDB failure in the commit path could vanish without ever surfacing to the caller. The failure was swallowed on the read that precedes the write: `commitTargetDoc` caught every rejection from `db.get`, but returned a freshly-built target doc only when `err.status === 404` and returned `undefined` for anything else — so a genuine store error was never reported as itself, surfacing at best as a downstream `TypeError` when the `undefined` document was dereferenced.
 
 ## Root Cause
 
