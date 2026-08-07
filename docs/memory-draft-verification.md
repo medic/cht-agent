@@ -139,6 +139,47 @@ checked against `origin/master`). Absence under `fallback` still refutes a
 fabricated symbol, but cannot distinguish "never existed" from "existed then was
 removed", so treat it as strong evidence rather than proof.
 
+## Attribution: "added" vs "modified"
+
+The probe for a `file-touched` claim compares the status the prose asserts
+against the PR's real file list, so "a new mocha harness was added (…)" is a
+defect when the PR's own diff deletes those files. That check is only as good as
+the extractor: it fires when a claim carries `status`, and for three review
+rounds nothing set one, so it never ran. `enumerate-claims` now infers the status
+deterministically, which is what makes this class caught on every run rather than
+whenever the model volunteers it.
+
+Inference is deliberately narrow, because a false "this is fabricated" costs more
+than a missed check. A status is only read when the file itself is the object of
+a create/delete verb — the verb precedes the path, sits within ~90 characters and
+the same clause, and the path is not the object of a locating preposition. That
+last rule is the load-bearing one: *"added a `dbQuery` wrapper in
+pouchdb-provider.js"* creates a symbol inside a file the PR **modified**.
+Measured over the tasks-and-targets batch, a screen keyed on verb-near-path
+produced 64 hits of which 63 were that shape; the rules above reduce it to 6
+inferred statuses, all confirmed by the PR file lists, while still reproducing
+the #10436 defect from the pre-fix text.
+
+## Known blind spots
+
+Three things this layer does not settle, all found while grounding
+tasks-and-targets and all worth knowing before trusting a green run:
+
+- **Symbol attribution.** A `symbol` claim asks whether an identifier exists at
+  the anchor, not which PR introduced it. #10324 credited itself with the
+  sidebar's `telemetryKey` input; the input is real, so every probe passed, but
+  #10371 added it. Catching this needs the PR's own added lines, not the tree.
+- **Counterfactuals.** "The type was kept as `target` rather than
+  `target-interval`" asserts that the second name does *not* exist, and the
+  probe reports the absence it finds as `ungrounded`. `ABSENCE_CONTEXT`
+  deliberately excludes "rather than"/"instead of", because Design Choices uses
+  them constantly for things that do exist, so this is a known trade rather than
+  a bug.
+- **Placeholder literals.** A backticked template written with its holes spelled
+  out — `` `sidebar_filter:analytics:<telemetryKey>:reporting-period:select` `` —
+  can never be found by a literal `git grep`. Quote the real template literal
+  instead.
+
 ## Anchor resolution, and why it often fails
 
 In order: `source_sha` if that commit is present locally, then the squash-merge

@@ -94,6 +94,103 @@ const ABSENCE_CONTEXT = new RegExp([
 const NOT_TOUCHED =
   /\b(?:not modified|unchanged|pre-existing|existing spec|not added or edited|under test|not in this PR)\b/i;
 
+/**
+ * Prose that makes the FILE ITSELF the object of a create/delete verb, which is
+ * the only shape from which a `status` may be inferred.
+ *
+ * The distinction is the whole design of these two patterns, and getting it
+ * wrong is expensive in the direction this module cares about. "Added a
+ * `dbQuery` wrapper in pouchdb-provider.js" adds a symbol to a file the PR
+ * MODIFIED; "added webapp/tests/mocha/tsconfig.mocha.json" adds the file. A
+ * screen that keys on verb-near-path conflates the two — measured over the
+ * tasks-and-targets batch it produced 64 hits, 63 of them that first shape.
+ * So the verb must govern the path directly: adjacent to it, or joined to it by
+ * nothing more than an article. Any intervening `in`/`to`/`from` object means
+ * the file is the location of the change, not its subject.
+ *
+ * `#10436` is the case that motivated this. Its Testing section said a mocha
+ * harness "was added ... (webapp/tests/mocha/.mocharc.js, tsconfig.mocha.json,
+ * tsconfig.spec.json)" when the PR's own diff is deletions only. The probe could
+ * always have caught it — `checkFileTouched` compares a claimed status against
+ * the PR file list — but nothing ever set `status` on a deterministic claim, so
+ * the check only fired when the LLM extractor happened to volunteer one. It did
+ * not, through three review rounds.
+ */
+const ADD_VERB = /\b(?:add(?:s|ed|ing)?|introduc(?:e|es|ed|ing)|creat(?:e|es|ed|ing)|new)\b/gi;
+const DELETE_VERB = /\b(?:remov(?:e|es|ed|ing|al)|delet(?:e|es|ed|ing)|drop(?:s|ped|ping)?)\b/gi;
+
+/**
+ * A preposition whose OBJECT is the path — "a wrapper in pouchdb-provider.js".
+ * Only an article or a small quantifier may sit between, so that "for the webapp
+ * (webapp/tests/...)" does not read as though `for` governs the path.
+ */
+const LOCATES = '(?:in|to|from|into|within|inside|under|for|of|on|per|via|alongside|against)';
+
+/**
+ * How far back a create/delete verb may sit and still govern the path, and what
+ * stops it reaching. Both exist because this corpus writes a whole paragraph on
+ * one line: 10423's Testing opens "Added mocha unit tests for the API target
+ * controller (…)" and then names an e2e spec 200 characters later that the PR
+ * merely modified. Without a bound, the opening verb claims every path in the
+ * paragraph, and four of the fourteen statuses measured on the
+ * tasks-and-targets batch were exactly that.
+ */
+const VERB_REACH = 90;
+const CLAUSE_BREAK = /[;:]|\.\s|\s[—–-]\s/g;
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The status the quote asserts for `file`, or undefined when the prose does not
+ * make the file itself the thing created or deleted. Undefined is the safe
+ * answer and the common one: it leaves the claim exactly as strong as it was
+ * before, a plain "this PR touched the file".
+ *
+ * Two conditions, both required, and each earns its keep against a real shape
+ * from the corpus:
+ *
+ *   the verb precedes the path — "reused ngrx global state (reducers/global.ts)
+ *   instead of introducing new view-specific state" has a create verb in it, but
+ *   after the path, and is about what the PR declined to do.
+ *
+ *   the path is not a locating preposition's object — "added a `dbQuery` wrapper
+ *   in pouchdb-provider.js" creates a symbol, not the file.
+ */
+export function claimedStatus(quote: string, file: string): 'added' | 'deleted' | undefined {
+  const base = file.split('/').pop() ?? file;
+  const target = `(?:${escapeRe(file)}|${escapeRe(base)})`;
+  const at = quote.search(new RegExp(target, 'i'));
+  if (at < 0) return undefined;
+
+  if (new RegExp(`\\b${LOCATES}\\s+(?:the\\s+|a\\s+|an\\s+|its\\s+|two\\s+|both\\s+)?${target}`, 'i')
+    .test(quote)) {
+    return undefined;
+  }
+
+  // Only the clause the path sits in, and only so far back within it.
+  let before = quote.slice(Math.max(0, at - VERB_REACH), at);
+  CLAUSE_BREAK.lastIndex = 0;
+  let cut = -1;
+  for (const m of before.matchAll(CLAUSE_BREAK)) cut = (m.index ?? 0) + m[0].length;
+  if (cut > 0) before = before.slice(cut);
+
+  const lastIndexOfVerb = (re: RegExp): number => {
+    re.lastIndex = 0;
+    let last = -1;
+    for (const m of before.matchAll(re)) {
+      // "added no test files" asserts the opposite of what the verb suggests.
+      if (/^\s*(?:no|not|zero|none)\b/i.test(before.slice((m.index ?? 0) + m[0].length))) continue;
+      last = m.index ?? last;
+    }
+    return last;
+  };
+  const del = lastIndexOfVerb(DELETE_VERB);
+  const add = lastIndexOfVerb(ADD_VERB);
+  if (del < 0 && add < 0) return undefined;
+  // Whichever verb is nearer the path is the one governing it.
+  return del > add ? 'deleted' : 'added';
+}
+
 /** Inline-code spans: `foo`. */
 const BACKTICK_RE = /`([^`\n]+)`/g;
 
@@ -292,10 +389,30 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
   const seen = new Set<string>();
   const add = (c: Claim): void => {
     const key = `${c.kind}|${'symbol' in c ? c.symbol : ''}|${'file' in c ? c.file : ''}`;
-    if (seen.has(key)) return;
+    if (seen.has(key)) {
+      // A path can be claimed twice — bare under Related Files, and again in
+      // prose that says what happened to it. The prose is the stronger claim, so
+      // let a status upgrade the stored one rather than being deduped away.
+      if (c.kind === 'file-touched' && c.status) {
+        const prior = out.find(
+          p => p.kind === 'file-touched' && p.file === c.file
+        ) as (Claim & { kind: 'file-touched' }) | undefined;
+        if (prior && !prior.status) prior.status = c.status;
+      }
+      return;
+    }
     seen.add(key);
     out.push(c);
   };
+
+  /**
+   * A sentence that credits another PR ("#10507 had added it", "removed from
+   * master by #9718") is describing someone else's diff, and checking its verb
+   * against THIS PR's file list would manufacture a defect. The bare claim still
+   * gets enumerated; only the status is withheld.
+   */
+  const statusFor = (quote: string, file: string): 'added' | 'deleted' | undefined =>
+    /#\d{3,}/.test(quote) ? undefined : claimedStatus(quote, file);
 
   const usable = (p: string, quote: string): boolean =>
     !URL_PATH_RE.test(p) && !ABSENCE_CONTEXT.test(quote);
@@ -312,7 +429,9 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
       touched.add(p);                                  // claimed here; do not re-add below
       continue;
     }
-    if (!ABSENCE_CONTEXT.test(quote)) add({ kind: 'file-touched', file: p, quote });
+    if (!ABSENCE_CONTEXT.test(quote)) {
+      add({ kind: 'file-touched', file: p, quote, status: statusFor(quote, p) });
+    }
     touched.add(p);
   }
 
@@ -330,7 +449,18 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
   // every other path mentioned in the prose
   for (const p of raw.match(PATH_RE) ?? []) {
     const { quote } = lineContaining(lines, p);
-    if (!touched.has(p) && usable(p, quote)) add({ kind: 'path-exists', file: p, quote });
+    if (touched.has(p) || URL_PATH_RE.test(p)) continue;
+    // Prose that makes the file the object of a create/delete verb is asserting
+    // what this PR DID to it, which the diff can settle — a strictly stronger
+    // check than "does this path exist". Deletion says so with a word
+    // ABSENCE_CONTEXT suppresses, and rightly so for a symbol that will not be
+    // in the tree; a deleted file is still in the diff, so the claim survives.
+    const status = statusFor(quote, p);
+    if (status) {
+      add({ kind: 'file-touched', file: p, quote, status });
+      continue;
+    }
+    if (usable(p, quote)) add({ kind: 'path-exists', file: p, quote });
   }
 
   // backticked identifiers

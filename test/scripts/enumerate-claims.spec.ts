@@ -234,4 +234,90 @@ describe('enumerate-claims', () => {
       expect(out).to.not.have.property('file');
     });
   });
+
+  describe('claimedStatus — the file as object, not location', () => {
+    const statusOf = (prose: string, file: string): string | undefined => {
+      const draft = `## Testing\n\n${prose}\n`;
+      const c = enumerateClaims(draft)
+        .find(x => x.kind === 'file-touched' && x.file === file) as
+          { status?: string } | undefined;
+      return c?.status;
+    };
+
+    it('reads the 10436 harness sentence as an ADD claim', () => {
+      // The defect three review rounds missed: the PR's diff is deletions only,
+      // so a status of 'added' is what lets checkFileTouched contradict it.
+      expect(statusOf(
+        'A new Mocha unit-test harness was added for the webapp ' +
+          '(webapp/tests/mocha/tsconfig.mocha.json) specifically to unit-test the lib.',
+        'webapp/tests/mocha/tsconfig.mocha.json',
+      )).to.equal('added');
+    });
+
+    it('reads a plain "added <path>" as an ADD claim', () => {
+      expect(statusOf(
+        'Added tests/e2e/default/targets/utils/targets-helper-functions.js for the new page.',
+        'tests/e2e/default/targets/utils/targets-helper-functions.js',
+      )).to.equal('added');
+    });
+
+    it('shares one verb across a conjunct list', () => {
+      expect(statusOf(
+        'Added api/src/controllers/target.js and api/tests/mocha/controllers/target.spec.js.',
+        'api/tests/mocha/controllers/target.spec.js',
+      )).to.equal('added');
+    });
+
+    it('reads removal as a DELETE claim even though ABSENCE_CONTEXT matches', () => {
+      expect(statusOf(
+        'Removed shared-libs/rules-engine/src/rules-emitter/emitter.nools.js outright.',
+        'shared-libs/rules-engine/src/rules-emitter/emitter.nools.js',
+      )).to.equal('deleted');
+    });
+
+    it('does NOT claim a status when the file is where a symbol was added', () => {
+      // The 63-of-64 shape. pouchdb-provider.js was modified, not added; a
+      // status here would invent a defect on every draft that describes a hunk.
+      expect(statusOf(
+        'Added a `dbQuery(view, params)` wrapper in shared-libs/rules-engine/src/pouchdb-provider.js.',
+        'shared-libs/rules-engine/src/pouchdb-provider.js',
+      )).to.equal(undefined);
+    });
+
+    it('does NOT claim a status for "added ... to <path>"', () => {
+      expect(statusOf(
+        'Added supporting `priority` functions to two tasks in config/default/tasks.js.',
+        'config/default/tasks.js',
+      )).to.equal(undefined);
+    });
+
+    it('does NOT claim a status when another PR is credited', () => {
+      // "removed from master by #9718" is someone else's diff.
+      expect(statusOf(
+        'The helper in shared-libs/rules-engine/src/provider-wireup.js was removed from master by #9718.',
+        'shared-libs/rules-engine/src/provider-wireup.js',
+      )).to.equal(undefined);
+    });
+
+    it('still enumerates the file when no status can be read', () => {
+      const draft = '## Testing\n\nExtended webapp/tests/karma/ts/reducers/tasks.spec.ts with edge cases.\n';
+      const hit = enumerateClaims(draft)
+        .find(c => 'file' in c && c.file === 'webapp/tests/karma/ts/reducers/tasks.spec.ts');
+      expect(hit, 'the path is still claimed, just without a status').to.exist;
+      expect((hit as { status?: string }).status).to.equal(undefined);
+    });
+
+    it('lets a prose status upgrade a bare Related Files entry', () => {
+      const draft = [
+        '## Testing', '',
+        'Added webapp/tests/mocha/tsconfig.mocha.json for the lib.', '',
+        '## Related Files', '',
+        '- webapp/tests/mocha/tsconfig.mocha.json', '',
+      ].join('\n');
+      const hits = enumerateClaims(draft)
+        .filter(c => c.kind === 'file-touched' && c.file === 'webapp/tests/mocha/tsconfig.mocha.json');
+      expect(hits).to.have.lengthOf(1);
+      expect((hits[0] as { status?: string }).status).to.equal('added');
+    });
+  });
 });
