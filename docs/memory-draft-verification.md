@@ -160,10 +160,31 @@ produced 64 hits of which 63 were that shape; the rules above reduce it to 6
 inferred statuses, all confirmed by the PR file lists, while still reproducing
 the #10436 defect from the pre-fix text.
 
+## Backports: the pick does not carry the PR number
+
+`branch -r --contains <anchor>` can never see a backport, because a cherry-pick is
+a different commit. The probe therefore also searches the release branches for a
+commit referencing the PR — the draft's own, and any PR number quoted in the
+sentence ("backported to 4.13.x (PR #9555)").
+
+Neither is guaranteed to be there. cht-core stamps the **issue** in the subject and
+marks the pick with a bare `(backport)` suffix, so #9608's real backport reads
+
+```
+69ae8c0ab fix(#9604): fix integer validation in sms rules (backport)
+```
+
+at the tip of `origin/4.14.x` — while the draft's own PR is #9608 and its sentence
+names the backport PR #9610. Both searches missed, and a true backport was reported
+as invented. What a cherry-pick *must* carry is the original subject, so the anchor's
+own subject is now mined for the reference it was stamped with, and the refusal
+message lists every reference it searched rather than only the draft's PR.
+
 ## Known blind spots
 
-Three things this layer does not settle, all found while grounding
-tasks-and-targets and all worth knowing before trusting a green run:
+Four things this layer does not settle, the first three found while grounding
+tasks-and-targets and the fourth while grounding forms-and-reports, all worth
+knowing before trusting a green run:
 
 - **Symbol attribution.** A `symbol` claim asks whether an identifier exists at
   the anchor, not which PR introduced it. #10324 credited itself with the
@@ -179,6 +200,22 @@ tasks-and-targets and all worth knowing before trusting a green run:
   out — `` `sidebar_filter:analytics:<telemetryKey>:reporting-period:select` `` —
   can never be found by a literal `git grep`. Quote the real template literal
   instead.
+- **Identifiers that live in binary form sources.** An XLSForm *column header* —
+  `instance::cht:duration`, `instance::cht:unique_tel` — exists only inside the
+  zipped XML of an `.xlsx`, so `git grep` over the tree cannot see it and the
+  probe reports it as fabricated. Both were filed as ungrounded on
+  forms-and-reports and both are real; the proof is to unzip the fixture:
+
+  ```sh
+  git -C $CORE show origin/master:tests/e2e/default/enketo/forms/phone_widget.xlsx > pw.xlsx
+  unzip -q -o pw.xlsx -d pw && grep -o 'instance::[^<"]*' pw/xl/sharedStrings.xml | sort -u
+  #   instance::cht:unique_tel
+  ```
+
+  The *downstream* artefacts are greppable — the header becomes `cht:unique_tel`
+  in the generated XForm instance and `data-cht-unique_tel` on the rendered
+  question — so a draft that also names one of those gives the probe something it
+  can settle. Naming only the column header does not.
 
 ## Anchor resolution, and why it often fails
 

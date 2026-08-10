@@ -753,7 +753,18 @@ function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 're
   // Searching only the draft's own PR number misses it and reports a true claim
   // as a defect.
   const quotedPrs = [...claim.quote.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10));
-  for (const pr of [a.prNumber, ...quotedPrs].filter((n): n is number => n !== undefined)) {
+  // Neither number is guaranteed to appear on the cherry-pick. cht-core stamps
+  // the ISSUE in the subject and marks the pick with a bare "(backport)" suffix,
+  // so #9608's pick reads `fix(#9604): … (backport)` while the draft's sentence
+  // names the backport PR #9610 — source PR, quoted PR, both miss, and a real
+  // backport sitting at the tip of origin/4.14.x is reported as invented. What a
+  // cherry-pick MUST carry is the original subject, so mine the anchor's own
+  // subject for the reference it was stamped with.
+  const subjectRefs = [...a.subject.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10));
+  const searched = [...new Set(
+    [a.prNumber, ...quotedPrs, ...subjectRefs].filter((n): n is number => n !== undefined),
+  )];
+  for (const pr of searched) {
     const viaPick = onBranch(findCherryPick(ctx, pr));
     if (viaPick) {
       return verdict(claim, 'grounded',
@@ -763,7 +774,8 @@ function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 're
 
   const releaseLines = containing.filter(b => /\d+\.\d+\.x$/.test(b));
   return verdict(claim, 'ungrounded',
-    `${cmd} → does not include ${claim.branch}, and no commit referencing (#${a.prNumber}) reaches it`,
+    `${cmd} → does not include ${claim.branch}, and no commit referencing `
+      + `${searched.map(n => `(#${n})`).join(' / ') || '(#?)'} reaches it`,
     releaseLines.length ? `anchor reaches ${releaseLines.join(', ')}` : undefined);
 }
 
