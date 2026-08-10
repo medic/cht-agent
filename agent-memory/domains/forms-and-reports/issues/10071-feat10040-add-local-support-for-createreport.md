@@ -73,7 +73,7 @@ Local adapter create-operation pattern in cht-datasource: implement `create` in 
 
 ## Design Choices
 
-Implements report creation in the local adapter to keep the local data context aligned with the datasource abstraction's create operations (parity with the remote context), delivered as incremental work toward the broader create-report feature (#10038). Named the operation `create` inside the `Report.v1` namespace rather than a flat `createReport`, matching `Person.v1.create` and `Place.v1.create`. On the API side (PR #10099), reused the existing person/place create architecture (domain module + remote adapter + controller + shared validators) for API and naming consistency across the datasource surface rather than a bespoke report-only path, and centralized validation in parameter-validators.ts to avoid duplication.
+Implements report creation in the local adapter to keep the local data context aligned with the datasource abstraction's create operations (parity with the remote context), delivered as incremental work toward the report half (#10040) of the datasource create/update effort whose place half is #10038. Named the operation `create` inside the `Report.v1` namespace rather than a flat `createReport`, matching `Person.v1.create` and `Place.v1.create`. On the API side (PR #10099), reused the existing person/place create architecture (domain module + remote adapter + controller + shared validators) for API and naming consistency across the datasource surface rather than a bespoke report-only path, and centralized validation in parameter-validators.ts to avoid duplication.
 
 ## Related Files
 

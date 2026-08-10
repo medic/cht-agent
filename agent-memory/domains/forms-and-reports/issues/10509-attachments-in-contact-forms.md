@@ -23,7 +23,7 @@ App forms supported file uploads (images, audio, video) which were saved as atta
 
 ## Root Cause
 
-The contact form submission code path in `contact-save.service.ts` did not process file upload fields. It extracted scalar form values but skipped binary attachment data. The app form submission path had this logic in `enketo.service.ts`, but it lived in private methods there and so was not reachable from the contact form path.
+The contact form submission code path in `contact-save.service.ts` did not process file upload fields. It extracted scalar form values but skipped binary attachment data. The app form submission path had this logic in `enketo.service.ts`, but inline inside `xmlToDocs` rather than in any callable helper, so the contact form path had nothing to reuse.
 
 ## Solution
 
