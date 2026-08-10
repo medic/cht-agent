@@ -54,7 +54,7 @@ The countdown-timer Enketo widget only applied to questions of input type 'note'
 
 ## Root Cause
 
-The widget's own selector (`.or-appearance-countdown-timer input`) bound the countdown timer to the 'note' input type, which does not support the 'required' constraint, making timer completion unenforceable. There was also no mechanism to carry a per-field duration through form generation — the XSLT transform drops instance attributes, and generate-xform.js had no involvement with the countdown widget at all before this PR; the old note-based duration was read straight off the note's own value.
+The widget's own selector (`.or-appearance-countdown-timer input`) bound the countdown timer to the 'note' input type, which does not support the 'required' constraint, making timer completion unenforceable. A per-field duration could not survive form generation: the XSLT transform drops instance attributes and generate-xform.js had no involvement with the countdown widget before this PR. Durations were configurable already, but only in the one way that needed no generation support — the old note-based timer read its duration straight off the note's own value.
 
 ## Solution
 
