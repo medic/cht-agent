@@ -1,12 +1,12 @@
 ---
-id: cht-core-7462
+id: cht-core-7599
 category: improvement
 domain: forms-and-reports
 domainFit: strong
-issueNumber: 7462
-issueUrl: https://github.com/medic/cht-core/issues/7462
+issueNumber: 7599
+issueUrl: https://github.com/medic/cht-core/issues/7599
 title: 'Uplift Enketo forms module: enable excludeNonRelevant and patch date pickers to not auto-open as first question'
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-09'
 summary: The Enketo forms module was uplifted to enable `excludeNonRelevant` and to stop the date and date-time picker widgets from auto-popping open when they are the first question on a page. The enketo-core relevance patch was updated so CHT `inputs` group fields remain accessible to expressions even when the group is non-relevant.
 services:
   - webapp
@@ -36,8 +36,7 @@ confidence: medium
 entities:
   - webapp/src/js/enketo/config.js
   - webapp/patches/enketo-core+7.2.5.patch
-  - tests/e2e/cht-form/default/death-report.wdio-spec.js
-  - tests/page-objects/default/enketo/delivery.wdio.page.js
+  - tests/e2e/default/enketo/pregnancy-danger-sign-follow-up.wdio-spec.js
 concepts:
   - Enketo form rendering engine
   - non-relevant field handling (relevance logic)
@@ -73,16 +72,19 @@ Used a patch-package patch to override enketo-core internals instead of forking 
 
 - webapp/src/js/enketo/config.js
 - webapp/patches/enketo-core+7.2.5.patch
-- tests/e2e/cht-form/default/death-report.wdio-spec.js
-- tests/page-objects/default/enketo/delivery.wdio.page.js
+- webapp/src/js/enketo/widgets.js
+- webapp/src/ts/services/enketo.service.ts
+- webapp/src/css/enketo/_widgets.scss
+- tests/e2e/default/enketo/pregnancy-danger-sign-follow-up.wdio-spec.js
 
 ## Testing
 
-Updated end-to-end WebdriverIO coverage: the death-report cht-form e2e spec (tests/e2e/cht-form/default/death-report.wdio-spec.js) and the delivery Enketo page object (tests/page-objects/default/enketo/delivery.wdio.page.js) to exercise the new widget and relevance behavior; PR checklist confirms e2e testing where appropriate.
+Updated the existing `tests/e2e/default/enketo/pregnancy-danger-sign-follow-up.wdio-spec.js` WebdriverIO spec for the new relevance/widget behaviour; that is the only test change the epic squash carries. Note that #8740 is an epic child merged into the `7599-uplift-enketo-7` branch and squashed as #8528 (`314e79061a`), so its own commit sha is no longer resolvable in a clone — verify file claims against the squash, not `source_sha`.
 
 ## Related Issues
 
-- #7462: Uplift the forms module / Enketo (originating ticket)
+- #7599: Uplift enketo-core to v7 (originating ticket; the epic squashed as PR #8528)
+- #7462: Make code for Enketo forms reusable outside cht-core — a separate ticket about moving the Enketo bootstrap logic into shared-libs for cht-conf-test-harness, not the driver for this change
 - #7674: Enable excludeNonRelevant in the Enketo config
 - enketo/enketo-core#1002: Date and date-time pickers auto-pop open when first question on a page
 

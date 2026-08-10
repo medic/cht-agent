@@ -5,9 +5,9 @@ domain: forms-and-reports
 domainFit: strong
 issueNumber: 9604
 issueUrl: https://github.com/medic/cht-core/issues/9604
-title: Fix integer validation logic for SMS report validation rules in shared-libs/validation
-lastUpdated: '2026-07-16'
-summary: Integer validation rules applied to SMS-submitted report fields were not validating values correctly. The fix corrects the integer validator function in shared-libs/validation and adds unit test coverage.
+title: Fix SMS report validation rules that rejected valid values by comparing string-typed fields with strict equality
+lastUpdated: '2026-08-09'
+summary: The `integer` validation rule applied to SMS-submitted report fields always returned false, rejecting valid integers, because it compared a parsed number against the string the SMS parser produced with strict equality. The fix relaxes that comparison (and the equally strict `equals`/`iequals`/`equalsto`) to loose equality, repairs a broken `in` validator, and adds unit test coverage.
 services:
   - sentinel
   - api
@@ -46,23 +46,23 @@ stale: false
 
 ## Problem
 
-Integer validation rules configured for SMS-submitted report fields did not behave correctly: values that were not valid integers could pass validation (and/or legitimate integer values could be rejected), so malformed numeric data arriving via SMS reports was not reliably caught by the configured validation rules.
+Integer validation rules on SMS-submitted report fields always failed: legitimate integer values (e.g. a bsYear of 2078) were rejected and the configured error message was raised, blocking otherwise valid submissions. Reported against custom SMS field types such as bsYear/bsMonth/bsDay; the reporter suspected the validation-code changes in #9524 as the regression point, and noted it was not an issue before 4.13.0.
 
 ## Root Cause
 
-The integer validator in shared-libs/validation/src/validator_functions.js used flawed integer-checking logic (loose/incomplete numeric check) that mishandled the string-typed values produced when SMS form fields are parsed, so non-integer or edge-case inputs were classified incorrectly.
+`integer` was implemented as `parseInt(value, 10) === value`. SMS field parsing yields string-typed values, so the strict comparison of a number against its own string form was never true — the predicate returned false for every input. The same strict-equality flaw affected `equals`, `iequals` and `equalsto`, and `in` was additionally broken by referencing `arguments` inside an arrow function, where it does not resolve to the call's arguments.
 
 ## Solution
 
-Corrected the integer validation logic in validator_functions.js so integer values are identified properly for string-typed SMS field inputs, and added/updated unit tests in test/validator_functions.js and test/validations.js to cover the previously-failing cases. The fix was also cherry-picked as a backport to the 4.14.x release branch (PR #9610).
+Relaxed the affected predicates in validator_functions.js from `===` to `==` (each with an explicit `// eslint-disable-line eqeqeq`), so a string field value compares equal to its numeric form: `integer`, `equals`, `iequals` and `equalsto`. Rewrote `in` as a rest-parameter arrow (`(allValues, value, ...args) => args.some(arg => arg == value)`) to fix the broken `arguments` reference. Added/updated unit tests in test/validator_functions.js and test/validations.js to cover the previously-failing cases. The fix was also cherry-picked as a backport to the 4.14.x release branch (PR #9610).
 
 ## Code Patterns
 
-When validating numeric/integer values that may arrive as strings (e.g. SMS-parsed fields), the validator must explicitly and strictly check integer-ness rather than relying on loose coercion; see the integer check in shared-libs/validation/src/validator_functions.js. Validators here are pure predicate functions that take a field value and return whether it satisfies the rule; the fix tightens the integer predicate while keeping that contract.
+Validators here are pure predicate functions that take a field value and return whether it satisfies the rule. Because SMS-parsed fields arrive as strings while rule arguments are authored as numbers, these predicates intentionally compare with loose equality (`==`, with `// eslint-disable-line eqeqeq`) rather than `===`; type coercion is the contract, not a bug. `sequals` is the deliberate strict counterpart and was left untouched. See shared-libs/validation/src/validator_functions.js.
 
 ## Design Choices
 
-The fix was made in the shared validator function so every consumer of @medic/validation benefits, rather than patching at the SMS-parsing layer. Coverage was added via unit tests. The backport to 4.14.x (PR #9610) was kept minimal and confined to the single validator function plus its tests, so the fix reaches the supported release without broader behavioral risk.
+The fix was made in the shared validator functions so every consumer of @medic/validation benefits, rather than patching at the SMS-parsing layer or making the SMS parser emit numbers. Loose equality was chosen over coercing inside each predicate because it keeps the change to a single operator per validator and preserves behaviour for callers already passing numbers; the eqeqeq lint rule is suppressed per line so the intent stays visible. Coverage was added via unit tests. The backport to 4.14.x (PR #9610) was kept minimal and confined to validator_functions.js plus its tests, so the fix reaches the supported release without broader behavioral risk.
 
 ## Related Files
 
@@ -72,14 +72,14 @@ The fix was made in the shared validator function so every consumer of @medic/va
 
 ## Testing
 
-Unit tests added/updated in shared-libs/validation/test/validator_functions.js and test/validations.js covering integer validation edge cases.
+A new unit spec shared-libs/validation/test/validator_functions.js was added to cover the predicates directly, and test/validations.js was updated, exercising string-typed inputs against integer/equals/in/equalsto rules.
 
 ## Related Issues
 
-- #9604: integer validation in SMS rules not working correctly
+- #9604: SMS 'integer' validation always returns false — valid integers in custom SMS field types (bsYear/bsMonth/bsDay) were rejected by their configured validation rules
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The change fixes a validator function that checks report/form field values (an integer validation rule), which is core to how submitted report data is validated. The 'sms' in the title refers to the submission channel (SMS-parsed string values are where the bug surfaced), but the logic being fixed is report/form field validation, not message delivery — so messaging is not the right domain.
+The change fixes the validator functions that check report/form field values (the integer, equals, iequals, in and equalsto rules), which are core to how submitted report data is validated. The 'sms' in the title refers to the submission channel (SMS-parsed string values are where the bug surfaced), but the logic being fixed is report/form field validation, not message delivery — so messaging is not the right domain.

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10904
 issueUrl: https://github.com/medic/cht-core/issues/10904
 title: Route file/binary attachments to the correct [db-doc="true"] sub-document in Enketo report forms
-lastUpdated: '2026-07-16'
-summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly.
+lastUpdated: '2026-08-09'
+summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly. NOT YET MERGED — the work lives only on the epic branches, not on `master`.
 services:
   - webapp
 techStack:
@@ -40,18 +40,21 @@ confidence: medium
 entities:
   - webapp/src/ts/services/enketo.service.ts
   - resolveOwnerDoc
-  - findBinaryNodeByFilename
+  - findFileNodeByFilename
 concepts:
   - db-doc sub-document generation in Enketo forms
   - binary attachment routing
   - XML tree ancestor resolution
   - Enketo FileManager file handling
   - inline base64 binary blob extraction
+  - unmerged epic branch work
 related_issues: []
-stale: false
+stale: true
 ---
 
 ## Problem
+
+> **Not on `master` (as of 2026-08-09).** Neither PR #10922 nor PR #11116 has been merged. The commits live only on the epic branches `origin/10700-photo-capture`, `origin/10700-photo-capture-in-sub-contacts-and-reports` and `origin/5.1.2-FR-attachments-for-subcontacts`; none of them is an ancestor of `origin/master`, and neither `resolveOwnerDoc` nor `findFileNodeByFilename` exists in `webapp/src/ts/services/enketo.service.ts` on `master`. Everything below describes the state of those branches, not shipped behaviour. (The frontmatter `source_sha` `cc34e08664…` and the current branch head `0df57c664…` are two rebased copies of the same squash.)
 
 When a report form contained `[db-doc="true"]` sub-documents with binary/file fields (e.g. photo capture for sub-contacts), every attachment was saved onto the main report doc regardless of which sub-doc the binary field actually belonged to, so sub-document photos/files landed on the wrong document.
 
@@ -61,13 +64,13 @@ The Enketo service attached all binary/file fields (both FileManager uploads and
 
 ## Solution
 
-Added `resolveOwnerDoc()` which walks up the XML tree from a binary node to the nearest `[db-doc="true"]` ancestor and returns the corresponding prepared sub-doc (falling back to the main report doc). Added `findBinaryNodeByFilename()` to locate the `[type=binary]` XML node matching a FileManager filename so its tree position can be used. FileManager-uploaded files and inline base64 binary fields inside sub-docs are now attached to the resolved owner doc instead of unconditionally to the main report.
+On the epic branch, `resolveOwnerDoc()` walks up the XML tree from a binary node to the nearest `[db-doc="true"]` ancestor and returns the corresponding prepared sub-doc (falling back to the main report doc). `findFileNodeByFilename()` locates the `[type=file]` XML node whose text matches a FileManager filename so its tree position can be used — Enketo's `Nodeset.setVal` rewrites file-widget nodes from `type="binary"` to `type="file"` once a file has been uploaded, so `[type=file]` is the correct selector for FileManager entries; inline base64 blobs from draw/signature widgets keep `type="binary"` and are routed separately through `attachLegacyFile`. FileManager-uploaded files and inline base64 binary fields inside sub-docs are attached to the resolved owner doc instead of unconditionally to the main report.
 
 The companion epic-level work (PR #11116) extended the same per-document routing into the enketo-translation layer (enketo-translation.service.ts) so file/binary fields are attached to their owning db-doc as the Enketo submission is translated into multiple CouchDB docs, and updated downstream contact rendering — contact-save.service.ts, format-data-record.service.ts, contact-photo.component.ts, and contacts-content.component.ts — so contacts and sub-contacts display their correctly-routed photo attachment.
 
 ## Code Patterns
 
-Ownership-by-tree-position: `resolveOwnerDoc()` in webapp/src/ts/services/enketo.service.ts ascends XML parents to the nearest `[db-doc="true"]` node and maps it to its prepared sub-doc, with the main report doc as fallback. `findBinaryNodeByFilename()` bridges FileManager filenames back to their `[type=binary]` XML node so position-based routing works for uploaded files as well as inline blobs.
+Ownership-by-tree-position (on the epic branches only — none of this is in `webapp/src/ts/services/enketo.service.ts` on `master`): `resolveOwnerDoc()` ascends XML parents to the nearest `[db-doc="true"]` node and maps it to its prepared sub-doc, with the main report doc as fallback. `findFileNodeByFilename()` bridges FileManager filenames back to their `[type=file]` XML node — the type Enketo rewrites file-widget nodes to after upload — so position-based routing works for uploaded files as well as for the inline `[type=binary]` blobs handled on the legacy path.
 
 ## Design Choices
 
@@ -105,7 +108,7 @@ Added Karma unit tests in enketo.service.spec.ts backed by new XML fixtures cove
 
 ## Related Issues
 
-- #10904: child issue closed by this PR — route file attachments to correct sub-docs
+- #10904: child issue this PR targets — route file attachments to correct sub-docs (still open; the PR has not merged)
 - #10700: parent epic — photo capture for sub contacts
 - #10903: sibling issue this work was adapted from
 
@@ -113,4 +116,4 @@ Added Karma unit tests in enketo.service.spec.ts backed by new XML fixtures cove
 
 **Fit:** strong
 
-The change lives in the Enketo form-submission service (enketo.service.ts) and governs how report forms with `[db-doc="true"]` sub-documents produce docs and attach binary/file fields. Attachment routing during report-form processing is core forms-and-reports territory; the contact angle (sub-contact photo capture) is only the originating use case, not the mechanism.
+The change lives in the Enketo form-submission service (enketo.service.ts) on the epic branches and governs how report forms with `[db-doc="true"]` sub-documents produce docs and attach binary/file fields. Attachment routing during report-form processing is core forms-and-reports territory; the contact angle (sub-contact photo capture) is only the originating use case, not the mechanism.

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 6390
 issueUrl: https://github.com/medic/cht-core/issues/6390
 title: Update Enketo phone widget to allow validating phone numbers without checking for duplicate contacts
-lastUpdated: '2026-06-23'
-summary: 'The phone widget previously always both validated a phone number and enforced uniqueness across contacts, with no way to permit duplicates. This PR adds a new field style (type: string, appearance: number tel) that validates the number but does not dup-check by default, with opt-in uniqueness via instance::cht:unique_tel.'
+lastUpdated: '2026-08-09'
+summary: 'The phone widget previously always both validated a phone number and enforced uniqueness across contacts, with no way to permit duplicates. This PR adds a new field style (type: string, appearance: numbers tel) that validates the number but does not dup-check by default, with opt-in uniqueness via instance::cht:unique_tel.'
 services:
   - webapp
 techStack:
@@ -58,11 +58,11 @@ phone-widget.js hardwired format validation together with the duplicate-contact 
 
 ## Solution
 
-Introduced a new field configuration — type: string with appearance: number tel — that always validates the phone number format but, by default, does NOT query for contacts with the same number. Uniqueness becomes opt-in by adding an instance::cht:unique_tel: true column. The legacy type: tel behavior is preserved (now deprecated) for backwards compatibility.
+Introduced a new field configuration — type: string with appearance: numbers tel — that always validates the phone number format but, by default, does NOT query for contacts with the same number. Uniqueness becomes opt-in by adding an instance::cht:unique_tel: true column. The legacy type: tel behavior is preserved (now deprecated) for backwards compatibility.
 
 ## Code Patterns
 
-Widget behavior is selected from the field's appearance string (number tel) plus a custom XForm instance attribute (instance::cht:unique_tel) rather than the field type; validation is decoupled from the uniqueness/duplicate-check so each can be enabled independently — webapp/src/js/enketo/widgets/phone-widget.js.
+Widget behavior is selected from the field's appearance string (numbers tel) plus a custom XForm instance attribute (instance::cht:unique_tel) rather than the field type; validation is decoupled from the uniqueness/duplicate-check so each can be enabled independently — webapp/src/js/enketo/widgets/phone-widget.js.
 
 ## Design Choices
 

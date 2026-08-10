@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8074
 issueUrl: https://github.com/medic/cht-core/issues/8074
 title: Add 'descendant-of-current-contact' appearance to filter the db-object (select-contact) Enketo widget by parent contact
-lastUpdated: '2026-06-23'
-summary: The db-object/select-contact widget could not constrain its options to a contact's subtree. This adds a `descendant-of-current-contact` appearance that filters selectable contacts to descendants of the contact whose tab the form was opened from, using the `contact_by_parent` CouchDB view combined with contact type.
+lastUpdated: '2026-08-09'
+summary: The db-object/select-contact widget could not constrain its options to a contact's subtree. This adds a `descendant-of-current-contact` appearance that filters selectable contacts to descendants of the contact whose tab the form was opened from, using the `contacts_by_parent` CouchDB view combined with contact type.
 services:
   - webapp
 techStack:
@@ -25,7 +25,7 @@ tags:
   - enketo-widget
   - contact-filtering
   - contact-search
-  - contact_by_parent
+  - contacts_by_parent
   - appearance-attribute
 related_workflows:
   - form-submission
@@ -46,7 +46,7 @@ concepts:
   - Enketo custom widgets
   - form appearance attributes
   - contact hierarchy (parent/descendant)
-  - contact_by_parent CouchDB view
+  - contacts_by_parent CouchDB view
   - select2-backed contact selection
   - search-request generation
 related_issues: []
@@ -63,15 +63,15 @@ The db-object widget and the underlying search-request generation (generate-sear
 
 ## Solution
 
-Introduced a new `descendant-of-current-contact` appearance handled by the db-object widget. When present (and scoped to forms opened in the contact tab), the widget reads the current contact ID from the URL via the contacts/reports components and passes it through select2-search and search services. generate-search-requests.js was extended to build a request querying the `contact_by_parent` CouchDB view keyed by the in-context contact ID plus the configured contact type, returning only descendants of the current contact.
+Introduced a new `descendant-of-current-contact` appearance handled by the db-object widget. When present (and scoped to forms opened in the contact tab), the widget reads the current contact ID from the URL via the contacts/reports components and passes it through select2-search and search services. generate-search-requests.js was extended to build a request querying the `contacts_by_parent` CouchDB view keyed by the in-context contact ID plus the configured contact type, returning only descendants of the current contact.
 
 ## Code Patterns
 
-Appearance-driven widget behavior — the Enketo widget inspects its `appearance` attribute to conditionally enable filtering (webapp/src/js/enketo/widgets/db-object-widget.js). Search-request construction in shared-libs/search/src/generate-search-requests.js extended to emit a `contact_by_parent` view query keyed by the in-context contact ID + contact type. The current contact ID is sourced from the route/URL in contacts.component.ts and reports.component.ts and threaded through select2-search.service.ts and search.service.ts.
+Appearance-driven widget behavior — the Enketo widget inspects its `appearance` attribute to conditionally enable filtering (webapp/src/js/enketo/widgets/db-object-widget.js). Search-request construction in shared-libs/search/src/generate-search-requests.js extended to emit a `contacts_by_parent` view query keyed by the in-context contact ID + contact type. The current contact ID is sourced from the route/URL in contacts.component.ts and reports.component.ts and threaded through select2-search.service.ts and search.service.ts.
 
 ## Design Choices
 
-Reused the existing `contact_by_parent` CouchDB view rather than adding a new index or Nouveau search, keeping the filter cheap and consistent with existing hierarchy queries. The behavior is opt-in per field via a declarative form `appearance` attribute, so configurers enable it without code changes, and is scoped to forms opened in the contact tab. The original `with-same-parent` naming was ambiguous (sounding like a siblings-of filter); the final `descendant-of-current-contact` name was chosen to clearly convey subtree/descendant semantics.
+Reused the existing `contacts_by_parent` CouchDB view rather than adding a new index or Nouveau search, keeping the filter cheap and consistent with existing hierarchy queries. The behavior is opt-in per field via a declarative form `appearance` attribute, so configurers enable it without code changes, and is scoped to forms opened in the contact tab. The original `with-same-parent` naming was ambiguous (sounding like a siblings-of filter); the final `descendant-of-current-contact` name was chosen to clearly convey subtree/descendant semantics.
 
 ## Related Files
 

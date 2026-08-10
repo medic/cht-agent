@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8681
 issueUrl: https://github.com/medic/cht-core/issues/8681
 title: Support requiring countdown-timer fields by binding the widget to 'trigger' question types instead of 'note'
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-09'
 summary: 'The countdown-timer widget was attached to ''note'' fields, which cannot be marked required, so users could bypass the timer before it finished. The widget was migrated to ''trigger'' question types that support ''required: yes'', enforcing timer completion via a constraint message, with custom durations set through a new instance::cht:duration column.'
 services:
   - api
@@ -54,11 +54,11 @@ The countdown-timer Enketo widget only applied to questions of input type 'note'
 
 ## Root Cause
 
-The widget selector and XForm generation bound the countdown timer to the 'note' input type, which does not support the 'required' constraint, making timer completion unenforceable.
+The widget's own selector (`.or-appearance-countdown-timer input`) bound the countdown timer to the 'note' input type, which does not support the 'required' constraint, making timer completion unenforceable. There was also no mechanism to carry a per-field duration through form generation — the XSLT transform drops instance attributes, and generate-xform.js had no involvement with the countdown widget at all before this PR; the old note-based duration was read straight off the note's own value.
 
 ## Solution
 
-Migrated the countdown-timer widget to apply to 'trigger' question types, which support 'required: yes'. When the timer completes, the widget checks the trigger's OK radio button, satisfying the required constraint; otherwise the user gets a 'This field is required' message if they try to bypass it. The checked OK value can gate subsequent questions. Custom timer durations are now configured via a new instance::cht:duration XLSForm column, with generate-xform.js updated to preserve that custom attribute through transformation, and medic.less adjusted for the new markup.
+Migrated the countdown-timer widget to apply to 'trigger' question types, which support 'required: yes'. When the timer completes, the widget checks the trigger's OK radio button, satisfying the required constraint; otherwise the user gets a 'This field is required' message if they try to bypass it. The checked OK value can gate subsequent questions. Custom timer durations are now configured via a new instance::cht:duration XLSForm column: generate-xform.js gained a generic `cht:*` passthrough (`setChtAttributes`) that re-reads the namespaced attributes off the source XForm's instance nodes — which the XSLT transform drops — and stamps them onto the rendered question element as `data-cht-*`, so the widget reads `$wrapper.attr('data-cht-duration')`. medic.less was adjusted for the new markup.
 
 ## Code Patterns
 
@@ -82,7 +82,7 @@ Chose 'trigger' over 'note' specifically because trigger inputs support the 'req
 
 ## Testing
 
-Added Karma unit tests for the widget and animation library (countdown-widget.spec.ts, timer-animation.spec.ts); added Mocha tests for generate-xform with custom-attributes fixtures (form.html, model.xml, xform.xml and their expected outputs) verifying instance::cht:duration passthrough; added a WebdriverIO e2e spec (submit-countdown-timer-form.wdio-spec.js) with a dedicated countdown-timer.xml form and updated Enketo/contacts page objects.
+Added Karma unit tests for the widget and animation library (countdown-widget.spec.ts, timer-animation.spec.ts); added Mocha tests for generate-xform with custom-attributes fixtures (form.html, model.xml, xform.xml and their expected outputs) verifying instance::cht:duration passthrough; extended the pre-existing WebdriverIO e2e spec (submit-countdown-timer-form.wdio-spec.js) and its countdown-timer.xml form to cover the trigger-based widget alongside the deprecated note form, and updated the Enketo/contacts/generic-form page objects.
 
 ## Related Issues
 
