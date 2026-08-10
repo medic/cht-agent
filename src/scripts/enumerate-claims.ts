@@ -138,6 +138,24 @@ const LOCATES = '(?:in|to|from|into|within|inside|under|for|of|on|per|via|alongs
 const VERB_REACH = 90;
 const CLAUSE_BREAK = /[;:]|\.\s|\s[—–-]\s/g;
 
+/**
+ * A create verb spelled inside a FILENAME is not a verb. Measured on
+ * forms-and-reports: "Regenerated 53 config form fixtures … plus the e2e and
+ * cht-form test fixtures (e.g. `tests/e2e/default/contacts/forms/ngo-create.xlsx`,
+ * `tests/integration/cht-form/default/forms/dates.xml`)". The `create` in
+ * `ngo-create.xlsx` matched ADD_VERB, sat within VERB_REACH of `dates.xml`, and
+ * inferred that dates.xml was ADDED — it is `M`, so the probe reported a true
+ * sentence as a defect. "Regenerated" is not in ADD_VERB precisely because
+ * regenerating a file that exists modifies it; the fixture's own name was the
+ * only thing that looked like a create.
+ *
+ * Blank out path-shaped tokens — anything unspaced carrying a `/` or a file
+ * extension — keeping length so VERB_REACH still measures real distance. Verbs
+ * contain neither slashes nor dots, so nothing real is masked.
+ */
+const PATHY_TOKEN = /\S*(?:\/\S+|\.[A-Za-z0-9]{1,5}\b)\S*/g;
+const maskPaths = (s: string): string => s.replace(PATHY_TOKEN, m => ' '.repeat(m.length));
+
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
@@ -173,6 +191,8 @@ export function claimedStatus(quote: string, file: string): 'added' | 'deleted' 
   let cut = -1;
   for (const m of before.matchAll(CLAUSE_BREAK)) cut = (m.index ?? 0) + m[0].length;
   if (cut > 0) before = before.slice(cut);
+  // After the clause cut, so CLAUSE_BREAK still sees real punctuation.
+  before = maskPaths(before);
 
   const lastIndexOfVerb = (re: RegExp): number => {
     re.lastIndex = 0;

@@ -254,6 +254,28 @@ describe('enumerate-claims', () => {
       )).to.equal('added');
     });
 
+    it('does not read a create verb spelled inside a FILENAME as a verb', () => {
+      // Observed on cht-agent#122, draft 8336. "create" in the fixture name
+      // ngo-create.xlsx matched ADD_VERB within reach of the next path, so a
+      // file the PR only regenerated (M) was inferred as added and a true
+      // sentence was reported as a defect.
+      expect(statusOf(
+        'Regenerated 53 config form fixtures plus the e2e and cht-form test fixtures ' +
+          '(e.g. tests/e2e/default/contacts/forms/ngo-create.xlsx, ' +
+          'tests/integration/cht-form/default/forms/dates.xml) to match the new pyxform output.',
+        'tests/integration/cht-form/default/forms/dates.xml',
+      )).to.equal(undefined);
+    });
+
+    it('still infers ADD when the verb is real and a pathy filename is nearby', () => {
+      // The masking must not swallow a genuine claim that happens to sit beside
+      // a path-shaped token.
+      expect(statusOf(
+        'Added tests/e2e/default/contacts/forms/ngo-create.xlsx as a new fixture.',
+        'tests/e2e/default/contacts/forms/ngo-create.xlsx',
+      )).to.equal('added');
+    });
+
     it('reads a plain "added <path>" as an ADD claim', () => {
       expect(statusOf(
         'Added tests/e2e/default/targets/utils/targets-helper-functions.js for the new page.',
