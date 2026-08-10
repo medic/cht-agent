@@ -46,7 +46,7 @@ Note that this PR did **not** touch `enketo.service.ts`: the extraction logic wa
 
 - Stored attachments directly on the contact document rather than creating linked report documents, since the files are properties of the contact (e.g. profile photo) not reports about the contact
 - Attached only to the main document and not to repeats or sibling sub-docs, matching the issue's explicit "out of scope" list
-- Re-implemented the extraction inside `contact-save.service.ts` instead of reusing the enketo service's version, because the equivalent logic there is private to that service. The duplication was the accepted cost of shipping; the two paths were later merged by the Enketo form-save rewrite (#11256)
+- Re-implemented the extraction inside `contact-save.service.ts` instead of reusing the enketo service's version, because there was nothing there to call: the equivalent logic was inline in `xmlToDocs`, not a helper. The duplication was the accepted cost of shipping; the two paths were later merged by the Enketo form-save rewrite (#11256)
 - Limited edit-time previews to `image/*` file inputs, leaving other file types without a thumbnail
 
 ## Related Files

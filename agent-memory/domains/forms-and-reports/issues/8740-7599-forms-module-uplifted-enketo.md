@@ -54,7 +54,7 @@ Two form UX/behavior issues: (1) the Enketo date and date-time picker widgets au
 
 ## Root Cause
 
-enketo-core's date/datetime picker widgets auto-open on focus when rendered first on a page. Separately, enketo-core's `relevant.js` clears values from non-relevant fields; with `excludeNonRelevant: true` this would clear the `inputs` group field values that CHT forms rely on for expression evaluation, breaking custom functionality.
+enketo-core's date/datetime picker widgets auto-open on focus when rendered first on a page. Separately, enketo-core's own relevance module clears values from non-relevant fields; with `excludeNonRelevant: true` this would clear the `inputs` group field values that CHT forms rely on for expression evaluation, breaking custom functionality. CHT overrides that behaviour through `webapp/patches/enketo-core+7.2.5.patch`, which is where the `/inputs`-always-relevant guard lives.
 
 ## Solution
 
