@@ -52,7 +52,7 @@ Duplicate phone number validation via the cht:unique_tel form attribute was brok
 
 ## Root Cause
 
-The phone widget parsed the cht:unique_tel attribute by matching only the exact lowercase string 'true'. Valid pyxform/ODK truthy variants (TRUE, True, yes, true()) were treated as falsy, so the uniqueness validation was skipped. Common spreadsheet auto-formatting turning 'true' into 'True'/'TRUE' triggered the bypass.
+The phone widget parsed the rendered `data-cht-unique_tel` attribute by matching only the exact lowercase string 'true'. Valid pyxform/ODK truthy variants (TRUE, True, yes, true()) were treated as falsy, so the uniqueness validation was skipped. Common spreadsheet auto-formatting turning 'true' into 'True'/'TRUE' triggered the bypass.
 
 ## Solution
 

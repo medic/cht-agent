@@ -62,7 +62,7 @@ Patched enketo-core 7.2.5 (via webapp/patches/enketo-core+7.2.5.patch) so the da
 
 ## Code Patterns
 
-Maintain vendored-library behavior changes through patch-package (webapp/patches/enketo-core+7.2.5.patch) rather than forking; guard value-clearing in relevant.js so the CHT `inputs` group is exempted when applying excludeNonRelevant pruning.
+Maintain vendored-library behavior changes through patch-package (webapp/patches/enketo-core+7.2.5.patch) rather than forking; guard value-clearing in enketo-core's relevance module so the CHT `inputs` group is exempted when applying excludeNonRelevant pruning.
 
 ## Design Choices
 

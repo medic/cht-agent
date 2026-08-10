@@ -52,7 +52,7 @@ Uplifted cht-conf to use a newer version of pyxform that supports the `trigger` 
 
 ## Testing
 
-- Regenerated 53 config form fixtures (22 under config/default, 21 under config/demo, 10 under config/covid-19 — e.g. `config/default/forms/app/death_report.xml`) plus the e2e and cht-form test fixtures (e.g. `tests/e2e/default/contacts/forms/ngo-create.xlsx`, `tests/integration/cht-form/default/forms/dates.xml`) to match the new pyxform output, and updated the e2e page objects and the training-materials spec that broke on the regenerated XML
+- Regenerated 53 config form fixtures (22 under config/default, 21 under config/demo, 10 under config/covid-19 — e.g. `config/default/forms/app/death_report.xml`) plus the e2e and cht-form test fixtures (e.g. `tests/e2e/default/enketo/forms/db-object-form.xml` and `tests/integration/cht-form/default/forms/dates.xml`, both regenerated in place; the PR also adds one new source workbook, `tests/e2e/default/contacts/forms/ngo-create.xlsx`) to match the new pyxform output, and updated the e2e page objects and the training-materials spec that broke on the regenerated XML
 - The PR ships no automated coverage of the `trigger` column itself — no unit or e2e test exercises dynamic defaults or value-change calculations
 
 ## Related Issues
