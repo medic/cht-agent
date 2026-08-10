@@ -74,7 +74,7 @@ Ownership-by-tree-position (on the epic branches only — none of this is in `we
 
 ## Design Choices
 
-Routing by XML node position (ancestor walk) rather than flat filename-to-doc matching ensures attachments land on the structurally-correct owner; falling back to the main report doc preserves backward-compatible behavior for forms without sub-docs. Each generated document is made self-contained with its own attachments, and the routing explicitly handles files within repeats plus cleared and orphaned file fields (PR #11116). Known limitation: when two sub-docs contain files of the same name (e.g. default-named camera captures), filename-based lookup returns the first match and both files route to the same sub-doc.
+Routing by XML node position (ancestor walk) rather than flat filename-to-doc matching ensures attachments land on the structurally-correct owner; falling back to the main report doc preserves backward-compatible behavior for forms without sub-docs. Each generated document is made self-contained with its own attachments, and the routing explicitly handles files within repeats plus cleared and orphaned file fields (PR #11116). Known limitation: the owner doc is decided by the ancestor walk, but the walk needs a starting node, and `findFileNodeByFilename()` finds that node by filename. When two sub-docs hold files of the same name (e.g. default-named camera captures) the lookup returns the first match, so both files start their walk from the same node and land on the same sub-doc.
 
 ## Related Files
 

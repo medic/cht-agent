@@ -58,7 +58,7 @@ enketo-core's date/datetime picker widgets auto-open on focus when rendered firs
 
 ## Solution
 
-Patched enketo-core 7.2.5 (via webapp/patches/enketo-core+7.2.5.patch) so the date and date-time picker widgets do not auto-pop open when they are the first question on a page. Set `excludeNonRelevant: true` in webapp/src/js/enketo/config.js, and updated the relevant.js portion of the enketo-core patch to skip clearing values from `inputs` group fields when they are non-relevant, preserving their accessibility to expressions.
+Patched enketo-core 7.2.5 (via webapp/patches/enketo-core+7.2.5.patch) so the date and date-time picker widgets do not auto-pop open when they are the first question on a page. Set `excludeNonRelevant: true` in webapp/src/js/enketo/config.js, and updated the relevance-module portion of the enketo-core patch to skip clearing values from `inputs` group fields when they are non-relevant, preserving their accessibility to expressions.
 
 ## Code Patterns
 

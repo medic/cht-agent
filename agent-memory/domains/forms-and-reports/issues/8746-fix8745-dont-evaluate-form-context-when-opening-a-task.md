@@ -48,7 +48,7 @@ stale: false
 
 ## Problem
 
-Opening a task that launches a form triggered evaluation of the form's context expression. That expression exists to decide whether a form is offered in contact/action-launcher contexts and is irrelevant when a task has already selected the form. Configurers legitimately set `context: "false"` in `form.properties.json` to keep a form off the contacts tab while still driving it from a task — in 3.x that worked, but in 4.x the task path evaluated the expression, got `false`, and refused to open the form with `error.loading.form.no_authorized` (a regression, reported on 4.4).
+Opening a task that launches a form triggered evaluation of the form's context expression. That expression exists to decide whether a form is offered in contact/action-launcher contexts and is irrelevant when a task has already selected the form. Configurers legitimately set `context: "false"` in a form's properties file (for this fix's e2e fixture, `tests/e2e/default/tasks/forms/home-visit.properties.json`) to keep a form off the contacts tab while still driving it from a task — in 3.x that worked, but in 4.x the task path evaluated the expression, got `false`, and refused to open the form with `error.loading.form.no_authorized` (a regression, reported on 4.4).
 
 ## Root Cause
 

@@ -39,7 +39,7 @@ Added a `cht:validate-luhn` custom XPath function to the medic XPath extensions,
 ## Design Choices
 
 - Implemented as an XPath function rather than a JavaScript validation hook, so it works within the standard XForm constraint mechanism and is accessible to form designers using XLSForm
-- Kept the implementation in the existing medic-xpath-extensions file rather than creating a separate module, since it is a single function
+- Kept the implementation in the existing medic-xpath-extensions file rather than creating a separate module: it is one small function plus the `stripSpace` helper it shares with `cht:strip-whitespace`, which the same commit registered
 - Luhn is a checksum designed to catch accidental/transcription errors, not malicious tampering, which fits validating government ID numbers; implementing it as a generic extension (rather than hardcoding validation in one form) makes it reusable across all forms and any Luhn-based identifier (PR #9220)
 
 ## Related Files

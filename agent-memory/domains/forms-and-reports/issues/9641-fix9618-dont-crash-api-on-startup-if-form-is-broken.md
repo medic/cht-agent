@@ -70,7 +70,7 @@ Chose graceful degradation (log the failure, continue startup) over fail-fast fo
 
 ## Testing
 
-Added an integration test 'should start up with broken forms' in tests/integration/api/server.spec.js: it PUTs a form:broken doc whose xml attachment is not XML (bypassing utils.saveDoc, which waits for good forms), waits for the 'Failed to update xform' log, then stops and restarts the API and asserts it comes back up — covering the previously crashing startup path.
+Added an integration test 'should start up with broken forms' in tests/integration/api/server.spec.js: it PUTs a doc whose `_id` is built as ``form:${formName}`` with `formName = 'broken'`, carrying an `xml` attachment of `btoa('this is totally not an xml')` (bypassing utils.saveDoc, which waits for good forms), waits for the 'Failed to update xform' log, then stops and restarts the API and asserts it comes back up — covering the previously crashing startup path.
 
 ## Related Issues
 

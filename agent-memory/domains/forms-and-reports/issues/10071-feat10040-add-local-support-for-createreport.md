@@ -36,7 +36,6 @@ confidence: medium
 entities:
   - shared-libs/cht-datasource/src/local/report.ts
   - shared-libs/cht-datasource/src/qualifier.ts
-  - shared-libs/cht-datasource/src/input.ts
 concepts:
   - local data adapter
   - datasource abstraction
