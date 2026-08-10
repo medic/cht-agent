@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9739
 issueUrl: https://github.com/medic/cht-core/issues/9739
 title: Fix 'Select all' deselection not clearing selected reports on the reports page
-lastUpdated: '2026-06-22'
-summary: Deselecting the 'Select all' checkbox on the reports page left previously selected reports still selected; the reports component's deselect handler was corrected to clear the selection state.
+lastUpdated: '2026-08-09'
+summary: Deselecting the 'Select all' checkbox on the reports page left previously selected reports still selected. The deselect handler was never at fault — `areAllReportsSelected()` mis-computed the toggle state, so the template routed the click back into select-all instead of deselect-all. The predicate was rewritten against a new `totalReportsCount` field.
 services:
   - webapp
 techStack:
@@ -35,7 +35,8 @@ entities:
 concepts:
   - bulk report selection
   - select-all/deselect-all toggle state
-  - selected-items state management
+  - computed toggle predicate driving the click branch
+  - rendered page vs total selection count
 related_issues: []
 stale: false
 ---
@@ -46,19 +47,26 @@ On the reports page, checking 'Select all' selected every report, but unchecking
 
 ## Root Cause
 
-The deselect path of the 'Select all' toggle in reports.component.ts did not dispatch/perform the clearing of the selected-reports state, so toggling the checkbox off was a no-op against the existing selection rather than resetting it.
+Not the deselect handler — `deselectAllReports()` already cleared the state and is not in this PR's diff at all. The template picks the branch from a computed predicate:
+
+```
+(click)="areAllReportsSelected() ? deselectAllReports() : selectAllReports()"
+[checked]="areAllReportsSelected()"
+```
+
+and `areAllReportsSelected()` was `selectedReports.length >= LIMIT_SELECT_ALL_REPORTS (500) || reportsList.length === selectedReports.length`. `reportsList` holds only the rendered page, so with more reports selected than are rendered but fewer than the 500 cap the predicate returned false: the checkbox drew itself unchecked and the click re-ran `selectAllReports()`. That is why issue #9739's repro specifies an offline user with **at least 50 reports** — below that, the rendered page and the selection match and the predicate happens to be right.
 
 ## Solution
 
-Corrected the reports component so that deselecting the 'Select all' checkbox properly clears the selected reports, ensuring the selection state mirrors the checkbox; accompanying unit tests were added/updated to cover the deselect behavior.
+Added a `totalReportsCount` field to the reports component, set to the size of the prepared selection when `selectAllReports()` runs, and rewrote `areAllReportsSelected()` to compare the current selection against it (falling back to the 500-report cap when the count is unknown). With the predicate accurate, the template's existing ternary routes the second click into the already-correct `deselectAllReports()`. Neither `deselectAllReports()` nor the selection actions were changed.
 
 ## Code Patterns
 
-Toggle handler in webapp/src/ts/modules/reports/reports.component.ts should handle both branches explicitly: select-all populates the selection while deselect-all resets it (clear selected reports), keeping UI checkbox state and the selected-items store in sync.
+When a template picks its action from a computed predicate — `(click)="areAllReportsSelected() ? deselectAllReports() : selectAllReports()"` in webapp/src/ts/modules/reports/reports.component.ts — the predicate is load-bearing, not just cosmetic: a wrong answer silently sends the click down the wrong branch. Compare the selection against a recorded total (`totalReportsCount`) rather than against the currently-rendered page (`reportsList`), which only holds what is on screen.
 
 ## Design Choices
 
-Fix targeted the deselect branch of the existing select-all toggle rather than reworking the selection model, keeping the change minimal and backwards compatible with existing selection behavior.
+Fixed the toggle-state predicate rather than the handlers or the selection model: `deselectAllReports()` already did the right thing, so the minimal correct change was to record how many reports select-all actually selected and compare against that. Kept `LIMIT_SELECT_ALL_REPORTS` as the fallback so behavior is unchanged before select-all has ever run.
 
 ## Related Files
 
@@ -67,7 +75,7 @@ Fix targeted the deselect branch of the existing select-all toggle rather than r
 
 ## Testing
 
-Karma unit tests in reports.component.spec.ts were added/modified to verify that deselecting 'Select all' clears the selected reports.
+No deselect-specific test was added. The existing Karma specs in reports.component.spec.ts were adjusted to seed `totalReportsCount` (two added lines) so the `areAllReportsSelected()` assertions stay valid under the new predicate — worth knowing, because the regression itself is still uncovered.
 
 ## Related Issues
 

@@ -6,8 +6,8 @@ domainFit: weak
 issueNumber: 9618
 issueUrl: https://github.com/medic/cht-core/issues/9618
 title: Prevent API from crashing on startup when a form is broken/invalid
-lastUpdated: '2026-06-22'
-summary: A single broken or invalid form would throw during the API startup sequence and crash the whole API service. The fix isolates per-form failures so a broken form is logged and skipped while the API continues starting up.
+lastUpdated: '2026-08-09'
+summary: A single broken or invalid form would throw during the API's xform-regeneration step, which shared a try/catch with the rest of the bootstrap whose handler called process.exit(1), crashing the whole API service. The fix moves xform regeneration into its own try/catch that only logs, so the API still comes up.
 services:
   - api
 techStack:
@@ -45,23 +45,23 @@ stale: false
 
 ## Problem
 
-If any configured form was broken or invalid (e.g. malformed XForm/XML), the API threw an unhandled error during its startup sequence and crashed, preventing the entire API service from coming up. One bad form could take down the whole instance.
+On startup the API regenerates the model.xml and form.html attachments for every form: doc from its xml attachment. If any of those xml attachments was invalid in a way xsltproc could not convert (the reported case was a stray apostrophe inside a tag, uploaded via upload-*-forms --skip-validate), the regeneration error was caught by the bootstrap's fatal handler, which exited the process — so the entire API service failed to come up. One bad form could take down the whole instance, and because the API usually fronts CouchDB, there was no easy way to upload a corrected form to recover.
 
 ## Root Cause
 
-During API startup in api/server.js, the form processing/initialization step ran without isolating per-form failures, so an exception raised by a single broken form propagated up and aborted the entire startup sequence instead of being contained to that form.
+During API startup in api/server.js, xform regeneration ran inside the same try/catch as the rest of the bootstrap (migrations, manifest, service worker), whose handler logged 'Fatal error initialising API' and called process.exit(1). Any error thrown while regenerating a single form's model.xml/form.html attachments therefore killed the whole startup.
 
 ## Solution
 
-The startup form-processing step was made fault-tolerant: a broken/invalid form is now caught and logged rather than allowed to throw, so the API continues its startup sequence and comes up successfully. The offending form is skipped while remaining initialization proceeds normally.
+The xform-regeneration step was split into its own try/catch that logs 'Error initialising API' and falls through instead of exiting, so a broken form no longer prevents the API from coming up; the migrations/manifest/service-worker steps keep the original fatal handling and still exit(1). Note that generateXform.updateAll() still aborts at the first broken form — its per-doc work is a promise reduce that rejects as a unit — so forms after it in the batch are left with their existing attachments. The API survives; the remaining forms are not individually rescued, and (unlike the option floated in the issue) stale model.xml/form.html attachments are not stripped from the offending doc.
 
 ## Code Patterns
 
-Fail-soft bootstrap: wrap per-item work in a startup loop (form processing in api/server.js) with try/catch so one bad item logs an error and is skipped rather than aborting the whole startup. Treat non-critical initialization as best-effort and keep the service-availability path resilient to bad configuration data.
+Fail-soft bootstrap by partitioning the startup sequence: keep must-succeed steps under a fatal try/catch that exits, and move best-effort steps (xform regeneration in api/server.js) into a separate try/catch that only logs. Treat non-critical initialization as best-effort and keep the service-availability path resilient to bad configuration data.
 
 ## Design Choices
 
-Chose graceful degradation (log and skip the broken form, continue startup) over fail-fast, prioritizing API availability — a single misconfigured form should not block the entire instance from starting. Errors are still logged so the broken form remains diagnosable.
+Chose graceful degradation (log the failure, continue startup) over fail-fast for the xform-regeneration step, prioritizing API availability — a single misconfigured form should not block the entire instance from starting, especially since the API is usually the proxy for CouchDB traffic and a crashed API leaves no route to fix the bad attachment. Kept fail-fast for migrations, manifest and service-worker generation, where continuing would leave the instance in an unusable state. Errors are still logged so the broken form remains diagnosable. The issue also proposed deleting the stale model.xml/form.html attachments so users get the standard 'missing required attachments' form error; that was not implemented here.
 
 ## Related Files
 
@@ -70,11 +70,11 @@ Chose graceful degradation (log and skip the broken form, continue startup) over
 
 ## Testing
 
-Added an integration test in tests/integration/api/server.spec.js asserting that the API server starts successfully even when a form is broken (per the branch name, 'api should start with broken forms'), covering the previously crashing startup path.
+Added an integration test 'should start up with broken forms' in tests/integration/api/server.spec.js: it PUTs a form:broken doc whose xml attachment is not XML (bypassing utils.saveDoc, which waits for good forms), waits for the 'Failed to update xform' log, then stops and restarts the API and asserts it comes back up — covering the previously crashing startup path.
 
 ## Related Issues
 
-- #9618: API crashes on startup when a form is broken
+- #9618: a broken form.xml attachment can prevent the api server from starting — xsltproc fails to regenerate model.xml/form.html and the error aborts startup
 
 ## Domain Rationale
 

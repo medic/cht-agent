@@ -6,13 +6,15 @@ subDomain: enketo
 issueNumber: 8336
 issueUrl: https://github.com/medic/cht-core/issues/8336
 title: Support trigger column in XLSForms for dynamic defaults and value-change calculations
-lastUpdated: 2026-01-16
+lastUpdated: 2026-08-09
 summary: Added support for the ODK trigger column in XLSForms, enabling dynamic defaults and calculations that fire on value change. Required uplifting cht-conf to use a newer version of pyxform.
 services:
   - webapp
 techStack:
   - javascript
   - typescript
+source_prs:
+  - "medic/cht-core#10269"
 ---
 
 ## Problem
@@ -32,7 +34,7 @@ Uplifted cht-conf to use a newer version of pyxform that supports the `trigger` 
 - The `trigger` column in XLSForm maps to the `xforms-value-changed` event in XForm XML
 - Dynamic defaults: set a field's default value based on other fields, evaluated once when the field becomes relevant
 - Value-change calculations: trigger a recalculation when a specific field value changes, unlike regular calculations that fire on any change
-- File: `webapp/src/js/enketo/widgets.js` is the widget registry where Enketo features are enabled
+- The webapp side already handled the event before this change: `webapp/src/ts/services/enketo.service.ts:327` binds it (`$selector.on('xforms-value-changed', () => this.ngZone.run(() => listener()))`), and `api/src/enketo-transformer/xsl/openrosa2html5form.xsl` carries `<setvalue>` / `<odk:setgeopoint>` children with the `xforms-value-changed` event through transformation — only the pyxform side was missing
 - Pattern: when uplifting form processing dependencies, expect cascading changes across form fixtures in tests
 - See ODK docs for trigger usage: https://docs.getodk.org/form-logic/#dynamic-defaults
 
@@ -44,14 +46,15 @@ Uplifted cht-conf to use a newer version of pyxform that supports the `trigger` 
 ## Related Files
 
 - cht-conf (external dependency, pyxform version bump)
-- webapp/src/js/enketo/widgets.js
-- config/default/forms/
+- webapp/src/ts/services/enketo.service.ts
+- api/src/enketo-transformer/xsl/openrosa2html5form.xsl
+- config/default/forms/, config/demo/forms/, config/covid-19/forms/ (regenerated XML)
 
 ## Testing
 
-- Updated form conversion tests to match new pyxform output
-- E2E tests verifying dynamic defaults and value-change calculations work in deployed forms
+- Regenerated the form fixtures across `config/*/forms/` and `tests/**/forms/` to match the new pyxform output, and updated the e2e page objects and the training-materials spec that broke on the regenerated XML
+- The PR ships no automated coverage of the `trigger` column itself — no unit or e2e test exercises dynamic defaults or value-change calculations
 
 ## Related Issues
 
-- #7599: Update to latest enketo-core (prerequisite for trigger support)
+- #7599: Uplift enketo-core to v7. Related uplift work, but not a blocker here — cht-core was already on enketo-core > 5.18.0, so the `xforms-value-changed` support was in place and only pyxform was behind.

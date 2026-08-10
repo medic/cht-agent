@@ -6,7 +6,7 @@ subDomain: api
 issueNumber: 10133
 issueUrl: https://github.com/medic/cht-core/issues/10133
 title: API startup loads all form attachments unnecessarily via _all_docs
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-08-09'
 source_prs:
   - "medic/cht-core#10248"
 related_issues:
@@ -25,19 +25,20 @@ When the API server started, it processed all forms by loading them via a CouchD
 
 ## Root Cause
 
-The `generate-xform.js` service used a single `_all_docs` request with `attachments=true` to fetch all form documents at once. CouchDB has a longstanding issue (apache/couchdb#2210) where reading very large attachments through `_all_docs` causes timeouts. The code did not need all attachments for the XForm generation step, only specific XML-related ones. The full-doc reads occurred around generate-xform.js lines 260/276 (PR #10248).
+Two separate full-document reads, in two different files. `api/src/services/forms.js` (`getFormDocs`) issued a single `_all_docs` request with `attachments: true, binary: true` to fetch every form document at once — this is the one that hangs, because CouchDB has a longstanding issue (apache/couchdb#2210) where reading very large attachments through `_all_docs` causes timeouts. Separately, `generate-xform.js`'s single-form `update` path did `db.medic.get(docId, { attachments: true, binary: true })`, which is the #10132 half: expensive on every form update even when only XML attachments changed. The issue report points at generate-xform.js (around lines 260 and 276, i.e. `update` and `updateAll`), but `updateAll` only reaches the `_all_docs` call indirectly through `formsService.getFormDocs()`. Neither path needed the media attachments.
 
 ## Solution
 
-Updated the form loading code in `generate-xform.js` to not request attachments in the `_all_docs` call. Instead, attachments are loaded separately per form, and only the relevant ones are fetched. Specifically, only the business-logic attachments needed for XForm generation — `form.xml`, `model.xml`, and `form.html` — are read and saved; large media attachments are never loaded during startup or form processing (PR #10248). PR #10248 changed 5 files in the API layer.
+Dropped `attachments` from both reads: `forms.js`'s `_all_docs` call now passes only `include_docs`, and `generate-xform.js`'s `update` now calls plain `db.medic.get(docId)`. Attachments are then loaded separately, by name, per form. Only the business-logic attachments needed for XForm generation are read and saved: the XForm XML attachment — whose name is resolved dynamically by the new `formsService.getXFormAttachmentName(doc)` helper (literally `xml`, or any `*.xml` other than `model.xml`) — plus `model.xml` and `form.html`. Large media attachments are never loaded during startup or form processing (PR #10248). PR #10248 changed 5 files in the API layer.
 
 ## Code Patterns
 
 - Never use `_all_docs` with `attachments=true` when documents may have large binary attachments
 - Load attachments separately and selectively, specifying which attachment names you need
-- Fetch specific attachments by name with `medic.getAttachment()` rather than pulling all attachments in a bulk/full-doc read, restricting form processing to the known business-logic set `form.xml`, `model.xml`, `form.html` (PR #10248)
-- File: `api/src/services/generate-xform.js` handles form XML generation at startup
-- File: `api/src/services/forms.js` manages form document retrieval
+- Fetch specific attachments by name with `db.medic.getAttachment()` rather than pulling all attachments in a bulk/full-doc read, restricting form processing to the business-logic set: the XForm XML attachment (name resolved at runtime, not a fixed `form.xml`), plus `model.xml` and `form.html` (PR #10248)
+- Resolve an attachment's name through a shared helper (`formsService.getXFormAttachmentName`) instead of hardcoding it — form docs name their XML attachment `xml` or `<something>.xml`, and the e2e replication test asserts exactly the trio `['model.xml', 'form.html', 'xml']`
+- File: `api/src/services/forms.js` owns form document retrieval and the `_all_docs` call that was the actual source of the timeout
+- File: `api/src/services/generate-xform.js` handles form XML generation at startup and the single-form update read
 - Pattern: when working with CouchDB documents that have attachments, always consider the size implications of bulk reads
 
 ## Design Choices
@@ -57,7 +58,7 @@ Updated the form loading code in `generate-xform.js` to not request attachments 
 
 - Updated unit tests for forms service and generate-xform service
 - Verified that form processing still works correctly with the separate attachment loading
-- Because the new code calls PouchDB's `medic.getAttachment()` directly, it must be stubbed in the unit-test environment (`UNIT_TEST_ENV=1`) to satisfy the "PouchDB functions must be stubbed" assertion (PR #10248)
+- Because the new code calls PouchDB's `db.medic.getAttachment()` directly, it must be stubbed in the unit-test environment (`UNIT_TEST_ENV=1`) to satisfy the "not stubbed!" assertion in api/src/db.js (PR #10248)
 
 ## Related Issues
 

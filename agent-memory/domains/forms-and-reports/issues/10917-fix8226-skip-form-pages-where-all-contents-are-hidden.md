@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8226
 issueUrl: https://github.com/medic/cht-core/issues/8226
 title: Skip Enketo form pages for top-level groups with the 'hidden' appearance via new HiddenGroup widget
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-08-09'
 summary: Enketo rendered empty, navigable pages for groups whose contents were all hidden (e.g. a top-level group with the `hidden` appearance), producing blank pages and blocking use of the db-object-widget to load contact data into a hidden group. A new HiddenGroup widget adds the `disabled` class to such groups so Enketo's pager skips them during navigation.
 services:
   - webapp
@@ -78,7 +78,7 @@ Reused Enketo's own widget extension point and its existing 'skip disabled group
 
 ## Testing
 
-Added Karma unit tests (webapp/tests/karma/js/enketo/widgets/hidden-group.spec.ts) covering the new widget, plus WebdriverIO e2e coverage (tests/e2e/default/enketo/db-object-widget.wdio-spec.js) with supporting XLSForm/XForm fixtures (db-object-form.xlsx/.xml) to verify that hidden groups are skipped during form navigation.
+Added Karma unit tests (webapp/tests/karma/js/enketo/widgets/hidden-group.spec.ts) covering the selector (matches a group only when both `or-group-data` and `or-appearance-hidden` are present) and the `disabled`-class behaviour. The existing db-object-widget e2e fixture (db-object-form.xlsx/.xml) was reworked so the `select-contact` field sits in a hidden top-level group — the scenario from #8226 — and the e2e spec's expected doc shape was updated accordingly, confirming contact data still loads through a group the pager now skips. Neither the spec nor the fixtures were newly created here, and the e2e makes no direct assertion about page count or navigation.
 
 ## Related Issues
 

@@ -5,9 +5,9 @@ domain: forms-and-reports
 domainFit: strong
 issueNumber: 9653
 issueUrl: https://github.com/medic/cht-core/issues/9653
-title: Refactor shared-libs/validation to query cht-datasource for uniqueness/existence checks, falling back to freetext index only for whitespace search strings
-lastUpdated: '2026-06-22'
-summary: The validation library queried CouchDB freetext indexes directly for uniqueness/existence validators; this refactor routes those lookups through the unified cht-datasource layer where possible and only falls back to the freetext index when the search string contains whitespace.
+title: Refactor shared-libs/validation to query cht-datasource for uniqueness/existence checks instead of building reports_by_freetext view queries directly
+lastUpdated: '2026-08-09'
+summary: The validation library built and executed medic-client/reports_by_freetext queries directly for its uniqueness/existence validators; this refactor routes every such lookup through cht-datasource (Report.v1.getUuids with Qualifier.byFreetext) and initialises the lib with a data context so it can reach that layer.
 services:
   - webapp
   - sentinel
@@ -50,23 +50,23 @@ stale: false
 
 ## Problem
 
-The shared-libs/validation library built and executed CouchDB freetext index queries directly to perform uniqueness/existence validations during form/report and registration processing. This bypassed the platform-wide cht-datasource data-access layer, duplicating query logic and diverging from the broader migration to cht-datasource.
+The shared-libs/validation library queried the medic-client/reports_by_freetext view index directly to perform uniqueness/existence validations during form/report and registration processing. That index is being retired, and the direct query bypassed the platform-wide cht-datasource data-access layer, duplicating query logic and diverging from the broader migration to cht-datasource.
 
 ## Root Cause
 
-Validators in shared-libs/validation depended on direct freetext index query construction rather than delegating to cht-datasource's higher-level lookup APIs, and the validation lib was not initialized with a data context to reach cht-datasource.
+Validators in shared-libs/validation constructed reports_by_freetext queries themselves rather than delegating to cht-datasource's higher-level lookup APIs, and the validation lib was not initialized with a data context, so it had no handle through which to reach cht-datasource.
 
 ## Solution
 
-Refactored the validation library to query cht-datasource where possible (exact lookups) while still querying freetext indexes when the search string contains whitespace, which cht-datasource lookups can't satisfy. The webapp validation.service was updated to pass the cht-datasource data context when initializing the validations lib, with corresponding adjustments to shared-libs/transitions/src/transitions/utils.js.
+Rewrote the `exists` lookup in validation_utils.js to go through cht-datasource unconditionally: it binds Report.v1.getUuids to the injected data context and drains the returned generator for Qualifier.byFreetext(searchString). No reports_by_freetext query remains in the validation lib. To supply the handle, validation.js's init now forwards options.dataContext into validationUtils.init(db, dataContext); the webapp passes chtDatasourceService.getDataContext() from validation.service.ts, and sentinel passes its own data-context module from shared-libs/transitions/src/transitions/utils.js. (The work reached master via the #9625 epic squash, which carries this same file set.)
 
 ## Code Patterns
 
-Route data access through cht-datasource with a freetext-index fallback for whitespace-containing search terms; inject a data context into a shared library at init time so the lib can reach cht-datasource (see webapp/src/ts/services/validation.service.ts and cht-datasource.service.ts).
+Inject a data context into a shared library at init time so the lib can reach cht-datasource (see webapp/src/ts/services/validation.service.ts and cht-datasource.service.ts, and shared-libs/transitions/src/transitions/utils.js for the sentinel side), then express lookups as qualifiers — Qualifier.byFreetext(...) against Report.v1.getUuids — rather than as view names and key ranges. Consuming the result means draining an async generator, not reading a rows array.
 
 ## Design Choices
 
-Retained direct freetext index querying as a fallback because cht-datasource lookups do not support multi-term/whitespace freetext searches; chose an incremental delegation to cht-datasource over a full rewrite to preserve backwards compatibility with existing data and configuration.
+Pushed the index-shape decision down into cht-datasource so future changes to the freetext indexes are invisible to the validation lib — the stated goal of #9653. Callers therefore no longer choose a view or a key range: cht-datasource decides internally whether a qualifier hits the keyed offline view, a range scan, or Nouveau, based on whether the freetext contains a `:` separator. Delegating rather than rewriting the validators kept backwards compatibility with existing data and configuration.
 
 ## Related Files
 
@@ -81,11 +81,12 @@ Retained direct freetext index querying as a fallback because cht-datasource loo
 
 ## Testing
 
-Updated unit tests for the validation library (shared-libs/validation/test/validations.js) and the webapp validation service (webapp/tests/karma/ts/services/validation.service.spec.ts), plus the sentinel transitions registration integration test (tests/integration/sentinel/transitions/registration.spec.js), to cover the new cht-datasource path and the freetext-index fallback for whitespace searches.
+Updated unit tests for the validation library (shared-libs/validation/test/validations.js) and the webapp validation service (webapp/tests/karma/ts/services/validation.service.spec.ts), plus the sentinel transitions registration integration test (tests/integration/sentinel/transitions/registration.spec.js), to cover the new cht-datasource path — stubbing the bound Report.v1.getUuids generator in place of the old view query, and asserting that the data context is threaded through init.
 
 ## Related Issues
 
-- #9653: refactor shared-libs/validations to call cht-datasource instead of directly querying freetext index
+- #9653: refactor shared-libs/validations to call cht-datasource instead of directly querying the medic-client/reports_by_freetext index, which is going away
+- #9586: the cht-datasource freetext search API this refactor consumes
 
 ## Domain Rationale
 

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10209
 issueUrl: https://github.com/medic/cht-core/issues/10209
 title: Harden xsltproc XForm transformation against XML External Entity (XXE) attacks
-lastUpdated: '2026-06-22'
-summary: The api generate-xform service piped admin-uploaded XForm XML to xsltproc with no restriction on external entity resolution, letting an admin exfiltrate arbitrary api-container files via an XXE payload (CWE-611). Fixed by rejecting XForms that declare a DOCTYPE/ENTITY and passing --nonet to xsltproc.
+lastUpdated: '2026-08-09'
+summary: The api generate-xform service piped admin-uploaded XForm XML to xsltproc with no restriction on external entity resolution, letting an admin exfiltrate arbitrary api-container files via an XXE payload (CWE-611). Fixed by rejecting any XForm whose raw text contains a DOCTYPE/ENTITY declaration — a deliberately comment-blind check — and passing --nonet to xsltproc.
 services:
   - api
 techStack:
@@ -37,7 +37,8 @@ entities:
   - api/src/services/generate-xform.js
 concepts:
   - XML External Entity (XXE) prevention
-  - input validation allowlist
+  - input validation denylist (reject DOCTYPE/ENTITY)
+  - comment-blind raw-text scanning
   - defence in depth
   - child process / external XML processor hardening
   - XForm-to-HTML transformation pipeline
@@ -55,15 +56,15 @@ In api/src/services/generate-xform.js the xsltproc child process was spawned wit
 
 ## Solution
 
-Two complementary defences in generate-xform.js: (1) a strict input allowlist that rejects any XForm declaring a DOCTYPE or external ENTITY before spawning, stripping XML comments first so benign comments mentioning the literal text <!DOCTYPE / <!ENTITY are not flagged; (2) passing --nonet as the first argument to xsltproc so libxml2 refuses to resolve external resources (DTDs, entities, stylesheets) over the network. Validation runs before childProcess.spawn, so tainted input never reaches xsltproc.
+Two complementary defences in generate-xform.js: (1) a strict input check (assertNoExternalEntities) that rejects any XForm whose raw text contains <!DOCTYPE or <!ENTITY before spawning — the scan is deliberately blunt and does not exempt XML comments, so a form that merely mentions those constructs inside a comment is rejected too; (2) passing --nonet as the first argument to xsltproc so libxml2 refuses to resolve external resources (DTDs, entities, stylesheets) over the network. Validation runs before childProcess.spawn, so tainted input never reaches xsltproc.
 
 ## Code Patterns
 
-Validate/reject untrusted XML against an allowlist before spawning an external XML processor; strip XML comments prior to scanning for forbidden constructs (<!DOCTYPE/<!ENTITY) to avoid false positives on benign content; pass --nonet to xsltproc/libxml2 invocations to disable external resource resolution. All in api/src/services/generate-xform.js.
+Scan the raw untrusted XML for forbidden constructs (<!DOCTYPE/<!ENTITY) and reject before spawning an external XML processor; the scan is intentionally comment-blind — it runs against the unmodified string rather than a comment-stripped copy — trading false positives on commented-out declarations for a check that cannot be evaded by comment-parsing tricks. Pass --nonet to xsltproc/libxml2 invocations to disable external resource resolution. All in api/src/services/generate-xform.js.
 
 ## Design Choices
 
-An input allowlist (reject DOCTYPE/ENTITY) was chosen as the primary, cheapest, and most reliable fix because legitimate CHT XForms never need those constructs; --nonet adds defence-in-depth for any future code path that might slip a DTD past the input check. Comments are stripped first to prevent false-positive rejections. The team's threat assessment in #10209 treated this as defence-in-depth since only an authenticated admin (with the medic password and access to the open-source container) can reach the code path.
+Rejecting DOCTYPE/ENTITY outright was chosen as the primary, cheapest, and most reliable fix because legitimate CHT XForms never need those constructs; --nonet adds defence-in-depth for any future code path that might slip a DTD past the input check. The check is deliberately applied to the raw text rather than a comment-stripped copy, accepting false positives on commented-out declarations in exchange for a check that cannot be evaded by comment-parsing tricks. The team's threat assessment in #10209 treated this as defence-in-depth since only an authenticated admin (with the medic password and access to the open-source container) can reach the code path.
 
 ## Related Files
 
@@ -72,7 +73,7 @@ An input allowlist (reject DOCTYPE/ENTITY) was chosen as the primary, cheapest, 
 
 ## Testing
 
-npm run unit-api on generate-xform.spec.js: 46 existing tests pass unchanged, plus 4 new tests — (a) --nonet is the first argument on every xsltproc spawn, (b) XForms with <!DOCTYPE> are rejected with a clear error and xsltproc is never spawned, (c) XForms with <!ENTITY> are rejected the same way, (d) XForms whose comments merely mention the literal text <!DOCTYPE/<!ENTITY> are still accepted (no false positives). npm run lint clean on both files; it was confirmed locally that a malicious form can no longer be uploaded.
+npm run unit-api on generate-xform.spec.js: 46 existing tests pass unchanged, plus 4 new tests — (a) --nonet is the first argument on every xsltproc spawn, (b) XForms with <!DOCTYPE> are rejected with a clear error and xsltproc is never spawned, (c) XForms with <!ENTITY> are rejected the same way, (d) XForms whose comments merely mention the literal text <!DOCTYPE/<!ENTITY> are rejected as well, pinning the deliberately comment-blind behaviour. npm run lint clean on both files; it was confirmed locally that a malicious form can no longer be uploaded.
 
 ## Related Issues
 

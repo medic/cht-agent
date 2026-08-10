@@ -1,13 +1,13 @@
 ---
 id: cht-core-9339
-category: improvement
+category: feature
 domain: forms-and-reports
 domainFit: strong
 issueNumber: 9339
 issueUrl: https://github.com/medic/cht-core/issues/9339
 title: Update Enketo phone widget to display the formatted/normalized number in the visible proxy input
-lastUpdated: '2026-06-22'
-summary: The phone widget normalized numbers before saving to the form model but left the visible proxy input showing the raw typed value, causing a confusing mismatch. The fix updates formatAndCopy so the proxy input also shows the formatted number, except when the number is invalid.
+lastUpdated: '2026-08-09'
+summary: The phone widget normalized numbers before saving to the form model but left the visible proxy input showing the raw typed value, causing a confusing mismatch. The fix updates formatAndCopy so the proxy input is set to the same value written to the model — which, for an invalid number, is the user's raw entry, since the normalizer already falls back to it.
 services:
   - webapp
 techStack:
@@ -53,15 +53,15 @@ In formatAndCopy(), the normalized/formatted value was copied only to the hidden
 
 ## Solution
 
-Updated formatAndCopy() so that after copying the formatted value to the hidden real input and firing the change event, the visible proxy input is also set to the same formatted value. When normalization returns false (invalid number), the proxy input keeps the original raw value so the resulting validation error still makes sense to the user.
+Updated formatAndCopy() to compute getFormattedValue() once and, after copying it to the hidden real input and firing the change event, set the visible proxy input to the same value. There is no new validity check: the pre-existing getFormattedValue() already returns `phoneNumber.normalize(settings, value) || value`, so when normalization returns false (invalid number) the "formatted" value is simply the raw entry and the proxy is left showing exactly what the user typed, keeping the resulting validation error comprehensible.
 
 ## Code Patterns
 
-Enketo proxy/real-input synchronization pattern in webapp/src/js/enketo/widgets/phone-widget.js (formatAndCopy): a visible proxy input plus a hidden real input bound to the model; after transforming/normalizing, sync the formatted value into both — but guard with a validity check so an invalid value preserves the user's raw entry for meaningful validation feedback.
+Enketo proxy/real-input synchronization pattern in webapp/src/js/enketo/widgets/phone-widget.js (formatAndCopy): a visible proxy input plus a hidden real input bound to the model; after transforming/normalizing, sync the same value into both unconditionally. The invalid-input case needs no branch because the normalizer itself falls back to the raw value (`normalize(...) || value`), so "write the formatted value everywhere" and "leave a bad entry visible for validation" are the same line of code.
 
 ## Design Choices
 
-There was discussion on the issue about whether it is acceptable to mutate the displayed value after the user has entered it; the team accepted this so the displayed value matches what is actually stored. Preserving the original raw value on invalid input is a deliberate choice to keep validation errors comprehensible.
+There was discussion on the issue about whether it is acceptable to mutate the displayed value after the user has entered it; the team accepted this so the displayed value matches what is actually stored. Preserving the original raw value on invalid input is a deliberate choice to keep validation errors comprehensible — implemented by reusing getFormattedValue()'s existing `|| value` fallback rather than adding a separate validity branch in formatAndCopy.
 
 ## Related Files
 
@@ -70,7 +70,7 @@ There was discussion on the issue about whether it is acceptable to mutate the d
 
 ## Testing
 
-Karma unit tests for the phone widget were updated to assert that the proxy input displays the formatted value after entry. The change was additionally tested locally.
+Karma unit tests for the phone widget were updated to assert on proxyInput.val() after entry: the normalized number for valid input, and the unchanged denormalized entry for an invalid number. The change was additionally tested locally.
 
 ## Related Issues
 

@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10679
 issueUrl: https://github.com/medic/cht-core/issues/10679
 title: Prevent weak-GPS geolocation timeout from blocking form submission by resolving complete() immediately with a sentinel -1 code
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-08-09'
 summary: 'The geolocation service blocked form submission for up to 30 seconds waiting for the GPS watcher when signal was weak, leading some deployments to disable GPS entirely. complete() now resolves immediately with {code: -1, ''Geolocation not yet acquired''} and nulls the deferred so late callbacks are discarded, while still capturing coordinates acquired before submission.'
 services:
   - webapp
@@ -68,7 +68,7 @@ Chose to prioritize form-submission UX over guaranteed geolocation capture: reso
 
 ## Testing
 
-Karma unit tests in geolocation.service.spec.ts cover 'submit before any data is acquired' and 'data acquired before submit'. A late-callback test asserts that success/failure callbacks firing after complete() are silently discarded. Note: removing the old 'should resolve promise even if watcher never calls any callback' test leaves the 30s -2 timeout path without a direct isolated test, relying on the remaining timeout test for coverage.
+Karma unit tests in geolocation.service.spec.ts cover 'submit before any data is acquired' and 'data acquired before submit'. A late-callback test asserts that success/failure callbacks firing after complete() are silently discarded. The old 'should resolve promise even if watcher never calls any callback' test was reworked into 'should resolve immediately when watcher never calls any callback', and a new fakeAsync test ('should resolve with timeout error when watcher never fires') ticks past 30s to pin the -2 timeout path and its geolocation:failure:-2 telemetry, so that path keeps direct isolated coverage.
 
 ## Related Issues
 

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9429
 issueUrl: https://github.com/medic/cht-core/issues/9429
 title: Pass up to 500 of a contact's reports into the contact summary when rendering forms
-lastUpdated: '2026-07-16'
-summary: When rendering an enketo form, the contact summary received only a limited subset of the contact's reports, so report-derived summary fields were computed from incomplete data for contacts with large histories. The fix loads and passes up to 500 of the contact's reports into the forms contact summary (capped at 500).
+lastUpdated: '2026-08-09'
+summary: When rendering an enketo form, form.service.ts loaded the contact's reports via its own SearchService call with no limit, so the contact summary saw only the search default of 50 reports while the contact page saw 500. The fix delegates to ContactViewModelGeneratorService so the forms contact summary receives the same set of up to 500 reports.
 services:
   - webapp
 techStack:
@@ -48,19 +48,19 @@ stale: false
 
 ## Problem
 
-Issue #9429 ('all reports in contact summary'): when an enketo form was rendered, the contact summary made available to the form received only a limited/default subset of the contact's reports. As a result, contact-summary fields that aggregate over a contact's reports were computed from incomplete data for contacts with many reports, producing incorrect form behavior and displayed values.
+Issue #9429 ('Only 50 reports are passed to the contact summary which is passed to enketo'): viewing a contact's page computed the contact summary over up to 500 reports, but completing an action from that same place re-computed the contact summary with only 50 reports before handing it to enketo. Contact-summary fields that aggregate over a contact's reports were therefore computed from incomplete data whenever a form was opened, and the same summary yielded different answers depending on where it was calculated.
 
 ## Root Cause
 
-The form-rendering path (form.service.ts) loaded the contact's reports with a low/default limit via the contact view model generator before passing them into the contact summary computation, so contacts with large report histories had their reports truncated below what the summary logic needed.
+The form-rendering path in form.service.ts fetched the contact's reports with its own SearchService.search('reports', ...) call and passed no `limit`, so it silently took the search service's default page size of 50 — while the contact page had already been switched to ContactViewModelGeneratorService, whose `LIMIT_SELECT_ALL_REPORTS = 500` returns up to 500. The two call sites therefore disagreed, and the contact summary computed at form-render time saw only 50 reports.
 
 ## Solution
 
-Raised the report limit applied when building the forms contact summary to 500: form.service.ts now requests up to 500 of the contact's reports (via ContactViewModelGeneratorService) and passes them into the contact summary used during enketo form rendering. 500 acts as a hard cap — contacts with more than 500 reports get the first 500, while contacts with fewer get all of them. This aligns the forms contact summary with the contact-page summary, which already loads the same 500-report set via contact-view-model-generator.service.ts, so both call sites produce the same summary instead of each choosing its own limit (PR #9436).
+Replaced form.service.ts's own SearchService.search('reports', ...) call with a delegation to ContactViewModelGeneratorService.loadReports({ doc: contact }, []), so the forms contact summary now receives up to 500 of the contact's reports instead of the search default of 50, and passes them into the contact summary used during enketo form rendering. The generator's `_loadReports` was guarded with `model.children?.forEach` because form.service.ts passes a bare `{ doc }` model with no children. 500 acts as a hard cap — contacts with more than 500 reports get the first 500, while contacts with fewer get all of them. This aligns the forms contact summary with the contact-page summary, which already loads the same 500-report set via contact-view-model-generator.service.ts, so both call sites produce the same summary instead of each choosing its own limit.
 
 ## Code Patterns
 
-Loading a bounded report set for the contact summary at form-render time: webapp/src/ts/services/form.service.ts fetches the contact's reports (limit 500) through webapp/src/ts/services/contact-view-model-generator.service.ts and supplies them to the contact summary input, keeping the report cap as a named limit rather than relying on the page-size default.
+Loading a bounded report set for the contact summary at form-render time: webapp/src/ts/services/form.service.ts fetches the contact's reports through webapp/src/ts/services/contact-view-model-generator.service.ts and supplies them to the contact summary input. The cap lives in the generator as the named constant LIMIT_SELECT_ALL_REPORTS = 500, so every consumer inherits one deliberate limit instead of silently falling back to SearchService's page-size default of 50.
 
 ## Design Choices
 
@@ -82,8 +82,8 @@ Added a Karma unit test in form.service.spec.ts asserting the report limit passe
 
 ## Related Issues
 
-- #9429: all reports in contact summary — the forms contact summary should receive the contact's reports (resolved with a 500-report cap)
-- PR #9434 was cherry-picked into backport PR #9436 (same fix on a release branch).
+- #9429: only 50 reports are passed to the contact summary which is passed to enketo — the summary should be computed over the same report set every time (resolved with the shared 500-report cap)
+- PR #9434 was cherry-picked into backport PR #9436, which landed on the 4.11.x release branch.
 
 ## Domain Rationale
 

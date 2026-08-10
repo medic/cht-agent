@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10810
 issueUrl: https://github.com/medic/cht-core/issues/10810
 title: Support calling extension-libs from form expressions (duplicate_check.expression and context.expression)
-lastUpdated: '2026-06-22'
-summary: Form expressions such as duplicate_check.expression and context.expression could only run a single inline JS string, forcing complex logic like duplicate-contact detection to be maintained inline. This PR adds an extensionLib(libId, ...args) utility so these expressions can call reusable extension-lib JS functions instead.
+lastUpdated: '2026-08-09'
+summary: Form expressions such as duplicate_check.expression and context.expression could only run a single inline JS string, forcing complex logic like duplicate-contact detection to be maintained inline. This PR converts XmlFormsContextUtilsService into an async get() factory and adds an extensionLib(libId, ...args) utility to the object it returns, so these expressions can call reusable extension-lib JS functions instead.
 services:
   - webapp
 techStack:
@@ -39,13 +39,14 @@ entities:
   - webapp/src/ts/services/form.service.ts
   - webapp/src/ts/services/xml-forms.service.ts
   - CHTDatasourceService
-  - XmlFormsContextUtilsService.extensionLib
+  - XmlFormsContextUtilsService.get
 concepts:
   - form expression evaluation
   - extension libraries (extension-libs)
   - duplicate contact detection
   - XPath extension functions (cht:extension-lib)
   - async service initialization
+  - async factory returning the expression-evaluation scope
 related_issues: []
 stale: false
 ---
@@ -56,19 +57,19 @@ App developers configuring duplicate_check.expression (and context.expression) c
 
 ## Root Cause
 
-Form context expressions are evaluated against the utility functions exposed by XmlFormsContextUtilsService, which had no helper for retrieving and invoking an extension-lib. The existing extension-lib mechanism lived only in the cht:extension-lib xPath function (medic-xpath-extensions.js) and was unavailable to duplicate_check/context expression evaluation.
+Form context expressions were evaluated against the public methods of XmlFormsContextUtilsService (the service instance was passed straight into parseProvider.parse(...)), and that class had no helper for retrieving and invoking an extension-lib — nor any way to await the datasource, since every method was synchronous. The existing extension-lib mechanism lived only in the cht:extension-lib xPath function (medic-xpath-extensions.js) and was unavailable to duplicate_check/context expression evaluation.
 
 ## Solution
 
-Added an extensionLib(libId, ...args) method to XmlFormsContextUtilsService that fetches the named extension-lib from CHTDatasourceService and invokes it with the supplied arguments, mirroring the existing cht:extension-lib xPath function. The method is now available within duplicate_check.expression and context.expression evaluation, wired through deduplicate.service, form.service and xml-forms.service. Per review feedback, the lookup avoids a synchronous getExtensionLib accessor on CHTDatasourceService so the datasource is fully initialized before an extension-lib is returned/invoked.
+Converted XmlFormsContextUtilsService from a bag of public methods into a single async get() factory that resolves CHTDatasourceService first and returns the utils object handed to expression evaluation. Alongside the existing ageInDays/ageInMonths/ageInYears/levenshteinEq/normalizedLevenshteinEq entries it adds extensionLib(libId, ...args), which looks the lib up on the resolved datasource and invokes it with the supplied arguments (throwing a configuration error when no lib with that ID exists), mirroring the existing cht:extension-lib xPath function. Callers — deduplicate.service (getDuplicates became async), form.service and xml-forms.service (checkFormExpression became async) — now await …get() and pass the resulting object to parseProvider.parse(...), so extensionLib is available within duplicate_check.expression and context.expression evaluation. Per review feedback the utils object is built behind an await this.chtDatasourceService.get(), so the datasource is fully initialized before any expression can run; the existing synchronous datasource.v1.getExtensionLib(id) accessor (added in #9090) is then used unchanged for the lookup, rather than exposing a new pre-initialization accessor on CHTDatasourceService itself.
 
 ## Code Patterns
 
-XmlFormsContextUtilsService.extensionLib(libId, ...args) retrieves an extension-lib from CHTDatasourceService and invokes it, reusing the pattern of the cht:extension-lib xPath function in webapp/src/js/enketo/medic-xpath-extensions.js. New utility methods added to XmlFormsContextUtilsService automatically become available in the scope of form context/duplicate_check expression evaluation.
+XmlFormsContextUtilsService.get() returns the object whose properties form the scope of context.expression / duplicate_check.expression evaluation — a new utility must be added to that returned object, not as a class method, to become available to form expressions. Its extensionLib(libId, ...args) entry retrieves an extension-lib from the resolved CHT datasource and invokes it, reusing the pattern of the cht:extension-lib xPath function in webapp/src/js/enketo/medic-xpath-extensions.js.
 
 ## Design Choices
 
-Modeled extensionLib() on the existing cht:extension-lib xPath function for consistency rather than inventing a new mechanism. The extension-lib lookup was kept off a synchronous getExtensionLib accessor on CHTDatasourceService, ensuring the datasource is fully initialized before an extension-lib is returned and invoked.
+Modeled extensionLib() on the existing cht:extension-lib xPath function for consistency rather than inventing a new mechanism. Because the datasource must be initialized before any lookup, the whole utils surface was moved behind an async get() factory that awaits chtDatasourceService.get() once — pushing the async boundary out to the callers (getDuplicates, checkFormExpression) — instead of leaving expression evaluation to reach for the datasource synchronously mid-flight. The trade-off is that the utils are no longer class methods, so anything added later must go inside the object get() returns.
 
 ## Related Files
 
@@ -81,7 +82,7 @@ Modeled extensionLib() on the existing cht:extension-lib xPath function for cons
 
 ## Testing
 
-Added/updated Karma unit tests for xml-forms-context-utils.service, deduplicate.service, form.service, xml-forms.service, cht-datasource.service and parse.provider. A WebdriverIO e2e test (tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js) with a supporting page object (custom-doc.wdio.page.js) was added to guard against future regressions in calling extension-libs from duplicate-check expressions.
+Added/updated Karma unit tests for xml-forms-context-utils.service, deduplicate.service, form.service, xml-forms.service, cht-datasource.service and parse.provider. Coverage for calling extension-libs from duplicate-check expressions was added into the existing WebdriverIO e2e spec (tests/e2e/default/contacts/duplicate-contacts.wdio-spec.js) and its existing page object (tests/page-objects/default/enketo/custom-doc.wdio.page.js) — both files were modified, not created.
 
 ## Related Issues
 
@@ -91,4 +92,4 @@ Added/updated Karma unit tests for xml-forms-context-utils.service, deduplicate.
 
 **Fit:** strong
 
-The PR extends form expression evaluation — it adds an extensionLib() utility to XmlFormsContextUtilsService that becomes available within duplicate_check.expression and context.expression, and every touched source file is a form-subsystem service. Duplicate contact detection is the motivating use case, but the actual capability is a general form-expression feature (it also applies to context.expression, which governs form relevance), so forms-and-reports is the most specific fit rather than contacts.
+The PR extends form expression evaluation — it adds an extensionLib() utility to the scope object XmlFormsContextUtilsService.get() returns, making it available within duplicate_check.expression and context.expression, and every touched source file is a form-subsystem service. Duplicate contact detection is the motivating use case, but the actual capability is a general form-expression feature (it also applies to context.expression, which governs form relevance), so forms-and-reports is the most specific fit rather than contacts.

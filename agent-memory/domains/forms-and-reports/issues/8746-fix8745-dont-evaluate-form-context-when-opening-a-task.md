@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8745
 issueUrl: https://github.com/medic/cht-core/issues/8745
 title: Skip form context expression evaluation when opening a form from a task
-lastUpdated: '2026-07-16'
-summary: When opening a task's form, the Enketo service was still evaluating the form's context expression (which is meant to gate form visibility in the action launcher/contact form lists), causing incorrect behavior on the task-launch path. The fix bypasses context evaluation when a form is opened from a task.
+lastUpdated: '2026-08-09'
+summary: 'A 4.x regression: opening a form from the tasks tab failed with `error.loading.form.no_authorized` when the form declared `context: "false"` in its properties, because the Enketo service still evaluated the context expression (which exists only to gate form visibility in the action launcher/contact form lists) on the task-launch path. The fix bypasses context evaluation when a form is opened from a task.'
 services:
   - webapp
 techStack:
@@ -48,11 +48,11 @@ stale: false
 
 ## Problem
 
-Opening a task that launches a form triggered evaluation of the form's context expression. That expression exists to decide whether a form is offered in contact/action-launcher contexts and is irrelevant when a task has already selected the form. Evaluating it on the task path produced incorrect behavior (e.g. failures or the form not opening as expected) because the context expression can reference data not available in the task-launch scenario.
+Opening a task that launches a form triggered evaluation of the form's context expression. That expression exists to decide whether a form is offered in contact/action-launcher contexts and is irrelevant when a task has already selected the form. Configurers legitimately set `context: "false"` in `form.properties.json` to keep a form off the contacts tab while still driving it from a task — in 3.x that worked, but in 4.x the task path evaluated the expression, got `false`, and refused to open the form with `error.loading.form.no_authorized` (a regression, reported on 4.4).
 
 ## Root Cause
 
-enketo.service.ts evaluated the form's context expression unconditionally during the form open/render path, without distinguishing forms launched from a task. Since a task has already determined the applicable form, re-evaluating the context is redundant and can break when the expression depends on contact/launcher state absent in the task flow.
+enketo.service.ts evaluated the form's context expression unconditionally during the form open/render path, without distinguishing forms launched from a task. Since a task has already determined the applicable form, re-evaluating the context is redundant — and actively harmful, because a deliberately-false context (or one depending on contact/launcher state absent in the task flow) then reads as an authorization failure.
 
 ## Solution
 
@@ -60,7 +60,7 @@ Updated enketo.service.ts so the task-launch path skips evaluation of the form c
 
 ## Code Patterns
 
-Guard context-specific evaluation by launch source: thread a flag indicating the form was opened from a task into the Enketo render path and only evaluate the context expression when it is meaningful (webapp/src/ts/services/enketo.service.ts).
+Guard context-specific evaluation by launch source: the form-context object already carries the launch `type` (`'contact'|'report'|'task'|'training-card'`), so `shouldEvaluateExpression()` returns `false` early for `type === 'task'` — no new flag needs threading through the render path. As of master that class and method live in `webapp/src/ts/services/form.service.ts` (`this.formConfig.type === 'task'`); at the time of this fix they were `EnketoFormContext` in `webapp/src/ts/services/enketo.service.ts`.
 
 ## Design Choices
 
@@ -72,7 +72,7 @@ Suppress context evaluation only on the task path rather than removing context e
 - webapp/tests/karma/ts/services/enketo.service.spec.ts
 - tests/e2e/default/tasks/tasks.wdio-spec.js
 - tests/e2e/default/tasks/tasks-breadcrumbs.wdio-spec.js
-- tests/e2e/default/tasks/forms/home-visit.properties.json
+- tests/e2e/default/tasks/forms/home-visit.properties.json (renamed to `home_visit.properties.json` by the pyxform uplift, PR #10269)
 
 ## Testing
 
@@ -80,7 +80,7 @@ Added/updated a Karma unit test in enketo.service.spec.ts asserting the form con
 
 ## Related Issues
 
-- #8745: form context expression incorrectly evaluated when opening a task
+- #8745: `error.loading.form.no_authorized` when opening a form from tasks tab because context evaluates to false (labelled `Type: Bug` / `Regression`)
 
 ## Domain Rationale
 

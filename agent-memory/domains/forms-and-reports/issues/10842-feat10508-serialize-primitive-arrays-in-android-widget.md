@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10508
 issueUrl: https://github.com/medic/cht-core/issues/10508
 title: Serialize android-app-launcher primitive arrays as space-delimited strings for non-repeat target fields
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-08-09'
 summary: The android-app-launcher Enketo widget always inserted returned JSON arrays into repeat groups, so forms could not use built-in XPath functions like selected-at()/count-selected() on list data without a repeat or the android-app-value-list appearance. The widget now deserializes a JSON array of primitives into a space-delimited string when the target field is not a repeat, in a passive backwards-compatible way.
 services:
   - webapp
@@ -51,19 +51,19 @@ When the android-app-launcher widget received a JSON array of primitive values (
 
 ## Root Cause
 
-The widget's data-insertion logic (around webapp/src/js/enketo/widgets/android-app-launcher.js:95) only handled arrays by populating repeats; there was no code path to flatten a primitive array into a single space-delimited string value for a non-repeat target field.
+The widget's data-insertion logic only handled arrays by populating repeats (the repeat wiring the issue links to, `processRepeatGroup`/`assignDataValueToRepeatGroup`); at the point where a value is finally written to a field — `assignValueToInput` — an array simply hit the "cannot set value, value is an array" bail-out. There was no code path to flatten a primitive array into a single space-delimited string value for a non-repeat target field.
 
 ## Solution
 
-Added handling so that when the target output field is NOT a repeat group and the received value is a JSON array of primitives, the array is deserialized into a space-delimited string and stored directly in the named field — the format Enketo's selected-at()/count-selected() expect. A reviewer tweak (jkuester) extended this to also handle arrays nested inside other objects. Existing forms using the android-app-value-list repeat appearance are unaffected.
+Added a join at the single value-assignment chokepoint (assignValueToInput): if the incoming value is an array whose items are all non-objects, it is flattened with array.join(' ') before being written to the field — the format Enketo's selected-at()/count-selected() expect. No repeat detection is needed: the repeat paths (assignDataValueToRepeatGroup, assignDataObjectToRepeatGroup) hand one element at a time to the same function, so existing forms using the android-app-value-list / android-app-object-list repeat appearances are unaffected. Because every value funnels through assignValueToInput, arrays reached via the nested-object path (processOutputSubLevels) are covered by the same four lines.
 
 ## Code Patterns
 
-Branch on whether the target field is a repeat; if not, join a primitive array into a space-delimited string (e.g. array.join(' ')) before writing it to the form model, including arrays nested within returned objects. See webapp/src/js/enketo/widgets/android-app-launcher.js.
+Normalize at the one place every value passes through rather than branching on the target's shape: assignValueToInput in webapp/src/js/enketo/widgets/android-app-launcher.js joins any all-primitive array with ' ' before writing it to the form model. Repeat handling stays passive for free, because the repeat helpers only ever pass individual elements down to the same function — no repeat check appears in the code.
 
 ## Design Choices
 
-Implemented as a passive, backwards-compatible change so existing android-app-value-list repeat-based forms continue to work unchanged. A space-delimited string was chosen because Enketo's multi-select XPath functions (selected-at, count-selected) operate on space-delimited value strings, avoiding the need for a repeat group or special appearance. Support for arrays nested inside objects was added during review to broaden applicability.
+Implemented as a passive, backwards-compatible change so existing android-app-value-list repeat-based forms continue to work unchanged. A space-delimited string was chosen because Enketo's multi-select XPath functions (selected-at, count-selected) operate on space-delimited value strings, avoiding the need for a repeat group or special appearance. Placing the join at the shared assignment chokepoint rather than adding a repeat/appearance check keeps the change to four lines and covers arrays nested inside returned objects at no extra cost.
 
 ## Related Files
 
@@ -72,7 +72,7 @@ Implemented as a passive, backwards-compatible change so existing android-app-va
 
 ## Testing
 
-Karma unit tests were added in webapp/tests/karma/js/enketo/widgets/android-app-launcher.spec.ts covering the new primitive-array-to-space-delimited-string behavior and confirming the existing repeat-group behavior is unchanged. Note: the handling for arrays nested inside objects was confirmed manually rather than fully covered by automated tests.
+One Karma unit test was added in webapp/tests/karma/js/enketo/widgets/android-app-launcher.spec.ts — 'should set output field as space-delimited string when target is not a repeat' — covering the new primitive-array-to-space-delimited-string behavior; the pre-existing repeat-group tests in the same spec were left untouched and continue to pin that path. Note: the handling for arrays nested inside objects has no dedicated test and was confirmed manually.
 
 ## Related Issues
 

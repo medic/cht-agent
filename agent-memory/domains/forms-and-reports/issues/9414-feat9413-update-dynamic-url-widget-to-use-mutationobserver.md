@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9413
 issueUrl: https://github.com/medic/cht-core/issues/9413
 title: Update Enketo dynamic-url widget to use MutationObserver instead of the deprecated DOMSubtreeModified mutation event
-lastUpdated: '2026-06-23'
-summary: The dynamic-url Enketo widget relied on the DOMSubtreeModified mutation event, which Chrome 127 removed, breaking dynamic URL updates and causing test failures in enketo-core's pipeline. The fix replaces the mutation event listener with a MutationObserver.
+lastUpdated: '2026-08-09'
+summary: The dynamic-url Enketo widget relied on the DOMSubtreeModified mutation event, which Chrome 127 removed; in enketo-core's pipeline the update went from synchronous to asynchronous and a karma test that asserted immediately began reading the previous URL. The fix replaces the mutation event listener with a MutationObserver and defers the karma assertion to the next macro-task.
 services:
   - webapp
 techStack:
@@ -47,7 +47,7 @@ stale: false
 
 ## Problem
 
-The dynamic-url widget used a DOMSubtreeModified mutation event listener to detect DOM changes and update the rendered URL. Chrome 127 removed support for mutation events, so the listener never fired (breaking dynamic URL updates) and the enketo-core pipeline, which runs CHT's tests, began failing without any code change on their side.
+The dynamic-url widget used a DOMSubtreeModified mutation-event listener to detect DOM changes and update the rendered URL. Chrome 127 removed mutation events; in enketo-core's pipeline (Chrome Headless 128) the update went from synchronous to asynchronous — presumably via a polyfill in the dependency tree — so a CHT karma test that asserted immediately after changing the value read the previous URL and failed. The failure appeared only in enketo-core's pipeline, with no change on their side; CHT's own pipelines were unaffected. DOMSubtreeModified being removed outright made this worth fixing at the source rather than only in the test.
 
 ## Root Cause
 
@@ -59,11 +59,11 @@ Replaced the DOMSubtreeModified mutation-event listener with a MutationObserver 
 
 ## Code Patterns
 
-Replace deprecated synchronous DOM mutation events (DOMSubtreeModified) with a MutationObserver observing subtree/childList changes in webapp/src/js/enketo/widgets/dynamic-url.js. In e2e specs, schedule the assertion as the last action on the macro-task queue so the asynchronous MutationObserver callback has flushed before asserting.
+Replace deprecated synchronous DOM mutation events (DOMSubtreeModified) with a MutationObserver observing subtree/childList changes in webapp/src/js/enketo/widgets/dynamic-url.js. In the karma unit spec, schedule the assertion inside setTimeout(..., 0) so it runs as the last action on the macro-task queue and the asynchronous MutationObserver callback has flushed before asserting.
 
 ## Design Choices
 
-MutationObserver is the modern, supported replacement for mutation events and required minimal additional code. Because MutationObserver callbacks fire asynchronously, the e2e assertion is structured to run last on the macro-task queue to avoid flaky timing while reliably observing the update.
+MutationObserver is the modern, supported replacement for mutation events and required minimal additional code. Because MutationObserver callbacks fire asynchronously, the karma assertion is wrapped in setTimeout(..., 0) (with done) to avoid flaky timing while reliably observing the update.
 
 ## Related Files
 
@@ -75,7 +75,7 @@ MutationObserver is the modern, supported replacement for mutation events and re
 
 ## Testing
 
-Updated the karma unit spec (dynamic-url.spec.ts) and added/updated a WebdriverIO integration spec (dynamic-url-widget.wdio-spec.js) with a dedicated test form (dynamic-url-widget.xlsx/.xml). The integration assertion is scheduled as the last macro-task so the asynchronous MutationObserver-driven update is observed deterministically.
+Updated the karma unit spec (dynamic-url.spec.ts) to make the test async and assert on the next macro-task (setTimeout(..., 0) plus done), so the asynchronous MutationObserver-driven update is observed deterministically. Added a WebdriverIO integration spec (dynamic-url-widget.wdio-spec.js) with a dedicated test form (dynamic-url-widget.xlsx/.xml); that spec asserts directly, since page interaction already gives the observer time to fire.
 
 ## Related Issues
 

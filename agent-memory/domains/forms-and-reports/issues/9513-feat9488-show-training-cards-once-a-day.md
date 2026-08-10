@@ -6,8 +6,8 @@ domainFit: weak
 issueNumber: 9488
 issueUrl: https://github.com/medic/cht-core/issues/9488
 title: Show training cards once per day by persisting last-viewed date in localStorage
-lastUpdated: '2026-06-22'
-summary: Training cards (Enketo training forms) had no daily throttling and could re-appear repeatedly within the same day. This PR persists the last-viewed date in localStorage and only re-displays the cards when that stored date is before the current day, limiting them to once per day per device.
+lastUpdated: '2026-08-09'
+summary: Training cards (Enketo training forms) had no daily throttling and could re-appear repeatedly within the same day. This PR has TrainingCardsService persist the last-viewed date in localStorage under a per-user key and return early unless that stored date is before today, limiting the cards to once per day per user per device.
 services:
   - webapp
 techStack:
@@ -48,15 +48,15 @@ The training-cards service did not persist any record of when cards were last vi
 
 ## Solution
 
-Added logic to store the last-viewed date in browser localStorage and compare it against the current date in the training-cards service; the app component only displays the training cards when the stored date is before today, after which the stored date is updated to today.
+TrainingCardsService.displayTrainingCards() now returns early when hasBeenDisplayed() finds a stored last-viewed date that is not before today (both dates normalised to midnight). The date is written to localStorage under a per-user key (training-cards-last-viewed-date-<username>) when the modal's afterOpened() first emits, so a card that is opened counts as shown for the rest of the calendar day. The app component only triggers the service; it holds no date logic (its change in this PR merely collapsed the existing privacy-policy and form-id guards into a single condition).
 
 ## Code Patterns
 
-Once-per-day client-side gating: persist a date string in localStorage and compare it to the current date to decide whether to run an action at most once per calendar day. See webapp/src/ts/services/training-cards.service.ts for the date-comparison/persistence logic and webapp/src/ts/app.component.ts for the display trigger.
+Once-per-day client-side gating: persist an ISO date string in localStorage and compare it to the current date — both normalised with setHours(0, 0, 0, 0) — to decide whether to run an action at most once per calendar day; namespace the storage key by username so the cap is per user rather than per browser profile. All of the gating and persistence lives in webapp/src/ts/services/training-cards.service.ts; webapp/src/ts/app.component.ts is only the display trigger.
 
 ## Design Choices
 
-Persistence uses localStorage (per-device/browser) rather than the user's CouchDB doc, so the once-a-day cap is local to each device and not synced across devices. This keeps the UX feature lightweight and avoids replication/server changes, at the cost of cards potentially showing once per device per day.
+Persistence uses localStorage (per-device/browser) rather than the user's CouchDB doc, so the once-a-day cap is local to each device and not synced across devices. The key is namespaced by username, so the cap is per user per device and a shared device does not consume another user's daily showing. This keeps the UX feature lightweight and avoids replication/server changes, at the cost of cards potentially showing once per user per device per day. A missing or unparseable stored date fails open (cards are shown), so a corrupt value never permanently suppresses training.
 
 ## Related Files
 
