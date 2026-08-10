@@ -6,8 +6,8 @@ subDomain: enketo
 issueNumber: 9227
 issueUrl: https://github.com/medic/cht-core/issues/9227
 title: Add XPath function for Luhn identifier validation in forms
-lastUpdated: '2026-07-16'
-summary: Added a custom XPath function to validate identifiers using the Luhn algorithm directly within Enketo forms, enabling client-side checksum validation to catch typos on ID fields (e.g., South African ID numbers).
+lastUpdated: '2026-08-09'
+summary: Added the `cht:validate-luhn` custom XPath function to validate identifiers using the Luhn algorithm directly within Enketo forms, enabling client-side checksum validation to catch typos on ID fields (e.g., South African ID numbers). Shipped in 4.10.0.
 services:
   - webapp
 techStack:
@@ -27,13 +27,13 @@ The CHT's custom XPath extensions for Enketo did not include a Luhn algorithm im
 
 ## Solution
 
-Added a `cht:luhn-check` custom XPath function to the medic XPath extensions. Form builders can now use this function in constraint expressions to validate that an entered identifier passes the Luhn checksum. PR #9220 was a focused 2-file change.
+Added a `cht:validate-luhn` custom XPath function to the medic XPath extensions, registered as `'cht:validate-luhn': luhn`. Form builders can now use this function in constraint expressions to validate that an entered identifier passes the Luhn checksum. PR #9220 was a focused 2-file change; the same commit also registered `cht:strip-whitespace`, which is why the Luhn check tolerates spaced-out input.
 
 ## Code Patterns
 
 - File: `webapp/src/js/enketo/medic-xpath-extensions.js` is where custom XPath functions for Enketo forms are defined
 - Pattern: to add a new validation function usable in forms, register it as a custom XPath extension rather than adding server-side validation
-- Usage in XForm constraint: `cht:luhn-check(./patient_id)` returns true/false
+- Usage in XForm constraint: `cht:validate-luhn(./patient_id)` returns true/false; the function takes an optional second argument for the expected digit length, so `cht:validate-luhn(./patient_id, 13)` also rejects anything that is not 13 digits long
 - This enables instant client-side feedback without a round-trip to the server
 
 ## Design Choices
@@ -49,7 +49,7 @@ Added a `cht:luhn-check` custom XPath function to the medic XPath extensions. Fo
 
 ## Testing
 
-- Unit tests covering valid Luhn numbers, invalid numbers, edge cases (empty strings, non-numeric input)
+- Sixteen unit tests in `webapp/tests/mocha/unit/enketo/medic-xpath-extensions.spec.js` under `describe('#validate-luhn()')`: valid and invalid South African ID numbers, a number of the wrong length, non-numeric input, input with embedded and with leading/trailing spaces, Amex / Visa / MasterCard / Discover card numbers, and one valid and one invalid case with no expected length supplied
 
 ## Related Issues
 

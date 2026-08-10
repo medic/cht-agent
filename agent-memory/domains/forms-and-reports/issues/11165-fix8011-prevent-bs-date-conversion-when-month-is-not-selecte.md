@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8011
 issueUrl: https://github.com/medic/cht-core/issues/8011
 title: Prevent Bikram Sambat date picker from saving a default Baisakh date when the month is not selected
-lastUpdated: '2026-06-23'
-summary: The Bikram Sambat (Nepali calendar) date picker silently saved an incorrect Baisakh-defaulted Gregorian date when only day and year were entered without selecting a month. The fix guards conversion until day, month, and year are all populated, clearing the Gregorian output otherwise so required-field validation blocks submission.
+lastUpdated: '2026-08-09'
+summary: The Bikram Sambat (Nepali calendar) date picker silently saved an incorrect Baisakh-defaulted Gregorian date when only day and year were entered without selecting a month. The fix lets the bikram-sambat-bootstrap library convert as before, then clears the Gregorian output whenever day, month or year is missing — re-asserting the clear on the next tick to beat the library's own blur handler — so required-field validation blocks submission.
 services:
   - webapp
 techStack:
@@ -37,6 +37,8 @@ concepts:
   - form input validation
   - bikram-sambat to gregorian date conversion
   - hidden form field state
+  - post-hoc correction of a third-party library's output
+  - event-ordering race with a vendored library's own handlers
 related_issues: []
 stale: false
 ---
@@ -51,11 +53,11 @@ The month input is type="hidden" and only receives a value when the user clicks 
 
 ## Solution
 
-Added a guard in the datepicker widget that verifies all three fields (day, month, year) are filled before allowing conversion to proceed. When any field is missing, the Gregorian output is cleared rather than saving a month-defaulted date, allowing required-field validation to block submission.
+Added a delegated `change`/`blur` handler on the widget's inputs (clearIfIncomplete) that checks whether all three fields (day, month, year) are filled and, if any is missing, clears the Gregorian output the library just wrote. Because bikram_sambat_bs's own blur handler runs after the delegated guard and would write the Baisakh-defaulted date back, the check is repeated on the next tick via setTimeout(…, 0). The widget cannot gate the library's conversion, so the fix corrects the result rather than preventing it — the net effect is that day+year with no month leaves the real date input empty and required-field validation blocks submission.
 
 ## Code Patterns
 
-Guard a derived/converted value on completeness of all its source inputs before transforming or persisting: in webapp/src/js/enketo/widgets/bikram-sambat-datepicker.js, check day, month, and year are all present before invoking conversion, and clear the output field otherwise instead of letting a defaulted component produce a misleading value.
+You cannot always gate a third-party library's listeners; instead, let it run and clear the derived value afterwards when its source inputs are incomplete — and re-assert the correction on the next tick (setTimeout(fn, 0)) so the library's own later handlers do not overwrite it. See clearIfIncomplete in webapp/src/js/enketo/widgets/bikram-sambat-datepicker.js, which checks day, month and year on a delegated change/blur handler and empties the real date input (firing change) rather than letting a defaulted component produce a misleading value.
 
 ## Design Choices
 
@@ -80,4 +82,4 @@ Added/updated Karma unit tests for the widget (bikram-sambat-datepicker.spec.ts)
 
 **Fit:** strong
 
-This is a bug in an Enketo form input widget (the Bikram Sambat date picker) affecting how date data is captured, converted, and validated during form entry — squarely the forms-and-reports domain. It is not a sync, permissions, or app-settings issue, so no pitfall redirects apply.
+This is a bug in an Enketo form input widget (the Bikram Sambat date picker) affecting how date data is captured, converted, and validated during form entry — squarely the forms-and-reports domain.

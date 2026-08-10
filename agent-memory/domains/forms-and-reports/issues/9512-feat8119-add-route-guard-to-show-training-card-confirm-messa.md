@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 8119
 issueUrl: https://github.com/medic/cht-core/issues/8119
 title: Add route guard to show the 'lose your progress' confirmation before navigating away from an open training card
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-08-09'
 summary: The training-card progress-loss confirmation previously only appeared when closing via the Cancel/X buttons. This PR adds an Angular route guard so the same confirmation is shown when the user navigates to another route or uses the browser/Android back button while a training card is open.
 services:
   - webapp
@@ -57,11 +57,11 @@ Exit handling for training cards was confined to the modal component's explicit 
 
 ## Solution
 
-Introduced a training-card route guard provider (webapp/src/ts/training-card.guard.provider.ts) registered on the app's feature routes (about, analytics, configuration-user, contacts, messages, privacy-policy, reports, tasks). New global NgRx state (actions/global.ts, reducers/global.ts, selectors/index.ts) tracks whether a training card is open/in-progress; when set, the guard intercepts navigation and invokes the same confirmation modal (via modal.service.ts) before allowing the route change. The training-cards service and modal service were updated to coordinate this state and reuse the existing confirm dialog.
+Introduced a training-card route guard provider (webapp/src/ts/training-card.guard.provider.ts) registered on the app's feature routes (about, analytics, configuration-user, contacts, messages, privacy-policy, reports, tasks). New global NgRx state (actions/global.ts, reducers/global.ts, selectors/index.ts) tracks whether a training card is open/in-progress; when it is, the guard blocks the navigation and flips a `showConfirmExit` flag (with the pending `nextUrl`) in global state, which the open training-cards modal renders as the existing confirmation. modal.service.ts gained a `closeOnNavigation` option so the training modal survives the blocked navigation, and the training-cards service opens the modal with `closeOnNavigation: false`.
 
 ## Code Patterns
 
-Centralized navigation-blocking pattern: an Angular route guard reads an 'in-progress' flag from NgRx global state (selectors/index.ts backed by reducers/global.ts + actions/global.ts) and defers to a shared confirmation modal (modal.service.ts) instead of intercepting navigation per-component. The guard is then attached across all feature route configs (*.routes.ts) so one guard enforces consistent confirm-on-leave behavior app-wide. Reference: webapp/src/ts/training-card.guard.provider.ts.
+Centralized navigation-blocking pattern: a canDeactivate route guard reads an 'in-progress' flag from NgRx global state (selectors/index.ts backed by reducers/global.ts + actions/global.ts), returns false, and hands the pending URL back through the same state slice so the already-open modal renders the confirmation — rather than intercepting navigation per-component or opening a dialog from inside the guard. The guard is then attached across all feature route configs (*.routes.ts) so one guard enforces consistent confirm-on-leave behavior app-wide. Reference: webapp/src/ts/training-card.guard.provider.ts.
 
 ## Design Choices
 
@@ -94,4 +94,4 @@ Added/updated e2e coverage in tests/e2e/default/enketo/training-cards.wdio-spec.
 
 **Fit:** weak
 
-The mechanism is cross-cutting Angular navigation plumbing (a canDeactivate route guard wired across seven feature modules' *.routes.ts), not form-engine code; it protects an in-progress training-form fill, so forms-and-reports is the least-bad home rather than a principled fit.
+The mechanism is cross-cutting Angular navigation plumbing (a canDeactivate route guard wired across eight feature modules' *.routes.ts), not form-engine code; it protects an in-progress training-form fill, so forms-and-reports is the least-bad home rather than a principled fit.
