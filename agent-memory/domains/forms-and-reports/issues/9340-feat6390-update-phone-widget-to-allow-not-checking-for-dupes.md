@@ -62,7 +62,7 @@ Introduced a new field configuration — type: string with appearance: numbers t
 
 ## Code Patterns
 
-Widget behavior is selected from the field's appearance string (numbers tel) plus a custom XForm instance attribute (instance::cht:unique_tel) rather than the field type; validation is decoupled from the uniqueness/duplicate-check so each can be enabled independently — webapp/src/js/enketo/widgets/phone-widget.js.
+Widget behavior is selected from the field's appearance string (numbers tel) plus a custom XLSForm column, `instance::cht:unique_tel` — a column header, so it exists only inside the .xlsx and is not greppable; it surfaces as `cht:unique_tel` in the generated XForm instance and as `data-cht-unique_tel` on the rendered question, which is what the widget reads — rather than the field type; validation is decoupled from the uniqueness/duplicate-check so each can be enabled independently — webapp/src/js/enketo/widgets/phone-widget.js.
 
 ## Design Choices
 

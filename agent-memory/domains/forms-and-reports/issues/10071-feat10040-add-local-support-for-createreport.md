@@ -51,7 +51,7 @@ stale: false
 
 ## Provenance
 
-PRs #10071 and #10099 were child PRs of the `9835-…` epic branch and are stamped nowhere in cht-core's history — `git log --grep='(#10071)'` finds nothing, and `source_sha` (`d40e65bae`) is this PR's own merge commit into that epic branch — GitHub still reports it as the PR's `merge_commit_sha`, but it is absent from a clone because the epic squashed it away. The work reaches master only through the epic squash `f382785be` — `feat(#9835): add cht datasource apis for creation and update of contacts and reports (#10083)`. Every path and symbol below is stated as of that squash; the per-child split between #10071 and #10099 comes from the PR descriptions, not from anything verifiable in the git history.
+PRs #10071 and #10099 were child PRs of the `9835-…` epic branch and are stamped nowhere in cht-core's history — `git log --grep='(#10071)'` finds nothing, and `source_sha` (`d40e65bae`) is this PR's own merge commit into that epic branch — GitHub still reports it as that PR's merge commit, but it is absent from a clone because the epic squashed it away. The work reaches master only through the epic squash `f382785be` — `feat(#9835): add cht datasource apis for creation and update of contacts and reports (#10083)`. Every path and symbol below is stated as of that squash; the per-child split between #10071 and #10099 comes from the PR descriptions, not from anything verifiable in the git history.
 
 ## Problem
 
@@ -116,5 +116,5 @@ Added and updated unit specs (shared-libs/cht-datasource/test/local/report.spec.
 ## Related Issues
 
 - #10040: "To have API that can create reports" — the issue these PRs implement, via local and API support for report creation
-- #10038: the broader report-creation feature this work builds toward
-- #10083: the epic PR whose squash (`f382785be`) is the only commit carrying this work on master
+- #10038: "To have API that can create places" — the sibling issue covering the place-creation half of the same cht-datasource create work
+- PR #10083: "feat(#9835): add cht datasource apis for creation and update of contacts and reports" — the epic PR whose squash (`f382785be`) is the only commit carrying this work on master

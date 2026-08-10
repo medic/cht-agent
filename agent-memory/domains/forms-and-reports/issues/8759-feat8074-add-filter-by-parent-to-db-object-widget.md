@@ -85,7 +85,7 @@ Reused the existing `contacts_by_parent` CouchDB view rather than adding a new i
 
 ## Testing
 
-Unit tests added/updated for search-request generation (shared-libs/search/test/generate-search-requests.js), the search service (webapp/tests/karma/ts/services/search.service.spec.ts), and the select2-search service (webapp/tests/karma/ts/services/select2-search.service.spec.ts). An end-to-end WDIO spec (tests/e2e/default/enketo/db-object-widget.wdio-spec.js) with a dedicated test form (tests/e2e/default/enketo/forms/db-object-widget.xml) and page-object helpers (tests/page-objects/default/enketo/generic-form.wdio.page.js) exercises the descendant filtering through the widget.
+Unit tests updated for search-request generation (shared-libs/search/test/generate-search-requests.js), the search service (webapp/tests/karma/ts/services/search.service.spec.ts), and the select2-search service (webapp/tests/karma/ts/services/select2-search.service.spec.ts). An end-to-end WDIO spec (tests/e2e/default/enketo/db-object-widget.wdio-spec.js) with a dedicated test form (tests/e2e/default/enketo/forms/db-object-widget.xml) and page-object helpers (tests/page-objects/default/enketo/generic-form.wdio.page.js) exercises the descendant filtering through the widget.
 
 ## Related Issues
 

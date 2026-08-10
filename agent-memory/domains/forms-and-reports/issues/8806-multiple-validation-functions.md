@@ -34,7 +34,7 @@ Moved the CHT extra validation functions into pupil's own `ValidatorFunctions` m
 ## Code Patterns
 
 - Validation rules can combine built-in pupil validators with CHT-specific functions using logical operators
-- CHT validation functions live directly in pupil's `ValidatorFunctions` map — lower-cased there: `exists`, `unique`, `uniquewithin`, `isafter`, `isbefore`, `isisoweek`, `validphone`, `uniquephone` — and are never evaluated in a parallel pass
+- CHT validation functions live directly in pupil's validator-functions map (`shared-libs/validation/src/validator_functions.js`, looked up by `validator.js`) — lower-cased there: `exists`, `unique`, `uniquewithin`, `isafter`, `isbefore`, `isisoweek`, `validphone`, `uniquephone` — and are never evaluated in a parallel pass
 - File: `shared-libs/validation/src/pupil.js` is the core validation engine
 - File: `shared-libs/validation/src/validator_functions.js` defines CHT-specific validators
 - File: `shared-libs/validation/src/validation.js` orchestrates the pipeline

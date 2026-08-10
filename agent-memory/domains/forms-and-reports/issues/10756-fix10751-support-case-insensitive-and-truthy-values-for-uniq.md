@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10751
 issueUrl: https://github.com/medic/cht-core/issues/10751
 title: Support case-insensitive and truthy values for unique_tel phone validation via centralized pyxform-boolean library
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: Duplicate-phone validation via cht:unique_tel was strictly case-sensitive, so values like "TRUE" (common from spreadsheet auto-formatting) silently bypassed the check. Fixed by centralizing pyxform truthy/falsy parsing into a new library and using it in the phone widget so validation is case-insensitive and ODK-aligned.
 services:
   - webapp
@@ -75,7 +75,7 @@ Per maintainer feedback (dianabarsan), the truthy/falsy logic was centralized in
 
 ## Testing
 
-Added a new Karma/Jasmine spec suite for the pyxform-boolean library (pyxform-boolean.spec.ts) covering truthy/falsy edge cases, and updated phone-widget.spec.ts to cover case-insensitive unique_tel validation. Full Enketo regression suite (npm run unit on tests/karma/js/enketo) passed 103/103.
+Added a new Karma/Jasmine spec suite for the pyxform-boolean library (pyxform-boolean.spec.ts) covering truthy/falsy edge cases, and updated phone-widget.spec.ts to cover case-insensitive unique_tel validation.
 
 ## Related Issues
 

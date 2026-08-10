@@ -28,7 +28,7 @@ The build script (`scripts/build/build-config.sh`) that packages the default con
 
 The fix merged as PR #10445: `scripts/build/build-config.sh` gained an `upload-training-forms` step alongside the existing `upload-app-forms` / `upload-collect-forms` / `upload-contact-forms` steps, so the default training forms are packaged into the image.
 
-Shipping the Welcome Guide by default then broke the e2e suites, because the card pops up for the admin user at the start of every run. PR #10445 handles that by seeding a *pre-completed* training doc: `tests/constants.js` gained `DEFAULT_USER_ADMIN_TRAINING_DOC` (`_id: training:admin:1234`, `form: training:admin_welcome`, deliberately typed `not_data_record` so it is not treated as a report), `tests/utils/index.js` writes it in `setUserContactDoc` during test setup, and adds its `_id` to `PROTECTED_DOCS` so `deleteAllDocs` leaves it alone between specs. The doc is protected from deletion, not re-created after it.
+Shipping the Welcome Guide by default then broke the e2e suites, because the card pops up for the admin user at the start of every run. PR #10445 handles that by seeding a *pre-completed* training doc: `tests/constants.js` gained `DEFAULT_USER_ADMIN_TRAINING_DOC`, whose `_id` is the template literal ``training:${USERNAME}:1234`` ( `form: training:admin_welcome`, deliberately typed `not_data_record` so it is not treated as a report), `tests/utils/index.js` writes it in `setUserContactDoc` during test setup, and adds its `_id` to `PROTECTED_DOCS` so `deleteAllDocs` leaves it alone between specs. The doc is protected from deletion, not re-created after it.
 
 ## Code Patterns
 

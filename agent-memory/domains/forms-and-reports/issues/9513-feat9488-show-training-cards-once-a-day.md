@@ -48,7 +48,7 @@ The training-cards service did not persist any record of when cards were last vi
 
 ## Solution
 
-TrainingCardsService.displayTrainingCards() now returns early when hasBeenDisplayed() finds a stored last-viewed date that is not before today (both dates normalised to midnight). The date is written to localStorage under a per-user key (training-cards-last-viewed-date-<username>) when the modal's afterOpened() first emits, so a card that is opened counts as shown for the rest of the calendar day. The app component only triggers the service; it holds no date logic (its change in this PR merely collapsed the existing privacy-policy and form-id guards into a single condition).
+TrainingCardsService.displayTrainingCards() now returns early when hasBeenDisplayed() finds a stored last-viewed date that is not before today (both dates normalised to midnight). The date is written to localStorage under a per-user key built by `getLocalStorageKey()` from the constant `STORAGE_KEY_LAST_VIEWED_DATE` (`'training-cards-last-viewed-date'`) suffixed with the username when the modal's afterOpened() first emits, so a card that is opened counts as shown for the rest of the calendar day. The app component only triggers the service; it holds no date logic (its change in this PR merely collapsed the existing privacy-policy and form-id guards into a single condition).
 
 ## Code Patterns
 

@@ -40,7 +40,7 @@ Note that this PR did **not** touch `enketo.service.ts`: the extraction logic wa
 - Sanitize upload filenames before they become attachment names, and rewrite the matching field values in the doc so the two stay in sync; prune `user-file-` attachments no longer referenced, or edits accumulate orphans
 - The attachment extraction logic *should* be shared between the app form and contact form submission paths — this PR did not do that, and the resulting duplication between `enketo.service.ts` and `contact-save.service.ts` did not survive long: #11256 deleted `contact-save.service.ts` and folded the contact save path into `enketo.service.ts`
 - File: `webapp/src/ts/services/contact-save.service.ts` handled contact form submission as of this PR; it was deleted on 2026-07-29 by #11256, which folded the contact save path into `enketo.service.ts`
-- File: `webapp/src/ts/services/enketo.service.ts` holds the app-form attachment extraction (`processFormAttachments`, `buildBinaryAttachmentData`) — private methods, which is why the contact path could not simply call them
+- File: `webapp/src/ts/services/enketo.service.ts` held the app-form attachment extraction at the time of this PR, but inline inside `xmlToDocs` — `FileManager.getCurrentFiles().forEach(file => this.attachmentService.add(doc, `user-file-${file.name}`, …))` plus an inline `'user-file' + …` name for binary elements. There was no callable helper to reuse, which is why the contact path re-implemented it. (The extracted `processFormAttachments` / `buildBinaryAttachmentData` methods a reader will find there today were added later, by the #11256 form-save rewrite.)
 
 ## Design Choices
 

@@ -85,7 +85,7 @@ Updated the existing `tests/e2e/default/enketo/pregnancy-danger-sign-follow-up.w
 
 - #7599: Uplift enketo-core to v7 (originating ticket; the epic squashed as PR #8528)
 - #7462: Make code for Enketo forms reusable outside cht-core — a separate ticket about moving the Enketo bootstrap logic into shared-libs for cht-conf-test-harness, not the driver for this change
-- #7674: Enable excludeNonRelevant in the Enketo config
+- #7674: "Answers to non-relevant questions in forms are not immediately cleared with new Enekto" — the bug that `excludeNonRelevant` in the Enketo config was enabled to fix
 - enketo/enketo-core#1002: Date and date-time pickers auto-pop open when first question on a page
 
 ## Domain Rationale

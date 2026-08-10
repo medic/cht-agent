@@ -52,7 +52,7 @@ Uplifted cht-conf to use a newer version of pyxform that supports the `trigger` 
 
 ## Testing
 
-- Regenerated the form fixtures across `config/*/forms/` and `tests/**/forms/` to match the new pyxform output, and updated the e2e page objects and the training-materials spec that broke on the regenerated XML
+- Regenerated the form fixtures under `config/default/forms/`, `config/default-bs/forms/`, `config/standard/forms/` and the `tests/e2e` / `tests/integration` form trees to match the new pyxform output, and updated the e2e page objects and the training-materials spec that broke on the regenerated XML
 - The PR ships no automated coverage of the `trigger` column itself — no unit or e2e test exercises dynamic defaults or value-change calculations
 
 ## Related Issues

@@ -49,7 +49,7 @@ stale: false
 
 ## Provenance
 
-PRs #10180 and #10200 were child PRs of the `9835-…` epic branch and are stamped nowhere in cht-core's history — `git log --grep='(#10180)'` finds nothing, and `source_sha` (`70b7be0b4`) is this PR's own merge commit into that epic branch — GitHub still reports it as the PR's `merge_commit_sha`, but it is absent from a clone because the epic squashed it away. The work reaches master only through the epic squash `f382785be` — `feat(#9835): add cht datasource apis for creation and update of contacts and reports (#10083)`. Every path and symbol below is stated as of that squash; the per-child split between #10180 and #10200 comes from the PR descriptions, not from anything verifiable in the git history.
+PRs #10180 and #10200 were child PRs of the `9835-…` epic branch and are stamped nowhere in cht-core's history — `git log --grep='(#10180)'` finds nothing, and `source_sha` (`70b7be0b4`) is this PR's own merge commit into that epic branch — GitHub still reports it as that PR's merge commit, but it is absent from a clone because the epic squashed it away. The work reaches master only through the epic squash `f382785be` — `feat(#9835): add cht datasource apis for creation and update of contacts and reports (#10083)`. Every path and symbol below is stated as of that squash; the per-child split between #10180 and #10200 comes from the PR descriptions, not from anything verifiable in the git history.
 
 ## Problem
 
@@ -108,7 +108,7 @@ The remote path (PR #10200) adds cht-datasource unit specs (test/remote/report.s
 ## Related Issues
 
 - #10041: umbrella issue for report update support in cht-datasource (this PR adds the local implementation portion)
-- #10083: the epic PR whose squash (`f382785be`) is the only commit carrying this work on master
+- PR #10083: "feat(#9835): add cht datasource apis for creation and update of contacts and reports" — the epic PR whose squash (`f382785be`) is the only commit carrying this work on master
 
 ## Domain Rationale
 
