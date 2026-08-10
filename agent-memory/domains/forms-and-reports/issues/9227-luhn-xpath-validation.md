@@ -49,7 +49,7 @@ Added a `cht:validate-luhn` custom XPath function to the medic XPath extensions,
 
 ## Testing
 
-- Sixteen unit tests in `webapp/tests/mocha/unit/enketo/medic-xpath-extensions.spec.js` under `describe('#validate-luhn()')`: valid and invalid South African ID numbers, a number of the wrong length, non-numeric input, input with embedded and with leading/trailing spaces, Amex / Visa / MasterCard / Discover card numbers, and one valid and one invalid case with no expected length supplied
+- Sixteen unit tests in `webapp/tests/mocha/unit/enketo/medic-xpath-extensions.spec.js`, all driving `cht:validate-luhn`: valid and invalid South African ID numbers, a number of the wrong length, non-numeric input, input with embedded and with leading/trailing spaces, Amex / Visa / MasterCard / Discover card numbers, and one valid and one invalid case with no expected length supplied
 
 ## Related Issues
 
