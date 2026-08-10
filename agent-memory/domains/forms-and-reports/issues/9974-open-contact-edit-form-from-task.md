@@ -6,7 +6,7 @@ subDomain: tasks-forms-integration
 issueNumber: 9974
 issueUrl: https://github.com/medic/cht-core/issues/9974
 title: Support opening a contact edit form from a task by routing on an edit_id in the action content
-lastUpdated: 2026-08-09
+lastUpdated: '2026-08-10'
 summary: Task actions of type "contact" could only route to contact creation. This adds an `edit_id` branch so a task whose config sets `content.edit_id` navigates to that contact's edit route, letting follow-up workflows update existing contact data directly from a task.
 services:
   - webapp

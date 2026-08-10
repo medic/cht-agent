@@ -6,12 +6,12 @@ subDomain: api
 issueNumber: 10133
 issueUrl: https://github.com/medic/cht-core/issues/10133
 title: API startup loads all form attachments unnecessarily via _all_docs
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 source_prs:
   - "medic/cht-core#10248"
 related_issues:
   - cht-core-10132
-summary: During API startup, form processing loaded all attachments (including large media files) in a single _all_docs call, causing timeouts on instances with large form media. Fixed by loading attachments separately and only fetching relevant ones.
+summary: During API startup, form processing read whole form documents with all their attachments (including large media files) — an `_all_docs` call for the batch path and a per-doc `get` for the update path — causing timeouts on instances with large form media. Fixed by loading attachments separately and only fetching relevant ones.
 services:
   - api
 techStack:

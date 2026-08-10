@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10052
 issueUrl: https://github.com/medic/cht-core/issues/10052
 title: Add ReportWithLineage support to fetch reports with fully hydrated contact lineage via cht-datasource and REST API
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Report retrieval via cht-datasource and the REST API only returned the minified (dehydrated) contact lineage. This PR adds ReportWithLineage methods and interfaces to fetch a report with its full contact lineage hydrated, mirroring the existing PersonWithLineage/PlaceWithLineage pattern.
 services:
   - api

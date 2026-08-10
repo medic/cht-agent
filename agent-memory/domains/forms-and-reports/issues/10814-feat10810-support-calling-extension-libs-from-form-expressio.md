@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10810
 issueUrl: https://github.com/medic/cht-core/issues/10810
 title: Support calling extension-libs from form expressions (duplicate_check.expression and context.expression)
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Form expressions such as duplicate_check.expression and context.expression could only run a single inline JS string, forcing complex logic like duplicate-contact detection to be maintained inline. This PR converts XmlFormsContextUtilsService into an async get() factory and adds an extensionLib(libId, ...args) utility to the object it returns, so these expressions can call reusable extension-lib JS functions instead.
 services:
   - webapp

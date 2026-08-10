@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 6390
 issueUrl: https://github.com/medic/cht-core/issues/6390
 title: Update Enketo phone widget to allow validating phone numbers without checking for duplicate contacts
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: 'The phone widget previously always both validated a phone number and enforced uniqueness across contacts, with no way to permit duplicates. This PR adds a new field style (type: string, appearance: numbers tel) that validates the number but does not dup-check by default, with opt-in uniqueness via instance::cht:unique_tel.'
 services:
   - webapp

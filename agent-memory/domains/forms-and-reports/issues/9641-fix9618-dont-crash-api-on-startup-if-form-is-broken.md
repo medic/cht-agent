@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 9618
 issueUrl: https://github.com/medic/cht-core/issues/9618
 title: Prevent API from crashing on startup when a form is broken/invalid
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: A single broken or invalid form would throw during the API's xform-regeneration step, which shared a try/catch with the rest of the bootstrap whose handler called process.exit(1), crashing the whole API service. The fix moves xform regeneration into its own try/catch that only logs, so the API still comes up.
 services:
   - api

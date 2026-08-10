@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10040
 issueUrl: https://github.com/medic/cht-core/issues/10040
 title: Add report-create support to the cht-datasource local adapter
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The cht-datasource local (direct-database) adapter could read reports but had no way to create them. This PR added `createReport` to the local report adapter, taking a `ReportQualifier`; the #10083 epic squash reshaped that into `Local.Report.v1.create` taking an `Input.v1.ReportInput`, which is the form on master.
 services:
   - api
@@ -56,7 +56,7 @@ PRs #10071 and #10099 were child PRs of the `9835-…` epic branch, so `git log 
 
 ## Problem
 
-The cht-datasource local data context could not create reports. Consumers operating against the local (direct-database/PouchDB) adapter could not create report documents through the datasource abstraction, leaving the local context behind the intended create capability. On the remote/API side the same gap existed: the report module exposed only read operations, with no remote create implementation, API controller method, or POST route for creating reports, even though person already had a full create path on the epic branch by the time this PR landed — `Person.v1.createPerson`, `api/src/controllers/person.js`, and `postResource('api/v1/person')` in `src/remote/person.ts` are all present at this PR's parent `cab214534`. Place had none yet; that half is tracked as #10038 (PR #10099).
+The cht-datasource local data context could not create reports. Consumers operating against the local (direct-database/PouchDB) adapter could not create report documents through the datasource abstraction, leaving the local context behind the intended create capability. On the remote/API side the same gap existed: the report module exposed only read operations, with no remote create implementation, API controller method, or POST route for creating reports, even though person already had a full create path on the epic branch by the time this PR landed — `Person.v1.createPerson`, a `createPerson` handler in `api/src/controllers/person.js`, and a `postResource` call for the `api/v1/person` route in `src/remote/person.ts` are all present at this PR's parent `cab214534`. Place had none yet; that half is tracked as #10038 (PR #10099).
 
 ## Root Cause
 
@@ -76,7 +76,7 @@ Local adapter create-operation pattern in cht-datasource: implement the create o
 
 ## Design Choices
 
-Implements report creation in the local adapter so the local data context exposes the same create operation as the datasource abstraction — the remote half had no create either and was added in the same epic, so this is one side of a paired addition, not a catch-up with an existing remote capability, delivered as incremental work toward the report half (#10040) of the datasource create/update effort whose place half is #10038. This PR named the operation flatly, `createReport`; the epic renamed it to `create` inside the `Report.v1` namespace to match `Person.v1.create` and `Place.v1.create`, which is the convention on master. On the API side (PR #10099), reused the existing person/place create architecture (domain module + remote adapter + controller + shared validators) for API and naming consistency across the datasource surface rather than a bespoke report-only path, and centralized validation in parameter-validators.ts to avoid duplication.
+Implements report creation in the local adapter so the local data context exposes the same create operation as the datasource abstraction — the remote half had no create either and was added in the same epic, so this is one side of a paired addition, not a catch-up with an existing remote capability, delivered as incremental work toward the report half (#10040) of the datasource create/update effort whose place half is #10038. This PR named the operation flatly, `createReport`; the epic renamed it to `create` inside the `Report.v1` namespace to match `Person.v1.create` and `Place.v1.create`, which is the convention on master. On the API side (PR #10099), reused the person create architecture already standing on the epic branch (domain module + remote adapter + controller + shared validators) for API and naming consistency across the datasource surface rather than a bespoke report-only path, and centralized validation in parameter-validators.ts to avoid duplication.
 
 ## Related Files
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8011
 issueUrl: https://github.com/medic/cht-core/issues/8011
 title: Prevent Bikram Sambat date picker from saving a default Baisakh date when the month is not selected
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The Bikram Sambat (Nepali calendar) date picker silently saved an incorrect Baisakh-defaulted Gregorian date when only day and year were entered without selecting a month. The fix lets the bikram-sambat-bootstrap library convert as before, then clears the Gregorian output whenever day, month or year is missing — re-asserting the clear on the next tick to beat the library's own blur handler — so required-field validation blocks submission.
 services:
   - webapp

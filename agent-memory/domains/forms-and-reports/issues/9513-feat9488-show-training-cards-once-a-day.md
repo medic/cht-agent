@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 9488
 issueUrl: https://github.com/medic/cht-core/issues/9488
 title: Show training cards once per day by persisting last-viewed date in localStorage
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Training cards (Enketo training forms) had no daily throttling and could re-appear repeatedly within the same day. This PR has TrainingCardsService persist the last-viewed date in localStorage under a per-user key and return early unless that stored date is before today, limiting the cards to once per day per user per device.
 services:
   - webapp

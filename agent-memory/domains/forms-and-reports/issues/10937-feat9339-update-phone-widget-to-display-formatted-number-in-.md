@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9339
 issueUrl: https://github.com/medic/cht-core/issues/9339
 title: Update Enketo phone widget to display the formatted/normalized number in the visible proxy input
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The phone widget normalized numbers before saving to the form model but left the visible proxy input showing the raw typed value, causing a confusing mismatch. The fix updates formatAndCopy so the proxy input is set to the same value written to the model — which, for an invalid number, is the user's raw entry, since the normalizer already falls back to it.
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10508
 issueUrl: https://github.com/medic/cht-core/issues/10508
 title: Serialize android-app-launcher primitive arrays as space-delimited strings for non-repeat target fields
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The android-app-launcher Enketo widget could only put a returned JSON array into a repeat group, via the android-app-value-list appearance. Aimed at an ordinary field the array was refused outright — assignValueToInput logged "value is an array" and wrote nothing — so forms could not use built-in XPath functions like selected-at()/count-selected() on list data. The widget now deserializes a JSON array of primitives into a space-delimited string when the target field is not a repeat, in a passive backwards-compatible way.
 services:
   - webapp

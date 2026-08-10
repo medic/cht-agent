@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9604
 issueUrl: https://github.com/medic/cht-core/issues/9604
 title: Fix SMS report validation rules that rejected valid values by comparing string-typed fields with strict equality
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The `integer` validation rule applied to SMS-submitted report fields always returned false, rejecting valid integers, because it compared a parsed number against the string the SMS parser produced with strict equality. The fix relaxes that comparison (and the equally strict `equals`/`iequals`/`equalsto`) to loose equality, repairs a broken `in` validator, and adds unit test coverage.
 services:
   - sentinel

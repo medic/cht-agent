@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 8225
 issueUrl: https://github.com/medic/cht-core/issues/8225
 title: db-object-widget fails to load contact data when inputs group is never relevant
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The select-contact feature from the db-object-widget could not load contact data into a sub-group of the inputs group when that group had relevant="false()". Fixed via a patch to enketo-core's relevance evaluation that keeps a non-relevant `inputs` branch enabled and merely marks it `disabled`.
 services:
   - webapp
@@ -28,13 +28,13 @@ Enketo Core's relevance processing disabled the whole branch for a group that is
 
 ## Solution
 
-Applied a patch to enketo-core (`webapp/patches/enketo-core+7.2.5.patch`) that special-cases the `inputs` group in Enketo's relevance evaluation (`src/js/relevant.js`): when a `/<form>/inputs` branch evaluates to non-relevant, the patch keeps it *enabled* — so its calculations and widgets, including the db-object-widget, still run — and only adds the `disabled` class so it stays hidden. A companion hunk in `src/js/form.js` keeps `/inputs` out of `getDataStrWithoutIrrelevantNodes`. Nothing in the patch touches widget initialization; the fix works entirely through relevance/branch processing, guaranteeing that contact-data loading, calculations, and widgets involving `inputs` always work even when the inputs fields are hidden (PR #9382). PR #9382 was a targeted fix with 6 files, mostly test updates.
+Applied a patch to enketo-core (`webapp/patches/enketo-core+7.2.5.patch`) that special-cases the `inputs` group in enketo-core's own relevance module: when a `/<form>/inputs` branch evaluates to non-relevant, the patch keeps it *enabled* — so its calculations and widgets, including the db-object-widget, still run — and only adds the `disabled` class so it stays hidden. A companion hunk in enketo-core's form module keeps `/inputs` out of `getDataStrWithoutIrrelevantNodes`. Nothing in the patch touches widget initialization; the fix works entirely through relevance/branch processing, guaranteeing that contact-data loading, calculations, and widgets involving `inputs` always work even when the inputs fields are hidden (PR #9382). PR #9382 was a targeted fix with 6 files, mostly test updates.
 
 ## Code Patterns
 
 - The CHT uses enketo-core patches (via `patch-package`) for fixes that cannot wait for upstream releases
 - Patches are stored in `webapp/patches/` and applied automatically during `npm install`
-- File: `webapp/patches/enketo-core+7.2.5.patch` contains the fix; its `inputs` hunks live in enketo-core's `src/js/relevant.js` and `src/js/form.js` (the same patch file also carries unrelated date/datetime picker hunks)
+- File: `webapp/patches/enketo-core+7.2.5.patch` contains the fix; its `inputs` hunks patch enketo-core's relevance and form modules (the same patch file also carries unrelated date/datetime picker hunks)
 - Pattern: to keep a branch's logic running while hiding it, enable the branch and add the `disabled` class rather than letting relevance processing tear it down
 - Pattern: when Enketo Core behavior needs changing, first check if a patch is viable before forking or working around it in CHT code
 - The `inputs` group with `relevant="false()"` is a standard CHT pattern for passing context into forms without displaying it

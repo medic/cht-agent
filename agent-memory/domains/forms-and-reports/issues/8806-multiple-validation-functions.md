@@ -6,7 +6,7 @@ subDomain: validation
 issueNumber: 8806
 issueUrl: https://github.com/medic/cht-core/issues/8806
 title: Multiple validation functions in a single rule do not work
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 source_prs:
   - "medic/cht-core#9602"
 related_issues:

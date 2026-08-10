@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10751
 issueUrl: https://github.com/medic/cht-core/issues/10751
 title: Support case-insensitive and truthy values for unique_tel phone validation via centralized pyxform-boolean library
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-08-10'
 summary: Duplicate-phone validation via cht:unique_tel was strictly case-sensitive, so values like "TRUE" (common from spreadsheet auto-formatting) silently bypassed the check. Fixed by centralizing pyxform truthy/falsy parsing into a new library and using it in the phone widget so validation is case-insensitive and ODK-aligned.
 services:
   - webapp

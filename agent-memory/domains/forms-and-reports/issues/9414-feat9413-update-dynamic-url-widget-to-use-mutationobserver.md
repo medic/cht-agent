@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9413
 issueUrl: https://github.com/medic/cht-core/issues/9413
 title: Update Enketo dynamic-url widget to use MutationObserver instead of the deprecated DOMSubtreeModified mutation event
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The dynamic-url Enketo widget relied on the DOMSubtreeModified mutation event, which Chrome 127 removed; in enketo-core's pipeline the update went from synchronous to asynchronous and a karma test that asserted immediately began reading the previous URL. The fix replaces the mutation event listener with a MutationObserver and defers the karma assertion to the next macro-task.
 services:
   - webapp

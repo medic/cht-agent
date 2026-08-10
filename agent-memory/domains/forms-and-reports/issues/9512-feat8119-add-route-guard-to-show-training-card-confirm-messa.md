@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 8119
 issueUrl: https://github.com/medic/cht-core/issues/8119
 title: Add route guard to show the 'lose your progress' confirmation before navigating away from an open training card
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The training-card progress-loss confirmation previously only appeared when closing via the Cancel/X buttons. This PR adds an Angular route guard so the same confirmation is shown when the user navigates to another route or uses the browser/Android back button while a training card is open.
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8745
 issueUrl: https://github.com/medic/cht-core/issues/8745
 title: Skip form context expression evaluation when opening a form from a task
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: 'A 4.x regression: opening a form from the tasks tab failed with `error.loading.form.no_authorized` when the form declared `context: "false"` in its properties, because the Enketo service still evaluated the context expression (which exists only to gate form visibility in the action launcher/contact form lists) on the task-launch path. The fix bypasses context evaluation when a form is opened from a task.'
 services:
   - webapp

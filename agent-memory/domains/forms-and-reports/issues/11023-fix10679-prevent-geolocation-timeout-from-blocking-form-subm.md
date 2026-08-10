@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10679
 issueUrl: https://github.com/medic/cht-core/issues/10679
 title: Prevent weak-GPS geolocation timeout from blocking form submission by resolving complete() immediately with a sentinel -1 code
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: 'The geolocation service blocked form submission for up to 30 seconds waiting for the GPS watcher when signal was weak, leading some deployments to disable GPS entirely. complete() now resolves immediately with {code: -1, ''Geolocation not yet acquired''} and nulls the deferred so late callbacks are discarded, while still capturing coordinates acquired before submission.'
 services:
   - webapp

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8971
 issueUrl: https://github.com/medic/cht-core/issues/8971
 title: Add more date-difference XPath functions to Enketo medic-xpath-extensions for in-form date calculations
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-08-10'
 summary: Date logic in CHT xforms previously required manual, error-prone calculations because few date helpers existed. This PR adds additional date-difference XPath functions to the Enketo extension library so form authors can compute differences between dates directly, backed by unit and e2e tests.
 services:
   - webapp

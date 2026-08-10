@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9429
 issueUrl: https://github.com/medic/cht-core/issues/9429
 title: Pass up to 500 of a contact's reports into the contact summary when rendering forms
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: When rendering an enketo form, form.service.ts loaded the contact's reports via its own SearchService call with no limit, so the contact summary saw only the search default of 50 reports while the contact page saw 500. The fix delegates to ContactViewModelGeneratorService so the forms contact summary receives the same set of up to 500 reports.
 services:
   - webapp

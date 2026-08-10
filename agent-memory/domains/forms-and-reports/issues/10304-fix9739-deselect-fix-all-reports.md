@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9739
 issueUrl: https://github.com/medic/cht-core/issues/9739
 title: Fix 'Select all' deselection not clearing selected reports on the reports page
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Deselecting the 'Select all' checkbox on the reports page left previously selected reports still selected. The deselect handler was never at fault — `areAllReportsSelected()` mis-computed the toggle state, so the template routed the click back into select-all instead of deselect-all. The predicate was rewritten against a new `totalReportsCount` field.
 services:
   - webapp

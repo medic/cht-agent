@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10209
 issueUrl: https://github.com/medic/cht-core/issues/10209
 title: Harden xsltproc XForm transformation against XML External Entity (XXE) attacks
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The api generate-xform service piped admin-uploaded XForm XML to xsltproc with no restriction on external entity resolution, letting an admin exfiltrate arbitrary api-container files via an XXE payload (CWE-611). Fixed by rejecting any XForm whose raw text contains a DOCTYPE/ENTITY declaration — a deliberately comment-blind check — and passing --nonet to xsltproc.
 services:
   - api

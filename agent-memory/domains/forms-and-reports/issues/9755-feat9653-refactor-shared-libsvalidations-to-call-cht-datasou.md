@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9653
 issueUrl: https://github.com/medic/cht-core/issues/9653
 title: Refactor shared-libs/validation to query cht-datasource for uniqueness/existence checks instead of building reports_by_freetext view queries directly
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The validation library built and executed medic-client/reports_by_freetext queries directly for its uniqueness/existence validators; this refactor routes every such lookup through cht-datasource (Report.v1.getUuids with Qualifier.byFreetext) and initialises the lib with a data context so it can reach that layer.
 services:
   - webapp

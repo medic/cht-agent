@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8226
 issueUrl: https://github.com/medic/cht-core/issues/8226
 title: Skip Enketo form pages for top-level groups with the 'hidden' appearance via new HiddenGroup widget
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Enketo rendered empty, navigable pages for groups whose contents were all hidden (e.g. a top-level group with the `hidden` appearance), producing blank pages and blocking use of the db-object-widget to load contact data into a hidden group. A new HiddenGroup widget adds the `disabled` class to such groups so Enketo's pager skips them during navigation.
 services:
   - webapp
@@ -65,7 +65,7 @@ Implement form-rendering tweaks as Enketo widgets (class with selector + name) r
 
 ## Design Choices
 
-Reused Enketo's own widget extension point and its existing 'skip disabled groups' pager behavior instead of modifying Enketo's pager directly, keeping the fix minimal and consistent with non-relevant/disabled handling. Following review (jkuester), the selector was simplified to match all top-level groups with the `hidden` appearance rather than requiring `field-list`, generalizing the fix (and renaming the widget from HiddenFieldList/hidden-field-list.js to HiddenGroup/hidden-group.js).
+Reused Enketo's own widget extension point and its existing 'skip disabled groups' pager behavior instead of modifying Enketo's pager directly, keeping the fix minimal and consistent with non-relevant/disabled handling. Following review (jkuester), the selector was simplified to match all top-level groups with the `hidden` appearance rather than requiring `field-list`, generalizing the fix (the widget landed as `HiddenGroup` in `webapp/src/js/enketo/widgets/hidden-group.js`; the narrower field-list name it carried earlier in review never reached the repo).
 
 ## Related Files
 

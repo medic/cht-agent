@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 9227
 issueUrl: https://github.com/medic/cht-core/issues/9227
 title: Add XPath function for Luhn identifier validation in forms
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Added the `cht:validate-luhn` custom XPath function to validate identifiers using the Luhn algorithm directly within Enketo forms, enabling client-side checksum validation to catch typos on ID fields (e.g., South African ID numbers). Shipped in 4.10.0.
 services:
   - webapp

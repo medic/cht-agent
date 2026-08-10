@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10904
 issueUrl: https://github.com/medic/cht-core/issues/10904
 title: Route file/binary attachments to the correct [db-doc="true"] sub-document in Enketo report forms
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly. NOT YET MERGED — the work lives only on the epic branches, not on `master`.
 services:
   - webapp

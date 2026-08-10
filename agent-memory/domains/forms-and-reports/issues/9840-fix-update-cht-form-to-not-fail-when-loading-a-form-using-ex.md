@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9844
 issueUrl: https://github.com/medic/cht-core/issues/9844
 title: Add extension-lib support to the cht-form web component and fix runtime/cancel errors when loading forms
-lastUpdated: '2026-08-09'
+lastUpdated: '2026-08-10'
 summary: The cht-form web component failed to load forms that use extension-libs and hit runtime errors from an unstubbed language service. This PR adds an extensionLibs input backed by a stub CHTDatasourceService, stubs the language service, turns EnketoFormContext into an interface so the web component can supply its own context, and reworks the teardown broken by Angular's web-component property debouncing.
 services:
   - webapp
