@@ -94,4 +94,4 @@ Added a dedicated phone_widget form and new specs in both e2e and integration/ch
 
 **Fit:** strong
 
-The change modifies an Enketo form input widget (phone-widget.js) and introduces new xlsxform field configuration governing how a phone field renders and validates within forms — this is squarely form widget/input behavior. The contact duplicate-check is a secondary capability of the widget, not the subject of the change.
+The change modifies an Enketo form input widget (phone-widget.js) and introduces new xlsxform field configuration governing how a phone field renders and validates within forms — this is squarely form widget/input behavior. The change is precisely about when the widget's contact duplicate-check runs — always, before this PR; opt-in via the unique_tel attribute after it.

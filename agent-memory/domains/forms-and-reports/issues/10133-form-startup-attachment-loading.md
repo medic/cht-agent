@@ -21,7 +21,7 @@ techStack:
 
 ## Problem
 
-When the API server started, it processed all forms by loading them via a CouchDB `_all_docs` call that included all attachments. On instances with forms containing large media files (images, audio), this call could time out due to a known CouchDB bug where `_all_docs` with large attachments hangs. The same full-document read also happened on form update, making it expensive even when only XML attachments changed (#10132).
+When the API server started, it processed all forms by loading them via a CouchDB `_all_docs` call that included all attachments. On instances with forms containing large media files (images, audio), this call could time out due to a known CouchDB bug where `_all_docs` with large attachments hangs. An equivalent full-document read happened on the single-form update path too — a separate call in a different file — making that path expensive even when only XML attachments changed (#10132).
 
 ## Root Cause
 

@@ -46,7 +46,7 @@ Enabled the draw widget by adding it to the widgets list, updated the file manag
 
 - Used the upstream Enketo draw widget rather than building a custom signature component, to stay aligned with the ODK ecosystem and benefit from upstream maintenance
 - Extracted `webapp/src/js/enketo/lib/window.js` (`getCurrentHref()`) as a testability seam over `window.location.href`, which `fileManager.getObjectUrl` uses to work out which report doc to pull a saved drawing's attachment from when re-opening a report for edit
-- Added both draw and file-upload integration tests to verify the full pipeline from widget interaction to attachment storage
+- Added new cht-form integration specs for both the draw widget and file upload (`tests/integration/cht-form/default/{draw-widget,file-upload}.wdio-spec.js`) to verify the full pipeline from widget interaction to attachment storage; the pre-existing `submit-photo-upload-form` e2e spec was updated rather than replaced
 
 ## Related Files
 

@@ -34,7 +34,7 @@ Added a dedicated `user-contact-summary.service.ts` that resolves the logged-in 
 ## Code Patterns
 
 - When forms need data beyond the subject contact, expose it via named external data instances and/or context variables rather than custom variables
-- The user's contact summary is loaded once per form session and cached, not re-fetched per question
+- The user's contact summary is computed once and held in a `CacheService` entry that outlives any single form session — it is not re-fetched per question or per form open, and is invalidated only when `ContactChangeFilterService.isRelevantChange()` says a change affects the user's own contact
 - Inside a form, read the user's summary from the `user-contact-summary` external data instance; to gate whether a form is offered at all, use `userSummary` in the form's context expression (bound in `xml-forms.service.ts#evaluateExpression` alongside `contact`, `summary` and `user`)
 - Compute-and-cache a derived view for the current user: resolve user → contact (user-settings.service + contact-view-model-generator.service, plus target-aggregates.service for target docs) → contact-summary.service → cache in a dedicated service (user-contact-summary.service.ts)
 - Replicate the same enketo wiring in `webapp/web-components/cht-form/src/app.component.ts` so embedded forms behave identically
