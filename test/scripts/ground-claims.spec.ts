@@ -56,7 +56,10 @@ function fakeGit(opts: { changed?: string[] } = {}): ExecFn {
     if (a[0] === 'log') return 'fix(#10802): check status';
     if (a[0] === 'rev-parse') return `${'d'.repeat(40)}\n`;
     if (a[0] === 'grep') {
-      const symbol = a[4];
+      // grep -n -F -w -e <symbol> … — the `-e` keeps a symbol that starts with
+      // a dash (a CLI flag named in prose) from being parsed as an option.
+      expect(a[4]).to.equal('-e');
+      const symbol = a[5];
       return symbol === 'realSymbol' ? `${SHA}:api/src/a.js:10:realSymbol` : noMatch();
     }
     return noMatch();

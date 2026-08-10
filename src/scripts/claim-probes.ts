@@ -344,8 +344,12 @@ export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?
     if (resolved) scoped = resolved;
   }
   const scope = scoped ? ['--', scoped] : [];
+  // `-e` is not decoration: a draft that names a CLI flag (9641 cites an
+  // `--skip-validate` upload) yields a symbol starting with a dash, which git
+  // parses as an option — `error: unknown option 'skip-validate'` — and the
+  // throw took down the whole ground-claims run, not just that one claim.
   const search = (needle: string): string[] =>
-    git(ctx, ['grep', '-n', '-F', '-w', needle, sha, ...scope])
+    git(ctx, ['grep', '-n', '-F', '-w', '-e', needle, sha, ...scope])
       .split('\n').map(l => l.trim()).filter(Boolean);
 
   const hits = search(symbol);
@@ -359,7 +363,7 @@ export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?
     .split('.')
     .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('\\??\\.');
-  return git(ctx, ['grep', '-n', '-E', '-w', pattern, sha, ...scope])
+  return git(ctx, ['grep', '-n', '-E', '-w', '-e', pattern, sha, ...scope])
     .split('\n').map(l => l.trim()).filter(Boolean);
 }
 
