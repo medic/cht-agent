@@ -94,7 +94,7 @@ Extensive unit tests added/updated: cht-datasource specs (test/place.spec.ts, te
 - #9065: Parent issue that added get-person and get-person-with-lineage
 - #8889: "Provide API access for online users" — the open umbrella issue these get-by-uuid endpoints serve; still open
 - PR #9090: added the person get-by-uuid datasource and `/api/v1/person/:uuid` endpoint this PR mirrors for places
-- PR #9176: created `src/place.ts` with the `Place`/`PlaceWithLineage` interfaces this PR adds operations to
+- PR #9176: "add api support for getting a person with lineage by uuid" — it also created `src/place.ts`, with the `Place`/`PlaceWithLineage` interfaces only; this PR adds the operations to it
 - cht-docs#1423: Documentation PR for the new place endpoints
 
 ## Domain Rationale
