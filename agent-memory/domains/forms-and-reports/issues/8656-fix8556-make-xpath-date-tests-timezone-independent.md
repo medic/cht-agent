@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8556
 issueUrl: https://github.com/medic/cht-core/issues/8556
 title: Make the medic-xpath-extensions date tests pass in any timezone
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: The medic-xpath-extensions mocha suite baked the runner's local timezone into its expectations, so `npm run unit-webapp` failed for developers outside UTC-4; the fix pins the timezone in the specs, corrects an ambiguous fixture date, and tidies one redundant re-parse in the shared `asMoment()` helper.
 services:
   - webapp
@@ -48,11 +48,11 @@ stale: false
 
 ## Root Cause
 
-The specs never pinned the timezone, so `Date.prototype.getTimezoneOffset` returned whatever the developer's machine reported and flowed straight into `getTimezoneOffsetAsTime()` and the Bikram Sambat conversions. One `difference-in-months` fixture pair (`Sun Sep 25 2005 1:00:00 GMT+0100` / `Sun Oct 25 2005 22:00:00 GMT+2300`) was also ambiguous across offsets. Separately, in the string branch of the shared `asMoment()` helper the fallthrough re-parsed the raw input (`moment(r)`) instead of returning the `rMoment` it had already built, so the two paths could disagree.
+The specs never pinned the timezone, so `Date.prototype.getTimezoneOffset` returned whatever the developer's machine reported and flowed straight into `getTimezoneOffsetAsTime()` and the Bikram Sambat conversions. One `difference-in-months` fixture pair (`Sun Sep 25 2005 1:00:00 GMT+0100` / `Sun Oct 25 2005 22:00:00 GMT+2300`) was also ambiguous across offsets. Separately, the string branch of the shared `asMoment()` helper ended in `return moment(r)` when `const rMoment = moment(r)` was already in scope and `r` is not reassigned after it — the same parse of the same string, run twice. Redundant rather than wrong, which is why no form behaviour changed.
 
 ## Solution
 
-Pinned `Date.prototype.getTimezoneOffset = () => -240` in a `beforeEach` (restoring the original in `afterEach`) so the suite is timezone-independent, corrected the ambiguous fixture date to `Sun Oct 24 2005 22:00:00 GMT+2300`, and made `asMoment()` return the already-parsed `rMoment` rather than re-parsing.
+Pinned `Date.prototype.getTimezoneOffset = () => -240` in a `beforeEach` (restoring the original in `afterEach`) so the suite is timezone-independent, corrected the ambiguous fixture date to `Sun Oct 24 2005 22:00:00 GMT+2300`, and made `asMoment()` return the already-parsed `rMoment` rather than re-parsing the same string (a tidy-up carried in the same PR, with no change in result).
 
 ## Code Patterns
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10904
 issueUrl: https://github.com/medic/cht-core/issues/10904
 title: Route file/binary attachments to the correct [db-doc="true"] sub-document in Enketo report forms
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly. NOT YET MERGED — the work lives only on the epic branches, not on `master`.
 services:
   - webapp
@@ -66,7 +66,7 @@ The Enketo service attached all binary/file fields (both FileManager uploads and
 
 On the epic branch, `resolveOwnerDoc()` walks up the XML tree from a binary node to the nearest `[db-doc="true"]` ancestor and returns the corresponding prepared sub-doc (falling back to the main report doc). `findFileNodeByFilename()` locates the `[type=file]` XML node whose text matches a FileManager filename so its tree position can be used — Enketo's `Nodeset.setVal` rewrites file-widget nodes from `type="binary"` to `type="file"` once a file has been uploaded, so `[type=file]` is the correct selector for FileManager entries; inline base64 blobs from draw/signature widgets keep `type="binary"` and are routed separately through `attachLegacyFile`. FileManager-uploaded files and inline base64 binary fields inside sub-docs are attached to the resolved owner doc instead of unconditionally to the main report.
 
-The companion epic-level work (PR #11116) extended the same per-document routing into the enketo-translation layer (enketo-translation.service.ts) so file/binary fields are attached to their owning db-doc as the Enketo submission is translated into multiple CouchDB docs, and updated downstream contact rendering — contact-save.service.ts, format-data-record.service.ts, contact-photo.component.ts, and contacts-content.component.ts — so contacts and sub-contacts display their correctly-routed photo attachment.
+The companion epic-level work (PR #11116) extended the same per-document routing into the enketo-translation layer (enketo-translation.service.ts) so file/binary fields are attached to their owning db-doc as the Enketo submission is translated into multiple CouchDB docs, and updated downstream contact rendering — contact-save.service.ts, format-data-record.service.ts and contacts-content.component.ts, plus a dedicated contact-photo component it adds — so contacts and sub-contacts display their correctly-routed photo attachment.
 
 ## Code Patterns
 
@@ -74,7 +74,7 @@ Ownership-by-tree-position (on the epic branches only — none of this is in `we
 
 ## Design Choices
 
-Routing by XML node position (ancestor walk) rather than flat filename-to-doc matching ensures attachments land on the structurally-correct owner; falling back to the main report doc preserves backward-compatible behavior for forms without sub-docs. Each generated document is made self-contained with its own attachments, and the routing explicitly handles files within repeats plus cleared and orphaned file fields (PR #11116). Known limitation: the owner doc is decided by the ancestor walk, but the walk needs a starting node, and `findFileNodeByFilename()` finds that node by filename. When two sub-docs hold files of the same name (e.g. default-named camera captures) the lookup returns the first match, so both files start their walk from the same node and land on the same sub-doc.
+Routing by XML node position (ancestor walk) rather than flat filename-to-doc matching is what lets an attachment reach its structurally-correct owner — subject to the starting-node caveat below, since the walk still begins from a node found by filename; falling back to the main report doc preserves backward-compatible behavior for forms without sub-docs. Each generated document is made self-contained with its own attachments, and the routing explicitly handles files within repeats plus cleared and orphaned file fields (PR #11116). Known limitation: the owner doc is decided by the ancestor walk, but the walk needs a starting node, and `findFileNodeByFilename()` finds that node by filename. When two sub-docs hold files of the same name (e.g. default-named camera captures) the lookup returns the first match, so both files start their walk from the same node and land on the same sub-doc.
 
 ## Related Files
 
