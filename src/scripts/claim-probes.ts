@@ -786,6 +786,9 @@ function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 're
 /** Claim kinds that read a tree and so can fall back to a tree-wide ref. */
 const TREE_SCOPED = new Set<Claim['kind']>(['symbol', 'symbol-in-file', 'path-exists']);
 
+/** Paths belonging to the agent-memory repo itself; cht-core has no such tree. */
+const MEMORY_REPO_PATH = /^agent-memory\//;
+
 // ---------------------------------------------------------------------------
 // Snippet fidelity
 // ---------------------------------------------------------------------------
@@ -976,6 +979,16 @@ export function checkClaim(
   ctx: ProbeCtx, anchor: Anchor | null, claim: Claim, siblings: Anchor[] = [],
   clusterPrs: Array<{ repo: string; prNumber: number }> = [], draft = ''
 ): Verdict {
+  // A draft may legitimately name a path in THIS repo — a domain-note banner
+  // citing `agent-memory/schema.json`, say. cht-core has no `agent-memory/`, so
+  // adjudicating it there reports a file that plainly exists as fabricated.
+  // Not our tree to settle: `unverifiable`, never `ungrounded`.
+  const claimFile = 'file' in claim ? claim.file : undefined;
+  if (claimFile && MEMORY_REPO_PATH.test(claimFile)) {
+    return verdict(claim, 'unverifiable',
+      `${claimFile} is a path in the agent-memory repo, not cht-core — out of this probe's tree`);
+  }
+
   if (anchor?.isRevert) {
     return verdict(claim, 'anchor-unusable',
       `anchor ${anchor.sha.slice(0, 10)} is a revert ("${anchor.subject}") — it cannot evidence the described change`);
@@ -1033,6 +1046,27 @@ export function checkClaim(
               `${claim.file} was ADDED by this PR, so a Problem/Root Cause claim cannot be about it`,
           };
         }
+      }
+    }
+  }
+
+  // A collapsed or hand-authored draft carries `source_prs[]` and its prose spans
+  // every PR in that cluster — but the canonical anchor is only the FIRST entry.
+  // A symbol the second or fifth PR introduced does not exist at that commit, so
+  // judging it there reports a real, present identifier as fabricated. Ask the
+  // siblings before calling it ungrounded: the same courtesy `file-touched`
+  // already gets, and for the same reason. Measured on the contacts batch this
+  // turned 12 false ungrounded findings on one draft (9835, five source_prs)
+  // back into passes, without changing any verdict on a single-PR draft.
+  if (settled.outcome === 'ungrounded' && TREE_SCOPED.has(claim.kind) && siblings.length) {
+    for (const sib of siblings) {
+      const atSibling = checkAtRef(ctx, sib.sha, claim, 'anchor', sib);
+      if (atSibling.outcome === 'grounded') {
+        return {
+          ...atSibling,
+          evidence: `${atSibling.evidence} — absent at the canonical anchor ${refLabel(anchor.sha)}, found at ` +
+            `${refLabel(sib.sha)}${sib.prNumber ? ` (#${sib.prNumber})` : ''}, a sibling from this draft's source_prs[]`,
+        };
       }
     }
   }

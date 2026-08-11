@@ -234,6 +234,24 @@ one. Measured against a same-day clone, `#9833`, `#9900`, `#9901`, `#11021`,
 `#11057` and `#9281` still resolve to nothing, because those PR numbers are
 stamped nowhere in history.
 
+### A cluster has more than one anchor
+
+A hand-authored or collapsed draft carries `source_prs[]` and its prose spans
+every PR in the cluster — but the canonical anchor is only the **first** entry.
+A symbol the fifth PR introduced does not exist at the first PR's commit, so
+judging it there reports a real, present identifier as fabricated. `file-touched`
+already consulted the siblings; `symbol`, `symbol-in-file` and `path-exists` did
+not, and settled at the canonical anchor alone.
+
+On contacts, one draft made the cost concrete: `9835` lists five `source_prs`,
+resolved to #10022 (the earliest), and returned **12 ungrounded claims — every
+one of them false**. `minifyDoc`, `assertSameParentLineage`, `getUpdatedContact`,
+`createDoc`, `updateDoc`, `ResourceNotFoundError`, `assertPermissions` and
+`postResource` are all real on master, in exactly the files the draft names; they
+simply arrived in #10081/#10083/#10222/#10246. Tree-scoped claims now retry at
+each sibling anchor before being called ungrounded, and say which sibling settled
+them. A single-PR draft has no siblings, so no verdict there changes.
+
 That makes an unresolvable anchor worth a second look rather than a shrug. Two
 of the three configuration drafts that would not anchor turned out to have real
 problems a reader would not spot: one describes a feature that is not on master
