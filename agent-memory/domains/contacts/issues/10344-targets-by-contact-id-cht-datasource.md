@@ -7,7 +7,7 @@ issueNumber: 10344
 issueUrl: https://github.com/medic/cht-core/issues/10344
 title: Support querying target intervals by contact IDs in cht-datasource
 lastUpdated: 2026-07-16
-summary: Added cht-datasource APIs to query target interval documents filtered by contact UUIDs, enabling the target aggregates service to fetch only supervised contacts' targets instead of all targets for a reporting period.
+summary: 'PROPOSED (open PR #10432, not merged): cht-datasource APIs to query target interval documents filtered by contact UUIDs, so the target aggregates service could fetch only supervised contacts'' targets instead of all targets for a reporting period. The contact-UUID filtering described here is on no branch but the PR''s own; the one piece that did land — binding TargetAggregatesService to cht-datasource via bindGenerator — arrived separately under epic #10423, against Target.v1.getAll rather than TargetInterval.v1.getAll.'
 services:
   - api
   - webapp
@@ -17,7 +17,41 @@ techStack:
   - couchdb
 source_prs:
   - "medic/cht-core#10432"
+stale: true
 ---
+
+> **Describes unlanded work — do not treat as available API.** PR #10432 is not
+> merged: its head is not an ancestor of `origin/master`, and the one commit that
+> references it (`db9694ef0`, "feat(#10344): support targets by contact id in
+> cht-datasource (#10432)") is not reachable from master either. Its content never
+> reached the `10140_previous-month-targets` epic that landed as #10423. The
+> contact-UUID filtering vocabulary — `ContactUuidsQualifier`, `byContactUuids()`,
+> `getTargetIntervalIds()`, `getDocUuidsByIdRange()`, `local/target-interval.ts`,
+> `remote/target-interval.ts`, `api/src/controllers/target-interval.js` — exists
+> **only** on that open PR's branch. On master the module is `local/target.ts`.
+>
+> **One piece did land, under a different PR.** `bindGenerator()` is on master in
+> six files. Master's copy came from epic #10423 (`622c62542`); #10432 introduces
+> its own independently — the epic is not an ancestor of the PR — so the method is
+> real on master while the target-interval binding around it is not. Master's
+> `target-aggregates.service.ts:35` binds `Target.v1.getAll`, not the
+> `TargetInterval.v1.getAll` this draft names. Read the `bindGenerator` mechanism
+> below as landed and the target-interval binding as proposed. Verify with:
+>
+> ```sh
+> git -C $CORE fetch origin refs/pull/10432/head:refs/verify/pr10432
+> git -C $CORE merge-base --is-ancestor refs/verify/pr10432 origin/master; echo $?   # 1 = not merged
+> git -C $CORE grep -c byContactUuids origin/master                                  # no output
+> git -C $CORE grep -lc byContactUuids refs/verify/pr10432                           # 12 files
+> git -C $CORE grep -l bindGenerator origin/master | wc -l                           # 6 — it IS on master
+> git -C $CORE log origin/master --oneline -S bindGenerator --reverse \
+>   -- webapp/src/ts/services/cht-datasource.service.ts | head -1                    # 622c62542 (#10423)
+> ```
+>
+> Kept because the design it records (target `_id` segment layout, the ID-only
+> `allDocs` two-path query) is the reasoning behind an open proposal. Everything
+> below is that proposal, not shipped behaviour, except where this banner says
+> otherwise.
 
 ## Problem
 
@@ -29,14 +63,12 @@ The target aggregates functionality needed to load target docs from the current 
 
 ## Solution
 
-PR #10432 implemented a five-layer change:
+PR #10432 proposes a five-layer change:
 1. **New qualifier:** `ContactUuidsQualifier` interface with `byContactUuids()` factory in `qualifier.ts`
 2. **ID-range helper:** `getDocUuidsByIdRange()` in `local/libs/doc.ts` calls `allDocs` with `include_docs: false` for efficient ID-only retrieval
 3. **Local adapter:** Smart two-path logic — single contact UUID uses direct range query, multiple UUIDs fetch all IDs for the period then filter by splitting `id.split('~')[2]` against a Set of contact UUIDs
 4. **Remote adapter:** `GET /api/v1/target-interval` with `contact_uuid` or `contact_uuids` query params
 5. **Webapp refactor:** `TargetAggregatesService` replaced raw `dbService.allDocs` with `chtDatasourceService.bindGenerator(TargetInterval.v1.getAll)`
-
-The feature merged as PR #10432 (targets-by-contact-id support in cht-datasource).
 
 ## Code Patterns
 
@@ -48,14 +80,14 @@ The feature merged as PR #10432 (targets-by-contact-id support in cht-datasource
 - File: `shared-libs/cht-datasource/src/local/libs/doc.ts` — `getDocUuidsByIdRange()` for ID-only allDocs
 - File: `shared-libs/cht-datasource/src/remote/target-interval.ts` — `getPage()` via REST endpoint
 - File: `webapp/src/ts/services/target-aggregates.service.ts` — refactored to use cht-datasource generator
-- File: `webapp/src/ts/services/cht-datasource.service.ts` — new `bindGenerator()` method for `AsyncGenerator`-returning functions
+- File: `webapp/src/ts/services/cht-datasource.service.ts` — `bindGenerator()` for `AsyncGenerator`-returning functions. Master already has this, via epic #10423; the PR adds its own copy on its branch
 - File: `api/src/controllers/target-interval.js` — new `getAll` handler
 
 ## Design Choices
 
 - Exploits the structured `_id` format of target docs rather than creating a new CouchDB view index
 - Two-path optimization: single contact avoids fetching all period IDs, multiple contacts batch-fetches IDs only (no docs) then filters client-side
-- `bindGenerator()` added to `CHTDatasourceService` to support async generator functions alongside regular promises
+- `bindGenerator()` on `CHTDatasourceService` supports async generator functions alongside regular promises — the same mechanism epic #10423 landed on master independently of this proposal
 - `moment().locale('en').format()` used instead of `moment().format()` to ensure consistent month tags regardless of user locale
 
 ## Related Files
