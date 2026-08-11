@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8985
 issueUrl: https://github.com/medic/cht-core/issues/8985
 title: Remove extra validation of parent place contact so creating a person via the people API no longer fails
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-08-11'
 summary: Creating a person via POST api/v1/people failed with 'Wrong type, this is not a person.' when the place hierarchy contained a place without a primary contact (a regression from 4.4 to 4.6). The fix removes the overly strict validation of the parent place's contact.
 services:
   - api
@@ -55,7 +55,7 @@ The place-validation logic in shared-libs/contacts/src/places.js performed extra
 
 ## Solution
 
-Removed the extra validation of the parent place contact in shared-libs/contacts/src/places.js so that person creation no longer hinges on the parent/ancestor place's primary contact, restoring the pre-regression (4.4) behavior. Backported to the 4.7.x release branch via cherry-pick (PR #9098).
+Removed the extra validation of the parent place contact from the recursive validatePlace in shared-libs/contacts/src/places.js so that person creation no longer hinges on the parent/ancestor place's primary contact, restoring the pre-regression (4.4) behavior. The people._validatePerson check was not deleted outright — it was relocated into a new preparePlaceContact helper (exported as _preparePlaceContact) that runs only against the new place's own contact. Backported to the 4.7.x release branch via cherry-pick (PR #9098).
 
 ## Code Patterns
 
@@ -63,7 +63,7 @@ When validating a newly created entity (here, a person within a place), validate
 
 ## Design Choices
 
-The fix removes the validation rather than patching it, since the type of a parent place's primary contact is irrelevant to whether a person can be created under that place. Additional e2e coverage was noted as a follow-up.
+The person-type check was moved out of the recursive validatePlace into a new preparePlaceContact helper that validates only the new place's own contact, so ancestors are no longer transitively re-validated — the type of a parent place's primary contact is irrelevant to whether a person can be created under that place. Additional e2e coverage was noted as a follow-up.
 
 ## Related Files
 
@@ -73,7 +73,7 @@ The fix removes the validation rather than patching it, since the type of a pare
 
 ## Testing
 
-Updated unit tests in shared-libs/contacts/test/unit/places.spec.js and integration tests in tests/integration/api/controllers/places.spec.js to cover creating a person under a parent place whose hierarchy lacks a primary contact. More e2e tests could be added later to further assess behavior.
+Added an integration test in tests/integration/api/controllers/places.spec.js ('#8985 should create place if parent has invalid contact') that POSTs a health_center under a district_hospital whose contact is `{ _id: '' }`, plus unit tests in shared-libs/contacts/test/unit/places.spec.js for the new preparePlaceContact helper ('adds default person type', 'rejects if contact does not exist'). Note the POST api/v1/people path from the issue is not directly covered; more e2e tests could be added later to further assess behavior.
 
 ## Related Issues
 

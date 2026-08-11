@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10766
 issueUrl: https://github.com/medic/cht-core/issues/10766
 title: Support collapsing/expanding contact-summary cards on the contact detail view
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-08-11'
 summary: Contact-summary cards on the contact detail view were always fully expanded, forcing heavy scrolling for data-dense cards (stock monitoring, immunizations). This PR lets users collapse/expand cards by tapping the header and adds a `collapsed` config property to start cards collapsed.
 services:
   - webapp
@@ -38,7 +38,7 @@ concepts:
   - contact-summary cards
   - collapsible UI with per-card state
   - config-driven UI defaults
-  - ARIA accessibility (role/aria-expanded)
+  - ARIA accessibility (aria-expanded on a semantic button)
   - scoped CSS to avoid style leakage
 related_issues: []
 stale: false
@@ -54,15 +54,15 @@ By design, the contact-summary card template unconditionally rendered the fields
 
 ## Solution
 
-Added a click handler plus `aria-expanded`, `role="button"`, and a chevron-icon toggle to `.action-header` in contacts-content.component.html, and gated the fields div with `*ngIf="!card.collapsed"`. The component tracks per-card collapsed state, honors a `collapsed: true` config default, and resets state when the displayed contact changes. Collapsible flexbox styles were scoped to `.compact-card .action-header` in inbox.less so other action-headers (tasks, reports, children) are unaffected.
+Replaced the card's `<div class="action-header cell">` with a semantic `<button type="button" class="action-header cell">` carrying the click handler, `[attr.aria-expanded]="!card.collapsed"`, and a chevron icon (`fa-chevron-up`/`fa-chevron-down`); no `role` attribute is needed on a real button. The fields div is gated with `*ngIf="!card.collapsed"`. The component tracks per-card collapsed state, honors a `collapsed: true` config default, and resets state when the displayed contact changes. Collapsible flexbox styles were scoped to `.compact-card button.action-header` in inbox.less so other action-headers (tasks, reports, children) are unaffected.
 
 ## Code Patterns
 
-Per-card collapse toggle: bind visibility with `*ngIf="!card.collapsed"` and flip state on header click, while exposing `aria-expanded`/`role="button"` on the header for accessibility (contacts-content.component.html). Scope new collapsible styling narrowly (`.compact-card .action-header` in inbox.less) instead of targeting all `.action-header` elements to prevent regressions in unrelated headers.
+Per-card collapse toggle: bind visibility with `*ngIf="!card.collapsed"` and flip state on header click, while making the header a real `<button type="button">` with `[attr.aria-expanded]` for accessibility (contacts-content.component.html). Scope new collapsible styling narrowly (`.compact-card button.action-header` in inbox.less) instead of targeting all `.action-header` elements to prevent regressions in unrelated headers.
 
 ## Design Choices
 
-Styling was deliberately scoped to `.compact-card .action-header` rather than all action-headers to avoid altering tasks/reports/children section headers. Per review feedback, the header was styled to match the rest of the app rather than look like a generic button. Both an interactive tap-to-toggle and a `collapsed` config default were supported so app builders can ship cards collapsed by default.
+Styling was deliberately scoped to `.compact-card button.action-header` rather than all action-headers to avoid altering tasks/reports/children section headers. Per review feedback, the header was styled to match the rest of the app rather than look like a generic button — it is a real `<button>` element restyled with `background: none; border: none; font: inherit; color: inherit` so it does not read as a default button. Both an interactive tap-to-toggle and a `collapsed` config default were supported so app builders can ship cards collapsed by default.
 
 ## Related Files
 

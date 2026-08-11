@@ -6,7 +6,7 @@ subDomain: hierarchy-validation
 issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
-lastUpdated: 2026-07-16
+lastUpdated: 2026-08-11
 summary: Fixed a validation gap where contacts could be created under any parent by manipulating the URL, bypassing the configured hierarchy. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp
@@ -29,9 +29,11 @@ The `ContactsEditComponent.getForm()` method, when handling contact creation, as
 
 PR #9563 added a `validateParentForCreateForm()` method to `ContactsEditComponent` that runs before the form is rendered. It has two branches:
 1. **No parent (top-level creation):** Calls `contactTypesService.getChildren()` with no argument to get valid top-level types. If the contact type is not in that list, throws an error.
-2. **Parent present:** Fetches the parent document from PouchDB, resolves its type via `contactTypesService.getTypeId()`, then calls `getChildren(parentType)` to get valid direct children. If the contact type is not in that list, throws an error setting `contentError = true` and preventing form rendering.
+2. **Parent present:** Fetches the parent document from PouchDB, resolves its type via `contactTypesService.getTypeId()`, then calls `getChildren(parentType)` to get valid direct children. If the contact type is not in that list, throws an error; `initForm()`'s catch block sets `contentError = true`, preventing form rendering.
 
-The `person` contact-type is handled explicitly as its own case in the validation logic rather than relying on the generic child-type lookup (PR #9563).
+(As of #9563. Master has since replaced the PouchDB fetch with `getContactFromDatasource(Qualifier.byUuid(...))` and split the two branches into `ensureValidTopLevelType()` / `ensureValidChildType()`.)
+
+Person types are not special-cased; they are resolved through the same `contactTypesService.getChildren(parentTypeId)` lookup as places.
 
 ## Code Patterns
 

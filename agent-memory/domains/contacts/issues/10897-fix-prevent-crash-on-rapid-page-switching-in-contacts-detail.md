@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10878
 issueUrl: https://github.com/medic/cht-core/issues/10878
 title: Prevent null-dereference crash on ContactsContentComponent when rapidly switching pages in contacts detail
-lastUpdated: '2026-06-22'
-summary: Rapid page navigation cleared selectedContact to null while in-flight async callbacks still accessed its .doc property, throwing a TypeError and crashing the contacts detail page. Fixed with optional chaining and early-return guards in the component.
+lastUpdated: '2026-08-11'
+summary: Navigating away cleared selectedContact to null while in-flight async callbacks still accessed its .doc property, throwing a TypeError and crashing the contacts detail page. Fixed with optional chaining and early-return guards in the component.
 services:
   - webapp
 techStack:
@@ -43,19 +43,19 @@ stale: false
 
 ## Problem
 
-Users hit 'TypeError: Cannot read properties of null (reading 'doc')' on the Contacts Detail page when navigating between pages very quickly. It was most reproducible for users with large datasets (~5000 docs) where slow loads created a window during which rapid navigation crashed the app.
+Users hit 'TypeError: Cannot read properties of null (reading 'doc')' on the Contacts Detail page when switching pages while the page was still loading. Reported once by a user with 5176 docs whose app was busy indexing search views after a reports search; the reporter noted the page switching was manual and not especially fast, so the slow load — not the speed of navigation — is what widened the window.
 
 ## Root Cause
 
-A race condition: fast page switching causes the Redux/ngrx store to clear selectedContact to null, but pending asynchronous callbacks and observable emissions from XmlFormsService and other background tasks (e.g. updateFastActions) still assumed a non-null contact and accessed properties like .doc on it.
+A race condition: switching pages causes the Redux/ngrx store to clear selectedContact to null, but pending asynchronous callbacks and observable emissions from XmlFormsService and other background tasks (e.g. updateFastActions) still assumed a non-null contact and accessed properties like .doc on it.
 
 ## Solution
 
-Added optional chaining (?.) throughout ContactsContentComponent when reading selectedContact, and added early returns at the start of updateFastActions() and inside the xmlFormsService subscription callbacks so they exit gracefully when navigation has already cleared the component state.
+Added optional chaining (?.) at several selectedContact reads in ContactsContentComponent, and added early returns at the start of updateFastActions() and inside the xmlFormsService subscription callbacks — which were extracted into updateContactTypes() and updateReportForms() — so they exit gracefully when navigation has already cleared the component state.
 
 ## Code Patterns
 
-Guard async/observable callbacks against state that navigation can clear: in webapp/src/ts/modules/contacts/contacts-content.component.ts, updateFastActions() and the xmlFormsService subscription callbacks early-return when selectedContact is null, and selectedContact is accessed with optional chaining (?.) wherever properties like .doc are read.
+Guard async/observable callbacks against state that navigation can clear: in webapp/src/ts/modules/contacts/contacts-content.component.ts, updateFastActions() and the extracted xmlFormsService callbacks updateContactTypes()/updateReportForms() early-return when selectedContact (or selectedContact.doc) is null, and selectedContact is read with optional chaining (?.) at the guard sites; the .doc reads that follow a guard stay direct.
 
 ## Design Choices
 
@@ -72,7 +72,7 @@ Unit tests added/updated in the Karma spec (contacts-content.component.spec.ts),
 
 ## Related Issues
 
-- #10878: TypeError 'Cannot read properties of null (reading doc)' crash on the Contacts Detail page when rapidly switching pages, surfaced by a large (~5000 doc) dataset
+- #10878: Switching pages too quickly can throw errors in the contacts detail page — a TypeError 'Cannot read properties of null (reading doc)' seen once while the app was indexing search views for a 5176-doc user
 
 ## Domain Rationale
 

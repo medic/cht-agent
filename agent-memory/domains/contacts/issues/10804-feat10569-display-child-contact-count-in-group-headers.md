@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10569
 issueUrl: https://github.com/medic/cht-core/issues/10569
 title: Display active (non-deceased) child contact count in contact profile group headers
-lastUpdated: '2026-06-22'
-summary: CHPs/CHAs had to scroll or manually count to know how many child contacts sat under a hierarchy level; this adds a localized parenthetical count (e.g. "People (2)", "Areas (5)") to each group header, computed from already-loaded in-memory data.
+lastUpdated: '2026-08-11'
+summary: CHPs/CHAs had to scroll or manually count to know how many child contacts sat under a hierarchy level; this adds a localized child count rendered as a small grey badge beside each group header label (e.g. "People 2", "Areas 5"), shown only when the count is above zero, computed from already-loaded in-memory data.
 services:
   - webapp
 techStack:
@@ -54,7 +54,7 @@ Not a defect: the contact profile's child group model exposed only group names a
 
 ## Solution
 
-Added an `activeCount` property to the child group model in ContactViewModelGeneratorService, computed alongside the existing `deceasedCount` within `markDeceased()` so no new iteration or database query is needed. Updated contacts-content.component.html to render the count as a parenthetical suffix on each group header, formatted via the existing `localizeNumber` pipe, with supporting styles in inbox.less.
+Added an `activeCount` property to the child group model in ContactViewModelGeneratorService, computed alongside the existing `deceasedCount` within `markDeceased()` so no new iteration or database query is needed. Updated contacts-content.component.html to render the count in a `<span class="children-count">` inside the group header's `<h3>`, gated on `*ngIf="group?.activeCount > 0"` and formatted via the existing `localizeNumber` pipe, with pill styling (`background: @gray-light; border-radius: 50%`) in inbox.less.
 
 ## Code Patterns
 
@@ -62,7 +62,7 @@ Piggyback a new aggregate on an existing pass: derive `activeCount` in the same 
 
 ## Design Choices
 
-Counts are computed from data already loaded in memory — no additional CouchDB queries — keeping the feature cheap and offline-safe. Display is purely additive (backwards compatible across hierarchy levels and RTL locales) and localized. The bare parenthetical lacks strong visual distinction; the parenthetical-suffix approach was kept per the issue's design guidance.
+Counts are computed from data already loaded in memory — no additional CouchDB queries — keeping the feature cheap and offline-safe. Display is purely additive (backwards compatible across hierarchy levels and RTL locales) and localized. The count is rendered as a distinct grey pill rather than plain inline text so it stands apart from the header label; issue #10569 gave no display-format guidance.
 
 ## Related Files
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8433
 issueUrl: https://github.com/medic/cht-core/issues/8433
 title: Add telemetry events to contact forms in the contacts-edit component
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-11'
 summary: Contact form interactions in the contacts-edit component were not instrumented, leaving no telemetry data on contact form load/save behavior. This PR adds telemetry events to record that data, with unit tests updated to cover the new instrumentation.
 services:
   - webapp
@@ -58,7 +58,7 @@ Inject the telemetry service into an Angular component and record events at form
 
 ## Design Choices
 
-Telemetry was recorded directly within the component at form lifecycle points and validated with unit tests only. End-to-end testing of the full stack was considered but left as an optional follow-up; coverage is unit-test based.
+Telemetry was recorded directly within the component at form lifecycle points, and validated with unit tests only.
 
 ## Related Files
 
@@ -67,7 +67,7 @@ Telemetry was recorded directly within the component at form lifecycle points an
 
 ## Testing
 
-Added/updated Karma unit tests in contacts-edit.component.spec.ts to verify the new telemetry events are recorded. End-to-end testing was not required for this instrumentation change; coverage is unit-test based.
+Coverage is unit-test based: Karma specs in contacts-edit.component.spec.ts assert the render, user_edit_time and save events are recorded. No e2e coverage was added.
 
 ## Related Issues
 

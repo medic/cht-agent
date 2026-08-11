@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9586
 issueUrl: https://github.com/medic/cht-core/issues/9586
 title: Implement freetext search for contacts and reports in the cht-datasource shared library
-lastUpdated: '2026-06-22'
-summary: cht-datasource (the typed read-access library) could only fetch records by identifier and had no freetext search capability. This PR adds a freetext qualifier plus search functions for contacts (persons/places) and reports across both local (CouchDB view-backed) and remote (API-backed) data contexts, and exposes them via new API controller endpoints.
+lastUpdated: '2026-08-11'
+summary: cht-datasource (the typed read-access library) could only fetch records by identifier and had no freetext search capability. This PR adds a freetext qualifier plus UUID-search functions on a new generic `contact` module (whose search spans both person and place documents) and a new `report` module, across both local (CouchDB view-backed) and remote (API-backed) data contexts, and exposes them via two new API controllers.
 services:
   - api
 techStack:
@@ -61,7 +61,9 @@ cht-datasource was built up incrementally and lacked a freetext qualifier, the c
 
 ## Solution
 
-Added a freetext qualifier (qualifier.ts) validated in parameter-validators.ts, and implemented search/getIds functions for contact, person, place, and report in both src/local/* (view-backed) and src/remote/* (HTTP-backed) variants, dispatched through the data-context abstraction. New endpoints were added to the api contact/person/place/report controllers and wired into routing.js.
+Added a freetext qualifier (qualifier.ts) validated in parameter-validators.ts, and implemented `getUuidsPage`/`getUuids` on the new contact.ts and report.ts modules, each with a src/local/* (CouchDB view-backed) and src/remote/* (HTTP-backed) variant dispatched through the data-context abstraction. person.ts and place.ts were only refactored to use the new shared parameter-validators.ts; they gained no freetext search.
+
+The PR also creates api/src/controllers/contact.js and api/src/controllers/report.js and registers four routes in routing.js — `GET /api/v1/contact/uuid`, `/api/v1/contact/:uuid`, `/api/v1/report/uuid`, `/api/v1/report/:uuid`. person.js and place.js gained no endpoints; they were only updated to throw the new `PermissionError` and to stop pre-coercing `limit`.
 
 ## Code Patterns
 
@@ -87,7 +89,7 @@ Search logic was centralized in cht-datasource so api (and other consumers) shar
 
 ## Testing
 
-Extensive unit tests were added/updated across cht-datasource (test/*.spec.ts for contact, person, place, report, qualifier, parameter-validators, plus local/* and libs/* specs) covering both local and remote search paths and qualifier validation, alongside api mocha controller specs (contact.spec.js, person.spec.js, place.spec.js, report.spec.js) for the new endpoints.
+Extensive unit tests were added/updated across cht-datasource (test/*.spec.ts for contact, person, place, report, qualifier, parameter-validators, plus local/* and libs/* specs) covering both local and remote search paths and qualifier validation, alongside api mocha controller specs — contact.spec.js and report.spec.js for the new endpoints, with person.spec.js and place.spec.js updated only for the PermissionError/limit refactor.
 
 ## Related Issues
 
@@ -97,4 +99,4 @@ Extensive unit tests were added/updated across cht-datasource (test/*.spec.ts fo
 
 **Fit:** strong
 
-The PR implements freetext search primarily over contacts (persons/places) in the cht-datasource library, so contact search anchors it in the contacts domain; report search is included as a secondary part of the same feature.
+The PR implements freetext search primarily over contact documents (both person and place types, via the `contacts_by_freetext`/`contacts_by_type_freetext` views) in the cht-datasource library, so contact search anchors it in the contacts domain; report search is included as a secondary part of the same feature.

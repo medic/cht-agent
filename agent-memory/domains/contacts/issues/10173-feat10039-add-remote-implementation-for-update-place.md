@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10039
 issueUrl: https://github.com/medic/cht-core/issues/10039
 title: Add remote (HTTP) cht-datasource implementation and API endpoint for updating place contacts
-lastUpdated: '2026-06-22'
-summary: The cht-datasource library could get/create places but had no remote (HTTP) path to update one. This PR adds the remote update-place implementation plus the backing API controller and route, completing update-place support across the local and remote datasource implementations.
+lastUpdated: '2026-08-11'
+summary: The cht-datasource library could get/create places and could already update one through the local (direct-DB) implementation, but had no remote (HTTP) path to update. This PR adds the remote update-place implementation plus the backing API controller and route, completing update-place support across the local and remote datasource implementations.
 services:
   - api
 techStack:
@@ -50,7 +50,7 @@ stale: false
 
 ## Problem
 
-The cht-datasource library exposed ways to get and create places but lacked a remote (HTTP-based) implementation for updating a place. Consumers operating against the API over HTTP (rather than with direct database access) had no datasource method to update a place document, and there was no API endpoint to back such an operation.
+The cht-datasource library exposed ways to get and create places, and could already update a place through the local (direct-DB) implementation, but lacked a remote (HTTP-based) implementation for updating a place. Consumers operating against the API over HTTP (rather than with direct database access) had no datasource method to update a place document, and there was no API endpoint to back such an operation.
 
 ## Root Cause
 
@@ -58,7 +58,7 @@ Feature gap rather than a defect: the update-place operation had not yet been im
 
 ## Solution
 
-Added a remote implementation for updating a place in shared-libs/cht-datasource/src/remote/place.ts that issues an HTTP request to the API, wired the corresponding update declaration into the place datasource module (src/place.ts), and surfaced it through src/index.ts. On the server side, added an update-place handler in api/src/controllers/place.js and registered the route in api/src/routing.js. Local implementation/core helpers (src/local/place.ts, src/local/libs/core.ts) were adjusted to keep the local and remote contracts aligned.
+Added a remote implementation for updating a place in shared-libs/cht-datasource/src/remote/place.ts that issues an HTTP request to the API, wired the corresponding update declaration into the place datasource module (src/place.ts), and surfaced it through src/index.ts. On the server side, added an update-place handler in api/src/controllers/place.js and registered the route in api/src/routing.js. src/local/libs/core.ts only widens `checkFieldWithLineage` to an export. src/local/place.ts (which already had `v1.update` from an earlier PR in the #9835 epic) additionally gains two new local update rules: rejecting a `parent` added to a top-of-hierarchy place, and appending the contact's `_id`/lineage when the original doc has no contact.
 
 ## Code Patterns
 
@@ -97,4 +97,4 @@ Extensive unit and integration coverage added/updated: datasource module spec (t
 
 **Fit:** strong
 
-The PR adds update capability for 'place' documents, which in CHT's data model are contacts forming the place hierarchy, so this is core contact management. The local/remote split here is a data-access abstraction (HTTP vs direct DB), not replication, so it is not data-sync.
+The PR adds remote update capability for 'place' documents, which in CHT's data model are contacts forming the place hierarchy, so this is core contact management. The local/remote split here is a data-access abstraction (HTTP vs direct DB), not replication, so it is not data-sync.

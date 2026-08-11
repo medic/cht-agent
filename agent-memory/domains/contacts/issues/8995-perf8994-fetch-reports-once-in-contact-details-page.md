@@ -5,8 +5,8 @@ domain: contacts
 domainFit: strong
 issueNumber: 8994
 issueUrl: https://github.com/medic/cht-core/issues/8994
-title: Fetch reports once in contact details page by passing docs (not IDs) to the contact view model generator
-lastUpdated: '2026-06-23'
+title: Fetch reports once in contact details page by passing already-loaded docs (not IDs) to the data-records service
+lastUpdated: '2026-08-11'
 summary: The contact details page fetched report docs more than once — loading them and then re-fetching inside addHeading. The PR threads already-fetched docs through the view-model generator and summary services, eliminating the redundant fetch.
 services:
   - webapp
@@ -47,19 +47,19 @@ stale: false
 
 ## Problem
 
-Rendering a contact's details page triggered redundant database reads: report docs were already loaded but addHeading received only their IDs and fetched the same docs a second time, slowing page load.
+Rendering a contact's details page triggered redundant database reads: report docs were already loaded and handed to addHeading, but addHeading discarded them, mapped them back to IDs and fetched the same docs a second time, slowing page load.
 
 ## Root Cause
 
-contactViewModelGenerator.addHeading took a list of IDs and re-fetched docs via getDataRecordsService rather than reusing docs that had already been loaded; getDataRecordsService.get() also had an inconsistent (id-or-array) signature that encouraged extra round-trips.
+contactViewModelGenerator.addHeading already received the loaded report docs but discarded them, mapping them to _ids and re-fetching summaries through getDataRecordsService.get(ids) rather than reusing docs that had already been loaded; getDataRecordsService.get() also had an inconsistent (id-or-array) signature that encouraged extra round-trips.
 
 ## Solution
 
-Changed addHeading to accept a list of docs instead of IDs so no second fetch occurs; added getDataRecordsService.getDocsSummaries to build summaries from already-fetched records; normalized getDataRecordsService.get() to take only an array of IDs and always return an array; added getSummariesService.getByDocs to attach summary fields from a list of docs; removed lodash from GetDataRecordsService in favor of native Array methods.
+Changed addHeading to hand its already-loaded report docs to a new getDataRecordsService.getDocsSummaries(docs) instead of mapping them to IDs and calling get(ids), so no second fetch occurs (addHeading's own signature is unchanged); added getDataRecordsService.getDocsSummaries to build summaries from already-fetched records; normalized getDataRecordsService.get() to take only an array of IDs and always return an array; added getSummariesService.getByDocs to attach summary fields from a list of docs; removed lodash from GetDataRecordsService in favor of native Array methods.
 
 ## Code Patterns
 
-Pass already-fetched documents downstream instead of IDs to avoid redundant DB round-trips (e.g., addHeading(docs) rather than addHeading(ids)) — see contact-view-model-generator.service.ts. Normalize service method signatures to consistently accept arrays and return arrays (get-data-records.service.ts get()/getDocsSummaries). Add a *-by-docs variant (getSummariesService.getByDocs) that operates on in-memory docs rather than re-querying by id.
+Pass already-fetched documents downstream instead of IDs to avoid redundant DB round-trips (e.g., getDocsSummaries(docs) rather than get(ids)) — see addHeading in contact-view-model-generator.service.ts. Normalize service method signatures to consistently accept arrays and return arrays (get-data-records.service.ts get()/getDocsSummaries). Add a *-by-docs variant (getSummariesService.getByDocs) that operates on in-memory docs rather than re-querying by id.
 
 ## Design Choices
 
@@ -79,7 +79,7 @@ Threading docs through function signatures trades a slightly heavier API surface
 
 ## Testing
 
-Updated Karma unit tests for the affected units: contacts.component, contact-view-model-generator.service, get-data-records.service, and target-aggregates.service specs were modified to cover the new doc-based signatures (addHeading receiving docs, getDocsSummaries/getByDocs) and the normalized array-only get() API.
+Updated Karma unit tests for the affected units: contacts.component, contact-view-model-generator.service, get-data-records.service, and target-aggregates.service specs were modified to cover the new doc-based paths (addHeading delegating to getDocsSummaries, and getDocsSummaries/getByDocs themselves) and the normalized array-only get() API.
 
 ## Related Issues
 

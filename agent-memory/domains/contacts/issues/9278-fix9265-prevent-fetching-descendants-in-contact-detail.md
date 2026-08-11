@@ -5,9 +5,9 @@ domain: contacts
 domainFit: strong
 issueNumber: 9265
 issueUrl: https://github.com/medic/cht-core/issues/9265
-title: Prevent contact detail from fetching descendants when user has a single assigned facility, fixing empty facility ID on app reload
-lastUpdated: '2026-06-23'
-summary: On app reload the contact detail view received an empty facility ID (normally populated by the contact list) and wrongly fetched descendants. The fix subscribes to the facility ID in the contacts effect constructor so it is ready early, and hides descendants when the user has exactly one assigned facility.
+title: Prevent contact detail from fetching descendants when the user's single assigned facility is the contact being viewed, fixing empty facility ID on app reload
+lastUpdated: '2026-08-11'
+summary: On app reload the contact detail view received an empty facility ID (normally populated by the contact list) and wrongly fetched descendants. The fix subscribes to the facility ID in the contacts effect constructor so it is ready early, which lets the pre-existing gate actually fire and hide descendants when the user has exactly one assigned facility and is viewing that facility.
 services:
   - webapp
 techStack:
@@ -45,7 +45,7 @@ stale: false
 
 ## Problem
 
-When reloading the app and landing on the contact detail view, the contact detail received an empty facility ID because the contact list (which normally saves it to the store) had not run. With an empty facility ID it incorrectly fetched and displayed descendants. Additionally, descendants were shown even when the user had only one assigned facility.
+When reloading the app and landing on the contact detail view, the contact detail received an empty facility ID because the contact list (which normally saves it to the store) had not run. With an empty facility ID it incorrectly fetched and displayed descendants. Additionally, descendants were shown even when the user had only one assigned facility and was viewing that facility.
 
 ## Root Cause
 
@@ -53,7 +53,7 @@ The user's facility ID is written to the NgRx store by the contacts list compone
 
 ## Solution
 
-Subscribe to the facility ID inside the contacts effect constructor so the value is populated early in the app lifecycle, independent of which contacts route loads first. The contact detail now suppresses descendants when the user has exactly one assigned facility, but still shows them when the user has no descendants or more than one facility (since with multiple facilities the contact list does not load descendants, making the detail view the only way to navigate down the hierarchy). Also renamed several variables holding collections to plural forms.
+Subscribe to the facility ID inside the contacts effect constructor so the value is populated early in the app lifecycle, independent of which contacts route loads first. The contact detail suppresses descendants only when the user has exactly one assigned facility **and the contact being viewed is that facility** (`userFacilityIds[0] === contactId`); it still shows them when the user has no assigned facilities or more than one (since with multiple facilities the contact list does not load descendants, making the detail view the only way to navigate down the hierarchy). The gating rule itself is unchanged by this PR; it only guarantees `userFacilityIds` is populated before the effect runs, so the single-facility branch is actually reached on reload. Also renamed several variables holding collections to plural forms.
 
 ## Code Patterns
 
@@ -61,7 +61,7 @@ Subscribe to store selectors in an NgRx effect's constructor (webapp/src/ts/effe
 
 ## Design Choices
 
-Moving the facility-ID subscription into the effect constructor decouples the detail view from load order so the value is ready on reload. Gating descendant display on the count of assigned facilities (hide for exactly 1, show for 0 or >1) preserves hierarchy navigation in the multi-facility case where the list intentionally does not load descendants.
+Moving the facility-ID subscription into the effect constructor decouples the detail view from load order so the value is ready on reload. The descendant gate (hide only when the user has exactly 1 assigned facility and it is the contact being viewed; show for 0 or >1 assigned facilities) preserves hierarchy navigation in the multi-facility case where the list intentionally does not load descendants.
 
 ## Related Files
 

@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 7110
 issueUrl: https://github.com/medic/cht-core/issues/7110
 title: Fix LHS contacts list not updating user home place after sync for offline users
-lastUpdated: '2026-06-23'
-summary: For offline users, the home place shown in the left-hand-side contacts list stayed stale after syncing an edit to that home place, even though the detail view reflected the change. Fixed the contacts component to re-resolve and update userHomePlace when the relevant doc changes on sync.
+lastUpdated: '2026-08-11'
+summary: For offline users, the home place shown in the left-hand-side contacts list stayed stale after syncing an edit to that home place, even though the detail view reflected the change. Fixed the contacts component to re-resolve and update usersHomePlace when the relevant doc changes on sync.
 services:
   - webapp
 techStack:
@@ -48,19 +48,19 @@ For offline users, when an admin edited the offline user's home place in another
 
 ## Root Cause
 
-The contacts list component (contacts.component.ts) did not re-resolve its userHomePlace reference when the corresponding contact document arrived via the Changes feed on sync; the home-place value was effectively resolved once and not refreshed when relevant changes came through, so the LHS list rendered outdated data.
+The contacts list component (contacts.component.ts) did not re-resolve its usersHomePlace reference when the corresponding contact document arrived via the Changes feed on sync; the home-place value was effectively resolved once and not refreshed when relevant changes came through, so the LHS list rendered outdated data.
 
 ## Solution
 
-Updated contacts.component.ts to refresh/re-resolve userHomePlace when the relevant document changes on sync, extracting the home-place resolution logic into dedicated functions so the LHS list stays consistent with synced data. Added karma unit coverage and a new wdio e2e spec to guard the regression.
+Updated contacts.component.ts to refresh/re-resolve usersHomePlace when the relevant document changes on sync: parameterized the existing private getUserHomePlaceSummary() with an optional homePlaceId and re-invoked it from the contacts-list Changes callback when the changed doc id matches the user's home place, so the LHS list stays consistent with synced data. Added karma unit coverage and a new wdio e2e spec to guard the regression.
 
 ## Code Patterns
 
-Extract home-place resolution into reusable functions in webapp/src/ts/modules/contacts/contacts.component.ts and re-invoke them on Changes-feed/sync events, keeping the contacts list view-model reactive to local DB changes rather than resolving derived state only on initial load.
+Give an existing load-time resolver an optional id parameter (getUserHomePlaceSummary(homePlaceId?) in webapp/src/ts/modules/contacts/contacts.component.ts) and re-invoke it from the Changes-feed callback when the changed doc is the one backing the derived state, keeping the contacts list view-model reactive to local DB changes rather than resolving derived state only on initial load.
 
 ## Design Choices
 
-Refresh the displayed home place reactively on change events instead of only at load time so the LHS list mirrors synced data; the resolution logic was factored into discrete functions to make the behavior unit-testable.
+Refresh the displayed home place reactively on change events instead of only at load time so the LHS list mirrors synced data; rather than adding a second resolver, the existing getUserHomePlaceSummary() was made reusable by accepting an optional home-place id, keeping one code path for both initial load and change-driven refresh.
 
 ## Related Files
 

@@ -5,9 +5,9 @@ domain: contacts
 domainFit: strong
 issueNumber: 9269
 issueUrl: https://github.com/medic/cht-core/issues/9269
-title: Expose an analytics.targetDocs() cht-datasource API and pass the logged-in user's last three months of target docs into the contact summary
-lastUpdated: '2026-06-23'
-summary: Contact summaries had no access to target/analytics data. This PR adds an `analytics.targetDocs()` namespace to the webapp CHTDatasourceAPI and passes the latest three months of the logged-in user's target docs into the contact-summary context when viewing one of the user's own facilities.
+title: Expose an analytics.getTargetDocs() cht-datasource API and pass the logged-in user's last three months of target docs into the contact summary
+lastUpdated: '2026-08-11'
+summary: Contact summaries only received the contact's current-month target doc, and nothing on the CHTDatasourceAPI exposed target data. This PR adds an `analytics.getTargetDocs()` function to the webapp CHTDatasourceAPI and passes the latest three months of target docs into the contact-summary context — the logged-in user's own docs when viewing one of that user's facilities.
 services:
   - webapp
 techStack:
@@ -51,19 +51,19 @@ stale: false
 
 ## Problem
 
-Contact-summary scripts had no way to access a contact's or the logged-in user's target/analytics data, so configurators could not surface recent target progress (e.g. a CHW's last-three-months target performance) on a contact's profile.
+Contact summaries already received the contact's current-month target doc as the 6th positional argument (`targetDoc`), but there was no way to reach earlier months and nothing exposed target data on the CHTDatasourceAPI. Configurators could therefore not surface recent target progress (e.g. a CHW's last-three-months target performance) on a contact's profile.
 
 ## Root Cause
 
-This is a capability gap rather than a bug: the CHTDatasourceAPI exposed to webapp had no analytics namespace, and contact-summary.service.ts built the summary context from only the contact, reports and lineage — target docs were never fetched or forwarded.
+This is a capability gap rather than a bug: the CHTDatasourceAPI exposed to webapp had no analytics namespace, and before this PR contacts.effects.ts called `targetAggregateService.getCurrentTargetDoc()` and forwarded exactly one doc — the contact's current-month target doc — into contact-summary.service.ts as the optional `targetDoc` parameter. Earlier months were never fetched.
 
 ## Solution
 
-Added an `analytics` namespace with `targetDocs()` to cht-datasource.service.ts that returns the latest three months of target docs, computing the window via calendar-interval.service.ts and retrieving docs through target-aggregates.service.ts. Wired contact-summary.service.ts to pass those target docs into the contact-summary context, and when the contact is one of the logged-in user's own facilities, the logged-in user's target docs are passed. Target-doc state is threaded through NgRx (global actions/reducers/selectors and contacts.effects.ts).
+cht-datasource.service.ts declares `analytics.getTargetDocs` as an empty-array stub; contact-summary.service.ts overwrites it with `() => targetDocs` just before invoking the generator, so the config script is the consumer. The docs themselves are fetched in contacts.effects.ts via `TargetAggregatesService.getTargetDocs()`, which walks back `MAX_TARGET_MONTHS = 3` intervals using calendar-interval.service.ts. When the contact is one of the logged-in user's own facilities, the logged-in user's target docs are passed instead of the contact's. Target-doc state continues to flow through the pre-existing contacts NgRx slice (`receiveSelectedContactTargetDoc`); this PR changed the global slice to carry `userFacilityIds` (pluralised) and a new `userContactId`, which contacts.effects.ts needs to decide whose target docs to load.
 
 ## Code Patterns
 
-Extend the cht-datasource API with a new typed namespace (analytics.targetDocs()) in webapp/src/ts/services/cht-datasource.service.ts, then consume it from contact-summary.service.ts to enrich the summary context — keeps config-facing inputs on a stable API rather than ad-hoc props. Use calendar-interval.service.ts to derive monthly reporting windows. Thread the new data through NgRx global actions/reducers/selectors and contacts.effects.ts.
+Extend the cht-datasource API with a new namespace entry (analytics.getTargetDocs()) in webapp/src/ts/services/cht-datasource.service.ts as a stub, then have contact-summary.service.ts assign the real closure onto it before running the config's generator function — keeps config-facing inputs on a stable API rather than ad-hoc props. Use calendar-interval.service.ts to derive monthly reporting windows. Load the data in contacts.effects.ts and keep it in the contacts NgRx slice; the global slice carries the `userFacilityIds`/`userContactId` that the effect needs.
 
 ## Design Choices
 

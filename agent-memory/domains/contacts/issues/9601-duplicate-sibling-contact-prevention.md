@@ -8,8 +8,8 @@ issueUrl: https://github.com/medic/cht-core/issues/9601
 title: Prevent duplicate sibling contact capture
 source_prs:
   - "medic/cht-core#9609"
-lastUpdated: 2026-07-16
-summary: Added configurable duplicate detection during contact creation that compares the new contact against existing siblings using Levenshtein distance, surfacing potential matches to the CHW before saving.
+lastUpdated: 2026-08-11
+summary: Added configurable duplicate detection on both the contact create and edit flows that compares the contact being saved against its existing siblings using a Levenshtein-based expression, surfacing potential matches to the CHW before saving.
 services:
   - webapp
 techStack:
@@ -30,13 +30,13 @@ CouchDB has no native constraint enforcement for contact uniqueness within a par
 
 PR #9609 intercepts the `saveContact` flow and injects a duplicate detection step before writing to CouchDB. A new `DeduplicateService` compares the contact being saved against all siblings of the same type using a configurable expression (default: Levenshtein distance <= 3 on name AND matching age). If duplicates are found, the save is blocked and candidates are displayed in an expandable panel. The CHW must explicitly acknowledge via a checkbox before the save proceeds.
 
-The check runs on both the create and edit flows, surfacing matches as expandable/collapsible cards in a new `duplicate_info` section injected into `enketo.component.html` (PR #9609). Conditional checking is supported via an `is_canonical` question, and the feature can be disabled per form with `duplicate_check.disabled`; when no expression is supplied the check defaults to comparing the `name` field. Includes i18n strings across all supported locales (PR #9609).
+The check runs on both the create and edit flows. `enketo.component.html` gains a content-projection slot `<ng-content select="[duplicate-contacts]"></ng-content>`; `contacts-edit.component.html` projects a `<div duplicate-contacts id="duplicate_contacts">` containing a `mat-accordion` of `<mm-duplicate-contacts>` cards (PR #9609). The feature can be disabled per form with `duplicate_check.disabled`, and when no expression is supplied the check falls back to `DEFAULT_CONTACT_DUPLICATE_EXPRESSION`, which requires both a Levenshtein-3 name match and an equal `ageInYears`. Includes i18n strings across all supported locales (PR #9609).
 
 ## Code Patterns
 
 - Duplicate detection uses a configurable expression engine evaluated via `ParseProvider`, allowing per-form customization
 - Default expression: `levenshteinEq(current.name, existing.name, 3) && ageInYears(current) === ageInYears(existing)`
-- Custom expressions are set in the form document's `context.duplicate_check.expression` field
+- Custom expressions are set in the form document's top-level `duplicate_check.expression` field (read as `formDoc.duplicate_check`, a sibling of `context` — not nested inside it)
 - Expressions can match arbitrary field combinations (e.g. name, sex, DOB, street/postal), not just name (PR #9609)
 - File: `webapp/src/ts/services/deduplicate.service.ts` — core detection logic, filters siblings using parsed expression
 - File: `webapp/src/ts/services/xml-forms-context-utils.service.ts` — provides `levenshteinEq()` and `normalizedLevenshteinEq()` utility functions
@@ -48,13 +48,12 @@ The check runs on both the create and edit flows, surfacing matches as expandabl
 ## Design Choices
 
 - Used Levenshtein distance rather than exact match to catch common misspellings and transliterations
-- Expression is configurable per form via `context.duplicate_check` JSON — allows disabling (`disabled: true`) or custom matching logic
+- Expression is configurable per form via the form doc's top-level `duplicate_check` JSON — allows disabling (`disabled: true`) or custom matching logic
 - Siblings are fetched from the `contacts_by_parent` CouchDB view rather than a new index, reusing existing infrastructure
 - Duplicates are shown in expandable panels with lazy-loaded contact summaries to avoid upfront performance cost
 - The detection is opt-out (enabled by default) rather than opt-in, to maximize data quality across deployments
 - Telemetry tracks both `duplicates_found` and `duplicates_acknowledged` events for monitoring effectiveness
 - Shipped intentionally as a "prototype" with the supported strategy set limited to Levenshtein-based matching, leaving room for future expansion (PR #9609)
-- The `is_canonical` question enables downstream conditional handling (merge or delete) of the flagged duplicates (PR #9609)
 
 ## Related Files
 

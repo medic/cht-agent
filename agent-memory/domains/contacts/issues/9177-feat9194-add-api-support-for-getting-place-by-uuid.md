@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9194
 issueUrl: https://github.com/medic/cht-core/issues/9194
 title: Add cht-datasource and REST API support for getting a place (contact) by UUID, with optional lineage
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-11'
 summary: 'CHT had no unified datasource or REST API for fetching a place-type contact by UUID (only get-person existed from #9065). This PR adds get-place and get-place-with-lineage to cht-datasource plus a GET /api/v1/place/{id} endpoint, and refactors several call sites to use the new datasource functions where the contact type was known.'
 services:
   - api
@@ -59,11 +59,11 @@ cht-datasource and the API only exposed person retrieval; place retrieval was ne
 
 ## Solution
 
-Added place support to cht-datasource (src/place.ts with local DB and remote HTTP implementations mirroring the existing person pattern, wired through local/index, remote/index, and the top-level index), exposed a new GET /api/v1/place/{id} endpoint (with ?with_lineage=true) via api/src/controllers/place.js and api/src/routing.js, and refactored multiple call sites (transitions, user-management, shared-libs/contacts, sentinel purging, the extract-person-contacts migration) to use the new datasource functions only where the contact type was known with confidence.
+Added the place operations to cht-datasource — src/place.ts already existed from #9176 with only the Place/PlaceWithLineage interfaces, and this PR added the get/getWithLineage operations to it plus new local DB (src/local/place.ts) and remote HTTP (src/remote/place.ts) implementations mirroring the existing person pattern, wired through local/index, remote/index, and the top-level index — exposed a new GET /api/v1/place/{id} endpoint (with ?with_lineage=true) via api/src/controllers/place.js and api/src/routing.js, and refactored multiple call sites (transitions, user-management, shared-libs/contacts, sentinel purging, the extract-person-contacts migration) to use the new datasource functions only where the contact type was known with confidence.
 
 ## Code Patterns
 
-cht-datasource local/remote/index pattern: define curried getByUuid / getByUuidWithLineage functions in shared-libs/cht-datasource/src/place.ts that take a data context, with concrete implementations in src/local/place.ts (direct DB access) and src/remote/place.ts (HTTP to API), registered in the respective index files. Refactor pattern: replace raw PouchDB.get with Place/Person datasource calls only when type is certain — a user's facility is a place, a contact's parent is a place, a user's contact is a person — adding explicit not-found error handling where the old PouchDB.get implicitly threw.
+cht-datasource local/remote/index pattern: define curried get / getWithLineage functions in shared-libs/cht-datasource/src/place.ts that take a data context, with concrete implementations in src/local/place.ts (direct DB access) and src/remote/place.ts (HTTP to API), registered in the respective index files; the imperative getDatasource(ctx).v1.place.getByUuid / getByUuidWithLineage wrappers live in src/index.ts. Refactor pattern: replace raw PouchDB.get with Place/Person datasource calls only when type is certain — a user's facility is a place, a contact's parent is a place, a user's contact is a person — adding explicit not-found error handling where the old PouchDB.get implicitly threw.
 
 ## Design Choices
 

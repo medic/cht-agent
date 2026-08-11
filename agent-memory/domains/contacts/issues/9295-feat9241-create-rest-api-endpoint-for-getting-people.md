@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9241
 issueUrl: https://github.com/medic/cht-core/issues/9241
 title: Add REST API endpoint for getting people via cht-datasource
-lastUpdated: '2026-07-16'
-summary: CHT had no dedicated REST API endpoint for programmatically retrieving person (contact) documents. This adds a person module to the cht-datasource shared library (local and remote variants) and exposes it through a new api controller and route that resolves a person by qualifier.
+lastUpdated: '2026-08-11'
+summary: CHT had no REST API endpoint for retrieving people in bulk by contact type. Building on the person module and `/api/v1/person/:uuid` route added by #9090, this adds the paged `GET /api/v1/person` endpoint and the shared `InvalidArgumentError` type used across the cht-datasource person and qualifier code.
 services:
   - api
 techStack:
@@ -57,17 +57,17 @@ stale: false
 
 ## Problem
 
-CHT lacked a standardized REST API endpoint for retrieving a person (contact) document by identifier. The cht-datasource library had no person-fetching capability, so neither internal callers nor external consumers had a documented, reusable way to get a person. Beyond single-person lookup, cht-datasource also exposed no way to retrieve people in bulk by contact type — neither as discrete pages nor as a lazily-consumed stream — and there was no REST endpoint for clients to page through people of a given type (PR #9311).
+CHT lacked a standardized REST API endpoint for retrieving people in bulk by contact type — clients had no way to page through people of a given type. Single-person lookup by UUID (`/api/v1/person/:uuid`) and the underlying cht-datasource person module already existed, added by PR #9090.
 
 ## Root Cause
 
-Missing functionality rather than a defect: the cht-datasource library had no person module (local/remote) or qualifier support for people, and the api service had no person controller or registered route.
+Missing functionality rather than a defect: no api route or controller method exposed the datasource's by-type paging over HTTP, and the datasource threw bare `Error`s that the api layer could not map to a 400 response.
 
 ## Solution
 
-Added a `person` module to cht-datasource exposing a unified interface with two implementations — local/person.ts (direct CouchDB access) and remote/person.ts (HTTP/REST access) — and re-exported it from src/index.ts. Added a qualifier helper (qualifier.ts) for typed person identifiers (e.g., by UUID) and a dedicated error type in libs/error.ts. On the api side, added a person controller (controllers/person.js) and registered a new route in routing.js that resolves the person by qualifier and returns JSON, with error handling wired through server-utils.js.
+Building on the person module and `/api/v1/person/:uuid` route added by #9090, this PR added the paged `GET /api/v1/person` endpoint (`person.v1.getAll` in api/src/controllers/person.js, registered in api/src/routing.js) and introduced shared-libs/cht-datasource/src/libs/error.ts with `InvalidArgumentError`, adopted across person.ts and qualifier.ts, with error handling wired through server-utils.js.
 
-A follow-up added bulk by-type retrieval (PR #9311): `Person.v1.getPageByType(Qualifier.byContactType(type), cursor, limit)` for cursor/limit pagination (defaults limit=100, cursor="0"), `Person.v1.getByType(ctx)(qualifier)` returning an AsyncGenerator that transparently walks pages, and the `Qualifier.byContactType` qualifier — implemented across both local and remote data-context variants, and exposed via a new `GET /api/v1/person` endpoint accepting personType/limit/cursor query params.
+This PR merged into the feature branch `9193-api-endpoints-for-getting-contacts-by-type` alongside #9266 (paging) and #9281 (generator), and reached master only via the epic squash PR #9311. The datasource surface those PRs landed is `Person.v1.getPage(ctx)(Qualifier.byContactType(type), cursor, limit)` for pagination and `Person.v1.getAll(ctx)(qualifier)` for the AsyncGenerator that transparently walks pages, surfaced on the `getDatasource()` facade as `person.getPageByType(type, cursor, limit)` and `person.getByType(type)` — implemented across both local and remote data-context variants, with defaults limit=100, cursor=`null`. The endpoint accepts personType/limit/cursor query params (`personType` was renamed to `type` by #9390; master reads `req.query.type`).
 
 ## Code Patterns
 
@@ -77,7 +77,7 @@ Cursor-based pagination with sensible defaults plus an AsyncGenerator wrapper th
 
 ## Design Choices
 
-Implemented data access through the cht-datasource abstraction instead of ad-hoc CouchDB queries in the controller, centralizing logic so it is reusable across server-side (local) and client-side (remote) contexts. Used typed qualifiers for identifier handling and a dedicated datasource error type for consistent error semantics across the library and the api layer. For bulk retrieval, exposed two complementary access styles — explicit page-by-page retrieval for callers managing cursors, and an AsyncGenerator for ergonomic full iteration — with cursor and limit optional (defaults 100, "0") (PR #9311).
+Implemented data access through the cht-datasource abstraction instead of ad-hoc CouchDB queries in the controller, centralizing logic so it is reusable across server-side (local) and client-side (remote) contexts. Used typed qualifiers for identifier handling and a dedicated datasource error type for consistent error semantics across the library and the api layer. For bulk retrieval, exposed two complementary access styles — explicit page-by-page retrieval for callers managing cursors, and an AsyncGenerator for ergonomic full iteration — with cursor and limit optional (defaults limit 100, cursor `null`) (PR #9311).
 
 ## Related Files
 
@@ -97,7 +97,7 @@ Implemented data access through the cht-datasource abstraction instead of ad-hoc
 
 ## Testing
 
-Extensive tests added: api controller unit tests (api/tests/mocha/controllers/person.spec.js); cht-datasource unit tests for the person interface (test/person.spec.ts), local implementation (test/local/person.spec.ts), remote implementation (test/remote/person.spec.ts), and qualifier (test/qualifier.spec.ts); plus an end-to-end integration test exercising the endpoint (tests/integration/api/controllers/person.spec.js). The by-type work extended these with unit tests across libs/core, local/libs/doc, local/libs/lineage, remote/libs/data-context, and server-utils, plus integration coverage of the new GET /api/v1/person endpoint (PR #9311).
+Extensive tests added: api controller unit tests (api/tests/mocha/controllers/person.spec.js); cht-datasource unit tests for the person interface (test/person.spec.ts), local implementation (test/local/person.spec.ts), remote implementation (test/remote/person.spec.ts), and qualifier (test/qualifier.spec.ts); plus an end-to-end integration test exercising the endpoint (tests/integration/api/controllers/person.spec.js). The by-type work extended these with unit tests across libs/core, local/libs/doc, local/libs/lineage, remote/libs/data-context, and server-utils, plus integration coverage of the GET /api/v1/person endpoint (landed on master via the epic squash PR #9311).
 
 ## Related Issues
 

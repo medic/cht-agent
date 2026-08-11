@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8674
 issueUrl: https://github.com/medic/cht-core/issues/8674
 title: Assign parent place to contacts created via the places API
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-11'
 summary: Contacts created through the places API were not assigned a parent place, causing a 'The contact must be a child of the place' error when subsequently creating a user for that contact. The fix assigns the parent place to new contacts in the contacts shared library.
 services:
   - api
@@ -46,15 +46,15 @@ Contacts created via the places API (POST /api/v1/places) were created without a
 
 ## Root Cause
 
-The contact-creation path in the contacts shared library (people.js / places.js) did not propagate/assign the parent place to the newly created contact when a place was created through the places API, leaving the contact detached from the place hierarchy.
+`createPlace` in shared-libs/contacts/src/places.js created the person before the place document existed — it called `people.getOrCreatePerson(place.contact)` and only then `db.medic.post(place)` — so there was no place UUID available to set as the person's parent, leaving the contact detached from the place hierarchy.
 
 ## Solution
 
-Updated the contacts shared library so that contacts created via the places API are assigned the parent place during creation, ensuring the new contact is a valid child of its place. Changes span shared-libs/contacts/src/places.js and shared-libs/contacts/src/people.js, with corresponding unit and integration test coverage.
+Reordered `createPlace` so the place is posted first, then `contact.place` is set to the new UUID before `people.getOrCreatePerson` runs, and finally `updatePlace` links the place back to the created person — ensuring the new contact is a valid child of its place. The response also gained the contact id (`{ ...result, contact: { id: person._id } }`), which issue #8674 had asked for. Changes span shared-libs/contacts/src/places.js and shared-libs/contacts/src/people.js, with corresponding unit and integration test coverage.
 
 ## Code Patterns
 
-Assign the parent place reference to a contact at the contact-creation layer in shared-libs/contacts/src/places.js and shared-libs/contacts/src/people.js, rather than patching it in the API controller, so the hierarchy invariant holds for all callers.
+Assign the parent place reference to a contact at the contact-creation layer in shared-libs/contacts/src/places.js (`createPlace`), rather than patching it in the API controller, so the hierarchy invariant holds for all callers; shared-libs/contacts/src/people.js only exposes `_getDefaultPersonType` so places.js can default the contact's type before validation.
 
 ## Design Choices
 
@@ -70,7 +70,7 @@ The fix was applied in the shared contacts library (the common contact/place cre
 
 ## Testing
 
-Added/updated unit tests in shared-libs/contacts/test/unit/places.spec.js and integration tests in tests/integration/api/controllers/places.spec.js; updated the extract-person-contacts migration integration spec. An e2e test for the places API endpoint was added during review.
+Added/updated unit tests in shared-libs/contacts/test/unit/places.spec.js and added a new integration spec tests/integration/api/controllers/places.spec.js; updated the extract-person-contacts migration integration spec.
 
 ## Related Issues
 
