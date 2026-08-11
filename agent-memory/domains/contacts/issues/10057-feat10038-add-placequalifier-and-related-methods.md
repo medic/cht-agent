@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10038
 issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Add PlaceQualifier type and related validation methods to cht-datasource
-lastUpdated: '2026-07-16'
+lastUpdated: '2026-08-11'
 summary: The cht-datasource shared library lacked a dedicated qualifier for identifying place contacts. This PR adds a PlaceQualifier type plus related validation/type-guard methods to qualifier.ts (WIP).
 services:
   - api
@@ -129,7 +129,7 @@ Unit tests for qualifier behavior in shared-libs/cht-datasource/test/qualifier.s
 ## Related Issues
 
 - #10038: parent issue — add PlaceQualifier and related validations
-- #10056: companion PR adding the missing test coverage for qualifier.ts
+- PR #10056: implements `createPerson` for the local (PouchDB) data context
 - PR #10065: implements createPlace in the local data context
 - PR #10089: adds datasource local/remote + REST API support to create places (built on PR #10065)
 - PR #10108: adds parent-field validation to the local place input qualifier

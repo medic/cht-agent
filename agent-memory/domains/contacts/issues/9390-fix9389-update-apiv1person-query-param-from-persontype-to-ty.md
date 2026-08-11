@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9389
 issueUrl: https://github.com/medic/cht-core/issues/9389
 title: Rename api/v1/person query parameter from personType to type for snake_case API consistency
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-11'
 summary: A recently added (still unreleased) get-persons-by-type capability on the GET /api/v1/person endpoint exposed its filter as the camelCase query parameter `personType`, violating CHT's REST API convention. The PR renames the parameter to `type` across the controller, the cht-datasource remote module, and the tests.
 services:
   - api
@@ -77,7 +77,7 @@ Updated the mocha unit tests for the controller (api/tests/mocha/controllers/per
 ## Related Issues
 
 - #9389: api/v1/person query param should be `type`, not camelCase `personType`, to follow the snake_case REST API convention
-- #9311: original PR that added get-persons-by-type support and introduced the inconsistent `personType` parameter
+- PR #9311: "add functionality of getting people as pages or async iterables in cht-datasource" — the epic squash that landed get-persons-by-type and introduced the `personType` query parameter this PR renames
 
 ## Domain Rationale
 

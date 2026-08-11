@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10712
 issueUrl: https://github.com/medic/cht-core/issues/10712
 title: Fix isRelevantChange using nullish coalescing (??) instead of logical OR (||), which made isRelevantContact/isRelevantReport dead code
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-07-16'
 summary: ContactChangeFilterService.isRelevantChange() chained its three checks with `??` instead of `||`; since matchContact() returns a boolean, `false ?? expr` short-circuits to false and the isRelevantContact/isRelevantReport branches were never evaluated. The operator was switched to `||` and test coverage added for the previously unreachable paths.
 services:
   - webapp

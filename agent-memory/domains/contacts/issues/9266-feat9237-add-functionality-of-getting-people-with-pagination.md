@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9237
 issueUrl: https://github.com/medic/cht-core/issues/9237
 title: Add paginated person retrieval (Person.v1.getPage) to cht-datasource
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-08-11'
 summary: The cht-datasource Person module could fetch a single person but had no way to list people in pages. This PR adds Person.v1.getPage(limit, skip) with local and remote implementations and supporting pagination primitives.
 services:
   - api

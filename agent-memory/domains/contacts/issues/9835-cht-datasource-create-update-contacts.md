@@ -6,7 +6,7 @@ subDomain: cht-datasource
 issueNumber: 9835
 issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Add cht-datasource APIs for creation and update of contacts and reports
-lastUpdated: 2026-07-16
+lastUpdated: 2026-08-11
 summary: Extended cht-datasource with create and update operations for Person, Place, and Report, exposed as both a TypeScript API and REST endpoints, with a major internal refactoring of validation, lineage handling, and auth.
 source_prs:
   - "medic/cht-core#10022"
@@ -105,6 +105,6 @@ The initial create/update surface added person/place/report create and update fo
 
 ## Related Issues
 
-- #10083: Initial create/update implementation that this PR refactored
-- #10081: Removed lineage checks from the person data source and qualifier that were deemed unnecessary
-- #10043: PR whose review discussion prompted removing the lineage checks in #10081
+- PR #10083: initial create/update implementation that this PR refactored
+- PR #10081: removed lineage checks from the person data source and qualifier that were deemed unnecessary
+- PR #10043: review discussion here prompted removing the lineage checks in PR #10081

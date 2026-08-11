@@ -82,4 +82,4 @@ The check runs on both the create and edit flows. `enketo.component.html` gains 
 
 ## Related Issues
 
-- #6363: Prior discussion on mitigating duplicate data capture
+- #6363: "Prevent and/or merge duplicate contacts" — the prior discussion this feature draws on
