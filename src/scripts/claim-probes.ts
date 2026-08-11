@@ -891,6 +891,22 @@ const FORWARD_SCOPED = new RegExp([
   // Rescuing on that could excuse a genuinely wrong anchor-era claim.
 ].join('|'), 'i');
 
+/**
+ * The mirror of FORWARD_SCOPED. A sentence that says outright it describes the
+ * tree BEFORE the change must be judged at the parent, and Problem/Root Cause
+ * already are — but only when extraction tagged the claim `pre-fix`, and it
+ * frequently does not. `9394` said "before this PR contacts.effects.ts called
+ * getCurrentTargetDoc()"; the method is real at the parent and deleted by the PR,
+ * so checking the anchor reported a true sentence as fabricated.
+ *
+ * Deliberately narrower than the section heuristic: only an explicit temporal
+ * marker counts, not the section a sentence happens to sit in.
+ */
+const BACKWARD_SCOPED = new RegExp([
+  'before this (?:pr|change|commit)', 'prior to this (?:pr|change|commit)',
+  'used to', 'previously', 'pre-existing behaviou?r', 'at the parent commit',
+].join('|'), 'i');
+
 /** The entity a claim asserts exists, if it names one checkable in a tree. */
 function claimEntity(claim: Claim): { kind: 'path' | 'symbol'; value: string } | null {
   switch (claim.kind) {
@@ -1066,6 +1082,25 @@ export function checkClaim(
           ...atSibling,
           evidence: `${atSibling.evidence} — absent at the canonical anchor ${refLabel(anchor.sha)}, found at ` +
             `${refLabel(sib.sha)}${sib.prNumber ? ` (#${sib.prNumber})` : ''}, a sibling from this draft's source_prs[]`,
+        };
+      }
+    }
+  }
+
+  // The mirror: a claim the draft explicitly scopes to BEFORE the change is
+  // judged at the parent. The section-based `pre-fix` path above only fires when
+  // extraction tagged the claim; an explicit "before this PR" in the sentence is
+  // better evidence than the section it sits in, and survives extraction not
+  // volunteering a scope.
+  if (settled.outcome === 'ungrounded' && TREE_SCOPED.has(claim.kind) && BACKWARD_SCOPED.test(claim.quote)) {
+    const parent = `${anchor.sha}^`;
+    if (commitExists(ctx, parent)) {
+      const before = checkAtRef(ctx, parent, claim, 'anchor', anchor);
+      if (before.outcome === 'grounded') {
+        return {
+          ...before,
+          evidence: `${before.evidence} — absent at the anchor, but the sentence scopes itself to before ` +
+            'the change ("before this PR", "used to", …), so it was checked at the parent',
         };
       }
     }

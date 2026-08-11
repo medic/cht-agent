@@ -87,11 +87,17 @@ describe('check-coherence', () => {
 
     // Observed on 10371: the model filed a pair and used `why` to clear it,
     // and the run counted it. Two clean passes then looked like one dirty one.
+    // Observed on contacts 10804: the model withdrew a pair by DOWNGRADING it
+    // rather than negating it. No negation sits next to "conflict", so the
+    // negation screen missed it and the pair was filed.
     ['These do not conflict.',
       'This is not a contradiction — the draft flags the rename explicitly.',
       'They are consistent: one states the rename, the other applies it.',
       'Both can be true at once.',
       'The two statements do not contradict each other.',
+      'This is a minor framing difference rather than a factual conflict.',
+      'A wording nit rather than a contradiction.',
+      'That is a difference of emphasis rather than an inconsistency.',
     ].forEach(why => {
       it(`discards a pair the model withdraws in its own rationale: "${why}"`, () => {
         const { kept, discarded } = verifyContradictions(draftInput(), [
