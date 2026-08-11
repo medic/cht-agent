@@ -6,7 +6,7 @@ subDomain: replication
 issueNumber: 8034
 issueUrl: https://github.com/medic/cht-core/issues/8034
 title: Replicate primary contacts for places at max replication depth
-lastUpdated: 2026-03-16
+lastUpdated: 2026-08-11
 summary: Added a replicate_primary_contacts config flag that causes primary contact persons for places at max replication depth to be replicated along with their reports and targets, solving the problem of supervisors not seeing CHW person records.
 services:
   - api
@@ -39,7 +39,7 @@ PR #9593 added a `replicate_primary_contacts: true` config option per role in `r
 - File: `ddocs/medic-db/medic/views/contacts_by_depth/map.js` — view emits `{ shortcode, primary_contact }`
 - File: `ddocs/medic-db/medic/views/contacts_by_primary_contact/map.js` — new view indexing contacts by their primary contact
 - File: `api/src/services/authorization.js` — `addPrimaryContactsSubjects()` collects and adds primary contact IDs to allowed subjects
-- File: `api/src/services/authorization.js` — `getDepth()` reads `replicate_primary_contacts` from config, most permissive setting wins across roles
+- File: `api/src/services/authorization.js` — `getDepth()` reads `replicate_primary_contacts` from config; the highest-depth role's setting wins, and among roles tied at that depth the most permissive wins
 - File: `api/src/services/authorization.js` — `allowedContact()` secondary path checks `subjectIds.includes(docId)` for primary contacts
 
 ## Design Choices
@@ -48,9 +48,11 @@ PR #9593 added a `replicate_primary_contacts: true` config option per role in `r
 - Primary contacts' reports and targets replicate automatically because their subject IDs are added to the allowed set — no separate mechanism needed
 - The view value shape change was accepted as a breaking change rather than adding a separate view, to avoid maintaining two views for the same data
 - When multiple roles have the same depth, `replicate_primary_contacts: true` from any matching role enables it (most permissive wins)
-- `getScopedAuthorizationContext` uses a `do...while` loop to handle chains where a primary contact is itself the primary contact of another place
+- `getScopedAuthorizationContext` re-runs `populateAllowedSubjectIds` in a `do...while` loop because a primary contact is only admitted once its place has already been added to `subjectIds`, and a single pass visits contacts in arbitrary order
 
 ## Related Files
+
+Every `api/src/services/…` path in this document (here and in Code Patterns) is as of the #9593 anchor, 2025-03-13. These replication services moved under `api/src/services/replication/` in #10823 (2026-05-11), so on current master read `api/src/services/replication/authorization.js`, `.../replication/bulk-docs.js` and `.../replication/db-doc.js`.
 
 - api/src/services/authorization.js
 - ddocs/medic-db/medic/views/contacts_by_depth/map.js

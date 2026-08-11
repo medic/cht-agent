@@ -6,7 +6,7 @@ subDomain: cht-datasource
 issueNumber: 10074
 issueUrl: https://github.com/medic/cht-core/issues/10074
 title: Update API migrations to read contacts with cht-datasource
-lastUpdated: 2026-03-16
+lastUpdated: 2026-08-11
 summary: Migrated two API migration scripts from direct db.medic calls to the cht-datasource Contact.v1 API, replacing 404-catch patterns with null-check patterns and CouchDB view queries with async generators.
 services:
   - api
@@ -14,6 +14,8 @@ techStack:
   - javascript
   - couchdb
 ---
+
+> Time-scoped to PR #10085 (merged 2025-07-25). Both migration scripts and their specs were subsequently deleted from master by #10187 (`chore(#9639): remove old migrations [5.0]`, 2025-08-27), so the migration paths named below no longer exist on master. `api/src/services/data-context.js` does still exist. This entry documents the cht-datasource read pattern as it stood at #10085.
 
 ## Problem
 
@@ -37,7 +39,7 @@ For `migrateOneType()`, the direct CouchDB view query (`db.medic.query('medic-cl
 - Replace CouchDB view queries with `Contact.v1.getUuids` async generator: `for await (const id of generator) { ... }`
 - File: `api/src/migrations/associate-records-with-people.js` — `getContact()` and `getClinic()` migrated to cht-datasource
 - File: `api/src/migrations/extract-person-contacts.js` — four functions migrated, `migrateOneType` uses async generator
-- File: `api/src/services/data-context.js` — the service that provides `getLocalDataContext(config, db)`
+- File: `api/src/services/data-context.js` — exports the local data context built by `getLocalDataContext(config, db)` from `@medic/cht-datasource`; consumers call `.bind(...)` on the exported object
 - Test pattern: stub `dataContext.bind` instead of `db.medic.get`, use `null` for "not found" instead of `Promise.reject({ status: 404 })`
 
 ## Design Choices
