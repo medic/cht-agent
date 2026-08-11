@@ -22,12 +22,24 @@ import {
   QaResult,
   XlsformBindDiff,
 } from '../types';
-import { askYesNo } from '../utils/prompt';
+import { askYesNo, askWithOptions } from '../utils/prompt';
 import {
   tier2TailExcerpt,
   isTier2EnvironmentalFailure,
   tier2FailuresArePreExisting,
 } from '../utils/cht-conf-tier2';
+import {
+  ScopeGateDecision,
+  assessScope,
+  buildScopeGateDecision,
+  buildWidenBrief,
+  buildWidenedTicket,
+  parseScopeGateChoice,
+  renderScopeAbandonBanner,
+  renderScopeGatePanel,
+  scopeGateOptions,
+  stampHumanDecision,
+} from '../utils/scope-gate';
 import { writePrBundle } from '../utils/pr-bundle';
 import { formatValidationScore } from '../utils/score-display';
 import {
@@ -50,6 +62,11 @@ export interface FullWorkflowResult {
   development?: DevelopmentWorkflowResult;
   /** Present only when the QA phase ran (cht-conf ticket + --qa). */
   qa?: QaResult;
+  /**
+   * HC5: the scope decision, when the gate had something to ask. `choice:
+   * 'abandon'` means no PR bundle was written and the CLI must exit non-zero.
+   */
+  scopeGate?: ScopeGateDecision;
 }
 
 /**
@@ -76,6 +93,117 @@ export interface QaOptions {
  * seed/apply gate indefinitely if the operator keeps saying yes.
  */
 const MAX_QA_RETRIES = 2;
+
+/**
+ * HC5 offers ONE scope-widening pass per run.
+ *
+ * Not a policy number: the gate is offered exactly once and is not re-entered
+ * after the widened pass, which is what bounds the mechanism structurally rather
+ * than by counting. The widened pass carries the GRAPH's iterationCount forward,
+ * so MAX_ITERATIONS stays a per-ticket refinement budget and the pass gets
+ * max(1, MAX_ITERATIONS - priorIterations) code-generation passes, never a fresh
+ * budget.
+ */
+const MAX_SCOPE_WIDEN = 1;
+
+/**
+ * HC5 may only prompt a human at a terminal.
+ *
+ * `--qa-auto` must never sit on stdin (the same rule HC4 follows), and a run with
+ * no TTY — piped, scripted, CI — used to complete without any post-QA question, so
+ * a new blocking prompt there would hang a previously-working invocation. Both
+ * cases record ACCEPT and print the panel, so the transcript still carries the
+ * evidence.
+ */
+const isScopeGateInteractive = (qaOptions?: QaOptions): boolean =>
+  qaOptions?.autoApprove !== true && process.stdin.isTTY === true;
+
+/**
+ * HC5 (scope gate): development can end ABOVE the score bar while validation has
+ * named correctness defects the fix did not make, and QA can report tier-2
+ * failures that are NEW against the pre-fix baseline. Both say the same thing —
+ * the change is inside its declared scope and the scope is wrong.
+ *
+ * HC4 cannot ask this: it only fires on `!qa.succeeded`, so a green run (m4's
+ * shape) never reaches it, and it never fires at all when QA is off or the ticket
+ * is cht-core. Its question is also different — "retry the same scope with this
+ * evidence" versus "renegotiate the ticket".
+ *
+ * Returns undefined when there is nothing to decide.
+ */
+const askScopeGate = async (
+  ticket: IssueTemplate,
+  development: DevelopmentWorkflowResult,
+  qa: QaResult | undefined,
+  qaOptions?: QaOptions,
+): Promise<ScopeGateDecision | undefined> => {
+  // Nothing was shipped, or the XLSForm loop already ended loudly with no fix —
+  // there is no scope to renegotiate.
+  if (!development.approved || development.result?.xlsformApplyExhausted) {
+    return undefined;
+  }
+  const findings = assessScope({
+    ticket,
+    ledger: development.result?.recommendationLedger ?? [],
+    ...(qa ? { qa } : {}),
+  });
+  if (!findings.opens) {
+    return undefined;
+  }
+  console.log(renderScopeGatePanel(findings));
+  if (!isScopeGateInteractive(qaOptions)) {
+    const why = qaOptions?.autoApprove ? 'non-interactive run (--qa-auto)' : 'no TTY on stdin';
+    console.log(`ℹ️  ${why}: not prompting. Recording ACCEPT — every item above rides into the PR body.\n`);
+    return buildScopeGateDecision({ findings, choice: 'accept', autoResolved: why });
+  }
+  const answer = await askWithOptions('🧭 How should this change proceed?', scopeGateOptions(findings));
+  return buildScopeGateDecision({ findings, choice: parseScopeGateChoice(answer) });
+};
+
+/**
+ * The single widened development pass HC5 can buy.
+ *
+ * Runs against a DERIVED ticket: the promoted recommendations are appended to
+ * `requirements` (so the planner, the executor, the per-file prompts AND the
+ * validator all score against them) and the relaxed constraints are rewritten in
+ * place. The ORIGINAL ticket keeps driving QA. Carries previousPlan (so the pass
+ * extends the fix instead of re-deriving it), the ledger, and the GRAPH iteration
+ * count (so MAX_ITERATIONS is not reset).
+ */
+const runWidenPass = async (args: {
+  developmentSupervisor: DevelopmentSupervisor;
+  researchResult: ResearchWorkflowResult;
+  developmentOptions: DevelopmentOptions;
+  ticket: IssueTemplate;
+  previous: DevelopmentWorkflowResult;
+  decision: ScopeGateDecision;
+}): Promise<{ development: DevelopmentWorkflowResult; ticket: IssueTemplate } | undefined> => {
+  const { developmentSupervisor, researchResult, developmentOptions, previous, decision } = args;
+  if (!researchResult.result) {
+    return undefined;
+  }
+  const widenInput = createDevelopmentInput(researchResult.result, developmentOptions);
+  if (!widenInput) {
+    console.error('❌ Could not rebuild development input for the widened pass; keeping the current result.');
+    return undefined;
+  }
+  const widenedTicket = buildWidenedTicket(args.ticket, decision);
+  widenInput.issue = widenedTicket;
+  widenInput.additionalContext = buildWidenBrief(decision);
+  widenInput.previousPlan = previous.result?.codeGeneration?.plan;
+  // The GRAPH's counter, not the HC2 rejection counter: MAX_ITERATIONS is a
+  // per-ticket budget and a widened pass must not be handed a fresh one.
+  widenInput.priorIterations = previous.result?.iterationCount ?? previous.iterationCount ?? 0;
+  widenInput.priorRecommendationLedger = previous.result?.recommendationLedger;
+  console.log(
+    `\n🧭 Re-running development with a WIDENED scope (${MAX_SCOPE_WIDEN} pass; ` +
+      `${decision.promoted.length} promoted requirement(s), ` +
+      `${decision.relaxedConstraints.length} relaxed constraint(s))...\n`,
+  );
+  const development = await executeDevelopmentWorkflow(developmentSupervisor, widenInput);
+  displayDevelopmentCompletion(development, developmentOptions);
+  return { development, ticket: widenedTicket };
+};
 
 /**
  * Render a failed QA run as development feedback.
@@ -323,18 +451,63 @@ export const executeFullWorkflow = async (
     console.log(`\n⚠️  QA still failing after ${MAX_QA_RETRIES} retries — stopping. Review the evidence above.\n`);
   }
 
+  // HC5 (scope gate). Placed AFTER the HC4 loop settles: the cheap same-scope
+  // retry is offered first, and scope renegotiation only once that is declined or
+  // exhausted. Offered ONCE — there is no loop here, which is what bounds it.
+  const scopeGate = await askScopeGate(ticket, developmentResult, qa, qaOptions);
+  // The PR body must describe the requirements the change was actually built to.
+  let prTicket = ticket;
+  if (scopeGate && (scopeGate.choice === 'widen' || scopeGate.choice === 'widen-relax')) {
+    const widened = await runWidenPass({
+      developmentSupervisor,
+      researchResult,
+      developmentOptions,
+      ticket,
+      previous: developmentResult,
+      decision: scopeGate,
+    });
+    if (widened) {
+      developmentResult = widened.development;
+      prTicket = widened.ticket;
+      for (const rel of developmentResult.filesWritten ?? []) {
+        ticketFiles.add(rel);
+      }
+      if (developmentResult.approved) {
+        // Re-prove the widened fix against the instance, using the ORIGINAL
+        // ticket: qaSpecs and the reproduce/verify assertions belong to the issue
+        // as filed, not to the renegotiated scope.
+        qa = await runQaPhase(
+          ticket,
+          developmentOptions,
+          qaOptions,
+          developmentResult.result?.xlsformApply?.bindDiff,
+          [...ticketFiles],
+        );
+      } else {
+        console.log('ℹ️  The widened pass was not approved at HC2; skipping the QA re-run.\n');
+      }
+    }
+  }
+
   // Handoff artefact, written last so it can carry the QA verdict. The agent
   // never pushes or opens PRs, so this is the only thing the operator needs to
   // copy out of the container to raise the change against the real config repo.
   const configRoot = developmentOptions.developmentTarget?.repoPath;
-  if (configRoot && developmentResult.approved) {
-    const ledger = developmentResult.result?.recommendationLedger;
+  if (scopeGate?.choice === 'abandon') {
+    // A human judged the change unfit to raise: no bundle, and name the files
+    // HC2 already wrote so the mount can be reverted before the next ticket.
+    console.log(renderScopeAbandonBanner([...ticketFiles], configRoot));
+  } else if (configRoot && developmentResult.approved) {
+    const ledger = stampHumanDecision(
+      developmentResult.result?.recommendationLedger ?? [],
+      scopeGate,
+    );
     await writePrBundle({
       configRoot,
-      ticket,
+      ticket: prTicket,
       filesWritten: [...ticketFiles],
       ...(qa ? { qa } : {}),
-      ...(ledger && ledger.length > 0 ? { recommendations: ledger } : {}),
+      ...(ledger.length > 0 ? { recommendations: ledger } : {}),
     });
   }
 
@@ -342,6 +515,7 @@ export const executeFullWorkflow = async (
     research: researchResult,
     development: developmentResult,
     ...(qa ? { qa } : {}),
+    ...(scopeGate ? { scopeGate } : {}),
   };
 };
 

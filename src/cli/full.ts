@@ -177,6 +177,13 @@ const main = async (): Promise<void> => {
     if (workflowResult.development?.result?.xlsformApplyExhausted) {
       process.exit(1);
     }
+
+    // HC5: a human abandoned the change at the scope gate. No PR bundle was
+    // written and the fix is not fit to raise — exit non-zero so a wrapper script
+    // or CI sees the failure (the summary and the revert instructions printed above).
+    if (workflowResult.scopeGate?.choice === 'abandon') {
+      process.exit(1);
+    }
   } catch (error) {
     console.error('\n❌ Error running workflow:', error);
     if (error instanceof Error) {

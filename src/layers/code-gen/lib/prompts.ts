@@ -1,5 +1,5 @@
 import { CodeGenModuleInput, ContextFile, GeneratedFile } from '../interface';
-import type { CodeContextFindings } from '../../../types';
+import type { CodeContextFindings, IssueTemplate } from '../../../types';
 import { PlanItem } from './plan';
 import { FileManifest, buildManifestSection } from './file-manifest';
 import { isLargeFile } from './large-file';
@@ -86,6 +86,44 @@ export function buildRetryFeedbackSection(input: CodeGenModuleInput): string {
 
 function formatNumberedList(items: ReadonlyArray<string>): string {
   return items.map((item, i) => `${i + 1}. ${item}`).join('\n');
+}
+
+/**
+ * Render the ticket's constraints, UNGATED.
+ *
+ * `issue.constraints` was parsed, typed and threaded all the way to
+ * CodeGenModuleInput.ticket, and then read by nothing that generates code — the
+ * only consumer was research-supervisor's complexity heuristic, behind
+ * `constraints.length > 2`. m4 has exactly 2, so its explicit "Surgical:
+ * predicate replacement only; do not change vaccine schedules,
+ * countTotalVaccinesByAge, or form logic" never reached a single model call. The
+ * fix then did what the ticket forbade, the validator objected, and the objection
+ * was deferred — a three-way contradiction nobody could see.
+ *
+ * No threshold, no gate: a constraint is either present or it is not. Returns ''
+ * for an empty list, which keeps every existing prompt BYTE-IDENTICAL (each call
+ * site interpolates this where a blank line already was).
+ */
+export function buildConstraintsSection(ticket: IssueTemplate): string {
+  const constraints = ticket.issue.constraints ?? [];
+  if (constraints.length === 0) {
+    return '';
+  }
+  return `## Constraints (hard boundaries — read these before you plan a single edit)
+${formatNumberedList(constraints)}
+
+A constraint is a boundary, not advice. It names part of the system this ticket is NOT allowed to
+change, even when changing it would make the fix better or more complete.
+- Do NOT edit a file, function, schedule, table or expression that a constraint protects. Work
+  inside what is left.
+- If a requirement appears to need a forbidden change, the requirement wins ONLY as far as the
+  constraint permits: implement the permitted part and record the rest in your summary as
+  "NOT DONE (constraint N): <what you could not change, and what stays broken because of it>".
+- Never satisfy a constraint by weakening an assertion, editing a test to match new behaviour, or
+  silencing a check.
+- A constraint tagged RELAXED AT HUMAN REVIEW was lifted by a reviewer for THIS pass only, and only
+  as far as its note says; everything it still protects stays untouched.
+`;
 }
 
 function formatBulletList(items: ReadonlyArray<string>): string {
@@ -250,7 +288,7 @@ ${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 Acceptance Criteria:
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
-
+${buildConstraintsSection(ticket)}
 ${buildXlsformFixBrief(input)}
 ${buildRetryFeedbackSection(input)}
 ## Instructions
@@ -338,7 +376,7 @@ ${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 Acceptance Criteria:
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
-
+${buildConstraintsSection(ticket)}
 ## Orchestration Plan
 Recommended Approach: ${orchestrationPlan.proposedApproach}
 
@@ -553,7 +591,7 @@ ${formatNumberedList(ticket.issue.requirements)}
 
 Acceptance Criteria:
 ${formatNumberedList(ticket.issue.acceptance_criteria)}
-
+${buildConstraintsSection(ticket)}
 ## Documentation References
 ${formatBulletList(researchFindings.suggestedApproaches)}`;
 }

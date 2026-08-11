@@ -253,3 +253,87 @@ describe('execute prompts — retry FEEDBACK section (F3)', () => {
     expect(prompt).to.include('(previous content not carried in context)');
   });
 });
+
+describe('claude-code-cli execute prompts — the ticket constraints (HC5 enabling fix)', () => {
+  // The live m4 constraints, joined across the markdown bullet's line break. These
+  // reached CodeGenModuleInput.ticket and were then read by no prompt at all: the
+  // CLI did exactly what the ticket forbade and nothing could see the contradiction.
+  const M4 = [
+    'Surgical: predicate replacement only; do not change vaccine schedules, ' +
+      '`countTotalVaccinesByAge`, or form logic.',
+    "Regression surface: the partner repo's `test/contact-summary.spec.js` and " +
+      '`test/targets/` immunization specs must stay green.',
+  ];
+
+  const withConstraints = (input: CodeGenModuleInput, constraints: string[]): CodeGenModuleInput => ({
+    ...input,
+    ticket: { issue: { ...input.ticket.issue, constraints } },
+  });
+
+  const formInput: CodeGenModuleInput = {
+    ...baseInput,
+    ticket: {
+      issue: {
+        ...baseInput.ticket.issue,
+        technical_context: {
+          domain: 'forms-and-reports',
+          components: [],
+          layer: 'cht-conf',
+          configArtifact: 'form',
+          artifactName: 'pregnancy_home_visit',
+        },
+      },
+    },
+  };
+
+  // Empty-safe: the section is interpolated where a blank line already was.
+  it('leaves all three prompts BYTE-IDENTICAL when constraints is empty', () => {
+    const criteria = '## Acceptance Criteria\n1. Filter visible\n\n';
+    expect(buildExecutePrompt(baseInput, plan)).to.include(`${criteria}## Approved Plan`);
+    expect(buildRelaxedExecutePrompt(baseInput, plan)).to.include(`${criteria}## Approved Plan`);
+    expect(buildExecutePrompt(formInput, plan)).to.include(`${criteria}## CHT config project`);
+    for (const prompt of [
+      buildExecutePrompt(baseInput, plan),
+      buildRelaxedExecutePrompt(baseInput, plan),
+      buildExecutePrompt(formInput, plan),
+    ]) {
+      expect(prompt).to.not.include('## Constraints');
+    }
+  });
+
+  it('renders the constraints in the STRICT execute prompt', () => {
+    const prompt = buildExecutePrompt(withConstraints(baseInput, M4), plan);
+    expect(prompt).to.include('## Constraints (hard boundaries');
+    expect(prompt).to.include(M4[0]);
+    expect(prompt).to.include(M4[1]);
+    // Positioned before the plan it must be obeyed while executing.
+    expect(prompt.indexOf('## Constraints')).to.be.lessThan(prompt.indexOf('## Approved Plan'));
+  });
+
+  it('renders the constraints in the RELAXED execute prompt', () => {
+    const prompt = buildRelaxedExecutePrompt(withConstraints(baseInput, M4), plan);
+    expect(prompt).to.include('## Constraints (hard boundaries');
+    expect(prompt).to.include(M4[0]);
+    expect(prompt).to.include(M4[1]);
+    // The relaxed pass relaxes PLAN ADHERENCE, never the ticket's boundaries.
+    expect(prompt).to.include('Plan Adherence (GUIDANCE)');
+  });
+
+  it('renders the constraints in the XLSForm execute prompt', () => {
+    const prompt = buildExecutePrompt(withConstraints(formInput, M4), plan);
+    expect(prompt).to.include('## Constraints (hard boundaries');
+    expect(prompt).to.include(M4[0]);
+    expect(prompt).to.include(M4[1]);
+    expect(prompt).to.include('.cht-agent/xlsform-fix.json');
+  });
+
+  // widen-relax stamps this marker onto the constraint it lifted; the executor has
+  // to be told what it means or the relaxation is invisible.
+  it('carries an HC5-relaxed constraint through verbatim', () => {
+    const relaxed = `${M4[0]} [RELAXED AT HUMAN REVIEW (HC5): you MAY change what this protects, ` +
+      'but ONLY as far as a promoted requirement demands, and nothing else it protects.]';
+    const prompt = buildExecutePrompt(withConstraints(baseInput, [relaxed]), plan);
+    expect(prompt).to.include(relaxed);
+    expect(prompt).to.include('A constraint tagged RELAXED AT HUMAN REVIEW was lifted by a reviewer');
+  });
+});

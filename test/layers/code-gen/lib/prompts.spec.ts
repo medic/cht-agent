@@ -1,5 +1,10 @@
 import { expect } from 'chai';
-import { buildPlanPrompt, buildXlsformFixBrief } from '../../../../src/layers/code-gen/lib/prompts';
+import {
+  buildConstraintsSection,
+  buildPlanPrompt,
+  buildSingleFilePrompt,
+  buildXlsformFixBrief,
+} from '../../../../src/layers/code-gen/lib/prompts';
 import { CodeGenModuleInput } from '../../../../src/layers/code-gen/interface';
 import { FileManifest } from '../../../../src/layers/code-gen/lib/file-manifest';
 import { CodeContextFindings } from '../../../../src/types';
@@ -287,5 +292,114 @@ describe('buildPlanPrompt — compiled-artifact rule is layer-scoped', () => {
   it('does not add the rule for cht-core', () => {
     const prompt = buildPlanPrompt(withLayer('cht-core'), emptyManifest);
     expect(prompt).to.not.contain('Do NOT include app_settings.json as a plan item');
+  });
+});
+
+describe('buildConstraintsSection — the ungated constraints block (HC5 enabling fix)', () => {
+  // The two constraints of the live m4 ticket, joined across the markdown bullet's
+  // line break. Before this section existed, `issue.constraints` reached
+  // CodeGenModuleInput.ticket and was then read by nothing that generates code.
+  const M4 = [
+    'Surgical: predicate replacement only; do not change vaccine schedules, ' +
+      '`countTotalVaccinesByAge`, or form logic.',
+    "Regression surface: the partner repo's `test/contact-summary.spec.js` and " +
+      '`test/targets/` immunization specs must stay green.',
+  ];
+
+  const withConstraints = (constraints: string[], overrides: Partial<CodeGenModuleInput> = {}) => {
+    const input = baseInput(overrides);
+    return {
+      ...input,
+      ticket: { issue: { ...input.ticket.issue, constraints } },
+    } as CodeGenModuleInput;
+  };
+
+  const planItem = { action: 'MODIFY' as const, filePath: 'tasks.js', rationale: 'fix the predicate' };
+  const singleFile = (input: CodeGenModuleInput) =>
+    buildSingleFilePrompt({
+      planItem,
+      fullPlan: [planItem],
+      input,
+      originalContentMap: new Map(),
+      previouslyGenerated: [],
+    });
+
+  const xlsformTicket = (constraints: string[]) =>
+    withConstraints(constraints, {
+      ticket: {
+        issue: {
+          title: 'Form bug',
+          type: 'bug',
+          priority: 'high',
+          description: 'A bind is wrong.',
+          technical_context: {
+            domain: 'forms-and-reports',
+            components: [],
+            layer: 'cht-conf',
+            configArtifact: 'form',
+            artifactName: 'pregnancy_home_visit',
+          },
+          requirements: ['fix it'],
+          acceptance_criteria: ['fixed'],
+          constraints,
+        },
+      },
+    });
+
+  it('returns the empty string for an empty constraint list', () => {
+    expect(buildConstraintsSection(baseInput().ticket)).to.equal('');
+  });
+
+  // Empty-safe: the section is interpolated where a blank line already was, so an
+  // empty list must leave the surrounding bytes exactly as they were.
+  it('leaves every prompt BYTE-IDENTICAL when constraints is empty', () => {
+    const criteria = 'Acceptance Criteria:\n1. Thing is done\n\n';
+    expect(buildPlanPrompt(baseInput(), emptyManifest)).to.contain(`${criteria}## Orchestration Plan`);
+    expect(singleFile(baseInput())).to.contain(`${criteria}## Documentation References`);
+    // The XLSForm plan prompt's next block is the fix brief, not a heading.
+    expect(buildPlanPrompt(xlsformTicket([]), emptyManifest))
+      .to.contain('Acceptance Criteria:\n1. fixed\n\n## CHT config project');
+    for (const prompt of [buildPlanPrompt(baseInput(), emptyManifest), singleFile(baseInput())]) {
+      expect(prompt).to.not.contain('## Constraints');
+    }
+  });
+
+  it('renders every constraint, numbered, with the boundary rules', () => {
+    const section = buildConstraintsSection(withConstraints(M4).ticket);
+    expect(section).to.contain('## Constraints (hard boundaries');
+    expect(section).to.contain(`1. ${M4[0]}`);
+    expect(section).to.contain(`2. ${M4[1]}`);
+    expect(section).to.contain('A constraint is a boundary, not advice');
+    expect(section).to.contain('NOT DONE (constraint N)');
+    // The RELAXED tag HC5's widen-relax stamps must be understood by the executor.
+    expect(section).to.contain('RELAXED AT HUMAN REVIEW');
+  });
+
+  it('reaches the main plan prompt', () => {
+    const prompt = buildPlanPrompt(withConstraints(M4), emptyManifest);
+    expect(prompt).to.contain('## Constraints (hard boundaries');
+    expect(prompt).to.contain(M4[0]);
+    expect(prompt).to.contain(M4[1]);
+  });
+
+  it('reaches the per-file prompt header (what claude-api generates each file from)', () => {
+    const prompt = singleFile(withConstraints(M4));
+    expect(prompt).to.contain('## Constraints (hard boundaries');
+    expect(prompt).to.contain(M4[0]);
+    expect(prompt).to.contain(M4[1]);
+  });
+
+  it('reaches the XLSForm plan prompt', () => {
+    const prompt = buildPlanPrompt(xlsformTicket(M4), emptyManifest);
+    expect(prompt).to.contain('## Constraints (hard boundaries');
+    expect(prompt).to.contain(M4[0]);
+    expect(prompt).to.contain(M4[1]);
+  });
+
+  // No threshold, no gate: the old research-supervisor heuristic only looked at
+  // `constraints.length > 2`, which is exactly why m4's two constraints were invisible.
+  it('is ungated — a single constraint renders just like three', () => {
+    expect(buildPlanPrompt(withConstraints([M4[0]]), emptyManifest))
+      .to.contain('## Constraints (hard boundaries');
   });
 });

@@ -1,7 +1,12 @@
 import { CodeGenModuleInput } from '../../interface';
 import { PlanItem } from '../../lib/plan';
 import { getArchPatternsSection } from '../../lib/arch-patterns';
-import { buildArchInsightsSection, buildXlsformFixBrief, buildRetryFeedbackSection } from '../../lib/prompts';
+import {
+  buildArchInsightsSection,
+  buildConstraintsSection,
+  buildXlsformFixBrief,
+  buildRetryFeedbackSection,
+} from '../../lib/prompts';
 import { isXlsformFixTicket, XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../../utils/xlsform-fix';
 
 /**
@@ -53,7 +58,7 @@ ${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 ## Acceptance Criteria
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
-
+${buildConstraintsSection(ticket)}
 ${buildXlsformFixBrief(input)}
 ${buildRetryFeedbackSection(input)}
 ## Descriptor format (STRICT)
@@ -119,7 +124,7 @@ ${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 ## Acceptance Criteria
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
-
+${buildConstraintsSection(ticket)}
 ## Approved Plan
 ${plan.map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`).join('\n')}
 
@@ -185,7 +190,7 @@ ${ticket.issue.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 ## Acceptance Criteria
 ${ticket.issue.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
-
+${buildConstraintsSection(ticket)}
 ## Approved Plan
 ${plan.map((p, i) => `${i + 1}. ${p.action} ${p.filePath} — ${p.rationale}`).join('\n')}
 
