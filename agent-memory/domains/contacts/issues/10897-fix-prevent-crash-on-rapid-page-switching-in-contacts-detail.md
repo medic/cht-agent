@@ -5,7 +5,7 @@ domain: contacts
 domainFit: strong
 issueNumber: 10878
 issueUrl: https://github.com/medic/cht-core/issues/10878
-title: Prevent null-dereference crash on ContactsContentComponent when rapidly switching pages in contacts detail
+title: Prevent null-dereference crash on ContactsContentComponent when navigating away from contacts detail before it finishes loading
 lastUpdated: '2026-08-11'
 summary: Navigating away cleared selectedContact to null while in-flight async callbacks still accessed its .doc property, throwing a TypeError and crashing the contacts detail page. Fixed with optional chaining and early-return guards in the component.
 services:
@@ -59,7 +59,7 @@ Guard async/observable callbacks against state that navigation can clear: in web
 
 ## Design Choices
 
-Chose minimal defensive null-checks (optional chaining + early returns) over restructuring the subscription lifecycle (e.g. unsubscribing/cancelling pending work on navigation). This is a low-risk, targeted fix for the specific null-access crash without reworking state and subscription management.
+Chose minimal defensive null-checks (optional chaining + early returns) over changing the subscription lifecycle itself (e.g. unsubscribing or cancelling pending work on navigation). The two callbacks were lifted into named methods to hold those guards, but they are still subscribed and torn down exactly as before. This is a low-risk, targeted fix for the specific null-access crash without reworking state and subscription management.
 
 ## Related Files
 
@@ -72,7 +72,7 @@ Unit tests added/updated in the Karma spec (contacts-content.component.spec.ts),
 
 ## Related Issues
 
-- #10878: Switching pages too quickly can throw errors in the contacts detail page — a TypeError 'Cannot read properties of null (reading doc)' seen once while the app was indexing search views for a 5176-doc user
+- #10878: titled "Switching pages too quickly can throw errors in the contacts detail page" — the report itself describes manual, unhurried navigation during a slow load; a TypeError 'Cannot read properties of null (reading doc)' seen once while the app was indexing search views for a 5176-doc user
 
 ## Domain Rationale
 

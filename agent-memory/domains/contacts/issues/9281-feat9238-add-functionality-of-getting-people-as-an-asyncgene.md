@@ -59,10 +59,11 @@ stale: false
 > `git fetch origin refs/pull/9281/head` makes it reachable.
 >
 > **Renamed before landing (`stale-as-written`):** the helper below is
-> `getDocumentStream` in `libs/data-context.ts` as this PR wrote it. On current master
-> the same mechanism is `getPagedGenerator` in `libs/core.ts`, and `getDocumentStream`
-> no longer exists anywhere in `shared-libs/cht-datasource/src`. The yield semantics
-> are unchanged: master's signature is `AsyncGenerator<Person, null>`.
+> `getDocumentStream` in `libs/data-context.ts` as this PR wrote it.
+> On master that same mechanism is `getPagedGenerator`, in `libs/core.ts`.
+> On master `getDocumentStream` no longer exists in `shared-libs/cht-datasource/src`.
+> The yield semantics are unchanged — on master the signature is
+> `AsyncGenerator<Person, null>`, differing only in the generator's return type.
 
 ## Problem
 

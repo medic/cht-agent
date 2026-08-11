@@ -6,7 +6,7 @@ subDomain: replication
 issueNumber: 8034
 issueUrl: https://github.com/medic/cht-core/issues/8034
 title: Replicate primary contacts for places at max replication depth
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-11'
 summary: Added a replicate_primary_contacts config flag that causes primary contact persons for places at max replication depth to be replicated along with their reports and targets, solving the problem of supervisors not seeing CHW person records.
 services:
   - api
@@ -47,7 +47,7 @@ PR #9593 added a `replicate_primary_contacts: true` config option per role in `r
 - Opt-in per role via `replicate_primary_contacts: true` rather than making it default, to avoid unexpected replication changes for existing deployments
 - Primary contacts' reports and targets replicate automatically because their subject IDs are added to the allowed set — no separate mechanism needed
 - The view value shape change was accepted as a breaking change rather than adding a separate view, to avoid maintaining two views for the same data
-- When multiple roles have the same depth, `replicate_primary_contacts: true` from any matching role enables it (most permissive wins)
+- Among the roles tied at that highest depth, `replicate_primary_contacts: true` on any one of them enables it (most permissive wins within the tie); a role at a lower depth never contributes
 - `getScopedAuthorizationContext` re-runs `populateAllowedSubjectIds` in a `do...while` loop because a primary contact is only admitted once its place has already been added to `subjectIds`, and a single pass visits contacts in arbitrary order
 
 ## Related Files

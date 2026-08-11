@@ -55,7 +55,7 @@ Contact summaries already received the contact's current-month target doc as the
 
 ## Root Cause
 
-This is a capability gap rather than a bug: the CHTDatasourceAPI exposed to webapp had no analytics namespace, and before this PR contacts.effects.ts called `targetAggregateService.getCurrentTargetDoc()` and forwarded exactly one doc — the contact's current-month target doc — into contact-summary.service.ts as the optional `targetDoc` parameter. Earlier months were never fetched.
+This is a capability gap rather than a bug: the CHTDatasourceAPI exposed to webapp had no analytics namespace, and before this PR `contacts.effects.ts` called `getCurrentTargetDoc()` on `TargetAggregatesService` and forwarded exactly one doc — the contact's current-month target doc — into contact-summary.service.ts as the optional `targetDoc` parameter. Earlier months were never fetched.
 
 ## Solution
 
