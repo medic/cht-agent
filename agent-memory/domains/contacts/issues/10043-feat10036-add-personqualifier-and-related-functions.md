@@ -43,6 +43,13 @@ related_issues: []
 stale: false
 ---
 
+> **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
+> cht-datasource library itself rather than a contacts feature. It stays in `contacts`
+> until the taxonomy lands — `data-access` is not yet a valid `domain` value in
+> `agent-memory/schema.json` (PR #152 adds it and is unmerged), and relocating a draft
+> before #135 adds union selection would drop it from `contacts` retrieval entirely.
+> Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
+
 ## Problem
 
 The cht-datasource library had no `PersonQualifier` or supporting functions to identify and validate person documents, blocking the planned ability to create `person` documents through the datasource API. Building on this, the datasource exposed only read/get operations for persons and had no way to persist a new Person: no `createPerson` in the local implementation (PR #10056), no `createPerson` in the person concept module or remote implementation, and no API route to create a person contact over HTTP (PR #10061).

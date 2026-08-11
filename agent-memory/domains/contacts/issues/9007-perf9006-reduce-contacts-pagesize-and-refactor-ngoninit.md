@@ -5,9 +5,9 @@ domain: contacts
 domainFit: strong
 issueNumber: 9006
 issueUrl: https://github.com/medic/cht-core/issues/9006
-title: Reduce contacts page_size and refactor contacts ngOnInit to async/await with unified try/catch to improve contact-list Apdex
+title: Reduce the contacts list PAGE_SIZE (50 to 25) and refactor contacts ngOnInit to async/await with unified try/catch to improve contact-list Apdex
 lastUpdated: '2026-06-23'
-summary: The contacts list page had a low Apdex (slow initial render). This PR reduces the contacts page_size so fewer contacts are fetched on initialization and refactors ngOnInit to async/await with a single unified try/catch for cleaner async control flow and consolidated error handling.
+summary: The contacts list page had a low Apdex (slow initial render). This PR reduces the contacts list component's PAGE_SIZE constant from 50 to 25 so fewer contacts are fetched on initialization and refactors ngOnInit to async/await with a single unified try/catch for cleaner async control flow and consolidated error handling.
 services:
   - webapp
 techStack:
@@ -37,7 +37,7 @@ confidence: medium
 entities:
   - webapp/src/ts/modules/contacts/contacts.component.ts
 concepts:
-  - pagination / page_size
+  - pagination / PAGE_SIZE
   - Angular lifecycle hooks (ngOnInit)
   - async/await control flow
   - unified try/catch error handling
@@ -53,19 +53,19 @@ The contact list page scored poorly on Apdex (issue #9006, 'improve-contact-list
 
 ## Root Cause
 
-ContactsComponent loaded too many contacts per page (large page_size) on init, increasing initial payload and render time, which degraded the contact-list Apdex; ngOnInit's async initialization also lacked a single error-handling path.
+ContactsComponent loaded too many contacts per page — its private `PAGE_SIZE` constant was 50 — increasing initial payload and render time, which degraded the contact-list Apdex; ngOnInit's async initialization also lacked a single error-handling path.
 
 ## Solution
 
-Reduced the contacts page_size so fewer contacts are loaded on the initial page (smaller initial payload, faster first render, better Apdex) and refactored ngOnInit to use async/await with one unified try/catch block for the initialization sequence, with infinite scrolling continuing to fetch subsequent pages on demand.
+Reduced the component's `PAGE_SIZE` constant from 50 to 25 so fewer contacts are loaded on the initial page (smaller initial payload, faster first render, better Apdex) and refactored ngOnInit to use async/await with one unified try/catch block for the initialization sequence, with infinite scrolling continuing to fetch subsequent pages on demand.
 
 ## Code Patterns
 
-Refactoring an Angular component's ngOnInit from chained promises/observables to async/await wrapped in a single try/catch for consolidated error handling (webapp/src/ts/modules/contacts/contacts.component.ts). Lowering an initial page_size to trade larger up-front fetches for more frequent on-demand pagination to improve perceived load performance.
+Refactoring an Angular component's ngOnInit from chained promises/observables to async/await wrapped in a single try/catch for consolidated error handling (webapp/src/ts/modules/contacts/contacts.component.ts). Lowering an initial `PAGE_SIZE` to trade larger up-front fetches for more frequent on-demand pagination to improve perceived load performance.
 
 ## Design Choices
 
-Reducing page_size trades a smaller, faster initial render (improved Apdex) against more frequent infinite-scroll fetches as the user scrolls. Choosing async/await with a single try/catch over promise/observable chaining improves readability and gives one place to handle initialization failures.
+Reducing `PAGE_SIZE` trades a smaller, faster initial render (improved Apdex) against more frequent infinite-scroll fetches as the user scrolls. Choosing async/await with a single try/catch over promise/observable chaining improves readability and gives one place to handle initialization failures.
 
 ## Related Files
 
@@ -75,7 +75,7 @@ Reducing page_size trades a smaller, faster initial render (improved Apdex) agai
 
 ## Testing
 
-Updated the Karma unit spec (contacts.component.spec.ts) to cover the refactored async ngOnInit and reduced page_size, and updated the WDIO e2e infinite-scrolling spec to reflect the new page_size and continued lazy-loading behavior. The change was also verified with a manual quick test.
+Updated the Karma unit spec (contacts.component.spec.ts) to cover the refactored async ngOnInit and the reduced `PAGE_SIZE`, and updated the WDIO e2e infinite-scrolling spec to reflect the new `PAGE_SIZE` and continued lazy-loading behavior.
 
 ## Related Issues
 
@@ -85,4 +85,4 @@ Updated the Karma unit spec (contacts.component.spec.ts) to cover the refactored
 
 **Fit:** strong
 
-The change is entirely within the contacts list page (contacts.component.ts, its unit spec, and the contacts infinite-scrolling e2e spec), tuning how the contact list loads and initializes. Per the infrastructure pitfall, an in-application performance/refactor change stays in its closest functional domain rather than the ops bucket.
+The change is entirely within the contacts list page (contacts.component.ts, its unit spec, and the contacts infinite-scrolling e2e spec), tuning how the contact list loads and initializes. An in-application performance change belongs with the feature it optimises: nothing here touches deployment, build or server configuration.

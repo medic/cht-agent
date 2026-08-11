@@ -44,6 +44,13 @@ related_issues: []
 stale: false
 ---
 
+> **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
+> cht-datasource library itself rather than a contacts feature. It stays in `contacts`
+> until the taxonomy lands — `data-access` is not yet a valid `domain` value in
+> `agent-memory/schema.json` (PR #152 adds it and is unmerged), and relocating a draft
+> before #135 adds union selection would drop it from `contacts` retrieval entirely.
+> Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
+
 ## Problem
 
 The cht-datasource data-access library provided qualifiers for other entity types but had no dedicated PlaceQualifier, so callers could not cleanly qualify/identify place contacts or validate place-specific identifiers through the unified datasource API.

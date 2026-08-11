@@ -21,6 +21,13 @@ techStack:
   - couchdb
 ---
 
+> **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
+> cht-datasource library itself rather than a contacts feature. It stays in `contacts`
+> until the taxonomy lands — `data-access` is not yet a valid `domain` value in
+> `agent-memory/schema.json` (PR #152 adds it and is unmerged), and relocating a draft
+> before #135 adds union selection would drop it from `contacts` retrieval entirely.
+> Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
+
 ## Problem
 
 The `cht-datasource` shared library only had read-only APIs (fetch by UUID, paginated listing). There were no APIs to create or update Person, Place, or Report documents. All writes went through ad-hoc code paths, bypassing the consistent abstraction layer that `cht-datasource` provides. The read-first design meant only get/getWithLineage-style paths existed across both the local (PouchDB) and remote (HTTP) data contexts, and the api controllers exposed no create/update routes for person, place, or report (PR #10083).
