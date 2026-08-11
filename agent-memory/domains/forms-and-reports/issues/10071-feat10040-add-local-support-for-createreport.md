@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10040
 issueUrl: https://github.com/medic/cht-core/issues/10040
 title: Add report-create support to the cht-datasource local adapter
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: The cht-datasource local (direct-database) adapter could read reports but had no way to create them. This PR added `createReport` to the local report adapter, taking a `ReportQualifier`; the #10083 epic squash reshaped that into `Local.Report.v1.create` taking an `Input.v1.ReportInput`, which is the form on master.
 services:
   - api
@@ -120,3 +120,11 @@ Added and updated unit specs (shared-libs/cht-datasource/test/local/report.spec.
 - #10040: "To have API that can create reports" — the issue these PRs implement, via local and API support for report creation
 - #10038: "To have API that can create places" — the sibling issue covering the place-creation half of the same cht-datasource create work
 - PR #10083: "feat(#9835): add cht datasource apis for creation and update of contacts and reports" — the epic PR whose squash (`f382785be`) is the only commit carrying this work on master
+
+## Domain Rationale
+
+**Fit:** strong
+
+The entity created is the report, and reports are canonically forms-and-reports; the work is the create half of the datasource's report API rather than a cross-cutting storage concern.
+
+Its files, though, are entirely `shared-libs/cht-datasource` — this is library extension, not consumption. Review on #122 asked for `data-access` as the primary domain with `secondaryDomains: [forms-and-reports]`. That re-key is deliberately **not** made here: neither the `data-access` enum value nor the `secondaryDomains` field exists in the schema yet, and the recommendation on that same PR is to ship both as one coordinated taxonomy change rather than through a content PR. Recorded here so the decision is visible in the draft rather than only in the review thread. Same for the sibling extenders `10064` and `10180`.

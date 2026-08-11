@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10052
 issueUrl: https://github.com/medic/cht-core/issues/10052
 title: Add ReportWithLineage support to fetch reports with fully hydrated contact lineage via cht-datasource and REST API
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: Report retrieval via cht-datasource and the REST API only returned the minified (dehydrated) contact lineage. This PR adds ReportWithLineage methods and interfaces to fetch a report with its full contact lineage hydrated, mirroring the existing PersonWithLineage/PlaceWithLineage pattern.
 services:
   - api
@@ -94,3 +94,5 @@ Updated unit tests in cht-datasource (test/report.spec.ts, test/local/report.spe
 **Fit:** strong
 
 The PR's primary entity is the report — it adds a way to fetch a report doc enriched with its contact lineage via cht-datasource and the REST API. Reports are canonically forms-and-reports; the lineage (contact hierarchy) is the enrichment, not the subject.
+
+Its files are entirely `shared-libs/cht-datasource`, so this is library extension rather than consumption, and review on #122 asked for `data-access` as the primary domain with `secondaryDomains: [forms-and-reports]`. That re-key is deliberately not made here — neither the enum value nor the field exists in the schema yet, and the recommendation on that same PR is to ship both as one coordinated taxonomy change rather than through a content PR. Same for the sibling extenders `10071` and `10180`.

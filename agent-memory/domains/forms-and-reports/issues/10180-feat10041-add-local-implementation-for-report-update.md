@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10041
 issueUrl: https://github.com/medic/cht-core/issues/10041
 title: Add local datasource implementation for updating reports in cht-datasource
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: The cht-datasource shared library lacked a local (direct-database) implementation for updating report documents, so report updates could not be performed through the local data context. This PR adds the local update operation for reports along with unit tests.
 services:
   - api
@@ -115,3 +115,5 @@ The remote path (PR #10200) adds cht-datasource unit specs (test/remote/report.s
 **Fit:** strong
 
 The PR adds report-update functionality to the cht-datasource library, and reports are squarely the forms-and-reports domain. Although it lives in the data-access layer, it concerns the report entity specifically (not a cross-cutting storage concern like ID generation), so forms-and-reports is the most specific home rather than data-sync.
+
+Review on #122 asked for `data-access` as the primary domain with `secondaryDomains: [forms-and-reports]` for this and the sibling extenders `10064` and `10071`. That re-key is deliberately not made here — neither the enum value nor the field exists in the schema yet, and the recommendation on that same PR is to ship both as one coordinated taxonomy change rather than through a content PR.
