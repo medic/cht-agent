@@ -232,7 +232,13 @@ export const buildPatch = async (
   // went in.
   const trackedIncluded = trackedChanged.filter(rel => includedSet.has(rel));
   if (trackedIncluded.length > 0) {
-    const tracked = await git(configRoot, ['diff', 'HEAD', '--', ...trackedIncluded]);
+    // --binary, NOT plain `git diff`: an XLSForm fix always ships the .xlsx, and
+    // without it git emits the payload-free stub `Binary files a/x and b/x differ`.
+    // The bundle then advertises itself as "git apply-able" and PR.md tells the
+    // reviewer to run `git apply` — which dies with "cannot apply binary patch
+    // ... without full index line". --binary implies --full-index and embeds the
+    // literal blob, so the workbook travels with the patch.
+    const tracked = await git(configRoot, ['diff', '--binary', 'HEAD', '--', ...trackedIncluded]);
     if (tracked.trim() !== '') {
       parts.push(tracked.trimEnd());
       files.push(...trackedIncluded);
@@ -240,7 +246,8 @@ export const buildPatch = async (
   }
   for (const rel of untracked) {
     if (!includedSet.has(rel)) continue;
-    const hunk = await git(configRoot, ['diff', '--no-index', '--', '/dev/null', rel]);
+    // --binary here too: a newly-added workbook is untracked on its first run.
+    const hunk = await git(configRoot, ['diff', '--binary', '--no-index', '--', '/dev/null', rel]);
     if (hunk.trim() !== '') {
       parts.push(hunk.trimEnd());
       files.push(rel);
