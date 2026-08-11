@@ -5,3 +5,9 @@ commitlint.config.js
 # Self-contained Remotion sub-project (own package.json/tsconfig) — not part of
 # the workbench lint surface.
 video/
+
+# Operator scratch: PR bundles copied out of the container, and a raw /tmp dump
+# that carries the partner config's own .eslintrc (references eslint-plugin-json,
+# which this repo does not install) — `eslint .` dies on it.
+pr/
+tmp/

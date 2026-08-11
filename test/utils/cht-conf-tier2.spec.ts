@@ -429,7 +429,7 @@ describe('cht-conf-tier2 (F7 runner)', () => {
 });
 
 describe('tier-2 failure classification and cause extraction', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { isTier2EnvironmentalFailure, tier2TailExcerpt } = require('../../src/utils/cht-conf-tier2');
 
   // Chromium prints its diagnosis first, then ~40 stack frames and a register
@@ -490,7 +490,7 @@ describe('tier-2 failure classification and cause extraction', () => {
 });
 
 describe('tier-2 baseline attribution', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const t2 = require('../../src/utils/cht-conf-tier2');
   const { parseMochaFailing, newTier2Failures, tier2FailuresArePreExisting, tier2BaselineLine } = t2;
 
@@ -558,7 +558,7 @@ describe('tier-2 baseline attribution', () => {
 });
 
 describe('tier-2 baseline scoping (filesToRevert)', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { filesToRevert } = require('../../src/utils/cht-conf-tier2');
 
   const DIRTY = [

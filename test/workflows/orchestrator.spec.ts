@@ -203,7 +203,7 @@ describe('orchestrator runQaPhase wiring (#66 / mission 04 A3)', () => {
 });
 
 describe('formatQaFeedback (HC4 — QA evidence as development feedback)', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { formatQaFeedback } = require('../../src/workflows/orchestrator');
 
   const baseQa = (over: Record<string, unknown> = {}) => ({
@@ -255,7 +255,7 @@ describe('formatQaFeedback (HC4 — QA evidence as development feedback)', () =>
 });
 
 describe('qaRetryBlocker (HC4 — when a code retry cannot help)', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { qaRetryBlocker, formatQaFeedback } = require('../../src/workflows/orchestrator');
 
   const qaOf = (over: Record<string, unknown> = {}) => ({
@@ -310,7 +310,7 @@ describe('qaRetryBlocker (HC4 — when a code retry cannot help)', () => {
 });
 
 describe('qaRetryBlocker — tier-2 baseline attribution', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { qaRetryBlocker } = require('../../src/workflows/orchestrator');
   const qaOf = (tier2: Record<string, unknown>) => ({
     ran: true, approved: true, reproduced: true, verified: true, succeeded: false,

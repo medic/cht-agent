@@ -303,7 +303,7 @@ describe('ClaudeApiTestGenModule', () => {
 });
 
 describe('pinTestPathsToConfigRoot (cht-conf spec paths)', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { pinTestPathsToConfigRoot } = require('../../../src/layers/test-gen/modules/claude-api/index');
   const item = (filePath: string) => ({
     filePath, testType: 'unit', targetSourceFile: 'tasks.js', description: 'd',

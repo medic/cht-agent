@@ -1006,7 +1006,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
 });
 
 describe('reconcilePlanAdherence — compiled-artifact exemption', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, n/no-missing-require, n/no-unpublished-require
   const { reconcilePlanAdherence } = require('../../../../../src/layers/code-gen/modules/claude-code-cli/index');
   const item = (filePath: string) => ({ filePath, action: 'MODIFY' as const, rationale: 'r' });
 
