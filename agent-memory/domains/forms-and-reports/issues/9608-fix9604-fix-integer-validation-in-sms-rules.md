@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9604
 issueUrl: https://github.com/medic/cht-core/issues/9604
 title: Fix SMS report validation rules that rejected valid values by comparing string-typed fields with strict equality
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: The `integer` validation rule applied to SMS-submitted report fields always returned false, rejecting valid integers, because it compared a parsed number against the string the SMS parser produced with strict equality. The fix relaxes that comparison (and the equally strict `equals`/`iequals`/`equalsto`) to loose equality, repairs a broken `in` validator, and adds unit test coverage.
 services:
   - sentinel
@@ -50,7 +50,7 @@ Integer validation rules on SMS-submitted report fields always failed: legitimat
 
 ## Root Cause
 
-`integer` was implemented as `parseInt(value, 10) === value`. SMS field parsing yields string-typed values, so the strict comparison of a number against its own string form was never true — the predicate returned false for every input. The same strict-equality flaw affected `equals`, `iequals` and `equalsto`, and `in` was additionally broken by referencing `arguments` inside an arrow function, where it does not resolve to the call's arguments.
+`integer` was implemented as `parseInt(value, 10) === value`. SMS field parsing yields string-typed values, so the strict comparison of a number against its own string form was never true — the predicate returned false for every SMS-parsed value. A caller already passing a number was unaffected — `parseInt(5, 10) === 5` is true — which is why loosening the operator preserves their behaviour rather than changing it. The same strict-equality flaw affected `equals`, `iequals` and `equalsto`, and `in` was additionally broken by referencing `arguments` inside an arrow function, where it does not resolve to the call's arguments.
 
 ## Solution
 

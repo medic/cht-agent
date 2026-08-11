@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 9618
 issueUrl: https://github.com/medic/cht-core/issues/9618
 title: Prevent API from crashing on startup when a form is broken/invalid
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-11'
 summary: A single broken or invalid form would throw during the API's xform-regeneration step, which shared a try/catch with the rest of the bootstrap whose handler called process.exit(1), crashing the whole API service. The fix moves xform regeneration into its own try/catch that only logs, so the API still comes up.
 services:
   - api
@@ -45,7 +45,7 @@ stale: false
 
 ## Problem
 
-On startup the API regenerates the model.xml and form.html attachments for every form: doc from its xml attachment. If any of those xml attachments was invalid in a way xsltproc could not convert (the reported case was a stray apostrophe inside a tag, uploaded via upload-*-forms --skip-validate), the regeneration error was caught by the bootstrap's fatal handler, which exited the process — so the entire API service failed to come up. One bad form could take down the whole instance, and because the API usually fronts CouchDB, there was no easy way to upload a corrected form to recover.
+On startup the API regenerates the model.xml and form.html attachments for every form: doc from its xml attachment. If any of those xml attachments was invalid in a way xsltproc could not convert (the reported case was a stray apostrophe inside a tag, uploaded via cht-conf's upload-*-forms with its `--skip-validate` flag, which lives in cht-conf, not cht-core), the regeneration error was caught by the bootstrap's fatal handler, which exited the process — so the entire API service failed to come up. One bad form could take down the whole instance, and because the API usually fronts CouchDB, there was no easy way to upload a corrected form to recover.
 
 ## Root Cause
 
