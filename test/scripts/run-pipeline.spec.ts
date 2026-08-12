@@ -420,6 +420,17 @@ describe('run-pipeline skipEntriesForRun', () => {
     expect(skipEntriesForRun([10], logPath, Buffer.byteLength(historical)).map((entry: { reason: string }) => entry.reason))
       .to.deep.equal(['new']);
   });
+
+  it('uses byte offsets when historical entries contain Unicode', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-recon-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    const historical = JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'old ✓', timestamp: 't' }) + '\n';
+    fs.writeFileSync(logPath, historical);
+    fs.appendFileSync(logPath, JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'new', timestamp: 't' }) + '\n');
+    const { skipEntriesForRun } = loadPipeline();
+    expect(skipEntriesForRun([10], logPath, Buffer.byteLength(historical)).map((entry: { reason: string }) => entry.reason))
+      .to.deep.equal(['new']);
+  });
 });
 
 describe('run-pipeline prNumbersFromDrafts', () => {

@@ -188,12 +188,12 @@ describe('relinkIssues (classification)', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('offline: parses the new hyphen-separated token format (post-slugify-fix drafts)', () => {
+  it('offline: ignores ambiguous hyphen-separated numeric slugs', () => {
     const dir = tmpDir();
-    makeDraft(dir, { name: '200-fix-6000-x.md', issueNumber: 137, pr: 200 }); // token 6000 ≠ issueNumber 137
+    makeDraft(dir, { name: '200-fix-6000-x.md', issueNumber: 200, pr: 200 });
     const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-fix-6000-x.md');
     expect(r.status).to.equal('flagged');
-    expect(r.reason).to.match(/suspect/);
+    expect(r.reason).to.match(/tokenless/);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

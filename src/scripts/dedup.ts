@@ -54,11 +54,9 @@ export function issueEqualsSourcePr(frontmatter: Record<string, unknown>): boole
 
 /**
  * The issue number embedded in a `<prNumber>-<slug>.md` filename when the slug
- * itself starts with a CHT `type(#N):` conventional-commit prefix (slugified to
- * `type<n>-...` or `type-<n>-...`, e.g. `10043-feat10036-add-thing.md` and
- * `10043-feat-10036-add-thing.md` both -> 10036 — old drafts predate the
- * slugify separator fix and are never rewritten, so both forms must keep
- * resolving). Returns null when the slug carries no such prefix.
+ * itself starts with a CHT `type(#N):` conventional-commit prefix encoded as
+ * `type<n>-...` (e.g. `10043-feat10036-add-thing.md` -> 10036). Returns null
+ * when the slug carries no unambiguous issue token.
  */
 export function slugIssueNumber(filePath: string): number | null {
   const base = path.basename(filePath, '.md');

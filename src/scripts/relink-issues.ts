@@ -59,7 +59,7 @@ export interface RelinkOptions {
 
 const SOURCE_PR_RE = /^([^#]+)#(\d+)$/;
 export const FILENAME_TOKEN_RE =
-  /^(\d+)-(?:issue-([1-9]\d*)|(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)-?(\d{4,}))-/;
+  /^(\d+)-(?:issue-([1-9]\d*)|(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)(\d{4,}))-/;
 const DEFAULT_REPO = 'medic/cht-core';
 
 interface SourcePr {
@@ -81,9 +81,8 @@ function parseSourcePr(ref: unknown): SourcePr | null {
 
 /**
  * Parse an explicit `8773-issue-137-slug` token or legacy high-number token
- * `8773-fix6299-slug` → { prNumber: 8773, issueNumber: 6299 };
- * null when tokenless. Both forms are accepted because old drafts predate the
- * slugify separator fix and are never rewritten.
+ * `8773-fix6299-slug` → { prNumber: 8773, issueNumber: 6299 }.
+ * Hyphenated numeric slugs are not parsed because they are ambiguous prose.
  */
 function parseFilenameToken(filename: string): Token | null {
   const m = FILENAME_TOKEN_RE.exec(path.basename(filename));

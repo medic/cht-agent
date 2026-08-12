@@ -457,13 +457,13 @@ function parseSkipLogLine(line: string): SkipLogEntry | null {
  */
 export function skipEntriesForRun(prNumbers: number[], logPath: string, startOffset = 0): SkipLogEntry[] {
   const wanted = new Set(prNumbers);
-  let log: string;
+  let log: Buffer;
   try {
-    log = fs.readFileSync(logPath, 'utf8');
+    log = fs.readFileSync(logPath);
   } catch {
     return [];
   }
-  return log.slice(startOffset).split('\n')
+  return log.subarray(startOffset).toString('utf8').split('\n')
     .map(parseSkipLogLine)
     .filter((e): e is SkipLogEntry => e !== null && wanted.has(e.prNumber));
 }
