@@ -6,7 +6,7 @@ subDomain: forms
 issueNumber: 9915
 issueUrl: https://github.com/medic/cht-core/issues/9915
 title: Replace deprecated db-object appearance with select-contact
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-11'
 summary: Migrated all XML forms in config/default and config/covid-19 from the deprecated db-object appearance and db:type bind to the modern select-contact appearance with string bind type. Also replaced deprecated horizontal-compact and horizontal appearances.
 services:
   - webapp
@@ -45,12 +45,12 @@ Two paths were used, because not every form has a one-to-one source. For the 17 
 - File: `config/default/forms/contact/*.xml` — 8 contact form files updated
 - File: `config/covid-19/forms/app/*.xml` — 2 app form files updated
 - File: `config/covid-19/forms/contact/*.xml` — 8 contact form files updated
-- Always edit `.xlsx` source files first, then regenerate XML via `cht-conf`
+- Edit the `.xlsx` source first and regenerate the XML via `cht-conf` wherever a form has its own source; the place create/edit forms are expanded from the shared `PLACE_TYPE-*.xlsx` templates, so their generated XML is edited directly instead
 
 ## Design Choices
 
 - Migration is a mechanical find-and-replace following documented rules, not a behavioral change
-- Source-of-truth is the `.xlsx` files — XML is regenerated, not hand-edited. The place create/edit forms are the exception in form only: their source is the shared `PLACE_TYPE-*.xlsx` template, which was edited, but because cht-conf expands it per configured place type and the expansions are checked in, the 12 generated XMLs were updated by hand rather than regenerated
+- Source-of-truth is the `.xlsx` files. For the 17 forms with their own source the XML was regenerated rather than hand-edited; the 12 place create/edit forms have no per-type source, so their `PLACE_TYPE-*.xlsx` template was edited and the checked-in expansions were updated by hand in the same change
 - All three deprecated appearances were handled in one PR to avoid multiple passes
 
 ## Related Files

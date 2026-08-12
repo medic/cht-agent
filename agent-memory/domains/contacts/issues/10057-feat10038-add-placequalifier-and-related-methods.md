@@ -119,7 +119,7 @@ Reuses the existing qualifier abstraction and validation/type-guard idioms alrea
 
 ## Testing
 
-Unit tests for qualifier behavior in shared-libs/cht-datasource/test/qualifier.spec.ts; additional/missing coverage for qualifier.ts was added separately in PR #10056, so it was intentionally skipped here.
+Unit tests for qualifier behavior in shared-libs/cht-datasource/test/qualifier.spec.ts; further qualifier coverage landed with the follow-up work rather than here. (PR #10056 is a different change — it implements `createPerson` for the local data context.)
 
 - Unit tests for the new local createPlace implementation in test/local/place.spec.ts (PR #10065).
 - Unit tests for the remote adapter (test/remote/place.spec.ts) and datasource index (test/index.spec.ts), controller tests (api/tests/mocha/controllers/place.spec.js), and integration tests (tests/integration/api/controllers/place.spec.js, tests/integration/shared-libs/cht-datasource/place.spec.js) (PR #10089).

@@ -97,7 +97,7 @@ Implemented data access through the cht-datasource abstraction instead of ad-hoc
 
 ## Testing
 
-Extensive tests added: api controller unit tests (api/tests/mocha/controllers/person.spec.js); cht-datasource unit tests for the person interface (test/person.spec.ts), local implementation (test/local/person.spec.ts), remote implementation (test/remote/person.spec.ts), and qualifier (test/qualifier.spec.ts); plus an end-to-end integration test exercising the endpoint (tests/integration/api/controllers/person.spec.js). The by-type work extended these with unit tests across libs/core, local/libs/doc, local/libs/lineage, remote/libs/data-context, and server-utils, plus integration coverage of the GET /api/v1/person endpoint (landed on master via the epic squash PR #9311).
+Test coverage extended — every test file in this PR is modified, none added. New cases in the api controller unit spec (api/tests/mocha/controllers/person.spec.js); cht-datasource unit tests for the person interface (test/person.spec.ts), local implementation (test/local/person.spec.ts), remote implementation (test/remote/person.spec.ts), and qualifier (test/qualifier.spec.ts); plus new end-to-end cases in the existing integration spec (tests/integration/api/controllers/person.spec.js). The by-type work extended these with unit tests across libs/core, local/libs/doc, local/libs/lineage, remote/libs/data-context, and server-utils, plus integration coverage of the GET /api/v1/person endpoint (landed on master via the epic squash PR #9311).
 
 ## Related Issues
 

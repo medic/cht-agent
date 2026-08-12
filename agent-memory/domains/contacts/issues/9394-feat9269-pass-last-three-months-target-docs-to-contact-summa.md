@@ -7,7 +7,7 @@ issueNumber: 9269
 issueUrl: https://github.com/medic/cht-core/issues/9269
 title: Expose an analytics.getTargetDocs() cht-datasource API and pass the logged-in user's last three months of target docs into the contact summary
 lastUpdated: '2026-08-11'
-summary: Contact summaries only received the contact's current-month target doc, and nothing on the CHTDatasourceAPI exposed target data. This PR adds an `analytics.getTargetDocs()` function to the webapp CHTDatasourceAPI and passes the latest three months of target docs into the contact-summary context — the logged-in user's own docs when viewing one of that user's facilities.
+summary: Contact summaries only received the contact's current-month target doc, and nothing on the datasource API the webapp hands to config scripts exposed target data. This PR adds an `analytics.getTargetDocs()` function to that surface, built by `CHTDatasourceService`, and passes the latest three months of target docs into the contact-summary context — the logged-in user's own docs when viewing one of that user's facilities.
 services:
   - webapp
 techStack:
@@ -51,11 +51,11 @@ stale: false
 
 ## Problem
 
-Contact summaries already received the contact's current-month target doc as the 6th positional argument (`targetDoc`), but there was no way to reach earlier months and nothing exposed target data on the CHTDatasourceAPI. Configurators could therefore not surface recent target progress (e.g. a CHW's last-three-months target performance) on a contact's profile.
+Contact summaries already received the contact's current-month target doc as the 6th positional argument (`targetDoc`), but there was no way to reach earlier months and nothing exposed target data on the API `CHTDatasourceService` builds for config scripts. Configurators could therefore not surface recent target progress (e.g. a CHW's last-three-months target performance) on a contact's profile.
 
 ## Root Cause
 
-This is a capability gap rather than a bug: the CHTDatasourceAPI exposed to webapp had no analytics namespace, and before this PR `contacts.effects.ts` called `getCurrentTargetDoc()` on `TargetAggregatesService` and forwarded exactly one doc — the contact's current-month target doc — into contact-summary.service.ts as the optional `targetDoc` parameter. Earlier months were never fetched.
+This is a capability gap rather than a bug: the object `CHTDatasourceService` exposes to config scripts had no analytics namespace, and before this PR `contacts.effects.ts` called `getCurrentTargetDoc()` on `TargetAggregatesService` and forwarded exactly one doc — the contact's current-month target doc — into contact-summary.service.ts as the optional `targetDoc` parameter. Earlier months were never fetched.
 
 ## Solution
 

@@ -69,7 +69,7 @@ A finite cap of 500 was chosen over unbounded fetching to balance contact-summar
 
 ## Testing
 
-Updated an e2e WebdriverIO spec (tests/e2e/default/contacts/contact-details.wdio-spec.js) to build a contact with 60 generic reports plus one pregnancy report, asserting that the contact-summary pregnancy card still appears for a contact with more than 50 reports while the RHS report and task lists each render exactly DOCS_DISPLAY_LIMIT (50) rows, backed by an updated pregnancy report factory (tests/factories/cht/reports/pregnancy.js) to generate the >50-report test scenario.
+Updated an e2e WebdriverIO spec (tests/e2e/default/contacts/contact-details.wdio-spec.js) to build a contact with 60 generic reports plus one pregnancy report, asserting that the contact-summary pregnancy card still appears for a contact with more than 50 reports while the RHS report and task lists each render exactly `DISPLAY_LIMIT` (50) rows, backed by an updated pregnancy report factory (tests/factories/cht/reports/pregnancy.js) to generate the >50-report test scenario.
 
 ## Related Issues
 

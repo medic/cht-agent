@@ -8,7 +8,7 @@ issueUrl: https://github.com/medic/cht-core/issues/9601
 title: Prevent duplicate sibling contact capture
 source_prs:
   - "medic/cht-core#9609"
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-11'
 summary: Added configurable duplicate detection on both the contact create and edit flows that compares the contact being saved against its existing siblings using a Levenshtein-based expression, surfacing potential matches to the CHW before saving.
 services:
   - webapp
@@ -42,7 +42,7 @@ The check runs on both the create and edit flows. `enketo.component.html` gains 
 - File: `webapp/src/ts/services/xml-forms-context-utils.service.ts` — provides `levenshteinEq()` and `normalizedLevenshteinEq()` utility functions
 - File: `webapp/src/ts/services/contacts.service.ts` — `getSiblings()` queries `medic-client/contacts_by_parent` view
 - File: `webapp/src/ts/services/form.service.ts` — `checkForDuplicates()` gates `saveContact`, throws `DuplicatesFoundError` if matches found
-- File: `webapp/src/ts/components/duplicate-contacts/duplicate-contacts.component.ts` — renders duplicate candidates in `mat-expansion-panel`
+- File: `webapp/src/ts/components/duplicate-contacts/duplicate-contacts.component.html` — renders duplicate candidates in `mat-expansion-panel` (the component's `.ts` holds its logic)
 - File: `webapp/src/ts/modules/contacts/contacts-edit.component.ts` — handles `DuplicatesFoundError`, manages acknowledgment state
 
 ## Design Choices
