@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 8225
 issueUrl: https://github.com/medic/cht-core/issues/8225
 title: db-object-widget fails to load contact data when inputs group is never relevant
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-12'
 summary: The select-contact feature from the db-object-widget could not load contact data into a sub-group of the inputs group when that group had relevant="false()". Fixed via a patch to enketo-core's relevance evaluation that keeps a non-relevant `inputs` branch enabled and merely marks it `disabled`.
 services:
   - webapp
@@ -42,7 +42,7 @@ Applied a patch to enketo-core (`webapp/patches/enketo-core+7.2.5.patch`) that s
 ## Design Choices
 
 - Used a patch-package patch rather than a fork or workaround, to keep the fix minimal and trackable
-- Preferred fixing at the Enketo Core level rather than working around it in CHT widget code, since the behavior was incorrect regardless of CHT-specific logic
+- Preferred patching enketo-core over a workaround in CHT widget code because relevance is evaluated inside enketo-core, so that is the only layer where the branch can be kept enabled. The patch is not a general upstream fix: it is labelled `// CHT-CORE PATCH` and hard-codes the CHT `inputs` convention (`/^\/[^/]+\/inputs$/`), which is why it lives in webapp/patches rather than going upstream
 
 ## Related Files
 
