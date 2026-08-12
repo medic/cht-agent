@@ -15,6 +15,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { isBatchFatalError } from '../llm/rate-limit';
+import { observeGeneration } from '../observability';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../utils/domain-inference';
 import { z } from 'zod';
 import type {
@@ -132,6 +133,12 @@ function getDistillChain() {
   return _distillChain;
 }
 
+function getDistillModel(): string {
+  if (isUsingCLIProvider()) return 'claude-cli';
+  if (process.env.OPENROUTER_API_KEY) return process.env.DISTILL_MODEL ?? DEFAULT_DISTILL_MODEL;
+  return ANTHROPIC_DISTILL_MODEL;
+}
+
 /**
  * Build the distillation prompt from a ScrapedPR.
  * Truncates long fields to keep cost predictable.
@@ -226,18 +233,8 @@ async function llmDistill(pr: ScrapedPR, trace?: DistillOptions['langfuseTrace']
   }
 
   const prompt = buildPrompt(pr);
-  let model = ANTHROPIC_DISTILL_MODEL;
-  if (isUsingCLIProvider()) model = 'claude-cli';
-  else if (process.env.OPENROUTER_API_KEY) model = process.env.DISTILL_MODEL ?? DEFAULT_DISTILL_MODEL;
-  const generation = trace?.generation({ name: 'distill-draft', model, input: prompt });
-  try {
-    const draft = await chain.invoke(prompt) as DistillDraft;
-    generation?.end({ output: draft });
-    return draft;
-  } catch (err) {
-    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) } });
-    throw err;
-  }
+  return await observeGeneration(trace, { name: 'distill-draft', model: getDistillModel(), input: prompt },
+    () => chain.invoke(prompt) as Promise<DistillDraft>);
 }
 
 /**

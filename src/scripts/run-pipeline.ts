@@ -316,6 +316,34 @@ async function runFilter(
   return result;
 }
 
+async function runTracedPipeline(
+  prNum: number,
+  repo: string,
+  force: boolean,
+  tag: string,
+  trace: ReturnType<typeof startTrace>['trace']
+): Promise<void> {
+  const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
+  console.log(`${tag} scraping...`);
+  const pr = scrapePR(prNum, repo);
+  console.log(`${tag} title:  ${pr.prTitle}`);
+  console.log(`${tag} labels: ${pr.labels.join(', ') || '(none)'}`);
+  console.log(`${tag} files:  ${pr.fileList.length}`);
+  scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
+
+  const filterResult = await runFilter(pr, force, tag, trace);
+  const output: Record<string, unknown> = { decision: filterResult.decision, reason: filterResult.reason };
+  if (filterResult.decision === 'distill') {
+    console.log(`${tag} distilling...`);
+    const distillResult = await distillPR(pr, { langfuseTrace: trace });
+    console.log(`${tag} distill: ${distillResult.status} — ${distillResult.reason}`);
+    if (distillResult.outputPath) console.log(`${tag} output: ${distillResult.outputPath}`);
+    trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
+    output.distillStatus = distillResult.status;
+  }
+  trace.update({ output });
+}
+
 export async function processSinglePR(
   prNum: number,
   repo: string,
@@ -334,28 +362,7 @@ export async function processSinglePR(
   });
 
   try {
-    const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
-    console.log(`${tag} scraping...`);
-    const pr = scrapePR(prNum, repo);
-    console.log(`${tag} title:  ${pr.prTitle}`);
-    console.log(`${tag} labels: ${pr.labels.join(', ') || '(none)'}`);
-    console.log(`${tag} files:  ${pr.fileList.length}`);
-    scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
-
-    const filterResult = await runFilter(pr, force, tag, trace);
-    const output: Record<string, unknown> = { decision: filterResult.decision, reason: filterResult.reason };
-
-    if (filterResult.decision === 'distill') {
-      console.log(`${tag} distilling...`);
-      const distillResult = await distillPR(pr, { langfuseTrace: trace });
-      console.log(`${tag} distill: ${distillResult.status} — ${distillResult.reason}`);
-      if (distillResult.outputPath) {
-        console.log(`${tag} output: ${distillResult.outputPath}`);
-      }
-      trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
-      output.distillStatus = distillResult.status;
-    }
-    trace.update({ output });
+    await runTracedPipeline(prNum, repo, force, tag, trace);
   } catch (err) {
     trace.update({ output: { error: errorMessage(err) } });
     throw err;

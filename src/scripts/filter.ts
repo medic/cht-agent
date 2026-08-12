@@ -14,6 +14,7 @@ import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { isBatchFatalError } from '../llm/rate-limit';
+import { observeGeneration } from '../observability';
 import { z } from 'zod';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
 import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
@@ -181,6 +182,12 @@ function getTriageChain() {
   return _triageChain;
 }
 
+function getTriageModel(): string {
+  if (isUsingCLIProvider()) return 'claude-cli';
+  if (process.env.OPENROUTER_API_KEY) return process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL;
+  return 'claude-haiku-4-5-20251001';
+}
+
 /**
  * Call the LLM to triage a PR that didn't match deterministic rules.
  * Returns flag-for-human if no API key is set. Errors from the LLM call are
@@ -219,19 +226,9 @@ ${body}
 
 Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<one sentence>" }`;
 
-  let model = 'claude-haiku-4-5-20251001';
-  if (isUsingCLIProvider()) model = 'claude-cli';
-  else if (process.env.OPENROUTER_API_KEY) model = process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL;
-  const generation = trace?.generation({ name: 'triage-classify', model, input: prompt });
-  try {
-    const result = await chain.invoke(prompt) as TriageOutput;
-    const output = { decision: result.decision as FilterDecision, reason: result.reason };
-    generation?.end({ output });
-    return output;
-  } catch (err) {
-    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) } });
-    throw err;
-  }
+  const result = await observeGeneration(trace, { name: 'triage-classify', model: getTriageModel(), input: prompt },
+    () => chain.invoke(prompt) as Promise<TriageOutput>);
+  return { decision: result.decision as FilterDecision, reason: result.reason };
 }
 
 /**
