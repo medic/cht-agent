@@ -28,8 +28,8 @@ In `contacts.effects.ts`, the code read the contact type directly from `contact?
 ## Solution
 
 PR #9276 replaced the direct field access with a call to `contactTypesService.getTypeId(contact?.doc)`, which delegates to `contactTypesUtils.getTypeId()` from the shared lib. This utility correctly handles both schemas:
-- Legacy: `doc.type !== 'contact'` -> returns `doc.type` (e.g., `"person"`)
-- New-style: `doc.type === 'contact'` -> returns `doc.contact_type` (e.g., `"hospital"`, which is the type the karma spec exercises; the case reported on #9264 was a `clinic`, resolved by the same branch)
+- Legacy: `doc.type !== 'contact'` -> returns `doc.type` (e.g., `"person"`, and the `clinic` reported on #9264 — that is the branch the reported case takes)
+- New-style: `doc.type === 'contact'` -> returns `doc.contact_type` (e.g., `"hospital"`, the type the karma spec exercises for this branch)
 
 ## Code Patterns
 
