@@ -7,7 +7,7 @@ issueNumber: 9065
 issueUrl: https://github.com/medic/cht-core/issues/9065
 title: Introduce cht-datasource shared data-access library (converted from cht-script-api) with get-person-by-UUID over local/remote data contexts
 lastUpdated: '2026-08-11'
-summary: CHT had no unified, context-aware data-access layer for fetching domain entities consistently across server, client, and custom config code. This PR converts cht-script-api into a new cht-datasource TypeScript library exposing person.getByUuid through both imperative and declarative APIs over local (offline) and remote (online) data contexts.
+summary: CHT had no unified, context-aware data-access layer for fetching domain entities consistently across server, client, and custom config code. This PR converts cht-script-api into a new cht-datasource TypeScript library exposing get-person-by-uuid through both an imperative and a declarative API over local (offline) and remote (online) data contexts — `datasource.v1.person.getByUuid(uuid)` imperatively, `Person.v1.get(ctx)(Qualifier.byUuid(uuid))` declaratively.
 services:
   - api
   - sentinel
