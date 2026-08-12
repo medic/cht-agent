@@ -64,4 +64,4 @@ PR #9204 added defensive normalization at multiple consumption points:
 
 ## Related Issues
 
-- PR #9128: the Admin multi-select facility picker that changed `facility_id` from a `string` to an `Array`, creating the older-database shape this fix tolerates
+- PR #9128: the Admin multi-select facility picker that changed `facility_id` from a `string` to an `Array`. It created the new array shape, not the legacy string one — the string is what pre-#9128 databases still hold, and tolerating both is what this fix adds

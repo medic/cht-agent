@@ -47,8 +47,11 @@ stale: false
 ---
 
 > **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
-> cht-datasource library itself rather than a contacts feature. It stays in `contacts`
-> until the taxonomy lands — `data-access` is not yet a valid `domain` value in
+> cht-datasource library itself, so under the proposed taxonomy its primary domain would
+> be `data-access` with `contacts` secondary. Among the nine domains that exist today
+> `contacts` is still the closest fit, which is what the Domain Rationale below argues —
+> the two statements are about different taxonomies, not in conflict. It stays in
+> `contacts` until the new one lands — `data-access` is not yet a valid `domain` value in
 > `agent-memory/schema.json` (PR #152 adds it and is unmerged), and relocating a draft
 > before #135 adds union selection would drop it from `contacts` retrieval entirely.
 > Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.

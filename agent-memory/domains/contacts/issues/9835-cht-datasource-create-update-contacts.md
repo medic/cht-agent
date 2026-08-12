@@ -6,7 +6,7 @@ subDomain: cht-datasource
 issueNumber: 9835
 issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Add cht-datasource APIs for creation and update of contacts and reports
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-11'
 summary: Extended cht-datasource with create and update operations for Person, Place, and Report, exposed as both a TypeScript API and REST endpoints, with a major internal refactoring of validation, lineage handling, and auth.
 source_prs:
   - "medic/cht-core#10022"
@@ -22,8 +22,11 @@ techStack:
 ---
 
 > **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
-> cht-datasource library itself rather than a contacts feature. It stays in `contacts`
-> until the taxonomy lands — `data-access` is not yet a valid `domain` value in
+> cht-datasource library itself, so under the proposed taxonomy its primary domain would
+> be `data-access` with `contacts` secondary. Among the nine domains that exist today
+> `contacts` is still the closest fit, which is what the Domain Rationale below argues —
+> the two statements are about different taxonomies, not in conflict. It stays in
+> `contacts` until the new one lands — `data-access` is not yet a valid `domain` value in
 > `agent-memory/schema.json` (PR #152 adds it and is unmerged), and relocating a draft
 > before #135 adds union selection would drop it from `contacts` retrieval entirely.
 > Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
