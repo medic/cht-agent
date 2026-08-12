@@ -46,7 +46,7 @@ PR #9593 added a `replicate_primary_contacts: true` config option per role in `r
 
 - Opt-in per role via `replicate_primary_contacts: true` rather than making it default, to avoid unexpected replication changes for existing deployments
 - Primary contacts' reports and targets replicate automatically because their subject IDs are added to the allowed set — no separate mechanism needed
-- The view value shape change was accepted as a breaking change rather than adding a separate view, to avoid maintaining two views for the same data
+- Two views were touched, for two different lookups, and only one of them was new. To expose a contact's `primary_contact` alongside its shortcode, `contacts_by_depth`'s emitted value was widened from a bare string to `{shortcode, primary_contact}` — accepted as a breaking change rather than adding a second depth-keyed view carrying the same rows. The genuinely new view, `contacts_by_primary_contact`, answers the opposite question (which places name a given person as their contact) and has no existing view to fold into
 - Among the roles tied at that highest depth, `replicate_primary_contacts: true` on any one of them enables it (most permissive wins within the tie); a role at a lower depth never contributes
 - `getScopedAuthorizationContext` re-runs `populateAllowedSubjectIds` in a `do...while` loop because a primary contact is only admitted once its place has already been added to `subjectIds`, and a single pass visits contacts in arbitrary order
 
