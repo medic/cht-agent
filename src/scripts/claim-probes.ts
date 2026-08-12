@@ -973,7 +973,11 @@ export function entityIsTimeScoped(text: string, entity: string): boolean {
  */
 const FORWARD_SCOPED = new RegExp([
   'replaced by', 'renamed to', 'superseded by', 'since renamed',
-  'current master', 'on master', 'today',
+  // "on master" and the possessive "master's <file>" are the same marker; a
+  // drift note naturally reaches for the second ("master's input.ts is
+  // types-only") and without it the claim is judged at the anchor, where a
+  // master-era symbol correctly does not exist.
+  'current master', 'on master', "master'?s", 'today',
   'now (?:lives|reads|tests|uses|is|are|called|spelled)',
   // NOT 'moved to': anchor-era prose says "the guard moved to the top of the
   // function", meaning the PR moved it — not that the current tree differs.
