@@ -197,6 +197,15 @@ describe('relinkIssues (classification)', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('offline: parses an explicit low-number issue token', () => {
+    const dir = tmpDir();
+    makeDraft(dir, { name: '200-issue-137-fix-137-x.md', issueNumber: 200, pr: 200 });
+    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-issue-137-fix-137-x.md');
+    expect(r.status).to.equal('relinked');
+    expect(r.to).to.equal(137);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('detects the new→old collision and surfaces the shared issue number', () => {
     const dir = tmpDir();
     makeDraft(dir, { name: '9559-fix9467-x.md', issueNumber: 9559, pr: 9559 }); // relinks → 9467

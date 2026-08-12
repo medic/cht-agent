@@ -409,6 +409,17 @@ describe('run-pipeline skipEntriesForRun', () => {
     const { skipEntriesForRun } = loadPipeline();
     expect(skipEntriesForRun([1], '/no/such/file.ndjson')).to.deep.equal([]);
   });
+
+  it('excludes entries written before this run even for the same PR', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-recon-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    const historical = JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'old', timestamp: 't' }) + '\n';
+    fs.writeFileSync(logPath, historical);
+    fs.appendFileSync(logPath, JSON.stringify({ prNumber: 10, decision: 'flag-for-human', reason: 'new', timestamp: 't' }) + '\n');
+    const { skipEntriesForRun } = loadPipeline();
+    expect(skipEntriesForRun([10], logPath, Buffer.byteLength(historical)).map((entry: { reason: string }) => entry.reason))
+      .to.deep.equal(['new']);
+  });
 });
 
 describe('run-pipeline prNumbersFromDrafts', () => {

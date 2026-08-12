@@ -455,7 +455,7 @@ function parseSkipLogLine(line: string): SkipLogEntry | null {
  * const entries = skipEntriesForRun([42], DEFAULT_PIPELINE_LOG_PATH);
  * ```
  */
-export function skipEntriesForRun(prNumbers: number[], logPath: string): SkipLogEntry[] {
+export function skipEntriesForRun(prNumbers: number[], logPath: string, startOffset = 0): SkipLogEntry[] {
   const wanted = new Set(prNumbers);
   let log: string;
   try {
@@ -463,13 +463,13 @@ export function skipEntriesForRun(prNumbers: number[], logPath: string): SkipLog
   } catch {
     return [];
   }
-  return log.split('\n')
+  return log.slice(startOffset).split('\n')
     .map(parseSkipLogLine)
     .filter((e): e is SkipLogEntry => e !== null && wanted.has(e.prNumber));
 }
 
 /** Print the run summary and exit non-zero on abort or failures. */
-function reportOutcome(total: number, state: BatchState, prNumbers: number[]): void {
+function reportOutcome(total: number, state: BatchState, prNumbers: number[], auditOffset: number): void {
   console.log(`\n${'─'.repeat(60)}`);
   if (state.abortKind === 'auth') {
     console.log('Stopped early: Claude authentication failed (401). Re-login in the container — `docker exec -it cht-seeder claude` then run /login — and re-run with --resume.');
@@ -480,7 +480,7 @@ function reportOutcome(total: number, state: BatchState, prNumbers: number[]): v
     process.exit(RATE_LIMIT_EXIT_CODE);
   }
   console.log(`Done. Processed ${total} PR(s), ${state.failures} failure(s).`);
-  console.log(formatReconciliation(reconcile(skipEntriesForRun(prNumbers, DEFAULT_PIPELINE_LOG_PATH))));
+  console.log(formatReconciliation(reconcile(skipEntriesForRun(prNumbers, DEFAULT_PIPELINE_LOG_PATH, auditOffset))));
   // ponytail: >0 is a reporting threshold, not a gate — entities may legitimately
   // name a module/concept rather than a literal path, so some drift is expected.
   const unverified = state.hallucinationRates.filter(r => r > 0).length;
@@ -489,12 +489,15 @@ function reportOutcome(total: number, state: BatchState, prNumbers: number[]): v
 }
 
 export async function runPipeline(prNumbers: number[], repo: string, force = false, concurrency = 1): Promise<void> {
+  const auditOffset = (() => {
+    try { return fs.statSync(DEFAULT_PIPELINE_LOG_PATH).size; } catch { return 0; }
+  })();
   const state: BatchState = { failures: 0, nextIndex: 0, abortKind: null, hallucinationRates: [] };
   const ctx: BatchCtx = { prNumbers, repo, force, parallel: concurrency > 1, state };
   const count = Math.min(concurrency, prNumbers.length);
   const workers = Array.from({ length: count }, () => runWorker(ctx));
   await Promise.all(workers);
-  reportOutcome(prNumbers.length, state, prNumbers);
+  reportOutcome(prNumbers.length, state, prNumbers, auditOffset);
 }
 
 /**

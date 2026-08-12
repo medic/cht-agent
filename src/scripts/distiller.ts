@@ -271,6 +271,11 @@ export function slugify(text: string): string {
   return slug || 'untitled';
 }
 
+function issueToken(title: string): string {
+  const match = /^(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)\s*\(\s*#([1-9]\d*)\s*\)/i.exec(title);
+  return match ? `issue-${match[1]}-` : '';
+}
+
 /** Backport marker: a "(cherry picked from commit ...)" note or a trailing "(#NNNN)" title suffix. */
 const BACKPORT_MARKER = /(cherry[- ]?picked from commit)|(\(#\d+\)\s*$)/i;
 
@@ -506,7 +511,7 @@ export async function distillPR(
 
   const markdown = renderMarkdown(frontmatter, draft);
   const slug = slugify(pr.prTitle);
-  const filename = `${pr.prNumber}-${slug}.md`;
+  const filename = `${pr.prNumber}-${issueToken(pr.prTitle)}${slug}.md`;
   const domainDir = path.join(outputDir, draft.domain);
 
   await fs.promises.mkdir(domainDir, { recursive: true });

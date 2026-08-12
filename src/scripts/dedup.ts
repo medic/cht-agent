@@ -63,7 +63,8 @@ export function issueEqualsSourcePr(frontmatter: Record<string, unknown>): boole
 export function slugIssueNumber(filePath: string): number | null {
   const base = path.basename(filePath, '.md');
   const m = FILENAME_TOKEN_RE.exec(base);
-  return m ? Number.parseInt(m[2], 10) : null;
+  const issue = m?.[2] ?? m?.[3];
+  return issue ? Number.parseInt(issue, 10) : null;
 }
 
 /**

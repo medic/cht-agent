@@ -798,4 +798,14 @@ describe('buildFrontmatter — related_issues', () => {
     expect(fm.source_pr).to.equal('medic/cht-interoperability#42');
     expect(fm.related_issues).to.deep.equal(['cht-interoperability-100']);
   });
+
+  it('uses an explicit filename token for low-numbered conventional-commit issues', async () => {
+    const { distillPR } = loadDistiller();
+    const result = await distillPR(makePR({ prTitle: 'fix(#137): restore sync' }), {
+      outputDir: tmpOutputDir(),
+      logPath: tmpLogPath(),
+      distillFn: async () => makeDraft(),
+    });
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-137-fix-137-/);
+  });
 });
