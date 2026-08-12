@@ -165,6 +165,23 @@ function writeSkipEntry(logPath: string, draftPath: string, reason: string): voi
   fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
 }
 
+function auditOffset(logPath: string): number {
+  try { return fs.statSync(logPath).size; } catch { return 0; }
+}
+
+function reconciliationSince(logPath: string, offset: number): string {
+  try {
+    const entries = fs.readFileSync(logPath).subarray(offset).toString('utf8')
+      .split('\n')
+      .flatMap(line => {
+        try { return [JSON.parse(line) as SkipLogEntry]; } catch { return []; }
+      });
+    return formatReconciliation(reconcile(entries));
+  } catch {
+    return '';
+  }
+}
+
 const MAX_BRANCH_SUFFIX = 99;
 
 /**
@@ -566,6 +583,7 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
 // CLI entry point
 if (require.main === module) {
   const apply = process.argv.includes('--apply');
+  const offset = auditOffset(DEFAULT_PIPELINE_LOG_PATH);
 
   if (!apply) {
     console.log('Dry-run — pass --apply to create PRs\n');
@@ -586,14 +604,6 @@ if (require.main === module) {
     console.log('No pending drafts found.');
   }
 
-  try {
-    const entries = fs.readFileSync(DEFAULT_PIPELINE_LOG_PATH, 'utf8')
-      .split('\n')
-      .flatMap(line => {
-        try { return [JSON.parse(line) as SkipLogEntry]; } catch { return []; }
-      });
-    console.log(formatReconciliation(reconcile(entries)));
-  } catch {
-    // No audit log yet.
-  }
+  const reconciliation = reconciliationSince(DEFAULT_PIPELINE_LOG_PATH, offset);
+  if (reconciliation) console.log(reconciliation);
 }

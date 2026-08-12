@@ -46,8 +46,8 @@ describe('slugIssueNumber', () => {
     expect(slugIssueNumber('10043-fix-a-typo.md')).to.be.null;
   });
 
-  it('extracts the issue number from the new hyphen-separated slug format', () => {
-    expect(slugIssueNumber('10043-feat-10036-add-thing.md')).to.equal(10036);
+  it('extracts the issue number from an explicit issue token', () => {
+    expect(slugIssueNumber('10043-issue-10036-feat-10036-add-thing.md')).to.equal(10036);
   });
 
   it('does not mistake descriptive numbers for issue references', () => {
