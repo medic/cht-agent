@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10040
 issueUrl: https://github.com/medic/cht-core/issues/10040
 title: Add report-create support to the cht-datasource local adapter
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: The cht-datasource local (direct-database) adapter could read reports but had no way to create them. This PR added `createReport` to the local report adapter, taking a `ReportQualifier`; the #10083 epic squash reshaped that into `Local.Report.v1.create` taking an `Input.v1.ReportInput`, which is the form on master.
 services:
   - api
@@ -72,7 +72,7 @@ Note the naming, because it is the trap here: `createReport` is real at this PR'
 
 ## Code Patterns
 
-Local adapter create-operation pattern in cht-datasource: implement the create operation in `src/local/<entity>.ts` mirroring the datasource abstraction. This PR passed a `ReportQualifier` and guarded against `_rev`; the epic then moved the surface to a typed input object from `src/input.ts` (`Input.v1.ReportInput`), which is the shape to follow today — qualifiers identify existing docs for reads, so a create path taking one was the thing the epic corrected. Establishes the template for adding further local create operations and keeping local/remote contexts at parity. The corresponding remote/API pattern (PR #10099): domain module (src/report.ts) exposes `create` → adapts to the remote adapter (src/remote/report.ts) for the HTTP POST → API controller (api/src/controllers/report.js) handles the request → route registered in api/src/routing.js → shared argument validation in src/libs/parameter-validators.ts, mirroring the existing person.ts and place.ts implementations.
+Local adapter create-operation pattern in cht-datasource: implement the create operation in `src/local/<entity>.ts` mirroring the datasource abstraction. This PR passed a `ReportQualifier` and guarded against `_rev`; the epic then moved the surface to a typed input object from `src/input.ts` (`Input.v1.ReportInput`), which is the shape to follow today — qualifiers identify existing docs for reads, so a create path taking one was the thing the epic corrected. Establishes the template for adding further local create operations and keeping local/remote contexts at parity. The corresponding remote/API pattern (PR #10099): domain module (src/report.ts) exposes `create` → adapts to the remote adapter (src/remote/report.ts) for the HTTP POST → API controller (api/src/controllers/report.js) handles the request → route registered in api/src/routing.js → shared argument validation in src/libs/parameter-validators.ts, mirroring person.ts, whose create path was already standing on the epic branch — place.ts's equivalent was not, and was added alongside this work by the same #10099 (see Problem).
 
 ## Design Choices
 
