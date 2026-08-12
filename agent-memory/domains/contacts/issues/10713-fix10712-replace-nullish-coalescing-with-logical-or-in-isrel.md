@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10712
 issueUrl: https://github.com/medic/cht-core/issues/10712
 title: Fix isRelevantChange using nullish coalescing (??) instead of logical OR (||), which made isRelevantContact/isRelevantReport dead code
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: ContactChangeFilterService.isRelevantChange() chained its three checks with `??` instead of `||`; since matchContact() returns a boolean, `false ?? expr` short-circuits to false and the isRelevantContact/isRelevantReport branches were never evaluated. The operator was switched to `||` and test coverage added for the previously unreachable paths.
 services:
   - webapp
@@ -69,7 +69,7 @@ Minimal, targeted operator swap (`??` → `||`) restores the originally intended
 
 ## Testing
 
-Added/updated Karma unit tests in webapp/tests/karma/ts/services/contact-change-filter.service.spec.ts to cover the previously dead isRelevantContact and isRelevantReport code paths, verifying isRelevantChange returns true when only those checks match.
+Updated the Karma unit spec webapp/tests/karma/ts/services/contact-change-filter.service.spec.ts (modified, not added) to cover the previously dead isRelevantContact and isRelevantReport code paths, verifying isRelevantChange returns true when only those checks match.
 
 ## Related Issues
 

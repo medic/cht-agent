@@ -92,7 +92,7 @@ Paths as touched on the 4.4.1-FR-barcode branch at the #8684 anchor (2023-11-16)
 
 ## Testing
 
-Added/updated Karma unit tests for the search-bar component (search-bar.component.spec.ts) and extended the existing browser-detector spec (browser-detector.service.spec.ts), covering support detection and scan/search behavior. End-to-end automation coverage was left to a planned follow-up PR that never reached master.
+Updated the Karma unit spec for the search-bar component (search-bar.component.spec.ts — modified, not added) and extended the existing browser-detector spec (browser-detector.service.spec.ts), covering support detection and scan/search behavior. End-to-end automation coverage was left to a planned follow-up PR that never reached master.
 
 ## Related Issues
 
