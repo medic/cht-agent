@@ -60,16 +60,17 @@ stale: true
 > `isPlaceQualifier` no longer exist anywhere in the tree — they were replaced by `PlaceInput`
 > in `src/input.ts` (#10094) — `v1.createPlace` is now `v1.create`, master's `src/input.ts` is
 > types-only (zero runtime declarations), and the create-time parent-fetch /
-> contact_type-check / lineage-shaping logic now lives in `src/local/libs/lineage.ts`
-> (`assertHasValidParentType`, `minifyDoc`). The prose below deliberately describes the state
-> at each cited PR, not master's shape; hence `stale: true`. Read every present-tense sentence
-> below as scoped to its cited PR.
+> contact_type-check / lineage-shaping logic lives on master in
+> `src/local/libs/lineage.ts`, as `assertHasValidParentType` and `minifyDoc`.
+> The prose below deliberately describes the state at each cited PR, not master's
+> shape; hence `stale: true`. Read every present-tense sentence below as scoped to
+> its cited PR.
 
 ## Problem
 
 The cht-datasource data-access library provided qualifiers for other entity types but had no dedicated PlaceQualifier, so callers could not cleanly qualify/identify place contacts or validate place-specific identifiers through the unified datasource API.
 
-Beyond the qualifier gap, the library exposed only read operations for places (get / getWithLineage / getPage / getAll) with no create path (PR #10065, PR #10089), no cht-datasource-backed create endpoint — the legacy `POST /api/v1/places` route existed but went through `api/src/services/places`, bypassing the datasource (PR #10089) — no `parent`-field validation on the local place create input (PR #10108), and — on create — stored the `parent`/`contact` fields as plain string IDs rather than the dehydrated nested lineage structure the rest of CHT relies on, with no check that the parent's contact_type was an allowed parent (PR #10124).
+Beyond the qualifier gap, the library exposed only read operations for places (get / getWithLineage / getPage / getAll) with no create path (PR #10065, PR #10089), no cht-datasource-backed create endpoint — the legacy `POST /api/v1/places` route existed but went through `shared-libs/contacts/src/places.js`, bypassing the datasource (PR #10089) — no `parent`-field validation on the local place create input (PR #10108), and — on create — stored the `parent`/`contact` fields as plain string IDs rather than the dehydrated nested lineage structure the rest of CHT relies on, with no check that the parent's contact_type was an allowed parent (PR #10124).
 
 ## Root Cause
 

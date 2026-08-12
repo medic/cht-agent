@@ -65,7 +65,7 @@ stale: true
 
 ## Problem
 
-The cht-datasource library had no `PersonQualifier` or supporting functions to identify and validate person documents, blocking the planned ability to create `person` documents through the datasource API. Building on this, the datasource exposed only read/get operations for persons and had no way to persist a new Person: no `createPerson` in the local implementation (PR #10056), no `createPerson` in the person concept module or remote implementation, and no cht-datasource-backed `POST /api/v1/person` route — the legacy `POST /api/v1/people` route existed but went through `api/src/services/people`, bypassing the datasource (PR #10061).
+The cht-datasource library had no `PersonQualifier` or supporting functions to identify and validate person documents, blocking the planned ability to create `person` documents through the datasource API. Building on this, the datasource exposed only read/get operations for persons and had no way to persist a new Person: no `createPerson` in the local implementation (PR #10056), no `createPerson` in the person concept module or remote implementation, and no cht-datasource-backed `POST /api/v1/person` route — the legacy `POST /api/v1/people` route existed but went through `shared-libs/contacts/src/people.js`, bypassing the datasource (PR #10061).
 
 ## Root Cause
 
