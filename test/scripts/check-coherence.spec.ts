@@ -98,6 +98,11 @@ describe('check-coherence', () => {
       'This is a minor framing difference rather than a factual conflict.',
       'A wording nit rather than a contradiction.',
       'That is a difference of emphasis rather than an inconsistency.',
+      // contacts 9177: the model cleared the pair by saying the two statements
+      // can coexist, without ever using the word "conflict".
+      'This is a difference of issue-vs-PR attribution, not necessarily exclusive.',
+      'The two accounts are not mutually exclusive.',
+      'Not strictly exclusive — one names the issue, the other the PR.',
     ].forEach(why => {
       it(`discards a pair the model withdraws in its own rationale: "${why}"`, () => {
         const { kept, discarded } = verifyContradictions(draftInput(), [

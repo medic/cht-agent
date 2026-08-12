@@ -135,17 +135,26 @@ const SELF_NEGATING =
   /\b(?:do(?:es)?\s+not|don't|doesn't|no|not\s+a|aren't|are\s+not|is\s+not|isn't)\s+(?:\w+\s+){0,3}?(?:conflict|contradict|contradiction|contradictory|inconsistent|incompatible)/i;
 
 /**
- * The other way the model withdraws a pair: not by negating "conflict" but by
- * downgrading it — "a minor framing difference rather than a factual conflict".
- * SELF_NEGATING wants a negation adjacent to the noun and finds none here, so
- * the pair was filed and a human sent to adjudicate something already cleared.
+ * The other ways the model withdraws a pair. It rarely says "these do not
+ * conflict" twice the same way, and each variant that slips through costs a
+ * human an adjudication of something already cleared:
+ *
+ *   downgraded  "a minor framing difference rather than a factual conflict"
+ *   compatible  "a difference of issue-vs-PR attribution, not necessarily
+ *                exclusive" — the two statements are simply both true
+ *
+ * Both observed on contacts, one round apart, after SELF_NEGATING was already
+ * in place. Keyed on the withdrawal phrase itself, not on the noun, because the
+ * noun is exactly what these variants avoid naming.
  */
 const DOWNGRADED =
   /\brather\s+than\s+(?:an?\s+)?(?:\w+\s+){0,3}?(?:conflict|contradiction|inconsistency|incompatibility)/i;
 
+const NOT_EXCLUSIVE = /\bnot\s+(?:necessarily\s+|strictly\s+|mutually\s+)*exclusive\b/i;
+
 /** True when the model's own rationale withdraws the pair it just filed. */
 export const whyWithdrawsPair = (why: string): boolean =>
-  SELF_NEGATING.test(why) || DOWNGRADED.test(why)
+  SELF_NEGATING.test(why) || DOWNGRADED.test(why) || NOT_EXCLUSIVE.test(why)
   || /\b(?:both\s+can\s+be|can\s+both\s+be)\s+true\b/i.test(why)
   || /\b(?:these|they)\s+are\s+consistent\b/i.test(why);
 
