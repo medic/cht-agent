@@ -603,6 +603,7 @@ function describeClaim(claim: Claim): string {
     case 'file-touched': return `\`${claim.file}\` ${claim.status ? `was not ${claim.status}` : 'was not touched'} by this PR`;
     case 'path-exists': return `\`${claim.file}\` does not exist`;
     case 'release-branch': return `not backported to \`${claim.branch}\``;
+    case 'introduced-by': return `\`${claim.symbol}\` was not introduced by #${claim.prNumber}`;
   }
 }
 

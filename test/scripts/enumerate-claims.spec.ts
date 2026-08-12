@@ -342,4 +342,37 @@ describe('enumerate-claims', () => {
       expect((hits[0] as { status?: string }).status).to.equal('added');
     });
   });
+
+  describe('introduced-by — attribution, not existence', () => {
+    const credited = (prose: string, symbol: string): number | undefined => {
+      const c = enumerateClaims(`## Solution\n\n${prose}\n`)
+        .find(x => x.kind === 'introduced-by' && (x as { symbol: string }).symbol === symbol);
+      return (c as { prNumber?: number } | undefined)?.prNumber;
+    };
+
+    it('credits the sole PR in a create sentence', () => {
+      // The #10071 shape: one PR named, one symbol, a create verb.
+      expect(credited('The place half was added by PR #10099, which exports `createPlace`.', 'createPlace'))
+        .to.equal(10099);
+    });
+
+    it('stays silent when two PRs share the sentence', () => {
+      // A correct draft spanning PRs looks exactly like this; guessing one would
+      // invent a defect.
+      expect(credited("place's `createPlace` landed via #10065 and #10089.", 'createPlace'))
+        .to.equal(undefined);
+    });
+
+    it('stays silent without a create verb', () => {
+      expect(credited('#10099 aligned validation around `createPlace`.', 'createPlace'))
+        .to.equal(undefined);
+    });
+
+    it('still emits the plain symbol claim alongside', () => {
+      const claims = enumerateClaims('## Solution\n\nPR #10099 added `createPlace`.\n');
+      expect(claims.some(c => c.kind === 'symbol' && (c as { symbol: string }).symbol === 'createPlace')).to.equal(true);
+      expect(claims.some(c => c.kind === 'introduced-by')).to.equal(true);
+    });
+  });
+
 });

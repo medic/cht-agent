@@ -211,6 +211,27 @@ export function claimedStatus(quote: string, file: string): 'added' | 'deleted' 
   return del > add ? 'deleted' : 'added';
 }
 
+/**
+ * A sentence crediting exactly one PR with creating something: "#10099 added X",
+ * "X was introduced by PR #10099". Returns that PR number, or undefined when the
+ * sentence is not an attribution or the credit is not unambiguous.
+ *
+ * Deliberately narrow, because the failure mode is expensive in one direction.
+ * Two PR numbers in the same sentence ("place's via #10065 and #10089") is the
+ * shape a *correct* draft uses when work spans PRs, so crediting either one and
+ * probing it would manufacture a defect out of an accurate sentence. A past
+ * tense create verb must also be present: "#10099 aligned their validation" is
+ * an attribution about a PR that introduces nothing.
+ */
+const CREATE_CREDIT =
+  /\b(?:add(?:ed|s)|introduc(?:ed|es)|creat(?:ed|es)|implement(?:ed|s))\b/i;
+
+export function solePrCredit(quote: string): number | undefined {
+  if (!CREATE_CREDIT.test(quote)) return undefined;
+  const prs = [...new Set([...quote.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10)))];
+  return prs.length === 1 ? prs[0] : undefined;
+}
+
 /** Inline-code spans: `foo`. */
 const BACKTICK_RE = /`([^`\n]+)`/g;
 
@@ -495,6 +516,16 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
     const { quote } = lineContaining(lines, m[1]);
     if (ABSENCE_CONTEXT.test(quote)) continue;       // the draft says it is gone
     add({ kind: 'symbol', symbol: tok, quote });
+
+    // "#10099 added `createPlace`" / "`createPlace` was added by PR #10099" —
+    // an attribution rather than an existence claim, and a separate probe. Only
+    // emitted when one PR reference governs the sentence: two numbers in the
+    // same clause ("#10065 and #10089") make the credit ambiguous, and guessing
+    // which one is meant is how a true sentence gets reported as a defect.
+    const creditedPr = solePrCredit(quote);
+    if (creditedPr !== undefined) {
+      add({ kind: 'introduced-by', symbol: tok, prNumber: creditedPr, quote });
+    }
   }
 
   return opts.max ? out.slice(0, opts.max) : out;

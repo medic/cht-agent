@@ -78,7 +78,20 @@ export type Claim =
   /** `file` must exist in the tree at the anchor. */
   | { kind: 'path-exists'; file: string; quote: string; scope?: ClaimScope }
   /** A claimed backport line must exist and contain the anchor commit. */
-  | { kind: 'release-branch'; branch: string; quote: string };
+  | { kind: 'release-branch'; branch: string; quote: string }
+  /**
+   * "PR #N introduced `symbol`" — an attribution, not an existence claim.
+   *
+   * The other symbol probes ask whether an identifier is real. This asks who put
+   * it there, which is a different question and the one the corpus keeps getting
+   * wrong: every symbol in the sentence exists, every section agrees, and the
+   * credited PR is simply not the one that added it. #10071 credited place-create
+   * to #10099 when #10065 and #10089 had landed it a week earlier; nothing that
+   * checks existence can see that.
+   *
+   * Settled in the one direction that is cheap and safe — see checkIntroducedBy.
+   */
+  | { kind: 'introduced-by'; symbol: string; prNumber: number; quote: string };
 
 /**
  * Which tree the verdict was proven against.
@@ -741,6 +754,79 @@ function findCherryPick(ctx: ProbeCtx, prNumber: number | undefined): string[] {
   return raw.flatMap(sha => branchesContaining(ctx, sha));
 }
 
+/**
+ * "PR #N introduced `symbol`", settled in ONE direction only.
+ *
+ * Proving who added a symbol is genuinely hard: an epic squash rewrites
+ * authorship, a cherry-pick duplicates it, and `git log -S` on a rebased branch
+ * points at whichever copy survived. Asking "did #N add this?" invites a false
+ * accusation every time provenance is untidy — which, in this corpus, is most of
+ * the time.
+ *
+ * The refutation is easy and safe, though, and it is the half that catches real
+ * defects. Two tree-wide tests were tried first and BOTH produce false
+ * accusations, which is worth recording because each looks correct until run:
+ *
+ *   "the symbol exists at #N's parent" — refutes #10065 introducing
+ *   `createPlace`, which it genuinely does, because the old `places` controller
+ *   had an unrelated `createPlace` elsewhere in the tree. Name collisions across
+ *   modules make any tree-wide presence test useless here.
+ *
+ *   "the symbol appears on an added line of #N's diff" — accepts #10099
+ *   introducing `createPlace`, which it does not, because its one added line
+ *   mentioning the symbol is an import edit in an unrelated file.
+ *
+ * What separates them is locality. For every file where #N adds a line naming
+ * the symbol, ask whether that same file already contained it at #N's parent. If
+ * every such file already had it, #N edited around a symbol that was already
+ * there; if some file gained it, #N introduced it there. Same-named functions in
+ * other modules cannot interfere, because only the files #N touched are read.
+ *
+ * Anything that cannot be established this way — PR unresolvable, no added line
+ * names the symbol, parent missing — is `unverifiable`: never a pass, never a
+ * defect.
+ */
+function checkIntroducedBy(
+  ctx: ProbeCtx, claim: Claim & { kind: 'introduced-by' }, repo = CHT_CORE_REPO
+): Verdict {
+  const pr = resolveAnchor(ctx, { prNumber: claim.prNumber, repo });
+  if (!pr) {
+    return verdict(claim, 'unverifiable',
+      `#${claim.prNumber} does not resolve to a commit in this checkout — cannot test what preceded it`);
+  }
+  const parent = `${pr.sha}^`;
+  if (!commitExists(ctx, parent)) {
+    return verdict(claim, 'unverifiable',
+      `${refLabel(pr.sha)} has no reachable parent here — cannot test what preceded #${claim.prNumber}`);
+  }
+
+  // Files where this PR adds a line naming the symbol.
+  const diff = git(ctx, ['show', pr.sha, '--format=', '--unified=0']);
+  const word = new RegExp(`\\b${claim.symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+  const files: string[] = [];
+  let current = '';
+  for (const line of diff.split('\n')) {
+    if (line.startsWith('+++ b/')) current = line.slice(6);
+    else if (line.startsWith('+') && current && word.test(line) && !files.includes(current)) files.push(current);
+  }
+  if (files.length === 0) {
+    return verdict(claim, 'unverifiable',
+      `no added line in ${refLabel(pr.sha)} names ${claim.symbol}, so this diff cannot show #${claim.prNumber} ` +
+        'introducing it either way');
+  }
+
+  const gained = files.filter(f => symbolHits(ctx, parent, claim.symbol, f).length === 0);
+  const cmd = `git grep -nFw ${claim.symbol} ${refLabel(pr.sha)}^ -- ${files.join(' ')}`;
+  if (gained.length > 0) {
+    return verdict(claim, 'grounded',
+      `${cmd} → absent at the parent in ${gained.join(', ')}, which #${claim.prNumber} adds it to`);
+  }
+  return verdict(claim, 'ungrounded',
+    `${cmd} → already present at the parent in every file #${claim.prNumber} touches it in ` +
+      `(${files.join(', ')}), so that PR edited around it rather than introducing it`,
+    `the draft credits #${claim.prNumber} with introducing it`);
+}
+
 function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'release-branch' }): Verdict {
   const onBranch = (branches: string[]): string | undefined =>
     branches.find(b => b === `origin/${claim.branch}` || b.endsWith(`/${claim.branch}`)
@@ -788,6 +874,9 @@ const TREE_SCOPED = new Set<Claim['kind']>(['symbol', 'symbol-in-file', 'path-ex
 
 /** Paths belonging to the agent-memory repo itself; cht-core has no such tree. */
 const MEMORY_REPO_PATH = /^agent-memory\//;
+
+/** Repo an `introduced-by` claim is resolved against when no anchor supplies one. */
+const CHT_CORE_REPO = 'medic/cht-core';
 
 // ---------------------------------------------------------------------------
 // Snippet fidelity
@@ -1003,6 +1092,12 @@ export function checkClaim(
   if (claimFile && MEMORY_REPO_PATH.test(claimFile)) {
     return verdict(claim, 'unverifiable',
       `${claimFile} is a path in the agent-memory repo, not cht-core — out of this probe's tree`);
+  }
+
+  // Settled against the CREDITED PR's parent, not the draft's own anchor, so it
+  // works whether or not this draft's commit resolves.
+  if (claim.kind === 'introduced-by') {
+    return checkIntroducedBy(ctx, claim, anchor?.repo);
   }
 
   if (anchor?.isRevert) {
