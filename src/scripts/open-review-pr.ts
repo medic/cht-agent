@@ -21,6 +21,7 @@ import type { SkipLogEntry, OpenReviewOptions, ReviewPRResult } from '../types/p
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
 import { ciGuardReason, dedupeByIssueId, DedupEntry, DedupDrop } from './dedup';
+import { formatReconciliation, reconcile } from './reconcile';
 
 const DEFAULT_DOMAINS_DIR = path.join(REPO_ROOT, 'agent-memory', 'domains');
 
@@ -269,8 +270,11 @@ function findValidEntries(domain: string, draftPaths: string[], logPath: string)
  * ```
  */
 function rewriteFrontmatterOnDisk(draftPath: string, frontmatter: Record<string, unknown>): void {
-  const { content } = matter(fs.readFileSync(draftPath, 'utf8'));
-  fs.writeFileSync(draftPath, matter.stringify(content, frontmatter), 'utf8');
+  const sourcePrs = frontmatter.source_prs;
+  if (!Array.isArray(sourcePrs) || !sourcePrs.every(s => typeof s === 'string')) return;
+  const content = fs.readFileSync(draftPath, 'utf8');
+  const insertion = `source_prs:\n${sourcePrs.map(s => `  - ${s}`).join('\n')}\n`;
+  fs.writeFileSync(draftPath, content.replace(/^(---\r?\n[\s\S]*?)(---\r?\n)/, `$1${insertion}$2`), 'utf8');
 }
 
 /** Return value of `collectValidPlans` — the dedup outcome plus derived per-domain plans. */
@@ -580,5 +584,16 @@ if (require.main === module) {
 
   if (results.every(r => r.status === 'skipped')) {
     console.log('No pending drafts found.');
+  }
+
+  try {
+    const entries = fs.readFileSync(DEFAULT_PIPELINE_LOG_PATH, 'utf8')
+      .split('\n')
+      .flatMap(line => {
+        try { return [JSON.parse(line) as SkipLogEntry]; } catch { return []; }
+      });
+    console.log(formatReconciliation(reconcile(entries)));
+  } catch {
+    // No audit log yet.
   }
 }
