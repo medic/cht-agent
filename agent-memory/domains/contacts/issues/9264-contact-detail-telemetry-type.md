@@ -6,7 +6,7 @@ subDomain: telemetry
 issueNumber: 9264
 issueUrl: https://github.com/medic/cht-core/issues/9264
 title: Contact detail telemetry not recording contact type in default config
-lastUpdated: 2026-07-16
+lastUpdated: '2026-08-11'
 source_prs:
   - "medic/cht-core#9276"
 summary: Fixed telemetry recording the generic string "contact" instead of the actual contact type (e.g., "person", "clinic") on the contact detail page, caused by not handling legacy hardcoded contact types.
@@ -29,7 +29,7 @@ In `contacts.effects.ts`, the code read the contact type directly from `contact?
 
 PR #9276 replaced the direct field access with a call to `contactTypesService.getTypeId(contact?.doc)`, which delegates to `contactTypesUtils.getTypeId()` from the shared lib. This utility correctly handles both schemas:
 - Legacy: `doc.type !== 'contact'` -> returns `doc.type` (e.g., `"person"`)
-- New-style: `doc.type === 'contact'` -> returns `doc.contact_type` (e.g., `"hospital"`)
+- New-style: `doc.type === 'contact'` -> returns `doc.contact_type` (e.g., `"hospital"`, which is the type the karma spec exercises; the case reported on #9264 was a `clinic`, resolved by the same branch)
 
 ## Code Patterns
 

@@ -51,7 +51,7 @@ Rendering a contact's details page triggered redundant database reads: report do
 
 ## Root Cause
 
-contactViewModelGenerator.addHeading already received the loaded report docs but discarded them, mapping them to their `_id` values (`_map(reports, '_id')`) and re-fetching summaries through getDataRecordsService.get(ids) rather than reusing docs that had already been loaded; getDataRecordsService.get() also had an inconsistent (id-or-array) signature that encouraged extra round-trips.
+`addHeading`, a private method on `ContactViewModelGeneratorService`, already received the loaded report docs but discarded them, mapping them to their `_id` values (`_map(reports, '_id')`) and re-fetching summaries through getDataRecordsService.get(ids) rather than reusing docs that had already been loaded; getDataRecordsService.get() also had an inconsistent (id-or-array) signature that encouraged extra round-trips.
 
 ## Solution
 
