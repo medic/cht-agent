@@ -6,7 +6,7 @@ subDomain: search
 issueNumber: 8074
 issueUrl: https://github.com/medic/cht-core/issues/8074
 title: Support filtering contact search by descendants of current contact
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-11'
 summary: Added a descendant-of-current-contact appearance keyword for form fields that scopes contact search to only contacts under the currently viewed place, using the existing contacts_by_parent CouchDB view.
 services:
   - webapp
@@ -18,7 +18,7 @@ techStack:
 
 ## Problem
 
-The `db-object` widget (and later `select-contact`) only supported searching contacts by document type, not by parent. In deployments with common or duplicate names, users had to scroll through entire lists of a given contact type with no way to narrow the scope to the relevant place. This made building relational forms (e.g., selecting a child's mother from the same household) cumbersome.
+The `db-object` widget (and later `select-contact`) could narrow contacts by document type and by the shared freetext search, but not by parent. In deployments with common or duplicate names, users had to scroll through entire lists of a given contact type with no way to narrow the scope to the relevant place. This made building relational forms (e.g., selecting a child's mother from the same household) cumbersome.
 
 ## Root Cause
 
