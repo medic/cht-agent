@@ -7,7 +7,7 @@ issueNumber: 9194
 issueUrl: https://github.com/medic/cht-core/issues/9194
 title: Add cht-datasource and REST API support for getting a place (contact) by UUID, with optional lineage
 lastUpdated: '2026-08-11'
-summary: 'CHT had no unified datasource or REST API for fetching a place-type contact by UUID (only get-person existed from #9065). This PR adds get-place and get-place-with-lineage to cht-datasource plus a GET /api/v1/place/{id} endpoint, and refactors several call sites to use the new datasource functions where the contact type was known.'
+summary: 'CHT had no unified datasource or REST API for fetching a place-type contact by UUID — only the person equivalents, get-person and get-person-with-lineage, existed (from #9065). This PR adds get-place and get-place-with-lineage to cht-datasource plus a GET /api/v1/place/{id} endpoint, and refactors several call sites to use the new datasource functions where the contact type was known.'
 services:
   - api
   - sentinel

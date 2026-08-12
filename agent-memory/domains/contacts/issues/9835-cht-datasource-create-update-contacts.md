@@ -37,7 +37,7 @@ The `cht-datasource` shared library only had read-only APIs (fetch by UUID, pagi
 
 ## Root Cause
 
-The initial `cht-datasource` implementation focused on reads. Write operations were scattered across different services without a unified interface. The prior attempt (PR #10083) had duplicated validation logic, inconsistent currying patterns, extra DB round-trips, and semantic misuse of error types.
+The initial `cht-datasource` implementation focused on reads. Write operations were scattered across different services without a unified interface: validation was repeated at each call site, currying patterns were inconsistent, writes cost extra DB round-trips, and error types were used with the wrong semantics. Those are the conditions the create/update surface below was written to replace.
 
 ## Solution
 
