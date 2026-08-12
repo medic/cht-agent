@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10036
 issueUrl: https://github.com/medic/cht-core/issues/10036
 title: Add PersonQualifier and related functions to cht-datasource to enable person document creation
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: The cht-datasource library lacked a qualifier abstraction for person documents, which is a prerequisite for creating persons via the datasource. This PR adds a `PersonQualifier` type plus related helper/guard functions and unit tests as groundwork for person-creation support.
 services:
   - api
@@ -40,7 +40,7 @@ concepts:
   - type guards
   - document identification
 related_issues: []
-stale: false
+stale: true
 ---
 
 > **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
@@ -53,9 +53,19 @@ stale: false
 > before #135 adds union selection would drop it from `contacts` retrieval entirely.
 > Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
 
+> **Drift note (verified 2026-08-12).** None of this draft's three source PRs is an ancestor of
+> `origin/master`; the work reached master only through the epic squash #10083 (`f382785be`,
+> 2026-03-10), after a rename pass. On master `PersonQualifier`, `byPersonQualifier`,
+> `isPersonQualifier` and `assertPersonQualifier` no longer exist anywhere in the tree — the
+> person qualifier became `PersonInput` in `src/input.ts` (#10094), and master's `src/input.ts`
+> is types-only (zero runtime declarations) — and `Person.v1.createPerson` is now
+> `Person.v1.create`. The prose below deliberately describes the state at each cited PR, not
+> master's shape; hence `stale: true`. Read every present-tense sentence below as scoped to its
+> cited PR.
+
 ## Problem
 
-The cht-datasource library had no `PersonQualifier` or supporting functions to identify and validate person documents, blocking the planned ability to create `person` documents through the datasource API. Building on this, the datasource exposed only read/get operations for persons and had no way to persist a new Person: no `createPerson` in the local implementation (PR #10056), no `createPerson` in the person concept module or remote implementation, and no API route to create a person contact over HTTP (PR #10061).
+The cht-datasource library had no `PersonQualifier` or supporting functions to identify and validate person documents, blocking the planned ability to create `person` documents through the datasource API. Building on this, the datasource exposed only read/get operations for persons and had no way to persist a new Person: no `createPerson` in the local implementation (PR #10056), no `createPerson` in the person concept module or remote implementation, and no cht-datasource-backed `POST /api/v1/person` route — the legacy `POST /api/v1/people` route existed but went through `api/src/services/people`, bypassing the datasource (PR #10061).
 
 ## Root Cause
 
@@ -67,14 +77,14 @@ Added a `PersonQualifier` type and related functions (e.g. construction and guar
 
 The feature was delivered in three layers against #10036:
 - **Qualifier groundwork (PR #10043):** the `PersonQualifier` type and helper/guard functions described above.
-- **Local data layer (PR #10056):** a `createPerson` implementation in the local person module (src/local/person.ts) that builds and persists the Person document through the local (PouchDB/CouchDB) path, with supporting qualifier logic in src/qualifier.ts to validate/qualify the create input.
+- **Local data layer (PR #10056):** a `createPerson` implementation in the local person module (src/local/person.ts) that builds and persists the Person document through the local (PouchDB/CouchDB) path. Its only change to src/qualifier.ts is a one-line export of the `PersonQualifier` type added by PR #10043 — no qualifier validation logic lands here.
 - **Concept module + API endpoint (PR #10061):** a `createPerson` in the person concept module (src/person.ts) with parameter validation (src/libs/parameter-validators.ts) and the remote implementation (src/remote/person.ts), exported from src/index.ts, then wired to an API controller (api/src/controllers/person.js) and a new route in api/src/routing.js to invoke it over HTTP.
 
 ## Code Patterns
 
 Follows the established qualifier pattern in shared-libs/cht-datasource/src/qualifier.ts (type definition plus factory and type-guard functions) used by other qualifiers, keeping person qualification consistent with existing datasource abstractions.
 
-- Local/remote split (PR #10056): new create operations live in src/local/person.ts mirroring existing local datasource conventions, with input validation/typing routed through the qualifier helpers in src/qualifier.ts.
+- Local/remote split (PR #10056): new create operations live in src/local/person.ts mirroring existing local datasource conventions, with the input *type* (`PersonQualifier`) imported from src/qualifier.ts. src/local/person.ts imports only types from that module and invokes no qualifier helper: its own runtime checks are a `_rev` rejection (via `hasField` from src/libs/core.ts) and `contactTypeUtils.isPerson`. Qualifier validation proper is applied by callers one layer up — `Qualifier.byPersonQualifier` in the API controller and in `getDatasource`, plus `assertPersonQualifier` in src/libs/parameter-validators.ts — all added in PR #10061.
 - Concept-module layering (PR #10061): each entity (person, and later place/report) gets a concept module (src/person.ts) exposing a unified interface, a remote implementation (src/remote/person.ts), shared qualifiers (src/qualifier.ts) and parameter validators (src/libs/parameter-validators.ts), and a public export via src/index.ts; the API then thinly wraps the datasource in a controller (api/src/controllers/person.js) registered in api/src/routing.js. New mutations for other entities should replicate this same pattern.
 
 ## Design Choices

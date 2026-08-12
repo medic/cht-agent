@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9238
 issueUrl: https://github.com/medic/cht-core/issues/9238
 title: Add Person.v1.getAll AsyncGenerator to cht-datasource for paginated iteration over all people
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: cht-datasource could only fetch a single page of people at a time — `getPage` took a numeric `skip`, so callers tracked offsets by hand. This adds Person.v1.getAll(ctx)(qualifier), returning an AsyncGenerator that yields individual person docs one at a time — fetching a page at a time internally and following the cursor — across both local and remote data contexts.
 services:
   - api
@@ -57,16 +57,31 @@ stale: false
 
 > **Epic child.** PR #9281 was squash-merged into the feature branch
 > `9193-api-endpoints-for-getting-contacts-by-type` (`bf8a77da`), not into master.
-> That branch reached master as PR #9311. Its own PR number is stamped nowhere on
-> master, which is why this draft's `source_sha` does not resolve in a plain clone —
-> `git fetch origin refs/pull/9281/head` makes it reachable.
+> That branch reached master as PR #9311 (`34dd0303c`). Its own PR number is stamped
+> nowhere on master, which is why this draft's `source_sha` does not resolve in a plain
+> clone. Fetch it with `git fetch origin +refs/pull/9311/head:refs/verify/pr9311` — the
+> epic PR's head ref. PR #9281's *own* head ref does not contain the anchor: that ref is
+> the pre-squash branch tip (`7e0355f3a`, a merge commit), whereas `bf8a77dae` was created
+> by the squash onto the feature branch. `git for-each-ref --contains bf8a77dae` lists
+> only the 9295 and 9311 pull refs.
 >
 > **Renamed before landing (`stale-as-written`):** the helper below is
 > `getDocumentStream` in `libs/data-context.ts` as this PR wrote it.
 > On master that same mechanism is `getPagedGenerator`, in `libs/core.ts`.
 > On master `getDocumentStream` no longer exists in `shared-libs/cht-datasource/src`.
-> The yield semantics are unchanged — on master the signature is
-> `AsyncGenerator<Person, null>`, differing only in the generator's return type.
+> On master the yield loop is still one-doc-at-a-time, but more than the name changed.
+> Two separate drifts, in order:
+>
+> - *Inside the epic, before it landed* (`34dd0303c`): the generator's return type went
+>   `AsyncGenerator<T, void>` → `AsyncGenerator<T, null>` with an explicit `return null`,
+>   the starting cursor went `'0'` → `null`, and the end-of-iteration test went from the
+>   sentinel string (`cursor !== '-1'`) to plain truthiness of the cursor, with
+>   `Page.cursor` retyped `string` → `Nullable<string>` to suit. So master never saw the
+>   `'-1'` sentinel for people at all.
+> - *Later, on master* (`869f5db66`, #10622, 2026-02-11): the hard-coded `const limit = 100`
+>   that this PR passed on every fetch was dropped, and the helper now calls
+>   `fetchFunction(fetchFunctionArgs, currentCursor)` with no limit (`l?: number`),
+>   deferring to `getPage`'s own default page size.
 
 ## Problem
 
@@ -78,11 +93,11 @@ This is a feature gap rather than a defect: the Person v1 API exposed only singl
 
 ## Solution
 
-Added Person.v1.getAll(ctx)(qualifier), returning `AsyncGenerator<Person, void>` — it yields **individual person docs one at a time**, paging in the background by repeatedly invoking the cursor-paginated fetch until exhausted. Implemented across the public person.ts facade and both the local (PouchDB) and remote (HTTP/API) person implementations, with a shared generator helper `getDocumentStream` added to libs/data-context.ts. The same PR also replaced getPage's numeric `skip` parameter with a string `cursor`, moving it ahead of `limit` in the signature.
+Added Person.v1.getAll(ctx)(qualifier), returning `AsyncGenerator<Person, void>` — it yields **individual person docs one at a time**, paging internally on demand by repeatedly invoking the cursor-paginated fetch until exhausted. `getAll` itself was added **only to the public person.ts facade** — there is no `getAll` in local/person.ts or remote/person.ts, at this commit or on master — plus a thin `getDatasource` wrapper `getByType(personType)` in index.ts that binds it. The facade generator binds the facade's *own* `getPage` (`const getPage = context.bind(v1.getPage)`), so local-vs-remote dispatch is inherited from `getPage`'s existing `adapt` call rather than reimplemented per context. The shared generator helper `getDocumentStream` was added to libs/data-context.ts. The same PR touched local/person.ts and remote/person.ts only to replace getPage's numeric `skip` parameter with a string `cursor`, moving it ahead of `limit` in the signature.
 
 ## Code Patterns
 
-AsyncGenerator-based pagination: a generic helper `getDocumentStream` in shared-libs/cht-datasource/src/libs/data-context.ts wraps a page-fetching function plus its argument into an `async function*` that fetches a page, re-yields its documents individually (`for (const doc of docs.data) { yield doc }`), then follows the cursor until it reports no more data; reusable for other entity types. Consumed as a flat loop over documents — `for await (const person of Person.v1.getAll(ctx)(Qualifier.byContactType('person'))) { ... }` — with no page-handling in the caller.
+AsyncGenerator-based pagination: a generic helper `getDocumentStream` in shared-libs/cht-datasource/src/libs/data-context.ts wraps a page-fetching function plus its argument into an `async function*` that fetches a page, re-yields its documents individually (`for (const doc of docs.data) { yield doc }`), then follows the cursor until the page reports the end of iteration — which at this commit means the sentinel string `cursor === '-1'`, see the banner; reusable for other entity types. Consumed as a flat loop over documents — `for await (const person of Person.v1.getAll(ctx)(Qualifier.byContactType('person'))) { ... }` — with no page-handling in the caller.
 
 ## Design Choices
 
@@ -104,7 +119,7 @@ The generator yields individual docs rather than pages, so callers iterate with 
 
 ## Testing
 
-Unit tests were added/updated for the public facade (test/person.spec.ts), the local and remote implementations (test/local/person.spec.ts, test/remote/person.spec.ts), the core/data-context helpers (test/libs/data-context.spec.ts), and the exported index surface (test/index.spec.ts). The helper's own cases state the contract directly — "yields document one by one", "should handle multiple pages", "should handle empty result" — and the facade test drains the generator with `for await` and deep-equals the result against the flat array of people, not against a list of pages.
+Unit tests were added/updated for the public facade (test/person.spec.ts), the generator helper (test/libs/data-context.spec.ts), and the `getDatasource` surface (test/index.spec.ts, which gained a `getByType` case asserting it binds `Person.v1.getAll`). The local and remote person specs (test/local/person.spec.ts, test/remote/person.spec.ts) changed only for getPage's `skip`→`cursor` swap and contain no `getAll` cases at all, matching the facade-only implementation. The helper's own cases state the contract directly — "yields document one by one", "should handle multiple pages", "should handle empty result" — and the facade test drains the generator with `for await` and deep-equals the result against the flat array of people, not against a list of pages.
 
 ## Related Issues
 
