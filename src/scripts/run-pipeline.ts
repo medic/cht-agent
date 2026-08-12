@@ -319,10 +319,9 @@ async function runFilter(
 async function runTracedPipeline(
   prNum: number,
   repo: string,
-  force: boolean,
-  tag: string,
-  trace: ReturnType<typeof startTrace>['trace']
+  opts: { force: boolean; tag: string; trace: ReturnType<typeof startTrace>['trace'] }
 ): Promise<void> {
+  const { force, tag, trace } = opts;
   const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
   console.log(`${tag} scraping...`);
   const pr = scrapePR(prNum, repo);
@@ -362,7 +361,7 @@ export async function processSinglePR(
   });
 
   try {
-    await runTracedPipeline(prNum, repo, force, tag, trace);
+    await runTracedPipeline(prNum, repo, { force, tag, trace });
   } catch (err) {
     trace.update({ output: { error: errorMessage(err) } });
     throw err;
