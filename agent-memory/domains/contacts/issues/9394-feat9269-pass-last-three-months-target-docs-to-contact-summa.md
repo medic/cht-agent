@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9269
 issueUrl: https://github.com/medic/cht-core/issues/9269
 title: Expose an analytics.getTargetDocs() cht-datasource API and pass the logged-in user's last three months of target docs into the contact summary
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: Contact summaries only received the contact's current-month target doc, and nothing on the datasource API the webapp hands to config scripts exposed target data. This PR adds an `analytics.getTargetDocs()` entry to that surface — declared as an empty-array stub by `CHTDatasourceService` and overwritten with the real function by `contact-summary.service.ts` before the generator runs — and passes the latest three months of target docs into the contact-summary context — the logged-in user's own docs when viewing one of that user's facilities.
 services:
   - webapp
@@ -89,7 +89,7 @@ Bounded to the last three months of target docs to limit payload size and match 
 
 ## Testing
 
-Updated/added Karma unit specs across the touched layer: cht-datasource.service.spec.ts, contact-summary.service.spec.ts, target-aggregates.service.spec.ts, contact-types.service.spec.ts, contacts.component.spec.ts, contacts-content.component.spec.ts, contacts-report.component.spec.ts, contacts.effects.spec.ts, reducers/global.spec.ts, selectors/index.spec.ts, app.component.spec.ts. Added/updated WDIO e2e for target aggregates and contact-summary target aggregates: tests/e2e/default/targets/target-aggregates.wdio-spec.js, tests/e2e/default/targets/config/contact-summary-target-aggregates.js, tests/e2e/default/targets/utils/aggregates-helper-functions.js.
+Updated/added Karma unit specs across the touched layer: cht-datasource.service.spec.ts, contact-summary.service.spec.ts, target-aggregates.service.spec.ts, contact-types.service.spec.ts, contacts.component.spec.ts, contacts-content.component.spec.ts, contacts-report.component.spec.ts, contacts.effects.spec.ts, reducers/global.spec.ts, selectors/index.spec.ts, app.component.spec.ts. Updated the WDIO e2e coverage for target aggregates and contact-summary target aggregates (every file below is modified, none added): tests/e2e/default/targets/target-aggregates.wdio-spec.js, tests/e2e/default/targets/config/contact-summary-target-aggregates.js, tests/e2e/default/targets/utils/aggregates-helper-functions.js.
 
 ## Related Issues
 

@@ -88,7 +88,7 @@ Earlier branch work, in merge order:
 
 - `ResourceNotFoundError` semantically distinguishes "document not found" from "bad argument" — mapped to HTTP 404 in `api/src/server-utils.js`, and back to the error class from a 404 response in the remote adapter (`remote/libs/data-context.ts`)
 - Index-preserving `getDocsByIds` enables parallel lookups. Note the currying: `const getMedicDocsByIds = getDocsByIds(medicDb); const [parent, contact] = await getMedicDocsByIds([parentId, contactId]);` — `getDocsByIds`, `createDoc`, `updateDoc` and `minifyDoc` are all `(db) => (args) => ...`, so the db handle is bound once at the top of each operation
-- Lineage minification reuses `@medic/lineage`'s `minify` function rather than reimplementing dehydration
+- Lineage minification reuses the `minify` function from the `@medic/lineage` package (`shared-libs/lineage/src/minify.js`) rather than reimplementing dehydration
 - Permission fix: the write endpoints no longer require the matching **read** permission (`can_view_contacts` for person/place, `can_view_reports` for report). Each now asserts `isOnline: true` plus `hasAny` of its own write permission or the general `can_edit`. The six write endpoints do **not** share one permission pair — per endpoint on master:
   - `POST /api/v1/person` — `hasAny: ['can_create_people', 'can_edit']`
   - `PUT /api/v1/person/:uuid` — `hasAny: ['can_update_people', 'can_edit']`
