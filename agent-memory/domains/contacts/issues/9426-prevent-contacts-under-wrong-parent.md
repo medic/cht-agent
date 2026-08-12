@@ -6,7 +6,7 @@ subDomain: hierarchy-validation
 issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-12'
 summary: Fixed a validation gap where contacts could be created under any parent by manipulating the URL, bypassing the configured hierarchy. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp
@@ -50,7 +50,7 @@ Person types are not special-cased; they are resolved through the same `contactT
 - Fails closed — an invalid parent prevents form rendering entirely rather than showing a warning
 - Only applies to creation, not editing (editing a contact doesn't change its parent relationship)
 
-> **Note:** This fix is client-side only. Neither `validate_doc_update.js` (medic nor medic-client) enforces parent-child hierarchy rules. A direct CouchDB write with an invalid parent would still succeed. Server-side hierarchy validation does not exist as of this fix.
+> **Note:** This fix is client-side only for the webapp form path. Neither `validate_doc_update.js` (medic nor medic-client) enforces parent-child hierarchy rules, so a direct CouchDB write with an invalid parent would still succeed. Server-side validation does exist, but only on the API path: `validatePlace` in `shared-libs/contacts/src/places.js` rejects a wrong parent type via `contactTypesUtils.isParentOf(parentType, type)` (`places.js:83`) for `POST /api/v1/places`, at this PR's anchor and still on master.
 
 ## Related Files
 

@@ -7,7 +7,7 @@ issueNumber: 6669
 issueUrl: https://github.com/medic/cht-core/issues/6669
 title: Add barcode scanner to search for contacts using the native Barcode Detection API
 lastUpdated: '2026-08-12'
-summary: Health workers had no way to look up contacts by scanning a barcode and had to type identifiers manually. This adds a permission-gated barcode scanner button to the search bar that opens the device camera, reads the barcode from the captured image via the browser's native Barcode Detection API, and triggers a contact search with the decoded value. Landed on the 4.4.1-FR-barcode release branch via medic/cht-core#8684 (2023-11-16), not on master; as of 2026-08-12 no barcode code exists on origin/master and issue medic/cht-core#6669 remains open.
+summary: Health workers had no way to look up contacts by scanning a barcode and had to type identifiers manually. This adds a permission-gated barcode scanner button to the search bar that opens the device camera, reads the barcode from the captured image via the browser's native Barcode Detection API, and triggers a contact search with the decoded value. Landed on the 4.4.1-FR-barcode release branch via medic/cht-core#8684 (2023-11-16), not on master; as of 2026-08-12 none of this barcode-scanner code exists on origin/master (the only `barcode` matches there are the vendored Enketo XSL handling of the ODK `barcode` question type) and issue medic/cht-core#6669 remains open.
 services:
   - webapp
   - api

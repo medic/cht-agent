@@ -6,7 +6,7 @@ subDomain: replication
 issueNumber: 8034
 issueUrl: https://github.com/medic/cht-core/issues/8034
 title: Replicate primary contacts for places at max replication depth
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: Added a replicate_primary_contacts config flag that causes primary contact persons for places at max replication depth to be replicated along with their reports and targets, solving the problem of supervisors not seeing CHW person records.
 services:
   - api
@@ -35,7 +35,7 @@ PR #9593 added a `replicate_primary_contacts: true` config option per role in `r
 ## Code Patterns
 
 - Config: `{ "role": "supervisor", "depth": 1, "replicate_primary_contacts": true }` in `replication_depth` array
-- The `contacts_by_depth` view value shape change is breaking — all consumers must read `row.value.shortcode` instead of `row.value`
+- The `contacts_by_depth` value shape change is breaking only for consumers that read the emitted *value*. Of the three non-test consumers at the anchor, just `api/src/services/authorization.js` does, and it was updated to `row.value.shortcode`; `shared-libs/transitions/src/lib/muting_utils.js` reads only `row.id` and `api/src/services/config-watcher.js` merely loads the view map, so neither needed changing — still true on master
 - File: `ddocs/medic-db/medic/views/contacts_by_depth/map.js` — view emits `{ shortcode, primary_contact }`
 - File: `ddocs/medic-db/medic/views/contacts_by_primary_contact/map.js` — new view indexing contacts by their primary contact
 - File: `api/src/services/authorization.js` — `addPrimaryContactsSubjects()` collects and adds primary contact IDs to allowed subjects
