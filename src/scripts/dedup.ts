@@ -25,6 +25,7 @@ export interface DedupEntry {
 
 export interface DedupDrop {
   path: string;
+  canonicalPath: string;
   reason: string;
 }
 
@@ -137,6 +138,7 @@ export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR
     for (const dup of rest) {
       dropped.push({
         path: dup.path,
+        canonicalPath: canonical.path,
         reason:
           `duplicate of ${String(canonical.frontmatter.id)} — collapsed into ` +
           `${sourcePrRef(canonical.frontmatter) ?? 'canonical'} (source_prs: ${sourcePrs.join(', ')})`,

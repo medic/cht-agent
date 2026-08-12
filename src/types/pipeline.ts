@@ -34,6 +34,8 @@ export interface ReviewComment {
  * Combines PR metadata, file changes, linked issues, and review comments.
  */
 export interface ScrapedPR {
+  /** GitHub repository in owner/name form. */
+  repo?: string;
   /** The GitHub PR number */
   prNumber: number;
   /** PR title */

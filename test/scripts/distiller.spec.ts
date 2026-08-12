@@ -783,4 +783,19 @@ describe('buildFrontmatter — related_issues', () => {
     const fm = buildFrontmatter(makeDraft(), pr);
     expect(fm.related_issues).to.deep.equal(['cht-core-100']);
   });
+
+  it('uses the source repository for interoperability provenance and cross-links', () => {
+    const { buildFrontmatter } = loadDistiller();
+    const fm = buildFrontmatter(makeDraft(), makePR({
+      repo: 'medic/cht-interoperability',
+      linkedIssues: [
+        { number: 99, body: 'canonical', comments: [] },
+        { number: 100, body: 'secondary', comments: [] },
+      ],
+    }));
+    expect(fm.id).to.equal('cht-interoperability-99');
+    expect(fm.issueUrl).to.equal('https://github.com/medic/cht-interoperability/issues/99');
+    expect(fm.source_pr).to.equal('medic/cht-interoperability#42');
+    expect(fm.related_issues).to.deep.equal(['cht-interoperability-100']);
+  });
 });

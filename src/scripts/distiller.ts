@@ -312,6 +312,8 @@ export function computeConfidence(draft: DistillDraft, pr: ScrapedPR): 'medium' 
  */
 export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<string, unknown> {
   const today = new Date().toISOString().slice(0, 10);
+  const repo = pr.repo ?? 'medic/cht-core';
+  const repoName = repo.split('/')[1];
   const issueNumber = pr.linkedIssues[0]?.number;
   if (issueNumber === undefined) {
     throw new Error(
@@ -321,12 +323,12 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
   }
 
   return {
-    id: `cht-core-${issueNumber}`,
+    id: `${repoName}-${issueNumber}`,
     category: draft.category,
     domain: draft.domain,
     domainFit: draft.domainFit,
     issueNumber,
-    issueUrl: `https://github.com/medic/cht-core/issues/${issueNumber}`,
+    issueUrl: `https://github.com/${repo}/issues/${issueNumber}`,
     title: draft.title,
     lastUpdated: today,
     summary: draft.summary,
@@ -334,7 +336,7 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
     techStack: draft.techStack,
     tags: draft.tags,
     related_workflows: draft.relatedWorkflows,
-    source_pr: `medic/cht-core#${pr.prNumber}`,
+    source_pr: `${repo}#${pr.prNumber}`,
     source_sha: pr.mergeSha,
     distilled_at: today,
     reviewed_by: null,
@@ -346,7 +348,7 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
     // canonical one) — real, grounded cross-links from this PR's own linkage,
     // not yet verified to have a promoted memory entry. Distinct from the
     // GitHub issues listed in the draft body's ## Related Issues section.
-    related_issues: pr.linkedIssues.slice(1).map(i => `cht-core-${i.number}`),
+    related_issues: pr.linkedIssues.slice(1).map(i => `${repoName}-${i.number}`),
     stale: false,
   };
 }

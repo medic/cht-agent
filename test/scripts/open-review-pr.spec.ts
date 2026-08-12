@@ -623,6 +623,7 @@ describe('openReviewPR — dedup lifecycle', () => {
     // that would gain a `source_prs` field once applied.
     expect(fs.readFileSync(originalPath, 'utf8')).to.equal(beforeOriginal);
     expect(fs.readFileSync(backportPath, 'utf8')).to.equal(beforeBackport);
+    expect(fs.existsSync(logPath)).to.equal(false);
   });
 
   it('apply promotes the lowest-PR-numbered canonical with source_prs and removes the duplicate from _pending', () => {
@@ -666,5 +667,33 @@ describe('openReviewPR — dedup lifecycle', () => {
     // The rewritten frontmatter still validates against the schema.
     const validate = buildValidator();
     expect(validate(promotedFm)).to.equal(true);
+  });
+
+  it('keeps duplicate drafts when the canonical promotion fails', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const domainsDir = makeTmpDir();
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      'gh-pr': () => { throw new Error('GitHub unavailable'); },
+    });
+
+    const results = openReviewPR({ apply: true, pendingDir, domainsDir, logPath, date: '20260520', execFn: exec.fn });
+
+    expect(results[0].status).to.equal('failed');
+    expect(fs.existsSync(backportPath)).to.equal(true);
+    expect(fs.existsSync(logPath)).to.equal(false);
   });
 });

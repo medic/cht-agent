@@ -324,6 +324,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   );
 
   return {
+    repo,
     prNumber,
     prTitle,
     prBody,

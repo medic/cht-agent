@@ -313,9 +313,6 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
   );
 
   const { kept, dropped } = dedupeByIssueId(allValid);
-  for (const drop of dropped) {
-    writeSkipEntry(logPath, drop.path, drop.reason);
-  }
 
   const plans = new Map<string, string[]>();
   for (const entry of kept) {
@@ -334,27 +331,35 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
 }
 
 /**
- * Applies the on-disk side effects of dedup: persists `source_prs` onto a
- * collapsed canonical draft's frontmatter, and removes every collapsed
- * duplicate from `_pending`. Apply-mode only — dry-run must report what would
- * happen without mutating any draft file.
+ * Persists `source_prs` onto collapsed canonical drafts before promotion.
+ * Dropped drafts are removed only after their canonical draft is promoted.
  *
  * @example
  * ```typescript
- * applyDedupMutations(kept, dropped);
+ * applyDedupMutations(kept);
  * ```
  */
-function applyDedupMutations(kept: DedupEntry[], dropped: DedupDrop[]): void { // NOSONAR typescript:S3776 -- two independent straight-line loops, not worth splitting
+function applyDedupMutations(kept: DedupEntry[]): void {
   for (const entry of kept) {
     if (entry.frontmatter.source_prs !== undefined) {
       rewriteFrontmatterOnDisk(entry.path, entry.frontmatter);
     }
   }
+}
+
+/** Remove and audit duplicates only after the canonical draft's PR is created. */
+function finalizeDedupDrops(
+  dropped: DedupDrop[],
+  promotedPaths: Set<string>,
+  logPath: string
+): void {
   for (const drop of dropped) {
+    if (!promotedPaths.has(drop.canonicalPath)) continue;
     try {
       fs.unlinkSync(drop.path);
+      writeSkipEntry(logPath, drop.path, drop.reason);
     } catch {
-      // Already gone — nothing to clean up.
+      // Already gone — don't report an action that did not occur in this run.
     }
   }
 }
@@ -559,8 +564,13 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
   const { plans, skipped, kept, dropped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
   if (!apply) return [...skipped, ...buildDryRunResults(plans, date)];
 
-  applyDedupMutations(kept, dropped);
-  return [...skipped, ...executeApply(plans, { domainsDir, date, exec })];
+  applyDedupMutations(kept);
+  const results = executeApply(plans, { domainsDir, date, exec });
+  const promotedPaths = new Set(results
+    .filter(result => result.status === 'created')
+    .flatMap(result => plans.get(result.domain) ?? []));
+  finalizeDedupDrops(dropped, promotedPaths, logPath);
+  return [...skipped, ...results];
 }
 
 // CLI entry point
