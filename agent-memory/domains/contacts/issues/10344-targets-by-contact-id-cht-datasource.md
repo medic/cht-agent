@@ -6,8 +6,8 @@ subDomain: cht-datasource
 issueNumber: 10344
 issueUrl: https://github.com/medic/cht-core/issues/10344
 title: Support querying target intervals by contact IDs in cht-datasource
-lastUpdated: 2026-08-11
-summary: 'PROPOSED (open PR #10432, not merged): cht-datasource APIs to query target interval documents filtered by contact UUIDs, so the target aggregates service could fetch only supervised contacts'' targets instead of all targets for a reporting period. The contact-UUID filtering described here is on no branch but the PR''s own; the one piece that did land — binding TargetAggregatesService to cht-datasource via bindGenerator — arrived separately under epic #10423, against Target.v1.getAll rather than TargetInterval.v1.getAll.'
+lastUpdated: '2026-08-12'
+summary: 'UNLANDED (PR #10432 merged into a since-deleted epic branch, then dropped before that epic squashed to master): cht-datasource APIs to query target interval documents filtered by contact UUIDs, so the target aggregates service could fetch only supervised contacts'' targets instead of all targets for a reporting period. The contact-UUID filtering described here is on no branch but the PR''s own; the one piece that did land — binding TargetAggregatesService to cht-datasource via bindGenerator — arrived separately under epic #10423, against Target.v1.getAll rather than TargetInterval.v1.getAll.'
 services:
   - api
   - webapp
@@ -20,15 +20,19 @@ source_prs:
 stale: true
 ---
 
-> **Describes unlanded work — do not treat as available API.** PR #10432 is not
-> merged: its head is not an ancestor of `origin/master`, and the one commit that
-> references it (`db9694ef0`, "feat(#10344): support targets by contact id in
-> cht-datasource (#10432)") is not reachable from master either. Its content never
-> reached the `10140_previous-month-targets` epic that landed as #10423. The
-> contact-UUID filtering vocabulary — `ContactUuidsQualifier`, `byContactUuids()`,
+> **Describes unlanded work — do not treat as available API.** PR #10432 *was*
+> merged, on 2025-12-19, but into the `10140_previous-month-targets` epic branch
+> rather than into master — and its content was then dropped before that epic
+> squashed. #10423, the squash that did land, carries none of its 54 files, the
+> epic branch has since been deleted from the remote, and the PR's own head is now
+> the only place the code exists. So "not on master" is right while "not merged"
+> would be wrong; `git merge-base --is-ancestor` answers the first question, not
+> the second.
+>
+> The contact-UUID filtering vocabulary — `ContactUuidsQualifier`, `byContactUuids()`,
 > `getTargetIntervalIds()`, `getDocUuidsByIdRange()`, `local/target-interval.ts`,
 > `remote/target-interval.ts`, `api/src/controllers/target-interval.js` — exists
-> **only** on that open PR's branch. On master the module is `local/target.ts`.
+> **only** on that PR's own head. On master the module is `local/target.ts`.
 >
 > **One piece did land, under a different PR.** `bindGenerator()` is on master in
 > six files. Master's copy came from epic #10423 (`622c62542`); #10432 introduces
@@ -40,7 +44,8 @@ stale: true
 >
 > ```sh
 > git -C $CORE fetch origin refs/pull/10432/head:refs/verify/pr10432
-> git -C $CORE merge-base --is-ancestor refs/verify/pr10432 origin/master; echo $?   # 1 = not merged
+> git -C $CORE merge-base --is-ancestor refs/verify/pr10432 origin/master; echo $?   # 1 = not on master
+> gh api repos/medic/cht-core/pulls/10432 --jq '.merged, .base.ref'                   # true, 10140_previous-month-targets
 > git -C $CORE grep -c byContactUuids origin/master                                  # no output
 > git -C $CORE grep -lc byContactUuids refs/verify/pr10432                           # 12 files
 > git -C $CORE grep -l bindGenerator origin/master | wc -l                           # 6 — it IS on master
@@ -49,7 +54,7 @@ stale: true
 > ```
 >
 > Kept because the design it records (target `_id` segment layout, the ID-only
-> `allDocs` two-path query) is the reasoning behind an open proposal. Everything
+> `allDocs` two-path query) is the reasoning behind work that never shipped. Everything
 > below is that proposal, not shipped behaviour, except where this banner says
 > otherwise.
 

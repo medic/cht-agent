@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 6669
 issueUrl: https://github.com/medic/cht-core/issues/6669
 title: Add barcode scanner to search for contacts using the native Barcode Detection API
-lastUpdated: '2026-08-11'
-summary: Health workers had no way to look up contacts by scanning a barcode and had to type identifiers manually. This adds a permission-gated barcode scanner button to the search bar that opens the device camera, reads the barcode from the captured image via the browser's native Barcode Detection API, and triggers a contact search with the decoded value. Landed on the 4.4.1-FR-barcode release branch via medic/cht-core#8684 (2023-11-16), not on master; as of 2026-08-11 no barcode code exists on origin/master and issue medic/cht-core#6669 remains open.
+lastUpdated: '2026-08-12'
+summary: Health workers had no way to look up contacts by scanning a barcode and had to type identifiers manually. This adds a permission-gated barcode scanner button to the search bar that opens the device camera, reads the barcode from the captured image via the browser's native Barcode Detection API, and triggers a contact search with the decoded value. Landed on the 4.4.1-FR-barcode release branch via medic/cht-core#8684 (2023-11-16), not on master; as of 2026-08-12 no barcode code exists on origin/master and issue medic/cht-core#6669 remains open.
 services:
   - webapp
   - api
@@ -70,7 +70,7 @@ Chose the native Barcode Detection API plus a hidden file input over custom CHT 
 
 ## Related Files
 
-Paths as touched on the 4.4.1-FR-barcode branch at the #8684 anchor (2023-11-16). All of them still exist on master, but none carries any barcode code there.
+Paths as touched on the 4.4.1-FR-barcode branch at the #8684 anchor (2023-11-16). All 17 existed at that anchor. Sixteen still exist on master and none of them carries any barcode code there; the exception is `config/standard/app_settings.json`, which is gone — the whole standard config was removed by medic/cht-core#8762 (`3f7f6d6e3`, January 2024) and `config/standard/` on master now holds only a `readme.md` pointer.
 
 - webapp/src/ts/components/search-bar/search-bar.component.ts
 - webapp/src/ts/components/search-bar/search-bar.component.html
