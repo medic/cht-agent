@@ -33,15 +33,7 @@ export interface DedupResult {
   dropped: DedupDrop[];
 }
 
-/**
- * Parses the PR number out of a `owner/repo#123` source_pr reference.
- *
- * @example
- * ```typescript
- * sourcePrNumber('medic/cht-core#42'); // 42
- * sourcePrNumber(undefined); // null
- * ```
- */
+/** Parse the PR number from an `owner/repo#123` reference. */
 export function sourcePrNumber(sourcePr: unknown): number | null {
   if (typeof sourcePr !== 'string') return null;
   const m = /#(\d+)$/.exec(sourcePr);
@@ -52,12 +44,6 @@ export function sourcePrNumber(sourcePr: unknown): number | null {
  * True when a draft's issueNumber equals its own source PR number — the exact
  * shape of the pre-R1 mislink (id/issueNumber aliasing the merge PR instead of
  * the resolved issue).
- *
- * @example
- * ```typescript
- * issueEqualsSourcePr({ issueNumber: 10198, source_pr: 'medic/cht-core#10198' }); // true
- * issueEqualsSourcePr({ issueNumber: 8026, source_pr: 'medic/cht-core#10198' }); // false
- * ```
  */
 export function issueEqualsSourcePr(frontmatter: Record<string, unknown>): boolean {
   const issueNumber = frontmatter.issueNumber;
@@ -71,15 +57,7 @@ export function issueEqualsSourcePr(frontmatter: Record<string, unknown>): boole
  * `type<n>-...` or `type-<n>-...`, e.g. `10043-feat10036-add-thing.md` and
  * `10043-feat-10036-add-thing.md` both -> 10036 — old drafts predate the
  * slugify separator fix and are never rewritten, so both forms must keep
- * resolving). Returns null when the slug carries no such prefix — nothing to
- * cross-check.
- *
- * @example
- * ```typescript
- * slugIssueNumber('10043-feat10036-add-thing.md'); // 10036
- * slugIssueNumber('10043-feat-10036-add-thing.md'); // 10036
- * slugIssueNumber('10043-fix-a-typo.md'); // null
- * ```
+ * resolving). Returns null when the slug carries no such prefix.
  */
 export function slugIssueNumber(filePath: string): number | null {
   const base = path.basename(filePath, '.md');
@@ -90,12 +68,6 @@ export function slugIssueNumber(filePath: string): number | null {
 /**
  * True when the filename's embedded issue number (if any) contradicts the
  * frontmatter's issueNumber — a stale slug or a resolution regression.
- *
- * @example
- * ```typescript
- * slugContradictsIssueNumber('10043-feat10036-add-thing.md', { issueNumber: 10036 }); // false
- * slugContradictsIssueNumber('10043-feat10036-add-thing.md', { issueNumber: 10043 }); // true
- * ```
  */
 export function slugContradictsIssueNumber(filePath: string, frontmatter: Record<string, unknown>): boolean {
   const slugIssue = slugIssueNumber(filePath);
@@ -106,14 +78,7 @@ export function slugContradictsIssueNumber(filePath: string, frontmatter: Record
 /**
  * Validates a draft against the CI guard: rejects a mislinked draft (issueNumber
  * aliasing its own source PR) or one whose filename slug contradicts its
- * frontmatter issueNumber. Returns a rejection reason, or null when the draft
- * passes.
- *
- * @example
- * ```typescript
- * ciGuardReason('10198-fix.md', { issueNumber: 10198, source_pr: 'medic/cht-core#10198' });
- * // 'issueNumber (10198) equals its own source PR number — issue likely unresolved'
- * ```
+ * frontmatter issueNumber. Returns a rejection reason, or null when the draft passes.
  */
 export function ciGuardReason(filePath: string, frontmatter: Record<string, unknown>): string | null {
   if (issueEqualsSourcePr(frontmatter)) {
@@ -136,16 +101,6 @@ function sourcePrRef(frontmatter: Record<string, unknown>): string | null {
  * source PR number — carrying a `source_prs` list of every contributing PR ref.
  * Drops every other member of the group. Cross-domain duplicates collapse the
  * same way; the canonical entry keeps its own domain.
- *
- * @example
- * ```typescript
- * const { kept, dropped } = dedupeByIssueId([
- *   { domain: 'data-sync', path: 'a.md', frontmatter: { id: 'cht-core-8985', source_pr: 'medic/cht-core#9098' } },
- *   { domain: 'data-sync', path: 'b.md', frontmatter: { id: 'cht-core-8985', source_pr: 'medic/cht-core#9027' } },
- * ]);
- * // kept === [b], b.frontmatter.source_prs === ['medic/cht-core#9027', 'medic/cht-core#9098']
- * // dropped === [{ path: 'a.md', reason: '...' }]
- * ```
  */
 export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR typescript:S3776 -- linear grouping/sort, not worth splitting
   const groups = new Map<string, DedupEntry[]>();

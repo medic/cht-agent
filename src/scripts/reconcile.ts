@@ -25,22 +25,7 @@ export interface ReconciliationSummary {
   otherFlags: number;
 }
 
-/**
- * Summarizes a batch of `_skipped.ndjson` entries into reconciliation counts.
- *
- * @param entries - Skip-log entries produced by a pipeline run.
- * @returns Counts of CI-guard rejections, dedup collapses, and other flags.
- *
- * @example
- * ```typescript
- * reconcile([
- *   { prNumber: 1, decision: 'flag-for-human', reason: 'open-review-pr: CI guard: mislink — 1-x.md', timestamp: 't' },
- *   { prNumber: 2, decision: 'flag-for-human', reason: 'open-review-pr: duplicate of cht-core-9 — 2-y.md', timestamp: 't' },
- *   { prNumber: 3, decision: 'flag-for-human', reason: 'PR closes no tracked issue', timestamp: 't' },
- * ]);
- * // { total: 3, ciGuardRejections: 1, dedupCollapses: 1, otherFlags: 1 }
- * ```
- */
+/** Summarize a batch of `_skipped.ndjson` entries. */
 export function reconcile(entries: SkipLogEntry[]): ReconciliationSummary {
   let ciGuardRejections = 0;
   let dedupCollapses = 0;
@@ -63,15 +48,7 @@ export function reconcile(entries: SkipLogEntry[]): ReconciliationSummary {
   return { total: entries.length, ciGuardRejections, dedupCollapses, otherFlags };
 }
 
-/**
- * Formats a `ReconciliationSummary` as a short human-readable report block.
- *
- * @example
- * ```typescript
- * formatReconciliation({ total: 3, ciGuardRejections: 1, dedupCollapses: 1, otherFlags: 1 });
- * // 'Reconciliation: 3 flagged/skipped — 1 CI-guard rejection(s), 1 dedup collapse(s), 1 other'
- * ```
- */
+/** Format a reconciliation summary for console output. */
 export function formatReconciliation(summary: ReconciliationSummary): string {
   return (
     `Reconciliation: ${summary.total} flagged/skipped — ` +
@@ -86,16 +63,6 @@ export function formatReconciliation(summary: ReconciliationSummary): string {
  * NOT appear anywhere in the PR's real `fileList`. `entities` may legitimately
  * name a module or architectural concept rather than a literal file path, so a
  * nonzero rate is expected and this must stay a reported metric, not a gate.
- *
- * @param claimed  - The distilled draft's `relatedFiles` and/or `entities`.
- * @param fileList - The scraped PR's actual list of changed file paths.
- * @returns A number in [0, 1]; 0 when `claimed` is empty (nothing to hallucinate).
- *
- * @example
- * ```typescript
- * hallucinationRate(['api/a.ts', 'made/up.ts'], ['api/a.ts', 'webapp/b.ts']); // 0.5
- * hallucinationRate([], ['api/a.ts']); // 0
- * ```
  */
 export function hallucinationRate(claimed: string[], fileList: string[]): number {
   if (claimed.length === 0) return 0;
