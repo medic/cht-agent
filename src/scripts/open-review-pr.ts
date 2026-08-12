@@ -290,7 +290,8 @@ function rewriteFrontmatterOnDisk(draftPath: string, frontmatter: Record<string,
   const sourcePrs = frontmatter.source_prs;
   if (!Array.isArray(sourcePrs) || !sourcePrs.every(s => typeof s === 'string')) return;
   const content = fs.readFileSync(draftPath, 'utf8');
-  const insertion = `source_prs:\n${sourcePrs.map(s => `  - ${s}`).join('\n')}\n`;
+  const lines = ['source_prs:', ...sourcePrs.map(s => `  - ${s}`), ''];
+  const insertion = lines.join('\n');
   fs.writeFileSync(draftPath, content.replace(/^(---\r?\n[\s\S]*?)(---\r?\n)/, `$1${insertion}$2`), 'utf8');
 }
 

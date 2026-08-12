@@ -25,27 +25,17 @@ export interface ReconciliationSummary {
   otherFlags: number;
 }
 
+function bucket(reason: unknown): keyof Omit<ReconciliationSummary, 'total'> {
+  if (typeof reason !== 'string') return 'otherFlags';
+  if (reason.includes('CI guard:')) return 'ciGuardRejections';
+  return reason.includes('duplicate of') ? 'dedupCollapses' : 'otherFlags';
+}
+
 /** Summarize a batch of `_skipped.ndjson` entries. */
 export function reconcile(entries: SkipLogEntry[]): ReconciliationSummary {
-  let ciGuardRejections = 0;
-  let dedupCollapses = 0;
-  let otherFlags = 0;
-
-  for (const entry of entries) {
-    if (typeof entry.reason !== 'string') {
-      otherFlags++;
-      continue;
-    }
-    if (entry.reason.includes('CI guard:')) {
-      ciGuardRejections++;
-    } else if (entry.reason.includes('duplicate of')) {
-      dedupCollapses++;
-    } else {
-      otherFlags++;
-    }
-  }
-
-  return { total: entries.length, ciGuardRejections, dedupCollapses, otherFlags };
+  const summary: ReconciliationSummary = { total: entries.length, ciGuardRejections: 0, dedupCollapses: 0, otherFlags: 0 };
+  for (const entry of entries) summary[bucket(entry.reason)]++;
+  return summary;
 }
 
 /** Format a reconciliation summary for console output. */
