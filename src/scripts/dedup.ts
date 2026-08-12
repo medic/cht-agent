@@ -15,6 +15,7 @@
  */
 
 import * as path from 'node:path';
+import { FILENAME_TOKEN_RE } from './relink-issues';
 
 export interface DedupEntry {
   domain: string;
@@ -82,8 +83,8 @@ export function issueEqualsSourcePr(frontmatter: Record<string, unknown>): boole
  */
 export function slugIssueNumber(filePath: string): number | null {
   const base = path.basename(filePath, '.md');
-  const m = /^\d+-[a-z]+-?(\d+)-/.exec(base);
-  return m ? Number.parseInt(m[1], 10) : null;
+  const m = FILENAME_TOKEN_RE.exec(base);
+  return m ? Number.parseInt(m[2], 10) : null;
 }
 
 /**
@@ -148,16 +149,19 @@ function sourcePrRef(frontmatter: Record<string, unknown>): string | null {
  */
 export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR typescript:S3776 -- linear grouping/sort, not worth splitting
   const groups = new Map<string, DedupEntry[]>();
+  const kept: DedupEntry[] = [];
+  const dropped: DedupDrop[] = [];
   for (const entry of entries) {
     const rawId = entry.frontmatter.id;
-    const id = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : '';
+    if (typeof rawId !== 'string' && typeof rawId !== 'number') {
+      kept.push(entry);
+      continue;
+    }
+    const id = String(rawId);
     const group = groups.get(id);
     if (group) group.push(entry);
     else groups.set(id, [entry]);
   }
-
-  const kept: DedupEntry[] = [];
-  const dropped: DedupDrop[] = [];
 
   for (const group of groups.values()) {
     if (group.length === 1) {
@@ -165,6 +169,8 @@ export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR
       continue;
     }
     const ranked = [...group].sort((a, b) => {
+      const fit = (b.frontmatter.domainFit === 'strong' ? 1 : 0) - (a.frontmatter.domainFit === 'strong' ? 1 : 0);
+      if (fit !== 0) return fit;
       const pa = sourcePrNumber(a.frontmatter.source_pr) ?? Infinity;
       const pb = sourcePrNumber(b.frontmatter.source_pr) ?? Infinity;
       return pa === pb ? a.path.localeCompare(b.path) : pa - pb;

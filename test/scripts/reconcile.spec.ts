@@ -42,6 +42,11 @@ describe('reconcile', () => {
     expect(reconcile(entries)).to.deep.equal({ total: 2, ciGuardRejections: 0, dedupCollapses: 0, otherFlags: 2 });
   });
 
+  it('tolerates a malformed audit entry without failing the batch', () => {
+    const malformed = { ...makeEntry(), reason: null } as unknown as SkipLogEntry;
+    expect(reconcile([malformed])).to.deep.equal({ total: 1, ciGuardRejections: 0, dedupCollapses: 0, otherFlags: 1 });
+  });
+
   it('tallies a mixed batch correctly', () => {
     const entries = [
       makeEntry({ reason: 'open-review-pr: CI guard: mislink — a.md' }),

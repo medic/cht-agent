@@ -58,7 +58,7 @@ export interface RelinkOptions {
 }
 
 const SOURCE_PR_RE = /^([^#]+)#(\d+)$/;
-const FILENAME_TOKEN_RE =
+export const FILENAME_TOKEN_RE =
   /^(\d+)-(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)?-?(\d+)-/;
 const DEFAULT_REPO = 'medic/cht-core';
 

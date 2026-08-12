@@ -47,6 +47,10 @@ export function reconcile(entries: SkipLogEntry[]): ReconciliationSummary {
   let otherFlags = 0;
 
   for (const entry of entries) {
+    if (typeof entry.reason !== 'string') {
+      otherFlags++;
+      continue;
+    }
     if (entry.reason.includes('CI guard:')) {
       ciGuardRejections++;
     } else if (entry.reason.includes('duplicate of')) {

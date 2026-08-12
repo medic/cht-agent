@@ -49,6 +49,11 @@ describe('slugIssueNumber', () => {
   it('extracts the issue number from the new hyphen-separated slug format', () => {
     expect(slugIssueNumber('10043-feat-10036-add-thing.md')).to.equal(10036);
   });
+
+  it('does not mistake descriptive numbers for issue references', () => {
+    expect(slugIssueNumber('10043-fix-500-errors-on-login.md')).to.be.null;
+    expect(slugIssueNumber('9200-support-2-level-hierarchy.md')).to.be.null;
+  });
 });
 
 describe('slugContradictsIssueNumber', () => {
@@ -100,6 +105,23 @@ describe('dedupeByIssueId', () => {
     expect(kept).to.have.length(1);
     expect(dropped).to.have.length(0);
     expect(kept[0].frontmatter.source_prs).to.be.undefined;
+  });
+
+  it('keeps drafts with missing IDs independent', () => {
+    const { kept, dropped } = dedupeByIssueId([
+      { domain: 'data-sync', path: 'a.md', frontmatter: {} },
+      { domain: 'contacts', path: 'b.md', frontmatter: { id: {} } },
+    ]);
+    expect(kept.map(d => d.path)).to.deep.equal(['a.md', 'b.md']);
+    expect(dropped).to.be.empty;
+  });
+
+  it('prefers a strong-fit draft over a lower-numbered weak-fit duplicate', () => {
+    const weak = entry('contacts', 'weak.md', 'cht-core-4', 'medic/cht-core#100');
+    weak.frontmatter.domainFit = 'weak';
+    const strong = entry('data-sync', 'strong.md', 'cht-core-4', 'medic/cht-core#200');
+    strong.frontmatter.domainFit = 'strong';
+    expect(dedupeByIssueId([weak, strong]).kept[0].path).to.equal('strong.md');
   });
 
   it('collapses a backport pair into the lowest-numbered PR, tagging source_prs', () => {
