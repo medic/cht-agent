@@ -694,6 +694,7 @@ describe('openReviewPR — dedup lifecycle', () => {
 
     expect(results[0].status).to.equal('failed');
     expect(fs.existsSync(backportPath)).to.equal(true);
+    expect(fs.readFileSync(path.join(pendingDir, 'contacts', '42-original.md'), 'utf8')).not.to.include('source_prs:');
     expect(fs.existsSync(logPath)).to.equal(false);
   });
 });

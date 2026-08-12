@@ -331,22 +331,6 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
 }
 
 /**
- * Persists `source_prs` onto collapsed canonical drafts before promotion.
- * Dropped drafts are removed only after their canonical draft is promoted.
- *
- * @example
- * ```typescript
- * applyDedupMutations(kept);
- * ```
- */
-function applyDedupMutations(kept: DedupEntry[]): void {
-  for (const entry of kept) {
-    if (entry.frontmatter.source_prs !== undefined) {
-      rewriteFrontmatterOnDisk(entry.path, entry.frontmatter);
-    }
-  }
-}
-
 /** Remove and audit duplicates only after the canonical draft's PR is created. */
 function finalizeDedupDrops(
   dropped: DedupDrop[],
@@ -406,14 +390,20 @@ function buildDryRunResults(plans: Map<string, string[]>, date: string): ReviewP
  *
  * @example
  * ```typescript
- * const paths = stageDrafts(['/tmp/pending/contacts/42-foo.md'], '/repo/agent-memory/domains/contacts/issues');
+ * const paths = stageDrafts(['/tmp/pending/contacts/42-foo.md'], '/repo/agent-memory/domains/contacts/issues', new Map());
  * ```
  */
-function stageDrafts(validDrafts: string[], targetDir: string): string[] {
+function stageDrafts(
+  validDrafts: string[],
+  targetDir: string,
+  frontmatterByPath: Map<string, Record<string, unknown>>
+): string[] {
   fs.mkdirSync(targetDir, { recursive: true });
   return validDrafts.map(draftPath => {
     const targetPath = path.join(targetDir, path.basename(draftPath));
     fs.copyFileSync(draftPath, targetPath);
+    const frontmatter = frontmatterByPath.get(draftPath);
+    if (frontmatter?.source_prs !== undefined) rewriteFrontmatterOnDisk(targetPath, frontmatter);
     return path.relative(REPO_ROOT, targetPath);
   });
 }
@@ -439,7 +429,7 @@ function deleteRemoteBranch(exec: ExecFn, branch: string): void {
 function promoteDomain(
   domain: string,
   validDrafts: string[],
-  opts: { domainsDir: string; date: string; exec: ExecFn }
+  opts: { domainsDir: string; date: string; exec: ExecFn; frontmatterByPath: Map<string, Record<string, unknown>> }
 ): ReviewPRResult {
   const { domainsDir, date, exec } = opts;
   const branch = uniqueBranchName(`memory/review/${domain}-${date}`, exec);
@@ -448,7 +438,7 @@ function promoteDomain(
 
   let pushed = false;
   try {
-    const addPaths = stageDrafts(validDrafts, path.join(domainsDir, domain, 'issues'));
+    const addPaths = stageDrafts(validDrafts, path.join(domainsDir, domain, 'issues'), opts.frontmatterByPath);
     exec('git', ['add', ...addPaths]);
     exec('git', ['commit', '-m',
       `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
@@ -499,7 +489,7 @@ function promoteDomain(
 function promoteDomainSafely(
   domain: string,
   validDrafts: string[],
-  config: { domainsDir: string; date: string; exec: ExecFn }
+  config: { domainsDir: string; date: string; exec: ExecFn; frontmatterByPath: Map<string, Record<string, unknown>> }
 ): ReviewPRResult {
   try {
     return promoteDomain(domain, validDrafts, config);
@@ -516,7 +506,7 @@ function promoteDomainSafely(
 
 function executeApply(
   plans: Map<string, string[]>,
-  config: { domainsDir: string; date: string; exec: ExecFn }
+  config: { domainsDir: string; date: string; exec: ExecFn; frontmatterByPath: Map<string, Record<string, unknown>> }
 ): ReviewPRResult[] {
   const { exec } = config;
   const results: ReviewPRResult[] = [];
@@ -564,8 +554,8 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
   const { plans, skipped, kept, dropped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
   if (!apply) return [...skipped, ...buildDryRunResults(plans, date)];
 
-  applyDedupMutations(kept);
-  const results = executeApply(plans, { domainsDir, date, exec });
+  const frontmatterByPath = new Map(kept.map(entry => [entry.path, entry.frontmatter]));
+  const results = executeApply(plans, { domainsDir, date, exec, frontmatterByPath });
   const promotedPaths = new Set(results
     .filter(result => result.status === 'created')
     .flatMap(result => plans.get(result.domain) ?? []));
