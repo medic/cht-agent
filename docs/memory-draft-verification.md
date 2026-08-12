@@ -69,6 +69,22 @@ npm run verify-drafts -- --dir /path/to/other-worktree/agent-memory
 Exit codes: `0` clean, `1` at least one blocking finding, `3` only online checks
 went unverified (a throttled `gh` never reports a pass).
 
+**Authenticate before running `--online`.** `gh-classify` asks `gh api` first and
+falls back to anonymous `curl`, so the tier works on a host with no `gh` at all —
+but anonymously it gets GitHub's **60 requests/hour**, and a single 37-draft
+domain exhausts that. The run then reports `unverified` counts that read like
+content problems and exits `3`. Export a token — any read-only PAT will do — and
+the same scan returns `0 unverified` and exits `0`:
+
+```sh
+GH_TOKEN=<read-only PAT> npm run verify-drafts -- --dir <dir> --online
+gh api rate_limit --jq '.resources.core'   # 5000/hour authenticated, 60 without
+```
+
+Measured on contacts: three consecutive anonymous runs each left 3–4 drafts
+unverified and needed an hour's wait between them; the authenticated run cleared
+all 37 in one pass. Nothing about the corpus changed in between.
+
 ## The vocabulary snapshot
 
 `vocab-near-miss` compares against `agent-memory/indices/cht-core-vocab.json`, a
