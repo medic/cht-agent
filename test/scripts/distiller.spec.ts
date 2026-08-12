@@ -808,4 +808,14 @@ describe('buildFrontmatter — related_issues', () => {
     });
     expect(path.basename(result.outputPath!)).to.match(/^42-issue-137-fix-137-/);
   });
+
+  it('uses an explicit filename token for breaking-change issue titles', async () => {
+    const { distillPR } = loadDistiller();
+    const result = await distillPR(makePR({ prTitle: 'fix(#137)!: restore sync' }), {
+      outputDir: tmpOutputDir(),
+      logPath: tmpLogPath(),
+      distillFn: async () => makeDraft(),
+    });
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-137-fix-137-/);
+  });
 });

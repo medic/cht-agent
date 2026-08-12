@@ -272,7 +272,7 @@ export function slugify(text: string): string {
 }
 
 function issueToken(title: string): string {
-  const match = /^(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)\s*\(\s*#([1-9]\d*)\s*\)/i.exec(title);
+  const match = /^(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)\s*\(\s*#([1-9]\d*)\s*\)!?/i.exec(title);
   return match ? `issue-${match[1]}-` : '';
 }
 
