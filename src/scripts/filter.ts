@@ -15,7 +15,6 @@ import { ChatOpenAI } from '@langchain/openai';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { isBatchFatalError } from '../llm/rate-limit';
 import { z } from 'zod';
-import type { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
 import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
 
@@ -189,14 +188,14 @@ function getTriageChain() {
  * so the failure path isn't handled twice.
  *
  * @param pr      - The PR to triage.
- * @param handler - Optional Langfuse callback handler for tracing this LLM call.
+ * @param trace - Optional Langfuse trace for this LLM call.
  *
  * @example
  * ```typescript
  * // Not called directly in tests — injected via opts.triageFn or exercised via filterPR
  * ```
  */
-async function llmTriage(pr: ScrapedPR, handler?: BaseCallbackHandler): Promise<FilterResult> {
+async function llmTriage(pr: ScrapedPR, trace?: FilterOptions['langfuseTrace']): Promise<FilterResult> {
   const chain = getTriageChain();
 
   if (!chain) {
@@ -220,9 +219,19 @@ ${body}
 
 Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<one sentence>" }`;
 
-  const callbacks = handler ? [handler] : undefined;
-  const result = await chain.invoke(prompt, { callbacks }) as TriageOutput;
-  return { decision: result.decision as FilterDecision, reason: result.reason };
+  let model = 'claude-haiku-4-5-20251001';
+  if (isUsingCLIProvider()) model = 'claude-cli';
+  else if (process.env.OPENROUTER_API_KEY) model = process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL;
+  const generation = trace?.generation({ name: 'triage-classify', model, input: prompt });
+  try {
+    const result = await chain.invoke(prompt) as TriageOutput;
+    const output = { decision: result.decision as FilterDecision, reason: result.reason };
+    generation?.end({ output });
+    return output;
+  } catch (err) {
+    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) } });
+    throw err;
+  }
 }
 
 /**
@@ -302,7 +311,7 @@ export async function filterPR(
     return { decision: 'flag-for-human', reason: 'LLM triage skipped' };
   }
 
-  const effectiveTriage = opts.triageFn ?? ((p: ScrapedPR) => llmTriage(p, opts.langfuseHandler));
+  const effectiveTriage = opts.triageFn ?? ((p: ScrapedPR) => llmTriage(p, opts.langfuseTrace));
   const result = await runLlmTriage(pr, effectiveTriage);
 
   if (result.decision !== 'distill') {

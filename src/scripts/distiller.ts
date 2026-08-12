@@ -17,7 +17,6 @@ import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-
 import { isBatchFatalError } from '../llm/rate-limit';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../utils/domain-inference';
 import { z } from 'zod';
-import type { BaseCallbackHandler } from '@langchain/core/callbacks/base';
 import type {
   ScrapedPR,
   DistillDraft,
@@ -212,14 +211,14 @@ Respond with a JSON object matching this structure exactly:
  * Returns a DistillDraft or throws — callers handle errors.
  *
  * @param pr      - The PR to distill.
- * @param handler - Optional Langfuse callback handler for tracing this LLM call.
+ * @param trace - Optional Langfuse trace for this LLM call.
  *
  * @example
  * ```typescript
  * // Not called directly in tests — injected via opts.distillFn
  * ```
  */
-async function llmDistill(pr: ScrapedPR, handler?: BaseCallbackHandler): Promise<DistillDraft> {
+async function llmDistill(pr: ScrapedPR, trace?: DistillOptions['langfuseTrace']): Promise<DistillDraft> {
   const chain = getDistillChain();
 
   if (!chain) {
@@ -227,8 +226,18 @@ async function llmDistill(pr: ScrapedPR, handler?: BaseCallbackHandler): Promise
   }
 
   const prompt = buildPrompt(pr);
-  const callbacks = handler ? [handler] : undefined;
-  return await chain.invoke(prompt, { callbacks }) as DistillDraft;
+  let model = ANTHROPIC_DISTILL_MODEL;
+  if (isUsingCLIProvider()) model = 'claude-cli';
+  else if (process.env.OPENROUTER_API_KEY) model = process.env.DISTILL_MODEL ?? DEFAULT_DISTILL_MODEL;
+  const generation = trace?.generation({ name: 'distill-draft', model, input: prompt });
+  try {
+    const draft = await chain.invoke(prompt) as DistillDraft;
+    generation?.end({ output: draft });
+    return draft;
+  } catch (err) {
+    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) } });
+    throw err;
+  }
 }
 
 /**
@@ -411,7 +420,7 @@ function resolveDistillOpts(opts: DistillOptions): {
   return {
     logPath: opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH,
     outputDir: opts.outputDir ?? DEFAULT_PIPELINE_OUTPUT_DIR,
-    distillFn: opts.distillFn ?? ((p: ScrapedPR) => llmDistill(p, opts.langfuseHandler)),
+    distillFn: opts.distillFn ?? ((p: ScrapedPR) => llmDistill(p, opts.langfuseTrace)),
   };
 }
 

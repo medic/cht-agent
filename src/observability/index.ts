@@ -1,22 +1,19 @@
 /**
- * Observability module — Langfuse client singleton and trace/handler factory.
+ * Observability module — Langfuse client singleton and trace factory.
  *
- * One reusable primitive: `startTrace()` creates a trace and the LangChain
- * callback handler rooted on it, so every LLM call and manual span lands under
- * the same trace. All exports no-op when LANGFUSE_ENABLED=false (the default in
+ * `startTrace()` creates a trace. Callers add direct generation observations so
+ * API and Claude CLI model paths are both represented. All exports no-op when LANGFUSE_ENABLED=false (the default in
  * tests and CI). The client is created lazily so dotenv vars loaded by the entry
  * point are available before the constructor runs.
  *
  * Usage:
- *   const { trace, handler } = startTrace({ name: 'my-workflow', sessionId, input, tags });
- *   await chain.invoke(prompt, { callbacks: [handler] });   // auto-captures model + tokens
+ *   const { trace } = startTrace({ name: 'my-workflow', sessionId, input, tags });
  *   const span = trace.span({ name: 'fetch' }); span.end({ output });
  *   trace.update({ output: result });
  *   await getLangfuse().flushAsync();
  */
 
 import Langfuse from 'langfuse';
-import { CallbackHandler } from 'langfuse-langchain';
 
 // Lazy singleton — created on first call so dotenv vars are available
 let _client: Langfuse | undefined;
@@ -43,18 +40,16 @@ export function getLangfuse(): Langfuse {
   return _client;
 }
 
-/** A trace plus the LangChain callback handler rooted on it. */
+/** A Langfuse trace rooted at a workflow execution. */
 export interface TraceContext {
   trace: ReturnType<Langfuse['trace']>;
-  handler: CallbackHandler;
 }
 
 /**
- * Start a Langfuse trace and a LangChain callback handler rooted on it.
+ * Start a Langfuse trace.
  *
- * The handler auto-captures model name, token usage, and latency for any chain
- * it's passed to; use `trace.span()` for non-LLM steps and `trace.update()` to
- * set the trace output. The SDK no-ops when LANGFUSE_ENABLED=false.
+ * Use `trace.generation()` for LLM calls, `trace.span()` for non-LLM steps, and
+ * `trace.update()` to set the trace output. The SDK no-ops when disabled.
  *
  * Pass a descriptive `name` (not a unique id) — Langfuse generates the trace id,
  * so re-running the same entity produces a distinct trace each time. Put the
@@ -68,7 +63,7 @@ export interface TraceContext {
  *
  * @example
  * ```typescript
- * const { trace, handler } = startTrace({
+ * const { trace } = startTrace({
  *   name: 'memory-pipeline-pr',
  *   sessionId: 'run-abc',
  *   input: { prNum: 42, repo: 'medic/cht-core' },
@@ -85,5 +80,5 @@ export function startTrace(opts: {
   metadata?: Record<string, unknown>;
 }): TraceContext {
   const trace = getLangfuse().trace(opts);
-  return { trace, handler: new CallbackHandler({ root: trace }) };
+  return { trace };
 }
