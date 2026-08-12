@@ -39,6 +39,23 @@ export interface VocabFamily {
   /** Inclusive Levenshtein bound for calling a candidate a near-miss. */
   maxDistance: number;
   terms: string[];
+  /**
+   * Terms that provably existed in cht-core once and have since been removed.
+   *
+   * A draft describing history correctly will name them — "the report endpoints
+   * kept `can_update_records` until #10522 renamed it" — and against a snapshot
+   * of TODAY's vocabulary that reads as a one-edit typo for `can_update_reports`.
+   * The finding is blocking, so a true, precisely-scoped sentence fails the gate
+   * and the tempting fix is to delete the history.
+   *
+   * Kept separate from `terms` on purpose: these suppress a near-miss but are
+   * never offered as a suggestion, so the checker can never advise a reader to
+   * use a name that no longer exists. Each entry needs the commit that removed
+   * it recorded in `historicalNote`, so the list stays auditable rather than
+   * becoming a junk drawer for whatever tripped the gate last.
+   */
+  historical?: string[];
+  historicalNote?: Record<string, string>;
 }
 
 /** A vocabulary snapshot, stamped with the checkout it was mined from. */
@@ -88,6 +105,10 @@ export function levenshtein(a: string, b: string, limit: number): number {
  */
 export function nearMiss(token: string, family: VocabFamily): string | null {
   if (family.terms.includes(token)) return null;
+  // A name that really existed is not a typo, even though the current snapshot
+  // has no such term. Checked before the distance loop so it can never be
+  // returned as a suggestion.
+  if (family.historical?.includes(token)) return null;
   let best: string | null = null;
   let bestDist = family.maxDistance + 1;
   for (const term of family.terms) {

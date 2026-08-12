@@ -116,6 +116,38 @@ describe('vocab', () => {
     it('returns null for a token too far from anything to be a typo', () => {
       expect(nearMiss('totally_unrelated_symbol', family)).to.equal(null);
     });
+
+    // A draft describing history correctly names permissions that have since been
+    // renamed. Against a snapshot of today's vocabulary those read as typos, and
+    // the finding is blocking — so a true, precisely-scoped sentence fails the
+    // gate and the tempting fix is to delete the history. Observed on contacts
+    // 9835, quoting the report controller's permission list as it stood at
+    // #10222: `can_update_records`, renamed to `can_update_reports` by #10522.
+    describe('a term that existed once and has since been removed', () => {
+      const withHistory: VocabFamily = {
+        ...family,
+        terms: ['can_update_reports'],
+        historical: ['can_update_records'],
+      };
+
+      it('does not flag it as a near-miss', () => {
+        expect(nearMiss('can_update_records', withHistory)).to.equal(null);
+      });
+
+      it('is never offered as a suggestion for a real typo', () => {
+        // 1 edit from the live term, 3 from the historical one — so the live term
+        // wins on distance. The guarantee under test is structural rather than
+        // arithmetic: `historical` is consulted before the distance loop and its
+        // entries are never candidates, so no input can make the checker advise a
+        // name that no longer exists.
+        expect(nearMiss('can_update_reportz', withHistory)).to.equal('can_update_reports');
+      });
+
+      it('still flags a typo when the family declares no history', () => {
+        expect(nearMiss('can_update_records', { ...family, terms: ['can_update_reports'] }))
+          .to.equal('can_update_reports');
+      });
+    });
   });
 
   describe('the committed snapshot', () => {

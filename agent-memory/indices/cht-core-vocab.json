@@ -82,7 +82,13 @@
         "can_view_unallocated_data_records",
         "can_view_users",
         "can_write_wealth_quintiles"
-      ]
+      ],
+      "historical": [
+        "can_update_records"
+      ],
+      "historicalNote": {
+        "can_update_records": "Real permission on the #9835 feature branch: added by b6470973b (#10200), still present at 8c92517ec (#10222), renamed to can_update_reports by a89955a9f (#10522). Absent from origin/master."
+      }
     },
     {
       "name": "couch-view",
