@@ -45,6 +45,23 @@ export interface TraceContext {
   trace: ReturnType<Langfuse['trace']>;
 }
 
+/** Record a model invocation and ensure failed calls are represented in Langfuse. */
+export async function observeGeneration<T>(
+  trace: TraceContext['trace'] | undefined,
+  opts: { name: string; model: string; input: string },
+  invoke: () => Promise<T>
+): Promise<T> {
+  const generation = trace?.generation(opts);
+  try {
+    const output = await invoke();
+    generation?.end({ output });
+    return output;
+  } catch (err) {
+    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) } });
+    throw err;
+  }
+}
+
 /**
  * Start a Langfuse trace.
  *

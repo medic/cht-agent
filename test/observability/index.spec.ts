@@ -1,4 +1,5 @@
-import { startTrace, getLangfuse } from '../../src/observability';
+import { expect } from 'chai';
+import { startTrace, getLangfuse, observeGeneration } from '../../src/observability';
 
 /**
  * Exercises the real Langfuse SDK with LANGFUSE_ENABLED=false (the default in
@@ -31,6 +32,10 @@ describe('observability (LANGFUSE_ENABLED=false)', () => {
     span.end({ output: { y: 2 } });
     trace.score({ name: 'outcome', value: 1 });
     trace.update({ output: { done: true } });
+
+    expect(await observeGeneration(trace, {
+      name: 'model', model: 'test-model', input: 'test input',
+    }, async () => ({ result: 'ok' }))).to.deep.equal({ result: 'ok' });
 
     await getLangfuse().flushAsync(); // must not throw or hang
   });
