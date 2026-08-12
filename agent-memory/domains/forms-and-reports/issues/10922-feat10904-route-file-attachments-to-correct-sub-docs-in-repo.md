@@ -7,7 +7,7 @@ issueNumber: 10904
 issueUrl: https://github.com/medic/cht-core/issues/10904
 title: Route file/binary attachments to the correct [db-doc="true"] sub-document in Enketo report forms
 lastUpdated: '2026-08-12'
-summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly. NOT YET MERGED — the work lives only on the epic branches, not on `master`.
+summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly. NOT ON MASTER — both PRs are merged, but into epic branches only, so none of this is shipped behaviour.
 services:
   - webapp
 techStack:
@@ -47,7 +47,7 @@ concepts:
   - XML tree ancestor resolution
   - Enketo FileManager file handling
   - inline base64 binary blob extraction
-  - unmerged epic branch work
+  - epic-branch work not yet on master
 related_issues:
   - cht-core-10700
   - cht-core-10903
@@ -56,7 +56,7 @@ stale: true
 
 ## Problem
 
-> **Not on `master` (as of 2026-08-09).** Neither PR #10922 nor PR #11116 has been merged. The commits live only on the epic branches `origin/10700-photo-capture`, `origin/10700-photo-capture-in-sub-contacts-and-reports` and `origin/5.1.2-FR-attachments-for-subcontacts`; none of them is an ancestor of `origin/master`, and neither `resolveOwnerDoc` nor `findFileNodeByFilename` exists in `webapp/src/ts/services/enketo.service.ts` on `master`. Everything below describes the state of those branches, not shipped behaviour. (The frontmatter `source_sha` `cc34e08664…` and the current branch head `0df57c664…` are two rebased copies of the same squash.)
+> **Merged into epic branches on 2026-05-19 and 2026-05-29; not on `master` (as of 2026-08-12).** PR #10922 merged into `10700-photo-capture-in-sub-contacts-and-reports` (squash `cc34e08664`, which is the frontmatter `source_sha` and the current head of that branch) and PR #11116 merged into `5.1.2-FR-attachments-for-subcontacts` (squash `e88c88361`). Neither squash is an ancestor of `origin/master`, and neither `resolveOwnerDoc` nor `findFileNodeByFilename` exists in `webapp/src/ts/services/enketo.service.ts` on `master` — `git log -S` finds them in no commit reachable from it. Everything below describes the state of those branches, not shipped behaviour. (`cc34e08664` and `0df57c664` — the latter an interior commit of `origin/10700-photo-capture`, not a branch head — are two rebased copies of the same #10922 squash, identical under `git patch-id --stable`. The #11116 changes reach `5.1.2-FR-attachments-for-subcontacts` through its own squash rather than through either of those shas.)
 
 When a report form contained `[db-doc="true"]` sub-documents with binary/file fields (e.g. photo capture for sub-contacts), every attachment was saved onto the main report doc regardless of which sub-doc the binary field actually belonged to, so sub-document photos/files landed on the wrong document.
 
@@ -110,7 +110,7 @@ Added Karma unit tests in enketo.service.spec.ts backed by new XML fixtures cove
 
 ## Related Issues
 
-- #10904: child issue this PR targets — route file attachments to correct sub-docs (still open; the PR has not merged)
+- #10904: child issue this PR targets — route file attachments to correct sub-docs (still open; the PR merged into an epic branch, not into master)
 - #10700: parent epic — photo capture for sub contacts
 - #10903: sibling issue this work was adapted from
 

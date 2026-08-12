@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 7599
 issueUrl: https://github.com/medic/cht-core/issues/7599
 title: 'Uplift Enketo forms module: enable excludeNonRelevant and patch date pickers to not auto-open as first question'
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-12'
 summary: The Enketo forms module was uplifted to enable `excludeNonRelevant` and to stop the date and date-time picker widgets from auto-popping open when they are the first question on a page. The enketo-core relevance patch was updated so CHT `inputs` group fields remain accessible to expressions even when the group is non-relevant.
 services:
   - webapp
@@ -79,7 +79,7 @@ Used a patch-package patch to override enketo-core internals instead of forking 
 
 ## Testing
 
-Updated the existing `tests/e2e/default/enketo/pregnancy-danger-sign-follow-up.wdio-spec.js` WebdriverIO spec for the new relevance/widget behaviour; that is the only test change the epic squash carries. Note that #8740 is an epic child merged into the `7599-uplift-enketo-7` branch and squashed as #8528 (`314e79061a`), so its own commit sha is no longer resolvable in a clone — verify file claims against the squash, not `source_sha`.
+The epic squash's only test change is `tests/e2e/default/enketo/pregnancy-danger-sign-follow-up.wdio-spec.js` (+2/-2), which adds `'deprecatedID'` to two `excludingEvery()` exclusion lists because enketo-core v7 sets `meta/deprecatedID` on edited submissions — edit-metadata fallout of the uplift, not relevance or widget coverage. PR #8740's own widget-behaviour test edits (removing the `browser.keys('Escape')` datepicker workaround in `tests/e2e/cht-form/default/death-report.wdio-spec.js` and `tests/page-objects/default/enketo/delivery.wdio.page.js`) cancelled out within the epic branch — the workaround is already absent at `314e79061a^` — so they do not appear in the squash. Note that #8740 is an epic child merged into the `7599-uplift-enketo-7` branch and squashed as #8528 (`314e79061a`), so its own commit sha is no longer resolvable in a clone — verify file claims against the squash, not `source_sha`.
 
 ## Related Issues
 

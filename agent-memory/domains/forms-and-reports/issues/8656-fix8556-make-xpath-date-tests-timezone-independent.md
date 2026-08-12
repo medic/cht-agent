@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8556
 issueUrl: https://github.com/medic/cht-core/issues/8556
 title: Make the medic-xpath-extensions date tests pass in any timezone
-lastUpdated: '2026-08-11'
-summary: The medic-xpath-extensions mocha suite baked the runner's local timezone into its expectations, so `npm run unit-webapp` failed for developers outside UTC-4; the fix pins the timezone in the specs, corrects an ambiguous fixture date, and tidies one redundant re-parse in the shared `asMoment()` helper.
+lastUpdated: '2026-08-12'
+summary: The medic-xpath-extensions mocha suite baked timezone-dependent expectations into its cases, so `npm run unit-webapp` failed in some timezones (e.g. NZ +12, per #8556) while passing in others such as UTC; the fix pins `getTimezoneOffset` to -240 (emulating UTC+4) so results are identical everywhere, corrects an ambiguous fixture date, and tidies one redundant re-parse in the shared `asMoment()` helper.
 services:
   - webapp
 techStack:
@@ -44,7 +44,7 @@ stale: false
 
 ## Problem
 
-`npm run unit-webapp` failed for developers outside UTC-4: the `medic-xpath-extensions` mocha suite (`#difference-in-months` and every `#to-bikram-sambat()` case) baked the runner's local timezone into its expectations, so results came out off by a day or a month in e.g. NZ (+12) — tracked in #8556. This was a test-determinism problem, not a defect in the extension functions themselves; no deployed form behaviour was wrong.
+The `medic-xpath-extensions` mocha suite (`#difference-in-months` and every `#to-bikram-sambat()` conversion case) baked timezone-dependent expectations into its cases, so `npm run unit-webapp` failed in some timezones while passing in others — results came out off by a day or a month in e.g. NZ (+12), the environment reported in #8556, while the same expectations passed at UTC in CI. This was a test-determinism problem, not a defect in the extension functions themselves; no deployed form behaviour was wrong.
 
 ## Root Cause
 

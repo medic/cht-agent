@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9653
 issueUrl: https://github.com/medic/cht-core/issues/9653
 title: Refactor shared-libs/validation to query cht-datasource for uniqueness/existence checks instead of building reports_by_freetext view queries directly
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-12'
 summary: The validation library built and executed medic-client/reports_by_freetext queries directly for its uniqueness/existence validators; this refactor routes every such lookup through cht-datasource (Report.v1.getUuids with Qualifier.byFreetext) and initialises the lib with a data context so it can reach that layer.
 services:
   - webapp
@@ -66,7 +66,7 @@ Inject a data context into a shared library at init time so the lib can reach ch
 
 ## Design Choices
 
-Pushed the index-shape decision down into cht-datasource so future changes to the freetext indexes are invisible to the validation lib — the stated goal of #9653. Callers therefore no longer choose a view or a key range: cht-datasource decides internally whether a qualifier hits the keyed offline view, a range scan, or Nouveau, based on whether the freetext contains a `:` separator. Delegating rather than rewriting the validators kept backwards compatibility with existing data and configuration.
+Pushed the index-shape decision down into cht-datasource so future changes to the freetext indexes are invisible to the validation lib — the stated goal of #9653. Callers therefore no longer choose a view or a key range: cht-datasource decides internally which index a qualifier hits. It uses Nouveau when running server side (no `_design/medic-offline-freetext` ddoc in the db, per `useNouveauIndexes` in src/local/libs/nouveau.ts) and the offline `reports_by_freetext` view otherwise, doing a keyed lookup when the freetext contains a `:` separator (`isKeyedFreetextQualifier`, src/qualifier.ts) and a prefix range scan when it does not. At this draft's anchor Nouveau was not in this path at all — `getUuidsPage` queried `medic-client/reports_by_freetext`, with `:` selecting keyed vs range; Nouveau replaced the views later, in f1bdfc07c (feat(#9542), PR #10201). Delegating rather than rewriting the validators kept backwards compatibility with existing data and configuration.
 
 ## Related Files
 
