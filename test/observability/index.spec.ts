@@ -1,4 +1,3 @@
-import { expect } from 'chai';
 import { startTrace, getLangfuse } from '../../src/observability';
 
 /**
@@ -20,15 +19,13 @@ describe('observability (LANGFUSE_ENABLED=false)', () => {
   });
 
   it('runs the full trace lifecycle without throwing when disabled', async () => {
-    const { trace, handler } = startTrace({
+    const { trace } = startTrace({
       name: 'test-workflow',
       sessionId: 'session-1',
       input: { id: 1 },
       tags: ['test'],
       metadata: { id: 1 },
     });
-
-    expect(handler).to.exist;
 
     const span = trace.span({ name: 'step', input: { x: 1 } });
     span.end({ output: { y: 2 } });

@@ -1,6 +1,6 @@
 # Observability
 
-CHT Agent uses [Langfuse](https://langfuse.com) for LLM tracing, token cost tracking, and pipeline monitoring.
+CHT Agent uses [Langfuse](https://langfuse.com) for LLM tracing and pipeline monitoring.
 
 ---
 
@@ -41,7 +41,7 @@ LANGFUSE_ENABLED=false
 
 All tests run with `LANGFUSE_ENABLED=false`. This is enforced in CI via the `unit_tests.yml` workflow env and locally via proxyquire stubs in `test/scripts/run-pipeline.spec.ts`.
 
-Tests that directly call `filterPR` or `distillPR` are unaffected — those functions only use the `langfuseHandler` opts field, which defaults to `undefined` in tests.
+Tests that directly call `filterPR` or `distillPR` are unaffected — tracing is optional and defaults to `undefined` in tests.
 
 ---
 
@@ -52,8 +52,8 @@ Each `processSinglePR` call produces **one Langfuse trace** containing:
 ```
 memory-pipeline-pr   (input: { prNum, repo, url }; tags: [memory-pipeline, <repo>])
 ├── span: scrape          (no LLM — input: prNum, repo; output: fileCount)
-├── generation: filter    (LangChain callback — model + tokens auto-captured)
-└── generation: distill   (LangChain callback — model + tokens auto-captured)
+├── generation: triage-classify
+└── generation: distill-draft
     score: distill-outcome (1 = written, 0 = flag-for-human)
     output: { decision, reason, distillStatus? }
 ```
@@ -91,10 +91,9 @@ Follow these when adding instrumentation to new workflows:
    import { startTrace, getLangfuse } from '../observability';
    ```
 
-2. Start a trace at the entry point of your workflow — this returns the trace and a
-   LangChain handler rooted on it:
+2. Start a trace at the entry point of your workflow:
    ```typescript
-   const { trace, handler } = startTrace({
+   const { trace } = startTrace({
      name: 'research-supervisor',
      sessionId,
      input: { runId },                 // identity only, not whole objects
@@ -102,11 +101,17 @@ Follow these when adding instrumentation to new workflows:
    });
    ```
 
-3. Pass `handler` to any LangChain chain invocation via the callbacks option
-   (model name and token usage are captured automatically):
+3. Wrap each model call in a generation. This works for both LangChain API calls
+   and the Claude CLI adapter:
    ```typescript
-   const callbacks = handler ? [handler] : undefined;
-   await chain.invoke(prompt, { callbacks });
+   const generation = trace.generation({ name: 'classify', model, input: prompt });
+   try {
+     const result = await chain.invoke(prompt);
+     generation.end({ output: result });
+   } catch (err) {
+     generation.end({ output: { error: String(err) } });
+     throw err;
+   }
    ```
 
 4. Use `trace.span()` for non-LangChain operations:
@@ -142,12 +147,19 @@ Follow these when adding instrumentation to new workflows:
 ## Sensitive Data
 
 The memory pipeline only traces **public** `medic/cht-core` PR data (number, repo,
-URL, and the LLM prompts/completions the callback handler captures), so no masking
+URL, and the LLM prompts/completions captured in direct generations), so no masking
 is configured today. The trace `input` is deliberately set to PR identity only
 (`{ prNum, repo, url }`) rather than the whole scraped object — keep it that way.
 
 If this pattern is reused for a workflow that handles private or user data, mask
 or omit it before it reaches a trace `input`, span, or prompt.
+
+## Token and Cost Data
+
+The direct generations record the selected model, prompt, completion, latency, and
+errors on both API and `claude-cli` paths. The current Claude CLI adapter returns
+parsed JSON rather than provider usage metadata, so it cannot report token or cost
+data. Add usage fields to the provider result before claiming token or cost tracking.
 
 ---
 
