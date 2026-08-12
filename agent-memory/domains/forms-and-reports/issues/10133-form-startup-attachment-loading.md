@@ -6,12 +6,12 @@ subDomain: api
 issueNumber: 10133
 issueUrl: https://github.com/medic/cht-core/issues/10133
 title: API startup loads all form attachments unnecessarily via _all_docs
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-12'
 source_prs:
   - "medic/cht-core#10248"
 related_issues:
   - cht-core-10132
-summary: During API startup, form processing read whole form documents with all their attachments (including large media files) — an `_all_docs` call for the batch path and a per-doc `get` for the update path — causing timeouts on instances with large form media. Fixed by loading attachments separately and only fetching relevant ones.
+summary: During API startup, form processing read whole form documents with all their attachments (including large media files). The `_all_docs` batch read is the one that timed out on instances with large form media (apache/couchdb#2210); the per-doc `get` on the update path was expensive rather than hanging. Fixed by loading attachments separately and only fetching relevant ones.
 services:
   - api
 techStack:
@@ -29,13 +29,13 @@ Two separate full-document reads, in two different files. `api/src/services/form
 
 ## Solution
 
-Dropped `attachments` from both reads: `forms.js`'s `_all_docs` call now passes only `include_docs`, and `generate-xform.js`'s `update` now calls plain `db.medic.get(docId)`. Attachments are then loaded separately, by name, per form. Only the business-logic attachments needed for XForm generation are read and saved: the XForm XML attachment — whose name is resolved dynamically by the new `formsService.getXFormAttachmentName(doc)` helper (literally `xml`, or any `*.xml` other than `model.xml`) — plus `model.xml` and `form.html`. Large media attachments are never loaded during startup or form processing (PR #10248). PR #10248 changed 5 files in the API layer.
+Dropped `attachments` from both reads: `forms.js`'s `_all_docs` call now passes only `include_docs`, and `generate-xform.js`'s `update` now calls plain `db.medic.get(docId)`. Attachments are then loaded separately, by name, per form. Only one attachment is read: the XForm XML, whose name is resolved dynamically by the new `formsService.getXFormAttachmentName(doc)` helper (literally `xml`, or any `*.xml` other than `model.xml`). `model.xml` and `form.html` are not read at all — they are the generated outputs generate-xform.js writes back onto the doc (:243, :247). Large media attachments are never loaded during startup or form processing (PR #10248). PR #10248 changed 5 files in the API layer.
 
 ## Code Patterns
 
 - Never use `_all_docs` with `attachments=true` when documents may have large binary attachments
 - Load attachments separately and selectively, specifying which attachment names you need
-- Fetch specific attachments by name with `db.medic.getAttachment()` rather than pulling all attachments in a bulk/full-doc read, restricting form processing to the business-logic set: the XForm XML attachment (name resolved at runtime, not a fixed `form.xml`), plus `model.xml` and `form.html` (PR #10248)
+- Fetch specific attachments by name with `db.medic.getAttachment()` rather than pulling all attachments in a bulk/full-doc read — form processing reads just the XForm XML attachment, its name resolved at runtime rather than a fixed `form.xml`, and writes `model.xml` and `form.html` back (PR #10248)
 - Resolve an attachment's name through a shared helper (`formsService.getXFormAttachmentName`) instead of hardcoding it — form docs name their XML attachment `xml` or `<something>.xml`, and the e2e replication test asserts exactly the trio `['model.xml', 'form.html', 'xml']`
 - File: `api/src/services/forms.js` owns form document retrieval and the `_all_docs` call that was the actual source of the timeout
 - File: `api/src/services/generate-xform.js` handles form XML generation at startup and the single-form update read

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 6390
 issueUrl: https://github.com/medic/cht-core/issues/6390
 title: Update Enketo phone widget to allow validating phone numbers without checking for duplicate contacts
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-12'
 summary: 'The phone widget previously always both validated a phone number and enforced uniqueness across contacts, with no way to permit duplicates. This PR adds a new field style (type: string, appearance: numbers tel) that validates the number but does not dup-check by default, with opt-in uniqueness via instance::cht:unique_tel.'
 services:
   - webapp
@@ -62,7 +62,7 @@ Introduced a new field configuration — type: string with appearance: numbers t
 
 ## Code Patterns
 
-Widget behavior is selected by one line in `_init`: `const uniqueTel = $wrapper.attr('data-cht-unique_tel') === 'true' || deprecated.isDeprecated($wrapper)`. Two things can therefore turn duplicate-checking on — the new `instance::cht:unique_tel` XLSForm column, and the legacy shape, which `deprecated.isDeprecated` detects as the absence of the `or-appearance-tel` class. The legacy `type: tel` field keeps always-on dup-checking through that second branch; only the new `type: string` / `appearance: numbers tel` style is opt-in. That column header lives only inside the `.xlsx` workbook, so it cannot be found by grepping the tree. It reaches the code in two steps: pyxform emits `cht:unique_tel` into the generated XForm instance, and the transform renders it as a `data-cht-unique_tel` attribute on the question. `webapp/src/js/enketo/widgets/phone-widget.js` reads `data-cht-unique_tel`; validation is decoupled from the uniqueness/duplicate-check so each can be enabled independently — webapp/src/js/enketo/widgets/phone-widget.js.
+Widget behavior is selected by one line in `_init`: `const uniqueTel = $wrapper.attr('data-cht-unique_tel') === 'true' || deprecated.isDeprecated($wrapper)`. Two things can therefore turn duplicate-checking on — the new `instance::cht:unique_tel` XLSForm column, and the legacy shape, which `deprecated.isDeprecated` detects as the absence of the `or-appearance-tel` class. The legacy `type: tel` field keeps always-on dup-checking through that second branch; only the new `type: string` / `appearance: numbers tel` style is opt-in. That column header lives only inside the `.xlsx` workbook, so it cannot be found by grepping the tree. It reaches the code in two steps: pyxform emits `cht:unique_tel` into the generated XForm instance, and the transform renders it as a `data-cht-unique_tel` attribute on the question. `webapp/src/js/enketo/widgets/phone-widget.js` reads `data-cht-unique_tel`; format validation is decoupled from the duplicate check rather than made independently switchable: the `numbers tel` appearance always validates the format, and only the uniqueness lookup is opt-in, via `cht:unique_tel="true"` — webapp/src/js/enketo/widgets/phone-widget.js.
 
 ## Design Choices
 
