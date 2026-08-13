@@ -156,7 +156,14 @@ const NOT_EXCLUSIVE = /\bnot\s+(?:necessarily\s+|strictly\s+|mutually\s+)*exclus
 export const whyWithdrawsPair = (why: string): boolean =>
   SELF_NEGATING.test(why) || DOWNGRADED.test(why) || NOT_EXCLUSIVE.test(why)
   || /\b(?:both\s+can\s+be|can\s+both\s+be)\s+true\b/i.test(why)
-  || /\b(?:these|they)\s+are\s+consistent\b/i.test(why);
+  || /\b(?:these|they)\s+are\s+consistent\b/i.test(why)
+  // "These are compatible, not contradictory — withdraw." Observed on
+  // forms-and-reports after the three patterns above were already in place. The
+  // model states the withdrawal as a bare imperative, so nothing in the sentence
+  // negates a noun for SELF_NEGATING to catch, and "compatible" is asserted
+  // rather than contrasted, which DOWNGRADED needs. Match the verdict itself.
+  || /\bwithdraw\b/i.test(why)
+  || /\b(?:are|is)\s+compatible\b/i.test(why);
 
 /**
  * Keep only contradictions whose BOTH quotes really occur in the draft, and

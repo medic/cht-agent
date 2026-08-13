@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-  checkCoherence, coherencePrompt, renderCoherence, verifyContradictions,
+  checkCoherence, coherencePrompt, renderCoherence, verifyContradictions, whyWithdrawsPair,
   CoherenceReport, FindFn,
 } from '../../src/scripts/check-coherence';
 import { DraftInput } from '../../src/scripts/ground-claims';
@@ -193,5 +193,20 @@ describe('check-coherence', () => {
       expect(renderCoherence([{ file: 'a.md', contradictions: [], discarded: 0 }]))
         .to.contain('_No contradictions found._');
     });
+  });
+});
+
+describe('whyWithdrawsPair — the phrasings that slipped through', () => {
+  it('withdraws on a bare imperative verdict', () => {
+    // forms-and-reports c48, on 10180: filed and withdrawn in the same breath.
+    expect(whyWithdrawsPair('These are compatible, not contradictory — withdraw.')).to.equal(true);
+  });
+
+  it('withdraws when compatibility is asserted rather than contrasted', () => {
+    expect(whyWithdrawsPair('The two statements are compatible; both describe the epic squash.')).to.equal(true);
+  });
+
+  it('still keeps a genuine contradiction', () => {
+    expect(whyWithdrawsPair('Problem says the read hangs while Root Cause says the write does.')).to.equal(false);
   });
 });
