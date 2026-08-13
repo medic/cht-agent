@@ -11,6 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import matter from 'gray-matter';
+import type { ValidateFunction } from 'ajv';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
 import { ciGuardReason } from './dedup';
 
@@ -24,43 +25,46 @@ export interface PendingFailure {
 /** Every .md draft under `pendingDir`, one directory level deep (domain dirs). */
 function pendingDrafts(pendingDir: string): string[] {
   if (!fs.existsSync(pendingDir)) return [];
-  const drafts: string[] = [];
-  for (const entry of fs.readdirSync(pendingDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const domainDir = path.join(pendingDir, entry.name);
-    for (const file of fs.readdirSync(domainDir)) {
-      if (file.endsWith('.md')) drafts.push(path.join(domainDir, file));
-    }
+  return fs
+    .readdirSync(pendingDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .flatMap(entry => {
+      const domainDir = path.join(pendingDir, entry.name);
+      return fs
+        .readdirSync(domainDir)
+        .filter(file => file.endsWith('.md'))
+        .map(file => path.join(domainDir, file));
+    });
+}
+
+/** Parse a draft's frontmatter, or null when the block is missing/unparseable. */
+function parseFrontmatter(content: string): Record<string, unknown> | null {
+  if (!hasFrontmatter(content)) return null;
+  try {
+    return normalizeFrontmatter(matter(content).data as Record<string, unknown>);
+  } catch {
+    return null;
   }
-  return drafts;
+}
+
+/** The reason one draft fails the guard, or null when it passes. */
+function draftFailure(draftPath: string, validate: ValidateFunction): string | null {
+  const data = parseFrontmatter(fs.readFileSync(draftPath, 'utf8'));
+  if (data === null) return 'missing or unparseable frontmatter block';
+  if (!validate(data)) {
+    const errors = (validate.errors ?? []).map(e => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`).join('; ');
+    return `schema invalid: ${errors}`;
+  }
+  const guardReason = ciGuardReason(draftPath, data);
+  return guardReason === null ? null : `CI guard: ${guardReason}`;
 }
 
 /** Validate all pending drafts; returns one failure per bad draft. */
 export function checkPending(pendingDir: string = PENDING_DIR): PendingFailure[] {
   const validate = buildValidator();
-  const failures: PendingFailure[] = [];
-  for (const draftPath of pendingDrafts(pendingDir)) {
-    const content = fs.readFileSync(draftPath, 'utf8');
-    if (!hasFrontmatter(content)) {
-      failures.push({ path: draftPath, reason: 'missing frontmatter block' });
-      continue;
-    }
-    let data: Record<string, unknown>;
-    try {
-      data = normalizeFrontmatter(matter(content).data as Record<string, unknown>);
-    } catch (err) {
-      failures.push({ path: draftPath, reason: `unparseable frontmatter: ${err instanceof Error ? err.message : String(err)}` });
-      continue;
-    }
-    if (!validate(data)) {
-      const errors = (validate.errors ?? []).map(e => `${e.instancePath || '(root)'} ${e.message ?? 'invalid'}`).join('; ');
-      failures.push({ path: draftPath, reason: `schema invalid: ${errors}` });
-      continue;
-    }
-    const guardReason = ciGuardReason(draftPath, data);
-    if (guardReason !== null) failures.push({ path: draftPath, reason: `CI guard: ${guardReason}` });
-  }
-  return failures;
+  return pendingDrafts(pendingDir)
+    .map(draftPath => ({ path: draftPath, reason: draftFailure(draftPath, validate) }))
+    .filter((f): f is PendingFailure => f.reason !== null);
 }
 
 if (require.main === module) {

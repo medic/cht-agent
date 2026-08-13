@@ -89,6 +89,6 @@ describe('checkPending', () => {
     const dir = setupPendingDir({ '42-plain.md': '# Just markdown\n' });
     const failures = checkPending(dir);
     expect(failures).to.have.length(1);
-    expect(failures[0].reason).to.include('missing frontmatter');
+    expect(failures[0].reason).to.include('missing or unparseable frontmatter');
   });
 });

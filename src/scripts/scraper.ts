@@ -262,6 +262,7 @@ function defaultBranch(repo: string): string | null {
   if (cached !== undefined) return cached;
   let name: string | null = null;
   try {
+    // NOSONAR typescript:S4036 -- gh resolves from PATH by design, like every other gh call in this module
     const raw = execFileSync('gh', ['repo', 'view', repo, '--json', 'defaultBranchRef'], EXEC_OPTS);
     const parsed = JSON.parse(raw) as { defaultBranchRef?: { name?: string } };
     name = parsed.defaultBranchRef?.name ?? null;
@@ -270,6 +271,24 @@ function defaultBranch(repo: string): string | null {
   }
   defaultBranchCache.set(repo, name);
   return name;
+}
+
+/**
+ * Throws when the PR merged into a branch other than the repo default — a merge
+ * into a feature branch is not shipped work: the branch may be abandoned and its
+ * symbols never reach the default branch. Fails open when baseRefName is absent
+ * or the default-branch lookup fails.
+ */
+function assertMergedIntoDefaultBranch(meta: Record<string, unknown>, prNumber: number, repo: string): void {
+  const base = meta.baseRefName as string | undefined;
+  if (!base) return;
+  const def = defaultBranch(repo);
+  if (def !== null && base !== def) {
+    throw new ScraperError(
+      `PR #${prNumber} merged into non-default branch '${base}' (default is '${def}')`,
+      prNumber
+    );
+  }
 }
 
 /** Fetch + parse PR metadata, asserting the PR is merged into the default branch. */
@@ -284,18 +303,7 @@ function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, u
   if (meta.mergedAt === null || meta.mergedAt === undefined) {
     throw new ScraperError(`PR #${prNumber} is not merged`, prNumber);
   }
-  // A merge into a feature branch is not shipped work: the branch may be
-  // abandoned and its symbols never reach the default branch.
-  const base = meta.baseRefName as string | undefined;
-  if (base) {
-    const def = defaultBranch(repo);
-    if (def !== null && base !== def) {
-      throw new ScraperError(
-        `PR #${prNumber} merged into non-default branch '${base}' (default is '${def}')`,
-        prNumber
-      );
-    }
-  }
+  assertMergedIntoDefaultBranch(meta, prNumber, repo);
   return meta;
 }
 
