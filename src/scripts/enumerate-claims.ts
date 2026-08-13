@@ -226,9 +226,26 @@ export function claimedStatus(quote: string, file: string): 'added' | 'deleted' 
 const CREATE_CREDIT =
   /\b(?:add(?:ed|s)|introduc(?:ed|es)|creat(?:ed|es)|implement(?:ed|s))\b/i;
 
-export function solePrCredit(quote: string): number | undefined {
-  if (!CREATE_CREDIT.test(quote)) return undefined;
-  const prs = [...new Set([...quote.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10)))];
+export function solePrCredit(quote: string, symbol?: string): number | undefined {
+  // A "quote" here is a whole line, and this corpus writes a paragraph per line.
+  // Judging the line as a unit credits the PR it mentions with every backticked
+  // token on it: 10443's line names #10445 and a create verb, and would have
+  // claimed that PR introduced `_id`. Narrow to the clause the symbol sits in,
+  // and require the verb to precede it there — the same locality rule that
+  // claimedStatus needs, for the same reason.
+  let scope = quote;
+  if (symbol) {
+    const at = quote.indexOf(symbol);
+    if (at < 0) return undefined;
+    let before = quote.slice(Math.max(0, at - VERB_REACH), at);
+    CLAUSE_BREAK.lastIndex = 0;
+    let cut = -1;
+    for (const m of before.matchAll(CLAUSE_BREAK)) cut = (m.index ?? 0) + m[0].length;
+    if (cut > 0) before = before.slice(cut);
+    scope = before;
+  }
+  if (!CREATE_CREDIT.test(scope)) return undefined;
+  const prs = [...new Set([...scope.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10)))];
   return prs.length === 1 ? prs[0] : undefined;
 }
 
@@ -522,7 +539,7 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
     // emitted when one PR reference governs the sentence: two numbers in the
     // same clause ("#10065 and #10089") make the credit ambiguous, and guessing
     // which one is meant is how a true sentence gets reported as a defect.
-    const creditedPr = solePrCredit(quote);
+    const creditedPr = solePrCredit(quote, m[1]);
     if (creditedPr !== undefined) {
       add({ kind: 'introduced-by', symbol: tok, prNumber: creditedPr, quote });
     }
