@@ -799,23 +799,56 @@ describe('buildFrontmatter — related_issues', () => {
     expect(fm.related_issues).to.deep.equal(['cht-interoperability-100']);
   });
 
-  it('uses an explicit filename token for low-numbered conventional-commit issues', async () => {
+  it('names the file from the resolved issue number, matching the title token', async () => {
     const { distillPR } = loadDistiller();
-    const result = await distillPR(makePR({ prTitle: 'fix(#137): restore sync' }), {
+    const logPath = tmpLogPath();
+    const result = await distillPR(makePR({ prTitle: 'fix(#99): restore sync' }), {
       outputDir: tmpOutputDir(),
-      logPath: tmpLogPath(),
+      logPath,
       distillFn: async () => makeDraft(),
     });
-    expect(path.basename(result.outputPath!)).to.match(/^42-issue-137-fix-137-/);
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-99-fix-99-/);
+    expect(fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '').to.not.include('"warn"');
   });
 
-  it('uses an explicit filename token for breaking-change issue titles', async () => {
+  it('names the file from the resolved issue number for breaking-change titles', async () => {
     const { distillPR } = loadDistiller();
-    const result = await distillPR(makePR({ prTitle: 'fix(#137)!: restore sync' }), {
+    const result = await distillPR(makePR({ prTitle: 'fix(#99)!: restore sync' }), {
       outputDir: tmpOutputDir(),
       logPath: tmpLogPath(),
       distillFn: async () => makeDraft(),
     });
-    expect(path.basename(result.outputPath!)).to.match(/^42-issue-137-fix-137-/);
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-99-fix-99-/);
+  });
+
+  it('names the file from resolution and warns when the title token disagrees', async () => {
+    // The 9039 shape: title says fix(#9024) but resolution found issue 9023.
+    const { distillPR } = loadDistiller();
+    const logPath = tmpLogPath();
+    const result = await distillPR(
+      makePR({
+        prTitle: 'fix(#9024): assert couchdb version',
+        linkedIssues: [{ number: 9023, body: 'real issue', comments: [] }],
+      }),
+      { outputDir: tmpOutputDir(), logPath, distillFn: async () => makeDraft() }
+    );
+    expect(result.status).to.equal('written');
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-9023-/);
+    const log = fs.readFileSync(logPath, 'utf8');
+    const entries = log.trim().split('\n').map(l => JSON.parse(l));
+    const warn = entries.find(e => e.decision === 'warn');
+    expect(warn).to.exist;
+    expect(warn.reason).to.include('#9024');
+    expect(warn.reason).to.include('#9023');
+  });
+
+  it('embeds the resolved issue even when the title has no token', async () => {
+    const { distillPR } = loadDistiller();
+    const result = await distillPR(makePR(), {
+      outputDir: tmpOutputDir(),
+      logPath: tmpLogPath(),
+      distillFn: async () => makeDraft(),
+    });
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-99-/);
   });
 });

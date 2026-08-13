@@ -75,8 +75,9 @@ export type FilterDecision = 'distill' | 'skip' | 'flag-for-human';
 export interface SkipLogEntry {
   /** The GitHub PR number that was filtered */
   prNumber: number;
-  /** The filter decision that caused this log entry */
-  decision: FilterDecision;
+  /** The filter decision that caused this log entry; 'warn' records a non-fatal
+   *  anomaly (e.g. PR title contradicts issue resolution) on a draft that WAS written. */
+  decision: FilterDecision | 'warn';
   /** Human-readable explanation for the decision */
   reason: string;
   /** ISO-8601 timestamp when the decision was recorded */

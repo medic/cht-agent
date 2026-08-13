@@ -27,6 +27,7 @@ import type {
 import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { buildValidator } from './schema-utils';
 import { hallucinationRate } from './reconcile';
+import { parseTitleIssue } from './issue-linkage';
 
 
 // Compiled once — the same validator open-review-pr re-runs before promotion.
@@ -271,11 +272,6 @@ export function slugify(text: string): string {
   return slug || 'untitled';
 }
 
-function issueToken(title: string): string {
-  const match = /^(?:fix|feat|perf|chore|refactor|docs|ci|build|test|style|revert)\s*\(\s*#([1-9]\d*)\s*\)!?/i.exec(title);
-  return match ? `issue-${match[1]}-` : '';
-}
-
 /** Backport marker: a "(cherry picked from commit ...)" note or a trailing "(#NNNN)" title suffix. */
 const BACKPORT_MARKER = /(cherry[- ]?picked from commit)|(\(#\d+\)\s*$)/i;
 
@@ -434,6 +430,17 @@ export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
   return renderMarkdown(buildFrontmatter(draft, pr), draft);
 }
 
+/** Log a non-fatal warning to the audit log; the draft is still written. */
+async function logWarning(prNumber: number, reason: string, logPath: string): Promise<void> {
+  const entry: SkipLogEntry = {
+    prNumber,
+    decision: 'warn',
+    reason,
+    timestamp: new Date().toISOString(),
+  };
+  await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
+}
+
 /** Log a flag-for-human outcome to the audit log and return the result. */
 async function flagForHuman(prNumber: number, reason: string, logPath: string): Promise<DistillResult> {
   const entry: SkipLogEntry = {
@@ -474,7 +481,9 @@ async function handleDistillError(err: unknown, prNumber: number, logPath: strin
 
 /**
  * Distill a scraped PR into a schema-valid knowledge draft.
- * Writes the draft to agent-memory/_pending/<domain>/<prNumber>-<slug>.md.
+ * Writes the draft to agent-memory/_pending/<domain>/<prNumber>-issue-<issueNumber>-<slug>.md,
+ * where <issueNumber> is the RESOLVED issue, so the filename can never contradict
+ * the frontmatter it was written with.
  * Never throws — failures return flag-for-human and write to _skipped.ndjson.
  *
  * @example
@@ -509,9 +518,21 @@ export async function distillPR(
     return flagForHuman(pr.prNumber, reason, logPath);
   }
 
+  // The filename embeds the RESOLVED issue number — never the raw title token.
+  // A title that disagrees with resolution is a warning for a human (below),
+  // not something to bake into the name for the CI guard to trip on.
+  const titleIssue = parseTitleIssue(pr.prTitle);
+  if (titleIssue !== null && titleIssue !== frontmatter.issueNumber) {
+    await logWarning(
+      pr.prNumber,
+      `title says #${titleIssue} but resolution chose #${frontmatter.issueNumber} — verify linkage`,
+      logPath
+    );
+  }
+
   const markdown = renderMarkdown(frontmatter, draft);
   const slug = slugify(pr.prTitle);
-  const filename = `${pr.prNumber}-${issueToken(pr.prTitle)}${slug}.md`;
+  const filename = `${pr.prNumber}-issue-${frontmatter.issueNumber}-${slug}.md`;
   const domainDir = path.join(outputDir, draft.domain);
 
   await fs.promises.mkdir(domainDir, { recursive: true });
