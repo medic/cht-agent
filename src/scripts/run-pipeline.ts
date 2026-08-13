@@ -481,7 +481,7 @@ function reportOutcome(total: number, state: BatchState, prNumbers: number[], au
   }
   console.log(`Done. Processed ${total} PR(s), ${state.failures} failure(s).`);
   console.log(formatReconciliation(reconcile(skipEntriesForRun(prNumbers, DEFAULT_PIPELINE_LOG_PATH, auditOffset))));
-  // ponytail: >0 is a reporting threshold, not a gate — entities may legitimately
+  // >0 is a reporting threshold, not a gate — entities may legitimately
   // name a module/concept rather than a literal path, so some drift is expected.
   const unverified = state.hallucinationRates.filter(r => r > 0).length;
   console.log(`${unverified} draft(s) with unverified file ref(s) (relatedFiles/entities not in the PR's fileList).`);

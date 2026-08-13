@@ -137,6 +137,17 @@ describe('dedupeByIssueId', () => {
     expect(dropped[0].reason).to.include('cht-core-8985');
   });
 
+  it('omits source_prs when no group member has a source_pr', () => {
+    const { kept, dropped } = dedupeByIssueId([
+      entry('data-sync', 'a.md', 'cht-core-8985'),
+      entry('data-sync', 'b.md', 'cht-core-8985'),
+    ]);
+    expect(kept).to.have.length(1);
+    expect(kept[0].frontmatter).to.not.have.property('source_prs');
+    expect(dropped).to.have.length(1);
+    expect(dropped[0].reason).to.not.include('source_prs');
+  });
+
   it('collapses cross-domain duplicates, keeping the canonical domain', () => {
     const inContacts = entry('contacts', 'contacts.md', 'cht-core-9835', 'medic/cht-core#10001');
     const inAuth = entry('authentication', 'auth.md', 'cht-core-9835', 'medic/cht-core#10050');

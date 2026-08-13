@@ -4,14 +4,15 @@
  * Two independent checks, both keyed on the frontmatter set by the R1 issue-resolution
  * fix (distiller.ts buildFrontmatter):
  *  - CI guard (`ciGuardReason`): reject a draft whose issueNumber equals its own source
- *    PR number, or whose filename slug embeds a different issue number than the
- *    frontmatter — both indicate the resolution regressed. The `/issues/N -> /pull/N`
- *    GitHub redirect makes this the only reliable detector short of hitting the API.
+ *    PR number (the pre-R1 aliasing bug, detectable by construction). The slug check
+ *    catches stale files on disk: the distiller names files from the RESOLVED issue
+ *    number, so a filename that embeds a different number predates the current
+ *    frontmatter and needs a relink.
  *  - Cross-PR/cross-domain dedup (`dedupeByIssueId`): multiple PRs (backport
  *    cherry-picks, multi-PR epics, or independent domain promotions) that resolve to
- *    the same issue `id` collapse into one canonical draft — the lowest source PR
- *    number — carrying a `source_prs` list of every contributing PR. The rest are
- *    dropped and logged rather than promoted twice.
+ *    the same issue `id` collapse into one canonical draft — strong `domainFit`
+ *    first, then lowest source PR number, then path — carrying a `source_prs` list
+ *    of every contributing PR. The rest are dropped and logged rather than promoted twice.
  */
 
 import * as path from 'node:path';
@@ -97,10 +98,11 @@ function sourcePrRef(frontmatter: Record<string, unknown>): string | null {
 
 /**
  * Collapses drafts that resolve to the same `id` (set by the distiller's
- * canonical-issue resolution) into one canonical draft — the one from the lowest
- * source PR number — carrying a `source_prs` list of every contributing PR ref.
- * Drops every other member of the group. Cross-domain duplicates collapse the
- * same way; the canonical entry keeps its own domain.
+ * canonical-issue resolution) into one canonical draft — strong `domainFit`
+ * first, then the lowest source PR number, then path as a stable tiebreaker —
+ * carrying a `source_prs` list of every contributing PR ref (omitted when no
+ * member has one). Drops every other member of the group. Cross-domain
+ * duplicates collapse the same way; the canonical entry keeps its own domain.
  */
 export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR typescript:S3776 -- linear grouping/sort, not worth splitting
   const groups = new Map<string, DedupEntry[]>();
@@ -132,15 +134,17 @@ export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR
     });
     const [canonical, ...rest] = ranked;
     const sourcePrs = ranked.map(e => sourcePrRef(e.frontmatter)).filter((s): s is string => s !== null);
-    canonical.frontmatter.source_prs = sourcePrs;
+    // Only set when non-empty: a bare `source_prs:` key is schema-invalid YAML.
+    if (sourcePrs.length > 0) canonical.frontmatter.source_prs = sourcePrs;
     kept.push(canonical);
     for (const dup of rest) {
+      const provenance = sourcePrs.length > 0 ? ` (source_prs: ${sourcePrs.join(', ')})` : '';
       dropped.push({
         path: dup.path,
         canonicalPath: canonical.path,
         reason:
           `duplicate of ${String(canonical.frontmatter.id)} — collapsed into ` +
-          `${sourcePrRef(canonical.frontmatter) ?? 'canonical'} (source_prs: ${sourcePrs.join(', ')})`,
+          `${sourcePrRef(canonical.frontmatter) ?? 'canonical'}${provenance}`,
       });
     }
   }

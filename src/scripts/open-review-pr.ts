@@ -348,7 +348,6 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
   return { plans, skipped, kept, dropped };
 }
 
-/**
 /** Remove and audit duplicates only after the canonical draft's PR is created. */
 function finalizeDedupDrops(
   dropped: DedupDrop[],
