@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8681
 issueUrl: https://github.com/medic/cht-core/issues/8681
 title: Support requiring countdown-timer fields by binding the widget to 'trigger' question types instead of 'note'
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-13'
 summary: 'The countdown-timer widget was attached to ''note'' fields, which cannot be marked required, so users could bypass the timer before it finished. The widget was migrated to ''trigger'' question types that support ''required: yes'', enforcing timer completion via a constraint message, with custom durations set through a new instance::cht:duration column.'
 services:
   - api
@@ -62,7 +62,7 @@ Migrated the countdown-timer widget to apply to 'trigger' question types, which 
 
 ## Code Patterns
 
-Custom Enketo widget targeting a specific question/input type in countdown-widget.js; separation of animation concerns into webapp/src/js/enketo/lib/timer-animation.js; custom XLSForm attribute passthrough (instance::cht:duration) handled in api/src/services/generate-xform.js with fixture-based round-trip tests under api/tests/mocha/services/xforms/custom-attributes/.
+Custom Enketo widget targeting a specific question/input type in countdown-widget.js; separation of animation concerns into webapp/src/js/enketo/lib/timer-animation.js; custom XLSForm attribute passthrough handled in api/src/services/generate-xform.js, with fixture-based round-trip tests under api/tests/mocha/services/xforms/custom-attributes/. Note the two notations: authors write the XLSForm column `instance::cht:duration`, which exists only inside the `.xlsx` workbook, and generation renders it into the XForm as the `cht:duration` attribute — that second form is the one present in the tree.
 
 ## Design Choices
 
@@ -82,7 +82,7 @@ Chose 'trigger' over 'note' specifically because trigger inputs support the 'req
 
 ## Testing
 
-Added Karma unit tests for the widget and animation library (countdown-widget.spec.ts, timer-animation.spec.ts); added Mocha tests for generate-xform with custom-attributes fixtures (form.html, model.xml, xform.xml and their expected outputs) verifying instance::cht:duration passthrough; extended the pre-existing WebdriverIO e2e spec (submit-countdown-timer-form.wdio-spec.js) and its countdown-timer.xml form to cover the trigger-based widget alongside the deprecated note form, and updated the Enketo/contacts/generic-form page objects.
+Added Karma unit tests for the widget and animation library (countdown-widget.spec.ts, timer-animation.spec.ts); added Mocha tests for generate-xform with custom-attributes fixtures (form.html, model.xml, xform.xml and their expected outputs) verifying the `cht:duration` passthrough (authored as the `instance::cht:duration` XLSForm column); extended the pre-existing WebdriverIO e2e spec (submit-countdown-timer-form.wdio-spec.js) and its countdown-timer.xml form to cover the trigger-based widget alongside the deprecated note form, and updated the Enketo/contacts/generic-form page objects.
 
 ## Related Issues
 
