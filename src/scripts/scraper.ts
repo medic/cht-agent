@@ -262,8 +262,7 @@ function defaultBranch(repo: string): string | null {
   if (cached !== undefined) return cached;
   let name: string | null = null;
   try {
-    // NOSONAR typescript:S4036 -- gh resolves from PATH by design, like every other gh call in this module
-    const raw = execFileSync('gh', ['repo', 'view', repo, '--json', 'defaultBranchRef'], EXEC_OPTS);
+    const raw = execFileSync('gh', ['repo', 'view', repo, '--json', 'defaultBranchRef'], EXEC_OPTS); // NOSONAR typescript:S4036 -- gh resolves from PATH like every other gh call here
     const parsed = JSON.parse(raw) as { defaultBranchRef?: { name?: string } };
     name = parsed.defaultBranchRef?.name ?? null;
   } catch {
