@@ -54,7 +54,7 @@ The `end` meta field in CHT forms always recorded (almost) the exact same value 
 
 ## Root Cause
 
-In `prepareForSave`, CHT fired `$('form.or').trigger('beforesave')`, which had two defects: (1) the event name `beforesave` was missing the hyphen — enketo-core's event.js defines the event as `before-save` — in 7.2.5, the version cht-core pins, `BeforeSave()` returns `new CustomEvent('before-save', { bubbles: true })`; (2) jQuery's `.trigger()` only invokes jQuery-bound listeners and never reaches native `addEventListener` listeners. enketo-core's preload.js updates the `end` value inside a native `before-save` DOM listener (`form.model.evaluate('now()', 'string')`). Since enketo-core 7.x (the Enketo Uplift in CHT 4.0.0) dropped jQuery entirely, that native callback silently never executed, leaving `end` frozen at its preloaded value equal to `start`.
+In `prepareForSave`, CHT fired `$('form.or').trigger('beforesave')`, which had two defects: (1) the event name `beforesave` was missing the hyphen. enketo-core's event.js defines the event as `before-save`: in 7.2.5, the version webapp/package.json pins, `BeforeSave()` returns `new CustomEvent('before-save', { bubbles: true })`. And (2) jQuery's `.trigger()` only invokes jQuery-bound listeners and never reaches native `addEventListener` listeners. enketo-core's preload.js updates the `end` value inside a native `before-save` DOM listener (`form.model.evaluate('now()', 'string')`). Since enketo-core 7.x (the Enketo Uplift in CHT 4.0.0) dropped jQuery entirely, that native callback silently never executed, leaving `end` frozen at its preloaded value equal to `start`.
 
 ## Solution
 

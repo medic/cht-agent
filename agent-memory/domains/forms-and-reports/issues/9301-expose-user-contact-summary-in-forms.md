@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 9301
 issueUrl: https://github.com/medic/cht-core/issues/9301
 title: Expose user's contact summary when filling out forms
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-13'
 summary: Made the logged-in user's contact summary data available to Enketo forms via a named external data instance, so forms can reference the user's own summary fields (e.g. stock levels) during data entry, and via a `userSummary` variable in the form-visibility context expressions that decide which forms are listed.
 services:
   - webapp
@@ -37,7 +37,7 @@ Added a dedicated `user-contact-summary.service.ts` that resolves the logged-in 
 - The user's contact summary is computed once and held in a `CacheService` entry that outlives any single form session — it is not re-fetched per question or per form open, and is invalidated only when `ContactChangeFilterService.isRelevantChange()` says a change affects the user's own contact
 - Inside a form, read the user's summary from the `user-contact-summary` external data instance; to gate whether a form is offered at all, use `userSummary` in the form's context expression (bound in `xml-forms.service.ts#evaluateExpression` alongside `contact`, `summary` and `user`)
 - Compute-and-cache a derived view for the current user: resolve user → contact (user-settings.service + contact-view-model-generator.service, plus target-aggregates.service for target docs) → contact-summary.service → cache in a dedicated service (user-contact-summary.service.ts)
-- Replicate the same enketo wiring in `webapp/web-components/cht-form/src/app.component.ts` so embedded forms behave identically
+- Replicate the equivalent wiring in `webapp/web-components/cht-form/src/app.component.ts` so embedded forms behave identically — there it is a `contactSummary` input and an `instance[id="contact-summary"]` lookup; the `user-contact-summary` instance id itself is webapp-side, in form.service.ts and xml-forms.service.ts
 - File: `webapp/src/ts/services/user-contact-summary.service.ts` fetches and caches the user's own contact summary
 
 ## Design Choices
