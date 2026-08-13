@@ -132,6 +132,57 @@ describe('scrapePR', () => {
     });
   });
 
+  describe('base-branch gate', () => {
+    function metaWithBase(baseRefName?: string): string {
+      return JSON.stringify({
+        number: 7,
+        title: 'No links PR',
+        body: 'This PR has no linked issues.',
+        labels: [],
+        mergeCommit: { oid: 'deadbeef' },
+        mergedAt: '2024-02-01T00:00:00Z',
+        files: [],
+        ...(baseRefName === undefined ? {} : { baseRefName }),
+      });
+    }
+
+    function loadWithBase(meta: string, repoView: () => string) {
+      return loadScraper((_file, args) => {
+        if (args[0] === 'repo' && args[1] === 'view') return repoView();
+        if (args[0] === 'pr' && args[1] === 'view') return meta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return '[]';
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+    }
+
+    const DEFAULT_MASTER = () => JSON.stringify({ defaultBranchRef: { name: 'master' } });
+
+    it('scrapes a PR merged into the default branch', () => {
+      const { scrapePR } = loadWithBase(metaWithBase('master'), DEFAULT_MASTER);
+      expect(scrapePR(7).prNumber).to.equal(7);
+    });
+
+    it('throws ScraperError for a PR merged into a feature branch', () => {
+      const { scrapePR } = loadWithBase(metaWithBase('10224-ui-extensions'), DEFAULT_MASTER);
+      expect(() => scrapePR(7)).to.throw(ScraperError, /non-default branch '10224-ui-extensions'/);
+    });
+
+    it('fails open when the default-branch lookup fails', () => {
+      const { scrapePR } = loadWithBase(metaWithBase('10224-ui-extensions'), () => {
+        throw new Error('gh unavailable');
+      });
+      expect(scrapePR(7).prNumber).to.equal(7);
+    });
+
+    it('skips the gate when metadata carries no baseRefName', () => {
+      const { scrapePR } = loadWithBase(metaWithBase(), () => {
+        throw new Error('repo view must not be called');
+      });
+      expect(scrapePR(7).prNumber).to.equal(7);
+    });
+  });
+
   describe('linked-issue sources (title scope + closingIssuesReferences)', () => {
     const issueViewByNumber: ExecHandler = (_file, args) =>
       JSON.stringify({ body: `body ${args[2]}`, comments: [] });

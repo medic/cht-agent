@@ -165,7 +165,7 @@ function fetchMetadata(prNumber: number, repo: string): string {
         '--repo',
         repo,
         '--json',
-        'number,title,body,labels,mergeCommit,mergedAt,files,author,closingIssuesReferences',
+        'number,title,body,labels,mergeCommit,mergedAt,baseRefName,files,author,closingIssuesReferences',
       ],
       EXEC_OPTS
     );
@@ -250,7 +250,29 @@ function fetchReviews(prNumber: number, repo: string): string {
 /** A raw review from the gh API; `user` is null for since-deleted accounts. */
 type RawReview = { user: { login: string } | null; body: string | null; state: string };
 
-/** Fetch + parse PR metadata, asserting the PR is merged. */
+/** Per-run cache of each repo's default branch; null means the lookup failed. */
+const defaultBranchCache = new Map<string, string | null>();
+
+/**
+ * The repo's default branch via `gh repo view`, cached per run. Returns null on
+ * any gh failure so the base-branch gate fails open rather than blocking a scrape.
+ */
+function defaultBranch(repo: string): string | null {
+  const cached = defaultBranchCache.get(repo);
+  if (cached !== undefined) return cached;
+  let name: string | null = null;
+  try {
+    const raw = execFileSync('gh', ['repo', 'view', repo, '--json', 'defaultBranchRef'], EXEC_OPTS);
+    const parsed = JSON.parse(raw) as { defaultBranchRef?: { name?: string } };
+    name = parsed.defaultBranchRef?.name ?? null;
+  } catch {
+    name = null;
+  }
+  defaultBranchCache.set(repo, name);
+  return name;
+}
+
+/** Fetch + parse PR metadata, asserting the PR is merged into the default branch. */
 function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, unknown> {
   const metaRaw = fetchMetadata(prNumber, repo);
   let meta;
@@ -261,6 +283,18 @@ function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, u
   }
   if (meta.mergedAt === null || meta.mergedAt === undefined) {
     throw new ScraperError(`PR #${prNumber} is not merged`, prNumber);
+  }
+  // A merge into a feature branch is not shipped work: the branch may be
+  // abandoned and its symbols never reach the default branch.
+  const base = meta.baseRefName as string | undefined;
+  if (base) {
+    const def = defaultBranch(repo);
+    if (def !== null && base !== def) {
+      throw new ScraperError(
+        `PR #${prNumber} merged into non-default branch '${base}' (default is '${def}')`,
+        prNumber
+      );
+    }
   }
   return meta;
 }
