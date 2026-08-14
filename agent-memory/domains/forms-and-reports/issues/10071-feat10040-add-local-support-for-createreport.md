@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10040
 issueUrl: https://github.com/medic/cht-core/issues/10040
 title: Add report-create support to the cht-datasource local adapter
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-14'
 summary: The cht-datasource local (direct-database) adapter could read reports but had no way to create them. This PR added `createReport` to the local report adapter, taking a `ReportQualifier`; the #10083 epic squash reshaped that into `Local.Report.v1.create` taking an `Input.v1.ReportInput`, which is the form on master.
 services:
   - api

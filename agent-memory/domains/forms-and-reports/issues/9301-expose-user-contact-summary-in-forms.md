@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 9301
 issueUrl: https://github.com/medic/cht-core/issues/9301
 title: Expose user's contact summary when filling out forms
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: Made the logged-in user's contact summary data available to Enketo forms via a named external data instance, so forms can reference the user's own summary fields (e.g. stock levels) during data entry, and via a `userSummary` variable in the form-visibility context expressions that decide which forms are listed.
 services:
   - webapp

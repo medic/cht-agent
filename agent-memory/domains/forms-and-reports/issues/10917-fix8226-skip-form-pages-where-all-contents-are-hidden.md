@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8226
 issueUrl: https://github.com/medic/cht-core/issues/8226
 title: Skip Enketo form pages for top-level groups with the 'hidden' appearance via new HiddenGroup widget
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: Enketo rendered empty, navigable pages for groups whose contents were all hidden (e.g. a top-level group with the `hidden` appearance), producing blank pages and blocking use of the db-object-widget to load contact data into a hidden group. A new HiddenGroup widget adds the `disabled` class to such groups so Enketo's pager skips them during navigation.
 services:
   - webapp

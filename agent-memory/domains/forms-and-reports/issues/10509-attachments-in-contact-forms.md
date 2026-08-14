@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 10509
 issueUrl: https://github.com/medic/cht-core/issues/10509
 title: Support uploading attachments in contact forms
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: Extended contact form submission to save file attachments (images, documents) to the contact document, matching the existing behavior in app forms where attachments are stored on the report document.
 services:
   - webapp

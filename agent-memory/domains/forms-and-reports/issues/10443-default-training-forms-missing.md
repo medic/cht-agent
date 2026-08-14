@@ -6,7 +6,7 @@ subDomain: build
 issueNumber: 10443
 issueUrl: https://github.com/medic/cht-core/issues/10443
 title: Default training forms not included in released Docker images
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: The default training form ("Welcome Guide" for new admins) was not included in the published CHT Docker images because the build script did not process training forms from the default config directory.
 services:
   - api

@@ -6,7 +6,7 @@ subDomain: api
 issueNumber: 10133
 issueUrl: https://github.com/medic/cht-core/issues/10133
 title: API startup loads all form attachments unnecessarily via _all_docs
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-14'
 source_prs:
   - "medic/cht-core#10248"
 related_issues:

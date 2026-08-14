@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8974
 issueUrl: https://github.com/medic/cht-core/issues/8974
 title: Fix `end` meta field always matching `start` by dispatching enketo-core's native `before-save` DOM event on form save
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: The `end` meta timestamp in CHT forms always equalled `start` because the save path fired `$('form.or').trigger('beforesave')`, which failed twice over — the event name did not match the one enketo-core listens for, and jQuery's `.trigger()` reaches only jQuery-bound handlers, never a native listener. Fixed by dispatching enketo-core's own `events.BeforeSave()` on the form element so enketo-core updates the `end` timestamp.
 services:
   - webapp

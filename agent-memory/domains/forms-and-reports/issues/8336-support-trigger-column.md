@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 8336
 issueUrl: https://github.com/medic/cht-core/issues/8336
 title: Support trigger column in XLSForms for dynamic defaults and value-change calculations
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: Added support for the ODK trigger column in XLSForms, enabling dynamic defaults and calculations that fire on value change. Required uplifting cht-conf to use a newer version of pyxform.
 services:
   - webapp

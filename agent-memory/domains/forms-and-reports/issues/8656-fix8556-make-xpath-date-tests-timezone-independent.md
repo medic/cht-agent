@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8556
 issueUrl: https://github.com/medic/cht-core/issues/8556
 title: Make the medic-xpath-extensions date tests pass in any timezone
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-14'
 summary: The medic-xpath-extensions mocha suite baked timezone-dependent expectations into its cases, so `npm run unit-webapp` failed in some timezones (e.g. NZ +12, per #8556) while passing in others such as UTC; the fix pins `getTimezoneOffset` to -240 (emulating UTC+4) so results are identical everywhere, corrects an ambiguous fixture date, and tidies one redundant re-parse in the shared `asMoment()` helper.
 services:
   - webapp

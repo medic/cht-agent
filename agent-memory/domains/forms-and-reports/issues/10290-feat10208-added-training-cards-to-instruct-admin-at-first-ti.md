@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10208
 issueUrl: https://github.com/medic/cht-core/issues/10208
 title: Add admin welcome training card for first-time setup and let training forms load without an associated contact
-lastUpdated: '2026-08-13'
+lastUpdated: '2026-08-14'
 summary: First-time admins on a clean CHT install saw no data and no onboarding guidance, and training cards failed with 'Error loading form' for users lacking an associated contact. This PR adds an `admin_welcome` training card to guide admins on populating data and makes training forms exempt from the contact requirement so they always load.
 services:
   - webapp
