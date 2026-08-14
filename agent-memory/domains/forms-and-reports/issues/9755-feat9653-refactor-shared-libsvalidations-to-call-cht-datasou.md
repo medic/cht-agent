@@ -44,7 +44,8 @@ concepts:
   - field uniqueness validation
   - data context injection
   - shared library refactoring
-related_issues: []
+related_issues:
+  - cht-core-9586
 stale: false
 ---
 

@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 8308
 issueUrl: https://github.com/medic/cht-core/issues/8308
 title: Add support for Signature/Draw Widget in Enketo forms
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-13'
 summary: Enabled the Enketo draw widget for collecting signatures and sketches within CHT forms. Required enabling the widget, adding file management support, and updating styles.
 services:
   - webapp
@@ -19,6 +19,8 @@ techStack:
   - enketo
 source_prs:
   - "medic/cht-core#8904"
+related_issues:
+  - cht-core-8072
 ---
 
 ## Problem

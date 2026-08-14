@@ -43,7 +43,8 @@ concepts:
   - hidden appearance
   - skipping disabled/non-relevant groups
   - widget registration
-related_issues: []
+related_issues:
+  - cht-core-4543
 stale: false
 ---
 
