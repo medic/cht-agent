@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10041
 issueUrl: https://github.com/medic/cht-core/issues/10041
 title: Add local datasource implementation for updating reports in cht-datasource
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-13'
 summary: The cht-datasource shared library lacked a local (direct-database) implementation for updating report documents, so report updates could not be performed through the local data context. This PR adds the local update operation for reports along with unit tests.
 services:
   - api
@@ -61,7 +61,7 @@ The local report module in cht-datasource only implemented a subset of CRUD oper
 
 ## Solution
 
-Added `Local.Report.v1.update` to shared-libs/cht-datasource/src/local/report.ts, which persists changes to a report document via the local data context: it validates the incoming `Input.v1.UpdateReportInput`, loads the original report and its contact by id, asserts the read-only fields (`_rev`, `reported_date`) are unchanged and the form is still supported, then writes through `updateDoc` from src/local/libs/doc.ts. Unit tests were added alongside. Note the naming — the export is `update` inside the `Report.v1` namespace (`Local.Report.v1.update`, `Remote.Report.v1.update`), matching `Person.v1.update` and `Place.v1.update`; there is no flat `updateReport` symbol.
+Added `Local.Report.v1.update` to shared-libs/cht-datasource/src/local/report.ts, which persists changes to a report document via the local data context: it validates the incoming `Input.v1.UpdateReportInput` (that type arrives with the epic squash, per Provenance above — `src/input.ts:36` on master, absent at this draft's own `source_sha`), loads the original report and its contact by id, asserts the read-only fields (`_rev`, `reported_date`) are unchanged and the form is still supported, then writes through `updateDoc` from src/local/libs/doc.ts. Unit tests were added alongside. Note the naming — the export is `update` inside the `Report.v1` namespace (`Local.Report.v1.update`, `Remote.Report.v1.update`), matching `Person.v1.update` and `Place.v1.update`; there is no flat `updateReport` symbol.
 
 The remote (API-backed) path completes the same update end to end (PR #10200): an update handler in api/src/controllers/report.js with the route registered in api/src/routing.js; update methods on the report datasource interface (src/report.ts) delegating to remote (src/remote/report.ts, HTTP to API) and local (src/local/report.ts, PouchDB) backends; a reusable doc-update helper in src/local/libs/doc.ts; and input parsing/validation in src/input.ts, with the capability exported via src/index.ts.
 

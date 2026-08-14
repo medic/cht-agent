@@ -6,7 +6,7 @@ subDomain: validation
 issueNumber: 8806
 issueUrl: https://github.com/medic/cht-core/issues/8806
 title: Multiple validation functions in a single rule do not work
-lastUpdated: '2026-08-10'
+lastUpdated: '2026-08-13'
 source_prs:
   - "medic/cht-core#9602"
 related_issues:
@@ -25,7 +25,7 @@ When app builders combined two CHT validation functions with a logical operator 
 
 ## Root Cause
 
-The validation pipeline had two separate systems: the pupil validation library for built-in rules, and a separate async pass for CHT-specific validation functions (`exists`, `unique`, `uniqueWithin`, `uniquePhone`, `validPhone`, `isISOWeek`, `isAfter`, `isBefore`, then held in `validation.extra_validations`). `validation.validate()` rewrote each matching rule's property name, ran `pupil.validate()`, ran the CHT functions in series afterwards, and AND-merged the two result sets. Because the CHT results never reached pupil's expression evaluator, the rule's own `||` was applied only to what pupil saw — so a combined rule could never come out true on the strength of one branch.
+The validation pipeline had two separate systems: the pupil validation library for built-in rules, and a separate async pass for CHT-specific validation functions (`exists`, `unique`, `uniqueWithin`, `uniquePhone`, `validPhone`, `isISOWeek`, `isAfter`, `isBefore`, then held in the `extra_validations` map — `shared-libs/validation/src/validation.js:157` at this PR's parent, and gone from the anchor because this PR replaced it). `validation.validate()` rewrote each matching rule's property name, ran `pupil.validate()`, ran the CHT functions in series afterwards, and AND-merged the two result sets. Because the CHT results never reached pupil's expression evaluator, the rule's own `||` was applied only to what pupil saw — so a combined rule could never come out true on the strength of one branch.
 
 ## Solution
 

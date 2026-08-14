@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10904
 issueUrl: https://github.com/medic/cht-core/issues/10904
 title: Route file/binary attachments to the correct [db-doc="true"] sub-document in Enketo report forms
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-13'
 summary: Binary/file attachments in report forms were always saved to the main report doc, even when the field belonged to a `[db-doc="true"]` sub-document. This PR walks the XML tree to resolve each attachment's owning sub-doc and routes both FileManager uploads and inline base64 blobs accordingly. NOT ON MASTER — both PRs are merged, but into epic branches only, so none of this is shipped behaviour.
 services:
   - webapp
@@ -76,7 +76,7 @@ Ownership-by-tree-position (on the epic branches only — none of this is in `we
 
 ## Design Choices
 
-Routing by XML node position (ancestor walk) rather than flat filename-to-doc matching is what lets an attachment reach its structurally-correct owner — subject to the starting-node caveat below, since the walk still begins from a node found by filename; falling back to the main report doc preserves backward-compatible behavior for forms without sub-docs. Each generated document is made self-contained with its own attachments, and the routing explicitly handles files within repeats plus cleared and orphaned file fields (PR #11116). Known limitation: the owner doc is decided by the ancestor walk, but the walk needs a starting node, and `findFileNodeByFilename()` finds that node by filename. When two sub-docs hold files of the same name (e.g. default-named camera captures) the lookup returns the first match, so both files start their walk from the same node and land on the same sub-doc.
+Routing by XML node position (ancestor walk) rather than flat filename-to-doc matching is what lets an attachment reach its structurally-correct owner — subject to the starting-node caveat below, since the walk still begins from a node found by filename; falling back to the main report doc preserves backward-compatible behavior for forms without sub-docs. Each generated document is made self-contained with its own attachments, and the routing explicitly handles files within repeats plus cleared and orphaned file fields — those fixtures (`db-doc-repeat-file-upload.xml`, `db-doc-in-repeat-with-files.xml`, `db-doc-orphan-file.xml`, `db-doc-with-file-field-cleared.xml`) are in #10922's own diff alongside the enketo.service work, and #11116 carries an equivalent copy on its branch. Known limitation: the owner doc is decided by the ancestor walk, but the walk needs a starting node, and `findFileNodeByFilename()` finds that node by filename. When two sub-docs hold files of the same name (e.g. default-named camera captures) the lookup returns the first match, so both files start their walk from the same node and land on the same sub-doc.
 
 ## Related Files
 
