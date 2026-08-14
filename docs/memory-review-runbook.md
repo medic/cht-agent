@@ -19,6 +19,10 @@ memory-verify's is fine and is gitignored.
 
 ## Three invocations that cost real time to get wrong
 
+All three below were learned by getting them wrong on a live branch; the third
+was written into an earlier draft of this runbook as advice that does not work,
+and corrected only after running it.
+
 **Export a token before anything `--online`.** Anonymous GitHub allows 60
 requests/hour, and one 40-draft domain exhausts it. The run then reports drafts
 as `unverified` and exits 3, which reads exactly like a content problem and is
@@ -39,11 +43,31 @@ draft's identity for three review rounds because every run was scoped to
 npm run verify-drafts -- --dir <agent-memory> --changed-only --base origin/main --online
 ```
 
-**Use `--changed-only` on the semantic tiers too.** Both `ground-claims` and
-`check-coherence` support it. Without it every pass re-processes every draft: at
-~40s/draft that is ~27 minutes per pass over 40 drafts instead of ~3 for the six
-you actually edited. Base it on **the last commit that gated clean**, not
-`origin/main` — against `main` the whole promote branch is "changed".
+**`--changed-only` does NOT work for the semantic tiers here, and the tools will
+tell you so.** `ground-claims` and `check-coherence` accept the flag, but they
+compute the diff *in the repo running them* — memory-verify — which knows nothing
+about the promote branch's commits. The scripts live only on
+`memory/draft-verification`, so there is no worktree that has both the tools and
+the drafts. Every pass refuses with:
+
+```
+--changed-only matched none of the 40 drafts under <dir>, though 19 file(s) changed.
+```
+
+That is the tool being right, not broken. To gate only what changed, stage the
+changed drafts into a scratch tree and point `--dir` at that. Both tiers are
+per-draft, so this is sound; keep `verify-drafts` corpus-wide, because its
+duplicate check is the one thing that genuinely needs every draft loaded.
+
+```sh
+STAGE=/tmp/delta/domains/<domain>/issues && mkdir -p "$STAGE"
+git -C <promote-worktree> diff --name-only <last-clean-gate>..HEAD -- <issues-dir> \
+  | while read -r p; do cp "<promote-worktree>/$p" "$STAGE/"; done
+npm run check-coherence -- --dir /tmp/delta --label <l> --concurrency 3
+```
+
+Measured: 13 drafts per pass instead of 40. Exclude commits that only bump
+`lastUpdated` — those bytes changed, the prose did not.
 
 ## The round loop
 
@@ -53,7 +77,7 @@ you actually edited. Base it on **the last commit that gated clean**, not
    essentially every time here, but the standard is that you checked, because a
    fix applied on faith is how a wrong claim gets laundered into memory.
 3. Fix. Commit with a message that states what was verified and how.
-4. Gate the delta (`--changed-only --base <previous commit>`).
+4. Gate the delta (stage the prose-changed drafts, above — not `--changed-only`).
 5. Repeat until the convergence bar below is met **on committed bytes**.
 6. Write the reply: worst-first, re-runnable commands, an honest ledger, and an
    explicit list of what you disclosed rather than fixed.
