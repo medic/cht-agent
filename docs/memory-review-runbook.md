@@ -1,0 +1,177 @@
+# Runbook: taking a promote branch through content review
+
+`memory-draft-verification.md` describes what each checker *is*. This describes
+how to run a review round without wasting a day or shipping a new defect while
+fixing an old one. Everything here is drawn from rounds on #120, #122, #123 and
+#132 — the numbers are measured, not estimated.
+
+## Layout
+
+| Thing | Where |
+|---|---|
+| Tooling + these docs | `.claude/worktrees/memory-verify` (branch `memory/draft-verification`) |
+| The corpus under review | a worktree per promote branch, e.g. `.claude/worktrees/scan-forms` |
+| cht-core to verify against | `medic-cht-agent/cht-core` — **`git fetch origin master` first** |
+| GitHub reads | `gh`, with `GH_TOKEN` exported (see below) |
+
+The promote worktree needs `node_modules` to run `validate-schema`; symlinking
+memory-verify's is fine and is gitignored.
+
+## Three invocations that cost real time to get wrong
+
+**Export a token before anything `--online`.** Anonymous GitHub allows 60
+requests/hour, and one 40-draft domain exhausts it. The run then reports drafts
+as `unverified` and exits 3, which reads exactly like a content problem and is
+not. Authenticated, the same bytes return `0 unverified`.
+
+```sh
+export GH_TOKEN=<read-only PAT>
+gh api rate_limit --jq '.resources.core'   # 5000/hour, vs 60 without
+```
+
+**Point `--dir` at the whole corpus, not one domain.** `duplicate-issue` is built
+from the drafts actually loaded, so a cross-domain collision is invisible if only
+your domain is in memory. #122 shipped a draft duplicating a landed contacts
+draft's identity for three review rounds because every run was scoped to
+`domains/forms-and-reports`. Load everything and focus the reporting instead:
+
+```sh
+npm run verify-drafts -- --dir <agent-memory> --changed-only --base origin/main --online
+```
+
+**Use `--changed-only` on the semantic tiers too.** Both `ground-claims` and
+`check-coherence` support it. Without it every pass re-processes every draft: at
+~40s/draft that is ~27 minutes per pass over 40 drafts instead of ~3 for the six
+you actually edited. Base it on **the last commit that gated clean**, not
+`origin/main` — against `main` the whole promote branch is "changed".
+
+## The round loop
+
+1. Read the review. Fetch the body *and* the inline comments — most of the
+   substance is inline.
+2. **Re-derive every item before editing it.** Reviewers have been right
+   essentially every time here, but the standard is that you checked, because a
+   fix applied on faith is how a wrong claim gets laundered into memory.
+3. Fix. Commit with a message that states what was verified and how.
+4. Gate the delta (`--changed-only --base <previous commit>`).
+5. Repeat until the convergence bar below is met **on committed bytes**.
+6. Write the reply: worst-first, re-runnable commands, an honest ledger, and an
+   explicit list of what you disclosed rather than fixed.
+
+## The convergence bar, and why it is not one clean pass
+
+Claim extraction is sampled. `enumerate-claims`' own header measures it: two runs
+over unchanged bytes shared 29% of extracted claims, so a single pass sees
+61–67% of what is checkable. One clean pass is not evidence.
+
+**Require at least three consecutive clean passes of each tier against frozen,
+committed bytes.** Re-freeze after every fix.
+
+The failure this prevents, verbatim from #122: passes `g17`–`g19` and `c17`–`c19`
+all ran after the final commit; `g19` and `c19` came back clean and the run
+stopped — while `c17`, `c18` and `g18` had each found something on those same
+bytes that nobody actioned. Clean-at-the-end is not converged. Coherence on that
+branch produced findings in passes 17, 18, 20–23, 25, 28, 31–33, 48, 49, 51 and
+53 — almost always after one or two clean ones.
+
+Two operational rules fall out of this:
+
+- **Do not edit while a gate is running.** You lose the ability to say which
+  bytes each pass read, which is the whole value of the ledger.
+- **A degraded run is not a clean run.** If a report shows many "semantic
+  extraction failed" entries (rate limits, CLI errors), its counts mean nothing —
+  two runs on #122 dropped from 619 grounded to 452 and 407 that way.
+
+## Verifying a claim: four steps, not two
+
+This is the protocol that separates a review-grade check from what the gate does.
+Apply it to the reviewer's items **and to every sentence you write yourself**.
+
+1. Quote the claim at head.
+2. Check it at the draft's own anchor.
+3. Check it on `origin/master`.
+4. **Walk the commits that touched the region in between.**
+
+Step 4 is the one that gets skipped, and skipping it produced the two worst
+defects of #122's round 3 — both introduced by the round-2 remediation:
+
+- `10133` claimed "only one attachment is read". True of `getFormDocs` in
+  `forms.js`, which was the only function checked; the same PR also changed
+  `updateAttachments` in `generate-xform.js` to read three by name.
+- `10071` credited place-create to #10099. It was already standing, from #10065
+  and #10089, a week earlier.
+
+Both sentences named only real symbols and contradicted nothing. Existence and
+coherence checks cannot see either.
+
+## Expect to cause defects while fixing them
+
+Measured on #122: **3 of the 7 round-3 review items were introduced by the
+round-2 remediation.** The follow-up audit found a fourth. When you replace a
+wrong sentence, the replacement is unverified prose that the gate will only
+check for symbol existence.
+
+Two habits that pay for themselves:
+
+- After fixing a section, **read its siblings**. `10133`, `10917` and `9553` each
+  carried the same wrong claim in two or three sections; fixing one and leaving
+  the others just defers the finding.
+- Re-run coherence after every edit, not only at the end.
+
+## Findings that are probe artifacts, not defects
+
+Do not "fix" these by weakening a true sentence. Do consider rewording so the
+claim is checkable — that is what stops it recurring every few passes.
+
+| Shape | Example | Why it fires |
+|---|---|---|
+| Counterfactual | "kept as `target` rather than `target-interval`" | the absence *is* the claim |
+| Placeholder literal | `` `sidebar_filter:analytics:<key>:select` `` | no literal grep can match it |
+| Package specifier | `enketo-core/src/js/event` | not a repo path |
+| XLSForm column | `instance::cht:duration` | lives inside the `.xlsx`; the rendered attribute (`cht:duration`) is what greps |
+| Dotted prose form | `validation.extra_validations` | source spells it `extra_validations` |
+| Epic-branch symbol | `Input.v1.UpdateReportInput` | real on master, absent at a child PR's anchor |
+
+The durable fix for the last four is to name **both** forms — the one an author
+writes and the one that greps.
+
+## Epic-branch drafts
+
+State it the same way every time, because the corpus has erred in both
+directions (one draft treated an epic merge as shipped, another called merged PRs
+unmerged):
+
+> **Merged into `<branch>` on `<date>`; not on `master` (as of `<date>`).**
+
+Then give the squash that carries the work to master, and check merge state via
+`gh api repos/medic/cht-core/pulls/<n> --jq .merged` — git ancestry answers a
+different question and both need saying.
+
+## What each tier can and cannot decide
+
+| Tier | Cost | Decides |
+|---|---|---|
+| `validate-schema` | free | shape |
+| `verify-drafts` | free, exhaustive | identity, duplicates, near-miss vocab, leakage, cross-field echoes |
+| `ground-claims` | ~40s/draft, sampled | does this symbol/path/status exist, and did this PR touch it |
+| `check-coherence` | ~40s/draft, sampled | do two sentences in one draft disagree |
+| a human | slow | **is this the right explanation** |
+
+The residual class is the last row: correctness of causal attribution. `9755`
+misattributed index routing, `8656` inverted a timezone sign, `10917` overstated
+a selector — each internally consistent, every symbol real. When you find a new
+instance, ask whether it is mechanisable before writing prose about it; the
+`introduced-by` probe exists because one of them was.
+
+**Anything two string comparisons can settle belongs in `verify-drafts`.** Three
+such checks (`related-issues-desync`, `missing-domain-rationale`, `fit-mismatch`)
+replaced defects previously found by sampled passes, one of them only on the
+fourth convergence set.
+
+## Budget
+
+`ground-claims` and `check-coherence` spend one `claude -p` per draft per pass on
+the operator's subscription; the session model is irrelevant. A 40-draft domain
+run to convergence is tens of passes. Use `--changed-only`, keep
+`--concurrency 3`, and log every run to `outputs/gate/` so the ledger survives a
+session restart.

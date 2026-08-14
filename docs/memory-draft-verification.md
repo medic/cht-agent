@@ -1,5 +1,10 @@
 # Verifying agent-memory drafts
 
+> **Running a review round?** This file is the reference for what each checker
+> does. `memory-review-runbook.md` is the operational counterpart — order of
+> operations, the invocations that cost time when wrong, the convergence bar, and
+> the claim-verification protocol.
+
 `npm run validate-schema` proves a draft is well-**shaped**. It cannot prove the
 shape is **true**. Both defect classes below passed schema validation and CI
 green, and were caught by a human reading 163 drafts against the cht-core source:
@@ -29,6 +34,9 @@ own, without a cht-core checkout and without an LLM.
 | `process-leakage` | warning | classifier/review scaffolding left in the prose |
 | `uniform-domain-fit` | warning | every draft self-reporting `domainFit: strong` |
 | `related-issues-empty` | warning | `related_issues` never backfilled anywhere |
+| `fit-mismatch` | blocking | frontmatter `domainFit` disagreeing with the `**Fit:**` line |
+| `related-issues-desync` | warning | `## Related Issues` cross-links issues the frontmatter omits |
+| `missing-domain-rationale` | warning | a distilled draft with no Domain Rationale section |
 | `issue-number-is-pr` | blocking, `--online` only | `issueNumber` that is really a PR |
 
 ## What it does NOT catch
