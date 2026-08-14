@@ -550,3 +550,44 @@ describe('formatReport', () => {
     expect(text).to.contain('not a pass');
   });
 });
+
+describe('checkFieldEchoes — questions `===` can answer', () => {
+  /** Findings for one raw draft written into a throwaway corpus. */
+  const checksOf = (raw: string): string[] => {
+    const dir = tmpCorpus({ 'x.md': raw });
+    return verifyDrafts({ dir }).findings.map(f => f.check);
+  };
+  const withFm = (fm: string, body: string): string => `---\n${fm}\n---\n\n${body}\n`;
+
+  it('catches an empty related_issues under a populated section', () => {
+    // 10922, found by coherence pass 28 on the fourth convergence set.
+    expect(checksOf(withFm(
+      'id: cht-core-10904\nissueNumber: 10904\nrelated_issues: []',
+      '## Related Issues\n\n- #10700: parent epic\n- #10903: sibling issue'
+    ))).to.include('related-issues-desync');
+  });
+
+  it("does not fire when the section only names the draft's own issue", () => {
+    expect(checksOf(withFm(
+      'id: cht-core-10904\nissueNumber: 10904\nrelated_issues: []',
+      '## Related Issues\n\n- #10904: the issue this draft is about'
+    ))).to.not.include('related-issues-desync');
+  });
+
+  it('catches a distilled draft with no Domain Rationale', () => {
+    // 10071 — the one draft whose domain the review had questioned.
+    expect(checksOf(withFm(
+      "id: cht-core-10040\nissueNumber: 10040\ndistilled_at: '2026-06-22'", '## Solution\n\nx'
+    ))).to.include('missing-domain-rationale');
+  });
+
+  it('exempts hand-authored drafts, which predate the section', () => {
+    expect(checksOf(withFm('id: cht-core-8225\nissueNumber: 8225', '## Solution\n\nx')))
+      .to.not.include('missing-domain-rationale');
+  });
+
+  it('catches domainFit disagreeing with the prose it restates', () => {
+    expect(checksOf(withFm('id: cht-core-1\nissueNumber: 1\ndomainFit: strong',
+      '## Domain Rationale\n\n**Fit:** weak\n\nx'))).to.include('fit-mismatch');
+  });
+});

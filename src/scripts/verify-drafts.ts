@@ -588,6 +588,62 @@ function readDraft(abs: string, scanRoot: string): { draft?: Draft; skipped?: st
   return { draft: { file: rel, abs, body: parsed.content, lines: content.split('\n'), fm } };
 }
 
+/**
+ * Cross-field checks: frontmatter against the prose that restates it.
+ *
+ * These are the cheapest findings in the whole workflow and they were being paid
+ * for at the most expensive tier. Each one below is a defect a coherence pass
+ * actually filed on forms-and-reports, at ~40 seconds of model time per draft
+ * per pass, sampled — when the same fact is two string comparisons away:
+ *
+ *   10922  frontmatter `related_issues: []` while `## Related Issues` listed
+ *          three. Found by coherence pass 28, on the fourth convergence set.
+ *   10071  no `## Domain Rationale` section at all — the one draft whose domain
+ *          the review had questioned. Found by reading, never by the gate.
+ *
+ * Deterministic, hermetic, exhaustive, free. A model should never be asked a
+ * question `===` can answer.
+ */
+function checkFieldEchoes(d: Draft): Finding[] {
+  const out: Finding[] = [];
+
+  // `domainFit: strong` vs "**Fit:** strong" in the rationale prose.
+  const fmFit = str(d.fm.domainFit);
+  const proseFit = /^\*\*Fit:\*\*\s*(\w+)/m.exec(d.body)?.[1];
+  if (fmFit && proseFit && fmFit !== proseFit) {
+    out.push(finding(d.file, 'fit-mismatch', 'blocking',
+      `frontmatter says domainFit: ${fmFit} but Domain Rationale says **Fit:** ${proseFit}`,
+      lineOf(d.lines, 'domainFit:')));
+  }
+
+  // An empty `related_issues` under a section that lists issues other than this
+  // draft's own. Its own issue appearing there is normal and not a cross-link.
+  const own = num(d.fm.issueNumber);
+  // Split on headings rather than lookahead: `(?=^## |\Z)` is the trap this repo
+  // already documents in enumerate-claims — JS has no `\Z`, so it matches a
+  // literal "Z" and the section silently fails to match whenever it is the last
+  // one in the file. Which is exactly where Related Issues usually sits.
+  const section = d.body.split(/^## /m).find(s => s.startsWith('Related Issues')) ?? '';
+  const listed = [...new Set(
+    [...section.matchAll(/^-\s*#(\d{3,6})\b/gm)].map(m => Number.parseInt(m[1], 10))
+  )].filter(n => n !== own);
+  const declared = Array.isArray(d.fm.related_issues) ? d.fm.related_issues.length : 0;
+  if (listed.length > 0 && declared === 0) {
+    out.push(finding(d.file, 'related-issues-desync', 'warning',
+      `## Related Issues cross-links ${listed.map(n => `#${n}`).join(', ')} but related_issues is empty — ` +
+        'the machine-readable field is what #135 de-duplicates on',
+      lineOf(d.lines, 'related_issues:')));
+  }
+
+  // A machine-distilled draft with no Domain Rationale. Hand-authored files
+  // predate the section and are exempt — `distilled_at` is what separates them.
+  if (d.fm.distilled_at !== undefined && !/^## Domain Rationale\s*$/m.test(d.body)) {
+    out.push(finding(d.file, 'missing-domain-rationale', 'warning',
+      'distilled draft has no ## Domain Rationale section, so its domain choice is unexplained'));
+  }
+  return out;
+}
+
 function hermeticFileChecks(d: Draft, vocab: Vocab): Finding[] {
   return [
     ...checkIdentityCoherence(d),
@@ -595,6 +651,7 @@ function hermeticFileChecks(d: Draft, vocab: Vocab): Finding[] {
     ...checkFilenameToken(d),
     ...checkVocabNearMiss(d, vocab),
     ...checkProcessLeakage(d),
+    ...checkFieldEchoes(d),
   ];
 }
 
