@@ -144,6 +144,49 @@ function logCodeContextUsage(codeContext: { codeSnippets: unknown[] } | null | u
   }
 }
 
+/**
+ * Explain why the code architecture section has no insights. A failed fetch and
+ * a search that genuinely found nothing both yield zero insights, so the plan
+ * has to say which one happened - otherwise the two are indistinguishable once
+ * the run is over.
+ */
+function describeCodeContextGap(codeContextFindings?: CodeContextFindings): string {
+  if (!codeContextFindings) {
+    return 'unavailable (code context search did not complete)';
+  }
+
+  if (codeContextFindings.warnings.length > 0) {
+    return `unavailable (${codeContextFindings.warnings.join('; ')})`;
+  }
+
+  return 'none returned for this issue';
+}
+
+/**
+ * Explain why the code snippet section is empty, for the same reason.
+ */
+function describeCodeSnippetGap(codeContext?: CodeContext | null): string {
+  if (!codeContext) {
+    return 'none available (context analysis returned no code context)';
+  }
+
+  return 'none matched this issue';
+}
+
+/**
+ * Repos, confidence and warnings from the code context search. Rendered even
+ * when no insights came back, so a failed fetch still reports itself.
+ */
+function formatCodeContextProvenance(codeContextFindings: CodeContextFindings): string {
+  const warnings =
+    codeContextFindings.warnings.length > 0
+      ? `\n**Warnings**: ${codeContextFindings.warnings.join(', ')}`
+      : '';
+
+  return `**Repos Analyzed**: ${codeContextFindings.relevantRepos.join(', ')}
+**Confidence**: ${(codeContextFindings.confidence * 100).toFixed(0)}%${warnings}`;
+}
+
 function collectBulletText(section: string): string[] {
   return section
     .split('\n')
@@ -433,6 +476,11 @@ ${snippet.content}
     )
     .join('\n\n')}
 `;
+    } else {
+      codeContextSection = `
+## CHT Core Code Context
+**Code Snippets**: ${describeCodeSnippetGap(codeContext)}
+`;
     }
 
     // Build OpenDeepWiki code architecture section if available
@@ -449,6 +497,15 @@ ${codeContextFindings.moduleRelationships.map((rel) => `- ${rel.source} -> ${rel
 
 **Confidence**: ${(codeContextFindings.confidence * 100).toFixed(0)}%
 ${codeContextFindings.warnings.length > 0 ? `\n**Warnings**: ${codeContextFindings.warnings.join(', ')}` : ''}
+`;
+    } else {
+      const provenance = codeContextFindings
+        ? `\n${formatCodeContextProvenance(codeContextFindings)}`
+        : '';
+
+      codeArchitectureSection = `
+## Code Architecture Context
+**Architecture Insights**: ${describeCodeContextGap(codeContextFindings)}${provenance}
 `;
     }
 

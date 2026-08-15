@@ -696,3 +696,92 @@ describe('ResearchSupervisor.research (v9b.2) — end-to-end orchestration', () 
   // referencing it here. The original tests imported it as a type.
   void {} as ResolvedIssueContext | undefined;
 });
+
+describe('ResearchSupervisor plan prompt provenance (#156)', () => {
+  const mkCodeContextFindings = (
+    overrides: Partial<CodeContextFindings> = {}
+  ): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
+    confidence: 0.3,
+    source: 'opendeepwiki',
+    ...overrides,
+  });
+
+  const FETCH_FAILED = 'Failed to fetch code context from cht-core';
+
+  const promptFor = async (codeContextFindings?: CodeContextFindings): Promise<string> => {
+    const llm = v9b2mkLLM('### 1. IMPLEMENTATION APPROACH\n- ok\n');
+    const { supervisor } = v9b2buildSupervisor({ llm });
+
+    await supervisor.generatePlanNode({
+      issue: v9b2mkIssue(),
+      researchFindings: v9b2mkFindings(),
+      contextAnalysis: v9b2mkAnalysis(),
+      codeContextFindings,
+    });
+
+    return (llm.invoke as sinon.SinonStub).firstCall.args[0] as string;
+  };
+
+  it('names the upstream failure in the prompt when the fetch failed', async () => {
+    const prompt = await promptFor(mkCodeContextFindings({ warnings: [FETCH_FAILED] }));
+    expect(prompt).to.contain(FETCH_FAILED);
+  });
+
+  it('distinguishes a failed fetch from a search that genuinely found nothing', async () => {
+    const failed = await promptFor(mkCodeContextFindings({ warnings: [FETCH_FAILED] }));
+    const empty = await promptFor(mkCodeContextFindings());
+
+    expect(failed).to.not.equal(empty);
+    expect(failed).to.contain(`**Architecture Insights**: unavailable (${FETCH_FAILED})`);
+    expect(empty).to.contain('**Architecture Insights**: none returned for this issue');
+  });
+
+  it('keeps the section present instead of omitting it when there are no insights', async () => {
+    const prompt = await promptFor(mkCodeContextFindings());
+    expect(prompt).to.contain('## Code Architecture Context');
+  });
+
+  it('reports confidence even when no insights came back', async () => {
+    const prompt = await promptFor(mkCodeContextFindings({ confidence: 0.3 }));
+    expect(prompt).to.contain('**Confidence**: 30%');
+  });
+
+  it('says so when the code context search never produced findings at all', async () => {
+    const prompt = await promptFor(undefined);
+    expect(prompt).to.contain('code context search did not complete');
+  });
+
+  it('states explicitly that no code snippets were available', async () => {
+    const prompt = await promptFor(mkCodeContextFindings());
+    expect(prompt).to.contain('## CHT Core Code Context');
+    expect(prompt).to.contain('context analysis returned no code context');
+  });
+
+  it('leaves a healthy run reporting its insights and no gap wording', async () => {
+    const prompt = await promptFor(
+      mkCodeContextFindings({
+        confidence: 0.8,
+        architectureInsights: [
+          {
+            component: 'cht-datasource',
+            description: 'Datasource qualifier layer',
+            patterns: ['qualifier'],
+            dependencies: [],
+          },
+        ],
+      })
+    );
+
+    expect(prompt).to.contain('## Code Architecture Context');
+    expect(prompt).to.contain('Datasource qualifier layer');
+    expect(prompt).to.contain('**Architecture Insights**: 1');
+    expect(prompt).to.contain('**Confidence**: 80%');
+    expect(prompt).to.not.contain('**Architecture Insights**: unavailable');
+    expect(prompt).to.not.contain('none returned for this issue');
+  });
+});
