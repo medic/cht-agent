@@ -793,7 +793,11 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
       },
     ];
     const risks = rules.filter(r => r.condition).map(r => r.message);
-    return [...risks, ...this.getCodeContextRisks(codeContextFindings)];
+
+    // Provenance first. `parsePlanResponse` caps this list, and these say
+    // whether the plan's own inputs can be trusted - losing one to the cap is
+    // worse than losing any advisory risk below it.
+    return [...this.getCodeContextRisks(codeContextFindings), ...risks];
   }
 
   /**

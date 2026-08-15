@@ -785,3 +785,65 @@ describe('ResearchSupervisor plan prompt provenance (#156)', () => {
     expect(prompt).to.not.contain('none returned for this issue');
   });
 });
+
+describe('ResearchSupervisor riskFactors ordering (#156)', () => {
+  const FETCH_FAILED = 'Failed to fetch code context from cht-core';
+
+  const degradedFindings = (): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [FETCH_FAILED],
+    confidence: 0.3,
+    source: 'opendeepwiki',
+  });
+
+  /** An issue and analysis that trip every one of the five heuristic rules. */
+  const maximallyRiskyState = () => ({
+    issue: v9b2mkIssue({
+      priority: 'high',
+      constraints: ['c1', 'c2', 'c3', 'c4'],
+      technical_context: {
+        domain: 'contacts',
+        components: ['api/src', 'webapp/src', 'sentinel/src', 'admin/src', 'shared-libs'],
+      },
+    }),
+    researchFindings: v9b2mkFindings({ confidence: 0.3 }),
+    contextAnalysis: v9b2mkAnalysis({ similarContexts: [] }),
+  });
+
+  const riskFactorsFor = async (codeContextFindings?: CodeContextFindings): Promise<string[]> => {
+    const llm = v9b2mkLLM('### 1. IMPLEMENTATION APPROACH\n- ok\n');
+    const { supervisor } = v9b2buildSupervisor({ llm });
+
+    const out = await supervisor.generatePlanNode({
+      ...maximallyRiskyState(),
+      codeContextFindings,
+    });
+
+    return (out.orchestrationPlan as { riskFactors: string[] }).riskFactors;
+  };
+
+  it('keeps the upstream-failure risk when every heuristic rule also fires', async () => {
+    const riskFactors = await riskFactorsFor(degradedFindings());
+    expect(riskFactors.some(r => r.includes(FETCH_FAILED))).to.equal(true);
+  });
+
+  it('ranks code context provenance ahead of advisory risks', async () => {
+    const riskFactors = await riskFactorsFor(degradedFindings());
+    expect(riskFactors[0]).to.contain('Code context warnings');
+  });
+
+  it('still respects the five-risk cap', async () => {
+    const riskFactors = await riskFactorsFor(degradedFindings());
+    expect(riskFactors).to.have.lengthOf(5);
+  });
+
+  it('leaves the heuristic risks alone when the code context is healthy', async () => {
+    const riskFactors = await riskFactorsFor(undefined);
+    expect(riskFactors).to.have.lengthOf(5);
+    expect(riskFactors.some(r => r.includes('Code context warnings'))).to.equal(false);
+    expect(riskFactors[0]).to.contain('Low confidence in documentation findings');
+  });
+});
