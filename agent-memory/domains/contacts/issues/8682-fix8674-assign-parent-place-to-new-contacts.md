@@ -50,7 +50,7 @@ Contacts created via the places API (POST /api/v1/places) were created without a
 
 ## Solution
 
-Reordered `createPlace` so the place is posted first, then `contact.place` is set to the new UUID before `people.getOrCreatePerson` runs, and finally `updatePlace` links the place back to the created person — ensuring the new contact is a valid child of its place. The response also gained the contact id (`{ ...result, contact: { id: person._id } }`), which issue #8674 had asked for. Changes span shared-libs/contacts/src/places.js and shared-libs/contacts/src/people.js, with corresponding unit and integration test coverage.
+Reordered `createPlace` so the place is posted first, then `contact.place` is set to the new UUID before `people.getOrCreatePerson` runs, and finally `updatePlace` links the place back to the created person — ensuring the new contact is a valid child of its place. The response also gained the contact id (`{ ...result, contact: { id: person._id } }`), which issue #8674 had asked for. The reorder is entirely within shared-libs/contacts/src/places.js; shared-libs/contacts/src/people.js changes by exactly one line — `module.exports._getDefaultPersonType = getDefaultPersonType;` — so that places.js can default the contact's type before validation. Unit and integration test coverage accompanies both.
 
 ## Code Patterns
 
