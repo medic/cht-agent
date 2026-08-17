@@ -60,8 +60,8 @@ stale: true
 > `isPlaceQualifier` no longer exist anywhere in the tree — they were replaced by `PlaceInput`
 > in `src/input.ts` (#10094) — `v1.createPlace` is now `v1.create`, master's `src/input.ts` is
 > types-only (zero runtime declarations), and the create-time parent-fetch /
-> contact_type-check / lineage-shaping logic lives on master in
-> `src/local/libs/lineage.ts`, as `assertHasValidParentType` and `minifyDoc`.
+> contact_type-check / lineage-shaping logic lives in `src/local/libs/lineage.ts`
+> on master, as `assertHasValidParentType` and `minifyDoc` — both master-only.
 > The prose below deliberately describes the state at each cited PR, not master's
 > shape; hence `stale: true`. Read every present-tense sentence below as scoped to
 > its cited PR.
