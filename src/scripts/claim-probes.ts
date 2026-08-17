@@ -878,6 +878,18 @@ const MEMORY_REPO_PATH = /^agent-memory\//;
 /** Repo an `introduced-by` claim is resolved against when no anchor supplies one. */
 const CHT_CORE_REPO = 'medic/cht-core';
 
+/**
+ * A sentence that explicitly places what it names in a sibling project. Requires
+ * the disclaimer, not merely the repo name: "mirroring cht-conf's behaviour"
+ * still describes cht-core code and must stay checkable. Only an outright "lives
+ * in X" / "not cht-core" hands the claim to a tree this probe cannot read.
+ */
+const CROSS_REPO_DISCLAIMER = new RegExp([
+  '\\b(?:lives?|ships?|resides?)\\s+(?:only\\s+)?in\\s+`?(?:cht-conf|enketo-core|enketo|cht-android|cht-sync|pyxform)`?',
+  '|\\bwhich\\s+lives\\s+in\\s+`?[\\w-]+`?,\\s*not\\s+cht-core\\b',
+  '|\\bnot\\s+(?:in\\s+)?cht-core\\b',
+].join(''), 'i');
+
 // ---------------------------------------------------------------------------
 // Snippet fidelity
 // ---------------------------------------------------------------------------
@@ -1096,6 +1108,17 @@ export function checkClaim(
   if (claimFile && MEMORY_REPO_PATH.test(claimFile)) {
     return verdict(claim, 'unverifiable',
       `${claimFile} is a path in the agent-memory repo, not cht-core — out of this probe's tree`);
+  }
+
+  // Same principle, one repo further out: a draft may name something that
+  // belongs to a SIBLING project and say so. 9641 explains that a broken form
+  // was uploaded "via cht-conf's upload-*-forms with its `--skip-validate` flag,
+  // which lives in cht-conf, not cht-core" — true, useful, and permanently
+  // absent from this tree, so every pass that samples it reports a defect. The
+  // draft has already told the reader where to look; believe it.
+  if (CROSS_REPO_DISCLAIMER.test(claim.quote)) {
+    return verdict(claim, 'unverifiable',
+      'the sentence places this in a sibling repo, not cht-core — out of this probe\'s tree');
   }
 
   // Settled against the CREDITED PR's parent, not the draft's own anchor, so it
