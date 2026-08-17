@@ -57,8 +57,8 @@ stale: true
 > `origin/master`; the work reached master only through the epic squash #10083 (`f382785be`,
 > 2026-03-10), after a rename pass. On master `PersonQualifier`, `byPersonQualifier`,
 > `isPersonQualifier` and `assertPersonQualifier` no longer exist anywhere in the tree — the
-> person qualifier became `PersonInput` in `src/input.ts` (#10094), and master's `src/input.ts`
-> is types-only (zero runtime declarations) — and `Person.v1.createPerson` is now
+> person qualifier is `PersonInput` on master, in `src/input.ts` (added there by #10094), and
+> on master that file is types-only (zero runtime declarations) — and `Person.v1.createPerson` is now
 > `Person.v1.create`. The prose below deliberately describes the state at each cited PR, not
 > master's shape; hence `stale: true`. Read every present-tense sentence below as scoped to its
 > cited PR.
