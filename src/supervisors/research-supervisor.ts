@@ -163,11 +163,16 @@ function describeCodeContextGap(codeContextFindings?: CodeContextFindings): stri
 }
 
 /**
- * Explain why the code snippet section is empty, for the same reason.
+ * Explain why the code snippet section is empty. A null `codeContext` is not an
+ * empty result: `gatherDomainContext` returns null only when no cht-core
+ * checkout was found or the domain has no component mapping, and both are
+ * configuration faults worth naming. `cli/research.ts` never checks for the
+ * path, so a research-only run on an unconfigured machine reaches this branch
+ * without anything else reporting it.
  */
 function describeCodeSnippetGap(codeContext?: CodeContext | null): string {
   if (!codeContext) {
-    return 'none available (context analysis returned no code context)';
+    return 'unavailable (no cht-core checkout found, or no component mapping for this domain)';
   }
 
   return 'none matched this issue';
@@ -794,25 +799,38 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
     ];
     const risks = rules.filter(r => r.condition).map(r => r.message);
 
-    // Provenance first. `parsePlanResponse` caps this list, and these say
-    // whether the plan's own inputs can be trusted - losing one to the cap is
-    // worse than losing any advisory risk below it.
-    return [...this.getCodeContextRisks(codeContextFindings), ...risks];
+    // Provenance first. `parsePlanResponse` caps this list, and a warning says
+    // whether the plan's own inputs can be trusted - losing that to the cap is
+    // worse than losing any advisory risk below it. The advisory risk keeps its
+    // original position, last, so a run on which nothing failed is unaffected.
+    const codeContextRisks = this.getCodeContextRisks(codeContextFindings);
+    return [...codeContextRisks.provenance, ...risks, ...codeContextRisks.advisory];
   }
 
   /**
-   * Risk factors derived from the OpenDeepWiki code context findings.
+   * Risk factors derived from the OpenDeepWiki code context findings, split by
+   * whether they record an actual fault.
+   *
+   * `provenance` says the search itself failed, so it outranks the heuristic
+   * risks. `advisory` does not: `confidence` is `insights.length > 0 ? 0.8 : 0.3`
+   * upstream, so a low value restates "zero insights" and nothing more, and that
+   * covers a search which worked and correctly found nothing as well as one that
+   * failed. Only `warnings` separates those two, so only `warnings` is promoted.
    */
-  private getCodeContextRisks(codeContextFindings?: CodeContextFindings): string[] {
-    if (!codeContextFindings) return [];
-    const risks: string[] = [];
+  private getCodeContextRisks(codeContextFindings?: CodeContextFindings): {
+    provenance: string[];
+    advisory: string[];
+  } {
+    if (!codeContextFindings) return { provenance: [], advisory: [] };
+    const provenance: string[] = [];
+    const advisory: string[] = [];
     if (codeContextFindings.warnings.length > 0) {
-      risks.push(`Code context warnings: ${codeContextFindings.warnings.join('; ')}`);
+      provenance.push(`Code context warnings: ${codeContextFindings.warnings.join('; ')}`);
     }
     if (codeContextFindings.confidence < 0.5) {
-      risks.push('Low confidence in code architecture analysis - manual review recommended');
+      advisory.push('Low confidence in code architecture analysis - manual review recommended');
     }
-    return risks;
+    return { provenance, advisory };
   }
 
   /**

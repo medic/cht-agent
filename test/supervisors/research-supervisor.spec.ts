@@ -756,10 +756,11 @@ describe('ResearchSupervisor plan prompt provenance (#156)', () => {
     expect(prompt).to.contain('code context search did not complete');
   });
 
-  it('states explicitly that no code snippets were available', async () => {
+  it('names the configuration fault when no code snippets were available', async () => {
     const prompt = await promptFor(mkCodeContextFindings());
     expect(prompt).to.contain('## CHT Core Code Context');
-    expect(prompt).to.contain('context analysis returned no code context');
+    expect(prompt).to.contain('unavailable (no cht-core checkout found');
+    expect(prompt).to.contain('no component mapping for this domain');
   });
 
   it('leaves a healthy run reporting its insights and no gap wording', async () => {
@@ -795,6 +796,21 @@ describe('ResearchSupervisor riskFactors ordering (#156)', () => {
     diagrams: [],
     relevantRepos: ['cht-core'],
     warnings: [FETCH_FAILED],
+    confidence: 0.3,
+    source: 'opendeepwiki',
+  });
+
+  /**
+   * A search that completed and correctly found nothing: no warnings, and the
+   * 0.3 confidence upstream assigns to any insight-free result. Nothing failed
+   * on this run, so it must keep the risk ordering it had before #156.
+   */
+  const emptyButHealthyFindings = (): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
     confidence: 0.3,
     source: 'opendeepwiki',
   });
@@ -840,10 +856,20 @@ describe('ResearchSupervisor riskFactors ordering (#156)', () => {
     expect(riskFactors).to.have.lengthOf(5);
   });
 
-  it('leaves the heuristic risks alone when the code context is healthy', async () => {
+  it('leaves the heuristic risks alone when there are no code context risks', async () => {
     const riskFactors = await riskFactorsFor(undefined);
     expect(riskFactors).to.have.lengthOf(5);
     expect(riskFactors.some(r => r.includes('Code context warnings'))).to.equal(false);
     expect(riskFactors[0]).to.contain('Low confidence in documentation findings');
+  });
+
+  it('does not promote the advisory risk when the search found nothing but nothing failed', async () => {
+    const riskFactors = await riskFactorsFor(emptyButHealthyFindings());
+
+    expect(riskFactors[0]).to.contain('Low confidence in documentation findings');
+    expect(riskFactors.some(r => r.includes('Changes span multiple components'))).to.equal(true);
+    expect(riskFactors.some(r => r.includes('Low confidence in code architecture'))).to.equal(
+      false
+    );
   });
 });
