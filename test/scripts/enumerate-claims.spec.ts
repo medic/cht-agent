@@ -373,6 +373,38 @@ describe('enumerate-claims', () => {
       expect(claims.some(c => c.kind === 'symbol' && (c as { symbol: string }).symbol === 'createPlace')).to.equal(true);
       expect(claims.some(c => c.kind === 'introduced-by')).to.equal(true);
     });
+
+    // "and" does two jobs, and the clause rule has to tell them apart. Observed
+    // on contacts 9835, ungrounded in three passes running: the second verb is
+    // the one that governs the symbol, and reaching past it credits the PR with
+    // introducing a helper it only widened.
+    describe('a second verb after a conjunction', () => {
+      it('does not credit a symbol the sentence says was merely generalized', () => {
+        expect(credited(
+          '`#10022` added `byReportQualifier` and generalized `hasField`/`hasFields` to take a descriptor.',
+          'hasFields',
+        )).to.equal(undefined);
+      });
+
+      it('still credits the first symbol in that same sentence', () => {
+        expect(credited(
+          '`#10022` added `byReportQualifier` and generalized `hasField`/`hasFields` to take a descriptor.',
+          'byReportQualifier',
+        )).to.equal(10022);
+      });
+
+      it('keeps crediting a plain conjoined list, where "and" is not a new verb', () => {
+        // The regression risk of breaking on every "and": here `isPlace` really
+        // was added by #10065 and must stay credited.
+        expect(credited('#10065 added `createPlace` and `isPlace` to the local module.', 'isPlace'))
+          .to.equal(10065);
+      });
+
+      it('does not credit across a contrastive verb', () => {
+        expect(credited('#10099 added `createPlace` but renamed `isPlace` afterwards.', 'isPlace'))
+          .to.equal(undefined);
+      });
+    });
   });
 
 });

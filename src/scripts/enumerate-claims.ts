@@ -136,7 +136,19 @@ const LOCATES = '(?:in|to|from|into|within|inside|under|for|of|on|per|via|alongs
  * tasks-and-targets batch were exactly that.
  */
 const VERB_REACH = 90;
-const CLAUSE_BREAK = /[;:]|\.\s|\s[—–-]\s/g;
+/**
+ * Clause boundaries for the locality rules below.
+ *
+ * The coordinating conjunctions carry a lookahead, because "and" does two
+ * different jobs. In "#N added `foo` and `bar`" it extends the create verb's
+ * reach and must NOT break — `bar` really was added. In "#10022 added
+ * `byReportQualifier` and generalized `hasField`/`hasFields`" it introduces a
+ * *second verb*, and the second verb is the one governing `hasFields`; without a
+ * break there, the scope reaches back to "added" and the probe reports #10022 as
+ * introducing a helper it merely widened. Requiring a verb-shaped word after the
+ * conjunction separates the two: a backtick or a bare noun does not break.
+ */
+const CLAUSE_BREAK = /[;:]|\.\s|\s[—–-]\s|\s(?:and|but|then|while|whereas)\s+(?=[A-Za-z]+(?:ed|es|s)\b)/g;
 
 /**
  * A create verb spelled inside a FILENAME is not a verb. Measured on
