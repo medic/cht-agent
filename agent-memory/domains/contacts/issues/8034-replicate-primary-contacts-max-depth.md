@@ -6,7 +6,7 @@ subDomain: replication
 issueNumber: 8034
 issueUrl: https://github.com/medic/cht-core/issues/8034
 title: Replicate primary contacts for places at max replication depth
-lastUpdated: '2026-08-12'
+lastUpdated: 2026-03-16
 summary: Added a replicate_primary_contacts config flag that causes primary contact persons for places at max replication depth to be replicated along with their reports and targets, solving the problem of supervisors not seeing CHW person records.
 services:
   - api
@@ -35,24 +35,22 @@ PR #9593 added a `replicate_primary_contacts: true` config option per role in `r
 ## Code Patterns
 
 - Config: `{ "role": "supervisor", "depth": 1, "replicate_primary_contacts": true }` in `replication_depth` array
-- The `contacts_by_depth` value shape change is breaking only for consumers that read the emitted *value*. Of the three non-test consumers at the anchor, just `api/src/services/authorization.js` does, and it was updated to `row.value.shortcode`; `shared-libs/transitions/src/lib/muting_utils.js` reads only `row.id` and `api/src/services/config-watcher.js` merely loads the view map, so neither needed changing — still true on master
+- The `contacts_by_depth` view value shape change is breaking — all consumers must read `row.value.shortcode` instead of `row.value`
 - File: `ddocs/medic-db/medic/views/contacts_by_depth/map.js` — view emits `{ shortcode, primary_contact }`
 - File: `ddocs/medic-db/medic/views/contacts_by_primary_contact/map.js` — new view indexing contacts by their primary contact
 - File: `api/src/services/authorization.js` — `addPrimaryContactsSubjects()` collects and adds primary contact IDs to allowed subjects
-- File: `api/src/services/authorization.js` — `getDepth()` reads `replicate_primary_contacts` from config; the highest-depth role's setting wins, and among roles tied at that depth the most permissive wins
+- File: `api/src/services/authorization.js` — `getDepth()` reads `replicate_primary_contacts` from config, most permissive setting wins across roles
 - File: `api/src/services/authorization.js` — `allowedContact()` secondary path checks `subjectIds.includes(docId)` for primary contacts
 
 ## Design Choices
 
 - Opt-in per role via `replicate_primary_contacts: true` rather than making it default, to avoid unexpected replication changes for existing deployments
 - Primary contacts' reports and targets replicate automatically because their subject IDs are added to the allowed set — no separate mechanism needed
-- Two views were touched, for two different lookups, and only one of them was new. To expose a contact's `primary_contact` alongside its shortcode, `contacts_by_depth`'s emitted value was widened from a bare string to `{shortcode, primary_contact}` — accepted as a breaking change rather than adding a second depth-keyed view carrying the same rows. The genuinely new view, `contacts_by_primary_contact`, answers the opposite question (which places name a given person as their contact) and has no existing view to fold into
-- Among the roles tied at that highest depth, `replicate_primary_contacts: true` on any one of them enables it (most permissive wins within the tie); a role at a lower depth never contributes
-- `getScopedAuthorizationContext` re-runs `populateAllowedSubjectIds` in a `do...while` loop because a primary contact is only admitted once its place has already been added to `subjectIds`, and a single pass visits contacts in arbitrary order
+- The view value shape change was accepted as a breaking change rather than adding a separate view, to avoid maintaining two views for the same data
+- When multiple roles have the same depth, `replicate_primary_contacts: true` from any matching role enables it (most permissive wins)
+- `getScopedAuthorizationContext` uses a `do...while` loop to handle chains where a primary contact is itself the primary contact of another place
 
 ## Related Files
-
-Every `api/src/services/…` path in this document (here and in Code Patterns) is as of the #9593 anchor, 2025-03-13. These replication services moved under `api/src/services/replication/` in #10823 (2026-05-11), so on current master read `api/src/services/replication/authorization.js`, `.../replication/bulk-docs.js` and `.../replication/db-doc.js`.
 
 - api/src/services/authorization.js
 - ddocs/medic-db/medic/views/contacts_by_depth/map.js
