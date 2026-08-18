@@ -155,7 +155,12 @@ export interface LLMProvider {
  * Default configuration values
  */
 export const DEFAULT_CONFIG = {
-  maxTokens: 65536, // Opus 4.6 supports 128K output, Sonnet/Haiku 4.x support 64K
+  /**
+   * Requested output ceiling, and the fallback cap for any model missing from
+   * MODEL_MAX_OUTPUT_TOKENS. Deliberately below every current model's real
+   * limit: an unlisted model is capped here rather than at its true ceiling.
+   */
+  maxTokens: 65536,
 } as const;
 
 /**
@@ -170,11 +175,21 @@ export const DEFAULT_MODELS: Record<APIProviderType, string> = {
 /**
  * Known max output token limits per model.
  * Used to cap maxTokens so the API doesn't reject oversized requests.
- * Models not listed here default to DEFAULT_CONFIG.maxTokens.
+ * Models not listed here default to DEFAULT_CONFIG.maxTokens, which is lower
+ * than every current model's real ceiling.
+ *
+ * Stopgap. The Models API returns max_tokens and a capabilities object per
+ * model, so this should eventually be a runtime lookup rather than a
+ * hand-maintained table. See https://platform.claude.com/docs/en/about-claude/models/overview
  */
 export const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
+  'claude-fable-5': 128000,
+  'claude-opus-5': 128000,
+  'claude-sonnet-5': 128000,
+  'claude-opus-4-8': 128000,
+  'claude-opus-4-7': 128000,
   'claude-opus-4-6': 128000,
-  'claude-sonnet-4-6': 64000,
+  'claude-sonnet-4-6': 128000,
   'claude-haiku-4-5': 64000,
   'claude-haiku-4-5-20251001': 64000,
   'claude-opus-4-5': 64000,

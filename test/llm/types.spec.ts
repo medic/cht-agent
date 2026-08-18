@@ -12,8 +12,37 @@ describe('getMaxOutputTokens', () => {
     expect(getMaxOutputTokens('claude-opus-4-6')).to.equal(128000);
   });
 
-  it('returns 64000 for Sonnet 4.6 (matches the runtime cap behavior)', () => {
-    expect(getMaxOutputTokens('claude-sonnet-4-6')).to.equal(64000);
+  it('returns the documented Sonnet 4.6 limit of 128000', () => {
+    expect(getMaxOutputTokens('claude-sonnet-4-6')).to.equal(128000);
+  });
+
+  it('returns 128000 for every current 128K-output model', () => {
+    for (const model of [
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-sonnet-4-6',
+    ]) {
+      expect(getMaxOutputTokens(model), model).to.equal(128000);
+    }
+  });
+
+  it('does not fall back to the default cap for any current model', () => {
+    // The fallback is 65536, below every current model's real ceiling, so a
+    // missing row silently truncates output rather than erroring.
+    for (const model of [
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+    ]) {
+      expect(MODEL_MAX_OUTPUT_TOKENS, model).to.have.property(model);
+      expect(getMaxOutputTokens(model), model).to.not.equal(DEFAULT_CONFIG.maxTokens);
+    }
   });
 
   it('returns 32000 for the older Opus 4.1 family', () => {
@@ -43,8 +72,8 @@ describe('capMaxTokens', () => {
   });
 
   it('clamps to the model limit when the request exceeds it', () => {
-    // Sonnet 4.6 caps at 64000; a 200000-token request should clamp to 64000.
-    expect(capMaxTokens('claude-sonnet-4-6', 200000)).to.equal(64000);
+    // Sonnet 4.6 caps at 128000; a 200000-token request should clamp to 128000.
+    expect(capMaxTokens('claude-sonnet-4-6', 200000)).to.equal(128000);
   });
 
   it('returns the request value when it equals the model limit exactly', () => {
