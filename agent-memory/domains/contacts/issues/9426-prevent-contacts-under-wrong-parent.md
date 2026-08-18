@@ -15,6 +15,8 @@ techStack:
   - angular
 source_prs:
   - "medic/cht-core#9563"
+related_issues:
+  - cht-core-6363
 ---
 
 ## Problem

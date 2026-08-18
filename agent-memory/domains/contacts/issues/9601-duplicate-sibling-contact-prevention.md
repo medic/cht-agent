@@ -8,7 +8,7 @@ issueUrl: https://github.com/medic/cht-core/issues/9601
 title: Prevent duplicate sibling contact capture
 source_prs:
   - "medic/cht-core#9609"
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: Added configurable duplicate detection on both the contact create and edit flows that compares the contact being saved against its existing siblings using a Levenshtein-based expression, surfacing potential matches to the CHW before saving.
 services:
   - webapp
@@ -16,6 +16,8 @@ techStack:
   - typescript
   - angular
   - enketo
+related_issues:
+  - cht-core-6363
 ---
 
 ## Problem

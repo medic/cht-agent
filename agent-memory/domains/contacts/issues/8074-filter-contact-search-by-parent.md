@@ -6,7 +6,7 @@ subDomain: search
 issueNumber: 8074
 issueUrl: https://github.com/medic/cht-core/issues/8074
 title: Support filtering contact search by descendants of current contact
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-12'
 summary: Added a descendant-of-current-contact appearance keyword for form fields that scopes contact search to only contacts under the currently viewed place, using the existing contacts_by_parent CouchDB view.
 services:
   - webapp
@@ -14,6 +14,8 @@ techStack:
   - typescript
   - angular
   - couchdb
+related_issues:
+  - cht-core-9915
 ---
 
 ## Problem

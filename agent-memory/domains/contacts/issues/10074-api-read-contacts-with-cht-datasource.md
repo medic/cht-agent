@@ -6,13 +6,15 @@ subDomain: cht-datasource
 issueNumber: 10074
 issueUrl: https://github.com/medic/cht-core/issues/10074
 title: Update API migrations to read contacts with cht-datasource
-lastUpdated: 2026-08-11
+lastUpdated: '2026-08-12'
 summary: Migrated two API migration scripts from direct db.medic calls to the cht-datasource Contact.v1 API, replacing 404-catch patterns with null-check patterns and CouchDB view queries with async generators.
 services:
   - api
 techStack:
   - javascript
   - couchdb
+related_issues:
+  - cht-core-9835
 ---
 
 > Time-scoped to PR #10085 (merged 2025-07-25). Both migration scripts and their specs were subsequently deleted from master by #10187 (`chore(#9639): remove old migrations [5.0]`, 2025-08-27), so the migration paths named below no longer exist on master. `api/src/services/data-context.js` does still exist. This entry documents the cht-datasource read pattern as it stood at #10085.

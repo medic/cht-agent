@@ -18,6 +18,8 @@ techStack:
 source_prs:
   - "medic/cht-core#10432"
 stale: true
+related_issues:
+  - cht-core-10343
 ---
 
 > **Describes work that reached an epic branch but not master.** PR #10432 *was*
