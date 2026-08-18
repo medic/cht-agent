@@ -6,7 +6,7 @@ subDomain: hierarchy-validation
 issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-17'
 summary: Fixed a validation gap where contacts could be created under any parent by manipulating the URL, bypassing the configured hierarchy. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp

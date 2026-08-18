@@ -6,7 +6,7 @@ subDomain: cht-datasource
 issueNumber: 10074
 issueUrl: https://github.com/medic/cht-core/issues/10074
 title: Update API migrations to read contacts with cht-datasource
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-17'
 summary: Migrated two API migration scripts from direct db.medic calls to the cht-datasource Contact.v1 API, replacing 404-catch patterns with null-check patterns and CouchDB view queries with async generators.
 services:
   - api

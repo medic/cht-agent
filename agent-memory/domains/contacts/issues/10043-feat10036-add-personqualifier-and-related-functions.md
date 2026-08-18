@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10036
 issueUrl: https://github.com/medic/cht-core/issues/10036
 title: Add PersonQualifier and related functions to cht-datasource to enable person document creation
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-17'
 summary: The cht-datasource library lacked a qualifier abstraction for person documents, which is a prerequisite for creating persons via the datasource. This PR adds a `PersonQualifier` type plus related helper/guard functions and unit tests as groundwork for person-creation support.
 services:
   - api
@@ -53,7 +53,7 @@ stale: true
 > before #135 adds union selection would drop it from `contacts` retrieval entirely.
 > Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
 
-> **Drift note (verified 2026-08-12).** None of this draft's three source PRs is an ancestor of
+> **Drift note (verified 2026-08-17).** None of this draft's three source PRs is an ancestor of
 > `origin/master`; the work reached master only through the epic squash #10083 (`f382785be`,
 > 2026-03-10), after a rename pass. On master `PersonQualifier`, `byPersonQualifier`,
 > `isPersonQualifier` and `assertPersonQualifier` no longer exist anywhere in the tree — the

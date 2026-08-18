@@ -6,7 +6,7 @@ subDomain: forms
 issueNumber: 9915
 issueUrl: https://github.com/medic/cht-core/issues/9915
 title: Replace deprecated db-object appearance with select-contact
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-17'
 summary: Migrated all XML forms in config/default and config/covid-19 from the deprecated db-object appearance and db:type bind to the modern select-contact appearance with string bind type. Also replaced deprecated horizontal-compact and horizontal appearances.
 services:
   - webapp

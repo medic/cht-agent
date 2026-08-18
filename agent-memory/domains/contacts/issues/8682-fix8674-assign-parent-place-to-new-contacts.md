@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8674
 issueUrl: https://github.com/medic/cht-core/issues/8674
 title: Assign parent place to contacts created via the places API
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-17'
 summary: Contacts created through the places API were not assigned a parent place, causing a 'The contact must be a child of the place' error when subsequently creating a user for that contact. The fix assigns the parent place to new contacts in the contacts shared library.
 services:
   - api

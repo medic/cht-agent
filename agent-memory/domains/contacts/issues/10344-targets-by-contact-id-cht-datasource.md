@@ -6,7 +6,7 @@ subDomain: cht-datasource
 issueNumber: 10344
 issueUrl: https://github.com/medic/cht-core/issues/10344
 title: Support querying target intervals by contact IDs in cht-datasource
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-17'
 summary: 'UNLANDED (PR #10432 merged into a since-deleted epic branch, then dropped before that epic squashed to master): cht-datasource APIs to query target interval documents filtered by contact UUIDs, so the target aggregates service could fetch only supervised contacts'' targets instead of all targets for a reporting period. The contact-UUID filtering described here reached the epic branch and was renamed away before the squash, so it is on no branch but the PR''s own. One piece did survive: the bindGenerator method on CHTDatasourceService originated in this PR and is on master because the epic squash carried it — but master binds it to Target.v1.getAll, which is the epic''s own work, not the TargetInterval.v1.getAll this draft describes.'
 services:
   - api
