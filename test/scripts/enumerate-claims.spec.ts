@@ -235,6 +235,55 @@ describe('enumerate-claims', () => {
     });
   });
 
+  describe('a quote that names one file and a claim that names another', () => {
+    // 10344's Code Patterns is a `File:` list, one path per bullet. The model
+    // paired `bindGenerator` (in the cht-datasource.service.ts bullet) with
+    // local/libs/doc.ts from three bullets above. doc.ts correctly has 0 hits,
+    // so a true claim came back as a misattribution — and the draft-wide guard
+    // cannot see it, because doc.ts really is in the draft.
+    const QUOTE = 'File: `webapp/src/ts/services/cht-datasource.service.ts` — `bindGenerator()` for generators.';
+    const RAW = [
+      '## Code Patterns',
+      '',
+      '- File: `shared-libs/cht-datasource/src/local/libs/doc.ts` — `getDocUuidsByIdRange()` for ID-only allDocs',
+      `- ${QUOTE}`,
+      '',
+    ].join('\n');
+
+    it('drops the location and checks the symbol alone', () => {
+      const out = normaliseClaim(RAW, {
+        kind: 'symbol-in-file',
+        symbol: 'bindGenerator',
+        file: 'shared-libs/cht-datasource/src/local/libs/doc.ts',
+        quote: QUOTE,
+      });
+      expect(out?.kind).to.equal('symbol');
+      expect((out as { file?: string } | null)?.file).to.equal(undefined);
+    });
+
+    it('keeps the pairing when the quote names that same file', () => {
+      const out = normaliseClaim(RAW, {
+        kind: 'symbol-in-file',
+        symbol: 'bindGenerator',
+        file: 'webapp/src/ts/services/cht-datasource.service.ts',
+        quote: QUOTE,
+      });
+      expect(out?.kind).to.equal('symbol-in-file');
+    });
+
+    it('leaves a quote that names no path to the draft-wide check', () => {
+      // No paths in the quote means no evidence either way, so the existing
+      // behaviour must stand rather than this rule firing on everything.
+      const out = normaliseClaim(RAW, {
+        kind: 'symbol-in-file',
+        symbol: 'bindGenerator',
+        file: 'shared-libs/cht-datasource/src/local/libs/doc.ts',
+        quote: 'the generator helper is bound once per call',
+      });
+      expect(out?.kind).to.equal('symbol-in-file');
+    });
+  });
+
   describe('claimedStatus — the file as object, not location', () => {
     const statusOf = (prose: string, file: string): string | undefined => {
       const draft = `## Testing\n\n${prose}\n`;

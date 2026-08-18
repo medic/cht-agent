@@ -399,6 +399,27 @@ export function normaliseClaim<T extends { kind: string; quote: string }>(
     }
   }
 
+  // THE QUOTE NAMES A FILE, AND IT IS NOT THIS ONE. A `File:` list writes one
+  // path per bullet, and the model can pair a symbol from one bullet with a path
+  // from another. 10344's Code Patterns has `local/libs/doc.ts` three bullets
+  // above `cht-datasource.service.ts — bindGenerator()`; extraction bound
+  // `bindGenerator` to doc.ts, which correctly has 0 hits, and the true claim
+  // was reported as a misattribution. The draft-wide check below cannot catch
+  // it, because the wrong path is genuinely in the draft — just not in this
+  // sentence. When the quote names paths at all, the claim's file has to be one
+  // of them; otherwise check the symbol alone and assert nothing about location.
+  const quotePaths = String(claim.quote).match(PATH_RE) ?? [];
+  const claimFile = (claim as { file?: unknown }).file;
+  if (typeof claimFile === 'string' && claimFile && quotePaths.length
+      && !quotePaths.some(p => p === claimFile || p.endsWith(`/${claimFile}`) || claimFile.endsWith(`/${p}`))) {
+    if ('symbol' in claim) {
+      claim = { ...claim, kind: 'symbol' } as T;
+      delete (claim as { file?: unknown }).file;
+    } else {
+      return null;
+    }
+  }
+
   const file = (claim as { file?: unknown }).file;
   if (typeof file === 'string' && file && !raw.includes(file)) {
     const base = file.split('/').pop() ?? '';
