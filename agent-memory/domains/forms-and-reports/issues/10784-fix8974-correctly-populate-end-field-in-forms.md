@@ -43,7 +43,7 @@ concepts:
   - library-supplied event factories over hand-built CustomEvents
   - enketo-core integration
   - declare module shims for untyped deep imports
-  - prepareForSave lifecycle hook
+  - prepareForSave lifecycle hook (removed on master by the #10700 save-workflow rewrite, cccce201e)
 related_issues: []
 stale: false
 ---

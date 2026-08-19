@@ -76,7 +76,7 @@ Chose a single route guard driven by centralized NgRx state over ad-hoc per-comp
 - webapp/src/ts/actions/global.ts
 - webapp/src/ts/reducers/global.ts
 - webapp/src/ts/selectors/index.ts
-- webapp/src/ts/app.module.ts
+- webapp/src/ts/app.module.ts (present at this PR's anchor; removed on master by the Angular 19 standalone-components migration, #9784)
 - webapp/src/ts/modules/contacts/contacts.routes.ts
 - webapp/src/ts/modules/reports/reports.routes.ts
 - webapp/src/ts/modules/tasks/tasks.routes.ts
