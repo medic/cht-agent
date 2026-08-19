@@ -456,4 +456,47 @@ describe('enumerate-claims', () => {
     });
   });
 
+  // A draft that says a COMMIT is gone is making a claim one `git for-each-ref`
+  // settles, and #122's round 4 shipped one that was false. The sentence below is
+  // the shape it took.
+  describe('a commit the draft says is unreachable', () => {
+    const shas = (text: string): string[] => enumerateClaims(text)
+      .filter(c => c.kind === 'sha-unreachable')
+      .map(c => (c as { sha: string }).sha);
+
+    it('extracts the sha a squash is said to have swallowed', () => {
+      expect(shas('The commit `70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87` is absent from a clone ' +
+        'because the epic squashed it away.')).to.deep.equal(['70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87']);
+    });
+
+    it('reads an abbreviated sha too', () => {
+      expect(shas('70b7be0b4 is unreachable from any branch.')).to.deep.equal(['70b7be0b4']);
+    });
+
+    it('needs the cue and the sha in ONE sentence, not merely on one line', () => {
+      // This corpus writes a paragraph per line, so the line is far too coarse:
+      // a squash mentioned in one sentence must not claim the next sentence's sha.
+      expect(shas('The epic squashed it away. Separately, commit 70b7be0b4 landed on master.'))
+        .to.deep.equal([]);
+    });
+
+    it('ignores an issue number, a date and a hex-looking English word', () => {
+      expect(shas('Issue 10083 is unreachable, filed 20260817, and the cafefeed is absent from a clone.'))
+        .to.deep.equal([]);
+    });
+
+    it('says nothing about commits when the sentence makes no absence claim', () => {
+      expect(shas('The fix landed as 70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87 on master.'))
+        .to.deep.equal([]);
+    });
+
+    it('survives the disclaimer filters that silence ordinary existence claims', () => {
+      // ABSENCE_CONTEXT exists to stop "removed X" being probed as "X exists".
+      // Here the removal IS the claim, so the filter must not delete it.
+      const claims = enumerateClaims('## Notes\n\nThe sha `70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87` was ' +
+        'removed from history and is absent from a clone.\n');
+      expect(claims.some(c => c.kind === 'sha-unreachable')).to.equal(true);
+    });
+  });
+
 });

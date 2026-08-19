@@ -40,10 +40,12 @@ import { createHash } from 'node:crypto';
 import matter from 'gray-matter';
 import { z } from 'zod';
 import { REPO_ROOT } from './schema-utils';
-import { enumerateClaims, normaliseClaim, quoteDisclaims, quoteIsPreFix } from './enumerate-claims';
+import {
+  assertsAbsence, enumerateClaims, normaliseClaim, quoteDisclaims, quoteIsPreFix,
+} from './enumerate-claims';
 import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import {
-  Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, defaultExec, entityIsTimeScoped,
+  Anchor, Claim, Outcome, ProbeCtx, Verdict, checkClaim, claimKey, defaultExec, entityIsTimeScoped,
   resolveAnchor, snippetMatches, ExecFn,
 } from './claim-probes';
 
@@ -350,13 +352,11 @@ function auditSnippets(ctx: ProbeCtx, draft: DraftInput, anchor: Anchor | null):
  * so a claim both produce is probed once.
  */
 function mergeClaims(deterministic: Claim[], modelled: Claim[], raw: string): Claim[] {
-  const key = (c: Claim): string =>
-    `${c.kind}|${'symbol' in c ? c.symbol : ''}|${'file' in c ? c.file : ''}`;
   const out = [...deterministic];
-  const seen = new Set(deterministic.map(key));
+  const seen = new Set(deterministic.map(claimKey));
   for (const c of modelled) {
-    if (seen.has(key(c))) continue;
-    seen.add(key(c));
+    if (seen.has(claimKey(c))) continue;
+    seen.add(claimKey(c));
     out.push(c);
   }
   // Apply the context filters to EVERY claim, not just enumerated ones. The
@@ -365,7 +365,9 @@ function mergeClaims(deterministic: Claim[], modelled: Claim[], raw: string): Cl
   return out
     .map(c => normaliseClaim(raw, c))
     .filter((c): c is Claim => c !== null)
-    .filter(c => !quoteDisclaims(raw, c.quote))
+    // A claim that ASSERTS an absence is exempt: the disclaiming sentence is the
+    // claim, so filtering on it would delete the check.
+    .filter(c => assertsAbsence(c) || !quoteDisclaims(raw, c.quote))
     .map(c => (
       'scope' in c || !quoteIsPreFix(raw, c.quote) ? c : { ...c, scope: 'pre-fix' as const }
     ));
@@ -604,6 +606,7 @@ function describeClaim(claim: Claim): string {
     case 'path-exists': return `\`${claim.file}\` does not exist`;
     case 'release-branch': return `not backported to \`${claim.branch}\``;
     case 'introduced-by': return `\`${claim.symbol}\` was not introduced by #${claim.prNumber}`;
+    case 'sha-unreachable': return `commit \`${claim.sha.slice(0, 10)}\` is reachable, not absent`;
   }
 }
 

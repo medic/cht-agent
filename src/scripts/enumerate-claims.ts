@@ -33,7 +33,7 @@
  *   - issue/PR references, which verify-drafts audits against the GitHub API
  */
 
-import { Claim } from './claim-probes';
+import { Claim, claimKey } from './claim-probes';
 
 /** Top-level directories a cht-core path can start with. */
 const REPO_DIRS = '(?:api|webapp|admin|sentinel|shared-libs|tests|ddocs|config|scripts)';
@@ -265,6 +265,48 @@ export function solePrCredit(quote: string, symbol?: string): number | undefined
 const BACKTICK_RE = /`([^`\n]+)`/g;
 
 /**
+ * Prose asserting that a COMMIT cannot be reached — "absent from a clone",
+ * "unreachable", "the epic squashed it away". Unlike every other pattern in this
+ * module these sentences are extracted BECAUSE they assert an absence: the
+ * absence is the claim, and one `git for-each-ref --contains` settles it.
+ *
+ * The defect that motivated it, from #122 round 4: a repair commit explained
+ * that `70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87` was "absent from a clone
+ * because the epic squashed it away". The commit is in the clone, reachable from
+ * `refs/verify/pr10083`. Nobody ran the one-line check because nothing ever
+ * produced the claim to run it on.
+ */
+const UNREACHABLE_CUE = new RegExp([
+  '\\babsent from (?:a|the|this|any|my|our|every)\\s+(?:local\\s+)?clone\\b',
+  '|\\b(?:un|not )reachable\\b',
+  '|\\bno longer reachable\\b',
+  '|\\b(?:missing|gone) from (?:a|the|this|any|every)\\s+(?:local\\s+)?clone\\b',
+  '|\\bnot (?:present|in) (?:a|the|this|any) clone\\b',
+  '|\\bstamped nowhere\\b',
+  '|\\bexists? nowhere\\b',
+  '|\\bsquashed (?:it |them )?away\\b',
+  '|\\bfinds nothing\\b',
+].join(''), 'i');
+
+/**
+ * A commit-shaped token. Both a digit and a hex letter are required, which is
+ * what keeps `10083` (an issue number) and `20260817` (a date) out — and, more
+ * to the point, keeps the seven-letter English words that happen to be hex
+ * (`decaded`, `beefface`) from being probed as commits.
+ */
+const SHA_TOKEN_RE = /\b[0-9a-f]{7,40}\b/g;
+const isShaToken = (t: string): boolean => /[0-9]/.test(t) && /[a-f]/.test(t);
+
+/**
+ * Sentence boundaries. This corpus writes a paragraph per line, so the LINE is
+ * far too coarse a unit to pair a cue with a sha — a line that mentions a squash
+ * in one sentence and quotes an unrelated commit in the next would manufacture
+ * the claim. A path's dots are not boundaries: `app.component.ts` has no space
+ * after its periods.
+ */
+const SENTENCE_SPLIT = /(?<=[.!?])\s+/;
+
+/**
  * A token worth probing as a symbol. Requires an identifier shape AND a "this is
  * code" signal — an underscore, a dot, camelCase, or a call suffix — so that a
  * bare English word in backticks is left alone.
@@ -354,6 +396,15 @@ export function quoteDisclaims(raw: string, quote: string): boolean {
   const line = raw.split('\n').find(l => l.includes(needle)) ?? quote;
   return ABSENCE_CONTEXT.test(line) || NOT_TOUCHED.test(line);
 }
+
+/**
+ * A claim whose CONTENT is a negative assertion. The disclaimer filters exist to
+ * stop "removed the `parseResponseBody` helper" being probed as an existence
+ * claim; applied to a claim that already says "this is gone", they delete the
+ * only claim capable of catching a wrong absence. The absence is the claim, so
+ * the sentence disclaiming things is the reason to keep it.
+ */
+export const assertsAbsence = (claim: Claim): boolean => claim.kind === 'sha-unreachable';
 
 /**
  * Sections whose prose is about OTHER issues, not this PR's tree. A Related
@@ -479,7 +530,7 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
   const out: Claim[] = [];
   const seen = new Set<string>();
   const add = (c: Claim): void => {
-    const key = `${c.kind}|${'symbol' in c ? c.symbol : ''}|${'file' in c ? c.file : ''}`;
+    const key = claimKey(c);
     if (seen.has(key)) {
       // A path can be claimed twice — bare under Related Files, and again in
       // prose that says what happened to it. The prose is the stronger claim, so
@@ -575,6 +626,17 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
     const creditedPr = solePrCredit(quote, m[1]);
     if (creditedPr !== undefined) {
       add({ kind: 'introduced-by', symbol: tok, prNumber: creditedPr, quote });
+    }
+  }
+
+  // commits the draft says are unreachable — the cue and the sha must sit in the
+  // same SENTENCE, not merely on the same paragraph-long line
+  for (const line of lines) {
+    for (const sentence of line.split(SENTENCE_SPLIT)) {
+      if (!UNREACHABLE_CUE.test(sentence)) continue;
+      for (const m of sentence.matchAll(SHA_TOKEN_RE)) {
+        if (isShaToken(m[0])) add({ kind: 'sha-unreachable', sha: m[0], quote: line.trim() });
+      }
     }
   }
 

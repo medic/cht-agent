@@ -91,7 +91,36 @@ export type Claim =
    *
    * Settled in the one direction that is cheap and safe — see checkIntroducedBy.
    */
-  | { kind: 'introduced-by'; symbol: string; prNumber: number; quote: string };
+  | { kind: 'introduced-by'; symbol: string; prNumber: number; quote: string }
+  /**
+   * "commit `70b7be0…` is absent from a clone" — a NEGATIVE existence claim about
+   * a commit, and the one shape where a draft asserts something git can check in
+   * one line that nobody ever checks.
+   *
+   * #122's round-4 review found a repair commit asserting that an epic squash had
+   * left a child PR's commit unreachable. The commit is sitting in the clone,
+   * reachable from `refs/verify/pr10083` — a fetched `refs/pull/N/head`, which is
+   * exactly the ref a "does the commit still exist" question turns on and exactly
+   * the ref `git branch --contains` cannot see.
+   *
+   * Settled in one direction only, for the same reason `introduced-by` is: a ref
+   * that CONTAINS the commit refutes the claim outright, while local absence is
+   * evidence about this clone's ref set and nothing more. See checkShaUnreachable.
+   */
+  | { kind: 'sha-unreachable'; sha: string; quote: string };
+
+/**
+ * Identity of a claim, for dedupe. Every discriminant that distinguishes two
+ * claims of the same kind must appear: a key built from kind+symbol+file alone
+ * collapses two different shas, two different literals and two different
+ * backport branches into one entry, silently dropping the second probe.
+ */
+export function claimKey(claim: Claim): string {
+  const bag = claim as unknown as Record<string, unknown>;
+  const part = (k: string): string => (k in bag ? String(bag[k]) : '');
+  return [claim.kind, part('symbol'), part('file'), part('sha'), part('literal'),
+    part('branch'), part('prNumber')].join('|');
+}
 
 /**
  * Which tree the verdict was proven against.
@@ -451,6 +480,20 @@ function wrappedMemberHit(ctx: ProbeCtx, ref: string, symbol: string, file: stri
   if (!m) return null;
   const line = blob.slice(0, m.index).split('\n').length;
   return `${file}:${line} (whitespace-tolerant match)`;
+}
+
+/**
+ * EVERY ref that contains the commit, not just the branches.
+ *
+ * `branch -r --contains` answers a different question and answers it wrongly for
+ * this one: a PR-head commit that never landed on a branch is reachable only
+ * from `refs/pull/N/head` (fetched into this clone as `refs/verify/prN`), and a
+ * branch scan reports it as reachable from nothing at all. That is precisely the
+ * evidence a "the squash made it unreachable" sentence has to be tested against.
+ */
+export function refsContaining(ctx: ProbeCtx, sha: string): string[] {
+  return git(ctx, ['for-each-ref', '--contains', sha, '--format=%(refname)'])
+    .split('\n').map(l => l.trim()).filter(Boolean);
 }
 
 /** Remote branches containing the commit — settles backport-line claims. */
@@ -827,6 +870,50 @@ function checkIntroducedBy(
     `the draft credits #${claim.prNumber} with introducing it`);
 }
 
+/**
+ * "This commit cannot be reached any more", settled the only way it safely can.
+ *
+ * The asymmetry is the whole point, and it is the opposite of every other probe
+ * here. Elsewhere presence grounds a claim and absence refutes it; here the
+ * draft is asserting the absence, so a containing ref REFUTES it and a missing
+ * object proves nothing — a clone holds only the refs somebody fetched, and
+ * GitHub's `refs/pull/*` are not fetched by default. "I do not have it" and "it
+ * does not exist" are different sentences, and the defect this probe exists for
+ * was written by conflating them: `70b7be0b4…` was reported as squashed out of
+ * existence while sitting in the clone under `refs/verify/pr10083`.
+ *
+ * So: reachable → `ungrounded`, naming the ref. Object missing → `unverifiable`
+ * with the fetch that would settle it. Object present but dangling →
+ * `unverifiable` too: unreferenced HERE says nothing about the repository the
+ * draft describes.
+ */
+function checkShaUnreachable(ctx: ProbeCtx, claim: Claim & { kind: 'sha-unreachable' }): Verdict {
+  const short = claim.sha.slice(0, 10);
+  const cmd = `git cat-file -e ${short}^{commit}`;
+  if (!commitExists(ctx, claim.sha)) {
+    const pr = /#(\d{3,6})/.exec(claim.quote)?.[1];
+    const fetch = pr
+      ? `git fetch origin refs/pull/${pr}/head:refs/verify/pr${pr}`
+      : 'git fetch origin \'refs/pull/*/head:refs/verify/pr*\'';
+    return verdict(claim, 'unverifiable',
+      `${cmd} → no such object in this clone. A clone has only the refs someone fetched, and ` +
+        'GitHub\'s refs/pull/* are not among them by default, so local absence cannot show the commit ' +
+        'is gone from the repository',
+      `fetch the durable pull ref and re-run: ${fetch}`);
+  }
+  const refs = refsContaining(ctx, claim.sha);
+  if (refs.length > 0) {
+    const shown = refs.slice(0, 3).join(', ');
+    return verdict(claim, 'ungrounded',
+      `git for-each-ref --contains ${short} → reachable from ${shown}` +
+        `${refs.length > 3 ? ` (+${refs.length - 3} more)` : ''}`,
+      'the draft says this commit cannot be reached');
+  }
+  return verdict(claim, 'unverifiable',
+    `${cmd} → the object is here but no ref contains it. Dangling in this clone is not absent from ` +
+      'the repository — it neither confirms nor refutes the sentence');
+}
+
 function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 'release-branch' }): Verdict {
   const onBranch = (branches: string[]): string | undefined =>
     branches.find(b => b === `origin/${claim.branch}` || b.endsWith(`/${claim.branch}`)
@@ -1126,6 +1213,11 @@ export function checkClaim(
   if (claim.kind === 'introduced-by') {
     return checkIntroducedBy(ctx, claim, anchor?.repo);
   }
+
+  // A question about the object graph, not about any tree: it needs no anchor,
+  // and an anchor that is a revert or will not resolve has no bearing on whether
+  // some other commit is reachable.
+  if (claim.kind === 'sha-unreachable') return checkShaUnreachable(ctx, claim);
 
   if (anchor?.isRevert) {
     return verdict(claim, 'anchor-unusable',
