@@ -607,6 +607,9 @@ function describeClaim(claim: Claim): string {
     case 'release-branch': return `not backported to \`${claim.branch}\``;
     case 'introduced-by': return `\`${claim.symbol}\` was not introduced by #${claim.prNumber}`;
     case 'sha-unreachable': return `commit \`${claim.sha.slice(0, 10)}\` is reachable, not absent`;
+    case 'literal-in-file': return claim.negated
+      ? `\`${claim.literal}\` IS in \`${claim.file}\``
+      : `\`${claim.literal}\` is not in \`${claim.file}\``;
   }
 }
 

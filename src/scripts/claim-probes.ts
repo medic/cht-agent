@@ -107,7 +107,27 @@ export type Claim =
    * that CONTAINS the commit refutes the claim outright, while local absence is
    * evidence about this clone's ref set and nothing more. See checkShaUnreachable.
    */
-  | { kind: 'sha-unreachable'; sha: string; quote: string };
+  | { kind: 'sha-unreachable'; sha: string; quote: string }
+  /**
+   * A backticked LITERAL the sentence pins to a file — a selector, a query
+   * string, an object literal. The symbol probes cannot see any of them: a
+   * symbol must be identifier-shaped, and `instance[id="contact-summary"]` is
+   * brackets and quotes.
+   *
+   * That is not a hypothetical gap. #122's round 4 found a repair commit saying
+   * the standalone `webapp/web-components/cht-form/src/app.component.ts` "looks
+   * it up as `instance[id="contact-summary"]`". The selector is in exactly one
+   * file at origin/master, `webapp/src/ts/services/form.service.ts:105`, and one
+   * `git grep -F` of the sentence's own literal in the sentence's own file says
+   * so. Nothing extracted the literal, so nothing ran the grep.
+   *
+   * `negated` inverts the reading, for a sentence that says the file does NOT
+   * contain the literal: hits then refute it.
+   */
+  | {
+    kind: 'literal-in-file'; literal: string; file: string; quote: string;
+    negated?: boolean; scope?: ClaimScope;
+  };
 
 /**
  * Identity of a claim, for dedupe. Every discriminant that distinguishes two
@@ -362,29 +382,33 @@ function resolveViaApi(ctx: ProbeCtx, repo: string, prNumber: number): Anchor | 
 // ---------------------------------------------------------------------------
 
 /**
+ * The real tree path for a pathspec prose wrote loosely, or the pathspec
+ * unchanged when it is already in the tree. Prose names a file by its bare name
+ * ("`handleIntervalTurnover` in provider-wireup.js") or by its tail
+ * ("reducers/global.ts"), and neither resolves as a pathspec — a scoped grep
+ * then returns nothing and the claim reads as misattributed to a file that git
+ * was simply never able to find.
+ *
+ * Resolution is attempted only when the literal pathspec is NOT in the tree.
+ * That cannot use pathExistsAt, which suffix-matches and so would report every
+ * shortened path as present, skipping the resolution it needs.
+ */
+function resolvePathspec(ctx: ProbeCtx, sha: string, pathspec?: string): string | undefined {
+  if (!pathspec) return undefined;
+  if (git(ctx, ['ls-tree', '--name-only', sha, '--', pathspec]).trim()) return pathspec;
+  const [resolved] = basenameMatches(ctx, sha, pathspec);
+  return resolved ?? pathspec;
+}
+
+/**
  * Word-bounded, fixed-string search at a commit, optionally scoped to a path.
  * `-F -w` is what separates a real symbol from a hallucination that happens to
  * be a prefix of one.
  */
 export function symbolHits(ctx: ProbeCtx, sha: string, symbol: string, pathspec?: string): string[] {
-  // Prose attributes a symbol to a file by its bare name ("`handleIntervalTurnover`
-  // in provider-wireup.js"), which no pathspec resolves. Expand it to the real
-  // path first, or the symbol reads as misattributed to a file that has no hits
-  // simply because git was handed a name it could not find.
-  // Prose also shortens a path to its tail ("reducers/global.ts only gains a
-  // `search?: string` field"), which is just as unresolvable as a bare name.
-  // Resolve whenever the literal pathspec is not itself in the tree —
-  // basenameMatches already suffix-matches, so it handles both forms.
-  // Prose also shortens a path to its tail ("reducers/global.ts only gains a
-  // `search?: string` field"), which is just as unresolvable as a bare name.
-  // Resolve whenever the pathspec is not LITERALLY in the tree — note this
-  // cannot use pathExistsAt, which already suffix-matches and would report
-  // every shortened path as present, skipping the resolution it needs.
-  let scoped = pathspec;
-  if (scoped && !git(ctx, ['ls-tree', '--name-only', sha, '--', scoped]).trim()) {
-    const [resolved] = basenameMatches(ctx, sha, scoped);
-    if (resolved) scoped = resolved;
-  }
+  // Prose names a file loosely — by basename, or by a tail of its path — so the
+  // pathspec is resolved against the tree before anything is scoped to it.
+  const scoped = resolvePathspec(ctx, sha, pathspec);
   const scope = scoped ? ['--', scoped] : [];
   // `-e` is not decoration: a draft that names a CLI flag (9641 cites an
   // `--skip-validate` upload) yields a symbol starting with a dash, which git
@@ -797,6 +821,206 @@ function findCherryPick(ctx: ProbeCtx, prNumber: number | undefined): string[] {
   return raw.flatMap(sha => branchesContaining(ctx, sha));
 }
 
+// ---------------------------------------------------------------------------
+// Literals: what a sentence quotes verbatim, checked in the file it names
+// ---------------------------------------------------------------------------
+
+/** `git grep -l` at a ref prefixes every path with `<ref>:`. */
+const stripRef = (ref: string, line: string): string =>
+  (line.startsWith(`${ref}:`) ? line.slice(ref.length + 1) : line);
+
+const linesOf = (raw: string): string[] => raw.split('\n').map(l => l.trim()).filter(Boolean);
+
+/**
+ * The literal, relaxed in the two ways prose and source legitimately differ.
+ *
+ * WHITESPACE, because source wraps: an object literal a draft writes on one line
+ * may be spread across three in the file, and the member-chain probe already
+ * concedes the same point.
+ *
+ * INTERPOLATION, because prose substitutes the value for the variable. The
+ * defect this module was built for turns on it: the draft writes
+ * `instance[id="contact-summary"]` and form.service.ts:105 reads
+ * `` `instance[id="${instanceId}"]` ``. A literal `git grep -F` finds that in
+ * NEITHER file, so the exact search alone cannot tell the file that really has
+ * the mechanism from the file that does not — which is the whole question.
+ * A quoted body may therefore also match a `${…}` substitution, and only there:
+ * the brackets, the attribute name and the quoting still have to be present.
+ */
+function flexibleLiteralRe(literal: string): RegExp {
+  const relax = (s: string): string => s.replace(/\s+/g, '\\s*');
+  const QUOTED = /(["'])((?:(?!\1).)*)\1/g;
+  let pattern = '';
+  let last = 0;
+  for (const m of literal.matchAll(QUOTED)) {
+    const at = m.index ?? 0;
+    pattern += relax(escapeRe(literal.slice(last, at)));
+    pattern += `${m[1]}(?:${escapeRe(m[2])}|\\$\\{[^}]*\\})${m[1]}`;
+    last = at + m[0].length;
+  }
+  return new RegExp(pattern + relax(escapeRe(literal.slice(last))));
+}
+
+/** `<file>:<line>` for a flexible match in that blob, or null. */
+function flexibleLiteralHit(ctx: ProbeCtx, ref: string, literal: string, file: string): string | null {
+  const blob = fileAt(ctx, ref, file);
+  if (blob === null) return null;
+  const m = flexibleLiteralRe(literal).exec(blob);
+  if (!m) return null;
+  return `${file}:${blob.slice(0, m.index).split('\n').length}`;
+}
+
+/**
+ * The same two tolerances as a POSIX ERE, so GIT can run the relaxed search over
+ * the whole tree instead of this process reading blobs one at a time. Finding
+ * where a literal really lives is the half of this probe that produces the
+ * finding, and a candidate-capped blob scan silently stops looking: the file
+ * that actually holds `instance[id="${instanceId}"]` sorts past any sane cap of
+ * the ~60 files mentioning `contact-summary`.
+ *
+ * Every metacharacter is spelled as a bracket expression rather than
+ * backslash-escaped, because `\{` and `\$` are undefined in POSIX ERE and git's
+ * matcher is not GNU's. `[]]`, `[$]`, `[{]` are portable and mean exactly one
+ * literal character each.
+ */
+function literalEre(literal: string): string {
+  const chr = (c: string): string => {
+    if (/[A-Za-z0-9_]/.test(c)) return c;
+    if (c === ']') return '[]]';
+    if (c === '^') return '[\\^]';
+    if (c === '\\') return '[\\\\]';
+    return `[${c}]`;
+  };
+  const esc = (s: string): string => s.split('').map(chr).join('');
+  const relax = (s: string): string => s.split(/\s+/).map(esc).join('[[:space:]]*');
+  const QUOTED = /(["'])((?:(?!\1).)*)\1/g;
+  let pattern = '';
+  let last = 0;
+  for (const m of literal.matchAll(QUOTED)) {
+    const at = m.index ?? 0;
+    pattern += relax(literal.slice(last, at));
+    // An empty pair of quotes has no body to alternate on; leave it literal.
+    pattern += m[2]
+      ? `${chr(m[1])}(${esc(m[2])}|[$][{][^}]*[}])${chr(m[1])}`
+      : esc(m[0]);
+    last = at + m[0].length;
+  }
+  return pattern + relax(literal.slice(last));
+}
+
+/** Quoted bodies a `${…}` substitution is allowed to stand in for. */
+const quotedBodies = (literal: string): string[] =>
+  [...literal.matchAll(/(["'])((?:(?!\1).)*)\1/g)].map(m => m[2]).filter(b => b.length >= 3);
+
+/**
+ * The guard on the interpolation tolerance, and it is not optional.
+ *
+ * Allowing a quoted body to match `${…}` means `instance[id="anything-at-all"]`
+ * matches `instance[id="${instanceId}"]` — so a fabricated selector value would
+ * be "found" in form.service.ts and reported as a misattribution complete with a
+ * confidently wrong suggestion. The tolerance exists because prose substitutes
+ * the VALUE for the variable, and that substitution is only the one the sentence
+ * means if the value itself is in that file. In form.service.ts it is:
+ * `const instanceId = 'contact-summary';` two dozen lines down.
+ */
+function substitutedValuesArePresent(ctx: ProbeCtx, ref: string, literal: string, file: string): boolean {
+  return quotedBodies(literal)
+    .every(body => linesOf(git(ctx, ['grep', '-l', '-F', '-e', body, ref, '--', file])).length > 0);
+}
+
+/** Where the literal really is at `ref`, exact search first, flexible second. */
+function literalHit(
+  ctx: ProbeCtx, ref: string, literal: string, file: string
+): { where: string; how: 'exact' | 'flexible' } | null {
+  const scoped = resolvePathspec(ctx, ref, file) ?? file;
+  const scope = ['--', scoped];
+  const exact = linesOf(git(ctx, ['grep', '-n', '-F', '-e', literal, ref, ...scope]));
+  if (exact.length) return { where: exact[0], how: 'exact' };
+  if (!substitutedValuesArePresent(ctx, ref, literal, scoped)) return null;
+  const relaxed = linesOf(git(ctx, ['grep', '-n', '-E', '-e', literalEre(literal), ref, ...scope]));
+  if (relaxed.length) return { where: relaxed[0], how: 'flexible' };
+  // Line-oriented git grep cannot see a literal the source wrapped across
+  // lines; the blob can. Only for the named file — reading every blob in the
+  // tree to answer "where else" is what the ERE search is for.
+  const wrapped = flexibleLiteralHit(ctx, ref, literal, scoped);
+  return wrapped ? { where: wrapped, how: 'flexible' } : null;
+}
+
+/**
+ * Files OTHER than `file` where the literal occurs at `ref`. This is what turns
+ * "not in the file the sentence names" into a finding a reader can act on: the
+ * draft is not wrong that the mechanism exists, only about where it lives.
+ */
+function literalElsewhere(ctx: ProbeCtx, ref: string, literal: string, file: string): string[] {
+  const own = resolvePathspec(ctx, ref, file) ?? file;
+  const elsewhere = (args: string[]): string[] =>
+    linesOf(git(ctx, ['grep', '-l', ...args, ref])).map(l => stripRef(ref, l)).filter(p => p !== own);
+  const exact = elsewhere(['-F', '-e', literal]);
+  if (exact.length) return exact;
+  return elsewhere(['-E', '-e', literalEre(literal)])
+    .filter(p => substitutedValuesArePresent(ctx, ref, literal, p));
+}
+
+/**
+ * A quoted literal, checked in the file the same sentence names.
+ *
+ * Absence from the named file is NOT reported as a fabrication on its own.
+ * Prose normalises code constantly — spacing, a value spelled where the source
+ * has a variable, an ellipsis — so "this exact string is nowhere" is a statement
+ * about spelling, and the corpus has a whole documented class of literals that
+ * can never be grepped (XLSForm column headers, placeholder templates). What IS
+ * a defect is a literal that is real and lives somewhere else: the sentence has
+ * attributed a mechanism to the wrong file, which is exactly the shape a reader
+ * cannot catch, because every identifier in it checks out.
+ */
+function checkLiteralInFile(
+  ctx: ProbeCtx, ref: string, claim: Claim & { kind: 'literal-in-file' }, prov: Provenance
+): Verdict {
+  const cmd = `git grep -nF '${claim.literal}' ${refLabel(ref)} -- ${claim.file}`;
+  const hit = literalHit(ctx, ref, claim.literal, claim.file);
+  const how = (h: { how: string }): string =>
+    (h.how === 'exact' ? '' : ' (whitespace- and interpolation-tolerant match)');
+
+  if (claim.negated) {
+    // The sentence says the file does NOT contain this, so a hit refutes it.
+    if (hit) {
+      // A refutation is only safe at the draft's own commit: under fallback the
+      // tree may have gained the very thing the sentence says is absent.
+      return verdict(claim, prov === 'anchor' ? 'ungrounded' : 'unverifiable',
+        `${cmd} → present at ${hit.where}${how(hit)}, but the sentence says it is not there`,
+        undefined, prov);
+    }
+    return verdict(claim, prov === 'anchor' ? 'grounded' : 'unverifiable',
+      `${cmd} → 0 hits, as the sentence says` +
+        (prov === 'anchor' ? '' : ' — but at a tree that is not the draft\'s own commit'),
+      undefined, prov);
+  }
+
+  if (hit) {
+    return verdict(claim, 'grounded', `${cmd} → ${hit.where}${how(hit)}`, undefined, prov);
+  }
+
+  const elsewhere = literalElsewhere(ctx, ref, claim.literal, claim.file);
+  if (elsewhere.length) {
+    const where = `found in ${elsewhere.slice(0, 3).join(', ')}`;
+    if (prov === 'fallback') {
+      return verdict(claim, 'unverifiable',
+        `${cmd} → 0 hits, but ${elsewhere.length} other file(s) have it in a tree that predates the ` +
+          'change; cannot tell a wrong attribution from code this PR moved — fetch cht-core to settle',
+        where, prov);
+    }
+    return verdict(claim, 'ungrounded',
+      `${cmd} → 0 hits, but ${elsewhere.length} other file(s) have it: attributed to the wrong file`,
+      where, prov);
+  }
+
+  return verdict(claim, 'unverifiable',
+    `${cmd} → 0 hits, and none anywhere at ${refLabel(ref)}. A literal that occurs nowhere is usually ` +
+      'prose normalising the source (a value spelled where the code has a variable, an elided middle) ' +
+      'rather than a fabrication, so this is undecided — quote the literal as the source spells it',
+    undefined, prov);
+}
+
 /**
  * "PR #N introduced `symbol`", settled in ONE direction only.
  *
@@ -957,7 +1181,9 @@ function checkReleaseBranch(ctx: ProbeCtx, a: Anchor, claim: Claim & { kind: 're
 }
 
 /** Claim kinds that read a tree and so can fall back to a tree-wide ref. */
-const TREE_SCOPED = new Set<Claim['kind']>(['symbol', 'symbol-in-file', 'path-exists']);
+const TREE_SCOPED = new Set<Claim['kind']>([
+  'symbol', 'symbol-in-file', 'path-exists', 'literal-in-file',
+]);
 
 /** Paths belonging to the agent-memory repo itself; cht-core has no such tree. */
 const MEMORY_REPO_PATH = /^agent-memory\//;
@@ -1040,6 +1266,11 @@ const TIME_SCOPED = new RegExp([
   'has since', 'since (?:replaced|renamed|removed|deleted)',
   '(?:was|were|later) (?:replaced|renamed|removed|deleted)',
   'postdates', 'predates', '-era\\b', '\\(deleted\\)',
+  // An epic draft says outright that its code is not on master yet — the
+  // runbook prescribes that exact wording. A reader told "none of this is in
+  // enketo.service.ts on master" has been warned; flagging it as stale would
+  // demand the caveat twice in one sentence.
+  'not (?:yet )?(?:on|in) `?master', 'none of (?:this|it) is', 'epic branch(?:es)? only',
   // NOT '(added)' or '(modified)': those annotate what the PR did to a file,
   // which says nothing about whether the path still exists today. Treating them
   // as time-scoping let a draft mark a path "(added)" in Related Files and then
@@ -1100,12 +1331,23 @@ const BACKWARD_SCOPED = new RegExp([
 ].join('|'), 'i');
 
 /** The entity a claim asserts exists, if it names one checkable in a tree. */
-function claimEntity(claim: Claim): { kind: 'path' | 'symbol'; value: string } | null {
+function claimEntity(
+  claim: Claim
+): { kind: 'path' | 'symbol' | 'literal'; value: string; file?: string } | null {
   switch (claim.kind) {
     case 'path-exists': return { kind: 'path', value: claim.file };
     case 'file-touched': return { kind: 'path', value: claim.file };
     case 'symbol-in-file': return { kind: 'path', value: claim.file };
     case 'symbol': return { kind: 'symbol', value: claim.symbol };
+    // The FILE is not the interesting entity here: a literal's file usually
+    // still exists while the mechanism the sentence describes has moved out of
+    // it. 9301 says the cht-form component "looks it up as
+    // `instance[id="contact-summary"]`" — true at that PR's own commit
+    // (app.component.ts:237), and on master the selector lives only in
+    // form.service.ts. Anchored, the sentence is right; read today, it sends a
+    // reader to the wrong file, which is precisely what drift is for.
+    case 'literal-in-file':
+      return claim.negated ? null : { kind: 'literal', value: claim.literal, file: claim.file };
     default: return null;
   }
 }
@@ -1152,6 +1394,19 @@ export function driftFor(
     };
   }
 
+  if (entity.kind === 'literal') {
+    const file = entity.file as string;
+    if (literalHit(ctx, currentRef, entity.value, file)) return undefined;
+    if (!literalHit(ctx, anchorSha, entity.value, file)) return undefined;
+    const moved = literalElsewhere(ctx, currentRef, entity.value, file);
+    return {
+      entity: entity.value,
+      note: `in ${file} at the anchor, but not there at ${refLabel(currentRef)}` +
+        `${moved.length ? ` — it is in ${moved.slice(0, 3).join(', ')} now` : ''}. The draft names ` +
+        'it without time-scoping, so a reader is sent to the wrong file',
+    };
+  }
+
   if (symbolHits(ctx, currentRef, entity.value).length > 0) return undefined;
   if (symbolHits(ctx, anchorSha, entity.value).length === 0) return undefined;
   return {
@@ -1169,6 +1424,7 @@ function checkAtRef(
     case 'symbol': return checkSymbol(ctx, ref, claim, prov);
     case 'symbol-in-file': return checkSymbolInFile(ctx, ref, claim, prov);
     case 'path-exists': return checkPathExists(ctx, ref, claim, prov, anchorForPath);
+    case 'literal-in-file': return checkLiteralInFile(ctx, ref, claim, prov);
     default: throw new Error(`checkAtRef called with non-tree-scoped claim: ${claim.kind}`);
   }
 }
@@ -1243,12 +1499,24 @@ export function checkClaim(
   };
   const settled = settleAtAnchor();
 
+  /**
+   * Whether the rescues below are worth trying. Every one of them exists because
+   * a claim can be true about a tree that is not the anchor's, and they all key
+   * on `ungrounded` — which a literal claim deliberately never reaches when the
+   * string is simply nowhere. So a literal wears its `unverifiable` into the
+   * retries too: 10133 says forms.js read attachments with
+   * `attachments: true, binary: true`, which is exactly what its PR deleted, and
+   * the parent has it two lines apart.
+   */
+  const worthRetrying = settled.outcome === 'ungrounded'
+    || (settled.outcome === 'unverifiable' && claim.kind === 'literal-in-file');
+
   // A Problem / Root Cause claim describes the tree the PR CHANGED. When it
   // fails at the anchor, ask the parent before calling it a fabrication — the
   // fix removing the thing the bug report named is the expected outcome, not a
   // defect. Absent from BOTH trees is still ungrounded.
   const preFix = TREE_SCOPED.has(claim.kind) && 'scope' in claim && claim.scope === 'pre-fix';
-  if (settled.outcome === 'ungrounded' && preFix) {
+  if (worthRetrying && preFix) {
     const parent = `${anchor.sha}^`;
     if (commitExists(ctx, parent)) {
       const before = checkAtRef(ctx, parent, claim, 'anchor', anchor);
@@ -1288,7 +1556,7 @@ export function checkClaim(
   // already gets, and for the same reason. Measured on the contacts batch this
   // turned 12 false ungrounded findings on one draft (9835, five source_prs)
   // back into passes, without changing any verdict on a single-PR draft.
-  if (settled.outcome === 'ungrounded' && TREE_SCOPED.has(claim.kind) && siblings.length) {
+  if (worthRetrying && TREE_SCOPED.has(claim.kind) && siblings.length) {
     for (const sib of siblings) {
       const atSibling = checkAtRef(ctx, sib.sha, claim, 'anchor', sib);
       if (atSibling.outcome === 'grounded') {
@@ -1306,7 +1574,7 @@ export function checkClaim(
   // extraction tagged the claim; an explicit "before this PR" in the sentence is
   // better evidence than the section it sits in, and survives extraction not
   // volunteering a scope.
-  if (settled.outcome === 'ungrounded' && TREE_SCOPED.has(claim.kind) && BACKWARD_SCOPED.test(claim.quote)) {
+  if (worthRetrying && TREE_SCOPED.has(claim.kind) && BACKWARD_SCOPED.test(claim.quote)) {
     const parent = `${anchor.sha}^`;
     if (commitExists(ctx, parent)) {
       const before = checkAtRef(ctx, parent, claim, 'anchor', anchor);
@@ -1322,7 +1590,7 @@ export function checkClaim(
 
   // A claim the draft explicitly scopes to the current tree must be judged
   // there. Failing it at the anchor is checking the wrong commit, not a defect.
-  if (settled.outcome === 'ungrounded' && TREE_SCOPED.has(claim.kind) && FORWARD_SCOPED.test(claim.quote)) {
+  if (worthRetrying && TREE_SCOPED.has(claim.kind) && FORWARD_SCOPED.test(claim.quote)) {
     const ref = ctx.fallbackRef ?? DEFAULT_FALLBACK_REF;
     if (commitExists(ctx, ref)) {
       const atCurrent = checkAtRef(ctx, ref, claim, 'fallback');

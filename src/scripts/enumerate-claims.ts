@@ -249,12 +249,7 @@ export function solePrCredit(quote: string, symbol?: string): number | undefined
   if (symbol) {
     const at = quote.indexOf(symbol);
     if (at < 0) return undefined;
-    let before = quote.slice(Math.max(0, at - VERB_REACH), at);
-    CLAUSE_BREAK.lastIndex = 0;
-    let cut = -1;
-    for (const m of before.matchAll(CLAUSE_BREAK)) cut = (m.index ?? 0) + m[0].length;
-    if (cut > 0) before = before.slice(cut);
-    scope = before;
+    scope = clauseBefore(quote, at);
   }
   if (!CREATE_CREDIT.test(scope)) return undefined;
   const prs = [...new Set([...scope.matchAll(/#(\d{3,6})/g)].map(m => Number.parseInt(m[1], 10)))];
@@ -305,6 +300,66 @@ const isShaToken = (t: string): boolean => /[0-9]/.test(t) && /[a-f]/.test(t);
  * after its periods.
  */
 const SENTENCE_SPLIT = /(?<=[.!?])\s+/;
+
+/**
+ * A backticked span that is a LITERAL rather than an identifier: a selector, a
+ * query string, an object literal, a call with arguments. `IDENT_RE` rejects all
+ * of them, so the symbol probes have never seen a single one — and the sentence
+ * that quotes one is usually the sentence explaining the mechanism, which is the
+ * prose most worth checking.
+ *
+ * The #122 round-4 defect is the specimen: "the standalone
+ * `webapp/web-components/cht-form/src/app.component.ts` … looks it up as
+ * `instance[id="contact-summary"]`". The selector lives in one file at
+ * origin/master and it is not that one. Every identifier in the sentence is
+ * real; only the attribution is wrong.
+ */
+const LITERAL_PUNCT = /[[\]"'=():#]/;
+
+/**
+ * Two literal shapes no grep can ever settle, both already documented as probe
+ * artifacts rather than defects, and both skipped here so they stop being
+ * re-litigated every pass:
+ *
+ *   a placeholder template — `sidebar_filter:analytics:<key>:select` — whose
+ *   holes are spelled out rather than quoted from source;
+ *
+ *   a string that lives in a BINARY source. An XLSForm column header exists
+ *   only inside the zipped XML of an `.xlsx`, so the tree cannot show it. When
+ *   the sentence says as much, believe it.
+ */
+const PLACEHOLDER = /<[A-Za-z0-9_ -]+>|\.\.\.|…/;
+const BINARY_SOURCE = /\.xlsx\b|\bworkbook\b|sharedStrings|\bzipped\b/i;
+
+/**
+ * How something is RUN, not what a file contains. A shell command and an
+ * environment assignment both read as literals — they carry `=`, `:` or quotes —
+ * and both get bound to whatever file the sentence happens to name, which is
+ * never where they live. Measured on forms-and-reports, this was 4 of the 19
+ * hits the first version of this extractor produced: `npm run unit-webapp`
+ * bound to a spec file (it is in package.json), `UNIT_TEST_ENV=1` bound to
+ * api/src/db.js (it is in the npm scripts), and two `git diff-tree`/`git log -S`
+ * invocations a draft cited to show its own working.
+ */
+const INVOCATION = /^(?:npm|npx|node|yarn|git|docker|curl|grunt|sh|bash)\b|^[A-Z][A-Z0-9_]*=/;
+
+/**
+ * An outright negation, as opposed to the change-of-state verbs ABSENCE_CONTEXT
+ * screens on. "The component does not query `instance[id=...]`" is a claim about
+ * the file's content that a grep settles by finding a hit, so it is extracted
+ * with the reading inverted rather than dropped. Clause-local, like every other
+ * scope rule here: a negation two clauses away governs a different verb.
+ */
+const NEGATION = /\b(?:does not|doesn't|do not|never|nowhere|not present|is not|are not)\b/i;
+
+/** Text preceding `at` within its own clause, bounded by VERB_REACH. */
+function clauseBefore(text: string, at: number): string {
+  const before = text.slice(Math.max(0, at - VERB_REACH), at);
+  CLAUSE_BREAK.lastIndex = 0;
+  let cut = -1;
+  for (const m of before.matchAll(CLAUSE_BREAK)) cut = (m.index ?? 0) + m[0].length;
+  return cut > 0 ? before.slice(cut) : before;
+}
 
 /**
  * A token worth probing as a symbol. Requires an identifier shape AND a "this is
@@ -404,7 +459,8 @@ export function quoteDisclaims(raw: string, quote: string): boolean {
  * only claim capable of catching a wrong absence. The absence is the claim, so
  * the sentence disclaiming things is the reason to keep it.
  */
-export const assertsAbsence = (claim: Claim): boolean => claim.kind === 'sha-unreachable';
+export const assertsAbsence = (claim: Claim): boolean =>
+  claim.kind === 'sha-unreachable' || (claim.kind === 'literal-in-file' && claim.negated === true);
 
 /**
  * Sections whose prose is about OTHER issues, not this PR's tree. A Related
@@ -626,6 +682,45 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
     const creditedPr = solePrCredit(quote, m[1]);
     if (creditedPr !== undefined) {
       add({ kind: 'introduced-by', symbol: tok, prNumber: creditedPr, quote });
+    }
+  }
+
+  // backticked literals, bound to the one file their own sentence names
+  for (const line of lines) {
+    if (ABSENCE_CONTEXT.test(line)) continue;          // the draft says it is gone
+    for (const sentence of line.split(SENTENCE_SPLIT)) {
+      if (BINARY_SOURCE.test(sentence)) continue;      // lives inside an .xlsx; no grep can see it
+      // Exactly one path, or the binding is a guess. A sentence naming two files
+      // does not say which one the literal belongs to, and picking is how a true
+      // sentence becomes a reported defect.
+      const paths = [...new Set(sentence.match(PATH_RE) ?? [])].filter(p => !URL_PATH_RE.test(p));
+      if (paths.length !== 1) continue;
+      for (const m of sentence.matchAll(BACKTICK_RE)) {
+        // `getCurrentHref()` is a symbol written with its call suffix, and
+        // window.js declares it as `const getCurrentHref = () =>`, so grepping
+        // the parenthesised form reports a true attribution as a defect. Strip
+        // the call the same way the symbol path does, then let the symbol path
+        // have it.
+        const literal = stripCall(m[1].trim());
+        if (literal.length < 6 || literal.length > 200) continue;
+        if (IDENT_RE.test(literal)) continue;          // identifier-shaped: the symbol probes own it
+        // A BACKTICKED PHRASE IS NOT CODE. This corpus emphasises with backticks
+        // — "the `previous month` filter" — and it nests them, so a stray pairing
+        // can capture prose outright (`, carrying an`, from a `` `` `` span two
+        // clauses away). Requiring a structural character rather than merely a
+        // space is what separates a literal from a phrase, and it drops the
+        // shell commands drafts cite to show their working along with it.
+        if (!LITERAL_PUNCT.test(literal)) continue;
+        if (INVOCATION.test(literal)) continue;        // how it is run, not what a file holds
+        if (PLACEHOLDER.test(literal)) continue;       // holes spelled out; ungreppable by construction
+        if (looksLikePath(literal) || literal === paths[0]) continue;
+        if (/^[0-9a-f]{7,40}$/i.test(literal)) continue;
+        const negated = NEGATION.test(clauseBefore(sentence, m.index ?? 0));
+        add({
+          kind: 'literal-in-file', literal, file: paths[0], quote: line.trim(),
+          ...(negated && { negated: true }),
+        });
+      }
     }
   }
 

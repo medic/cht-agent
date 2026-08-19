@@ -1,5 +1,11 @@
 import { expect } from 'chai';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { enumerateClaims, normaliseClaim } from '../../src/scripts/enumerate-claims';
+
+/** Draft bytes captured from the promote branch with `git show` — see FIXTURES. */
+const fixture = (name: string): string =>
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'memory-drafts', name), 'utf8');
 
 const DRAFT = [
   '---',
@@ -456,6 +462,97 @@ describe('enumerate-claims', () => {
     });
   });
 
+  // The literals the symbol probes could never see: a selector, an object
+  // literal, a config line. #122 shipped one attributed to the wrong file.
+  describe('a backticked literal bound to the file its sentence names', () => {
+    const lits = (text: string): Array<{ literal: string; file: string; negated?: boolean }> =>
+      enumerateClaims(text)
+        .filter(c => c.kind === 'literal-in-file')
+        .map(c => {
+          const { literal, file, negated } = c as unknown as
+            { literal: string; file: string; negated?: boolean };
+          return negated === undefined ? { literal, file } : { literal, file, negated };
+        });
+
+    const NINE_THREE_OH_ONE =
+      'The standalone `webapp/web-components/cht-form/src/app.component.ts` takes the subject summary ' +
+      'as a `contactSummary` input and looks it up as `instance[id="contact-summary"]`.';
+
+    it('extracts the selector and binds it to the file in that sentence', () => {
+      expect(lits(NINE_THREE_OH_ONE)).to.deep.equal([{
+        literal: 'instance[id="contact-summary"]',
+        file: 'webapp/web-components/cht-form/src/app.component.ts',
+      }]);
+    });
+
+    it('extracts it from the real 9301 draft bytes', () => {
+      // FIXTURE: `9301-defective-a389ae0.md`, the draft as committed at the
+      // promote branch head. The sentence is unchanged from 6e43e88 — the fix
+      // for it is still a pending review suggestion.
+      const hits = lits(fixture('9301-defective-a389ae0.md'));
+      expect(hits.map(h => h.literal)).to.include('instance[id="contact-summary"]');
+      expect(hits.find(h => h.literal === 'instance[id="contact-summary"]')?.file)
+        .to.equal('webapp/web-components/cht-form/src/app.component.ts');
+    });
+
+    it('extracts the object literal the reviewer\'s replacement sentence quotes', () => {
+      // The suggested repair: same file, the mechanism it really implements.
+      const fixed = 'The standalone `webapp/web-components/cht-form/src/app.component.ts` takes the ' +
+        'subject summary as a `contactSummary` input and tags it with the instance id this PR gave it ' +
+        "(`{ id: 'contact-summary', context: value }`), then hands it to `EnketoService.renderForm`.";
+      expect(lits(fixed).map(h => h.literal)).to.deep.equal(["{ id: 'contact-summary', context: value }"]);
+    });
+
+    it('refuses to guess when the sentence names two files', () => {
+      expect(lits('Both `webapp/src/ts/services/form.service.ts` and ' +
+        '`webapp/src/ts/services/xml-forms.service.ts` use `instance[id="contact-summary"]`.')).to.deep.equal([]);
+    });
+
+    it('inverts the reading for an outright negation', () => {
+      const hits = lits('`webapp/web-components/cht-form/src/app.component.ts` does not look it up as ' +
+        '`instance[id="contact-summary"]`.');
+      expect(hits).to.have.lengthOf(1);
+      expect(hits[0].negated).to.equal(true);
+    });
+
+    it('leaves an identifier written with its call suffix to the symbol probes', () => {
+      // `getCurrentHref()` is declared `const getCurrentHref = () =>`, so
+      // grepping the parenthesised form reports a true attribution as a defect.
+      expect(lits('Extracted `webapp/src/js/enketo/lib/window.js` (`getCurrentHref()`) as a seam.'))
+        .to.deep.equal([]);
+    });
+
+    it('ignores a backticked English phrase, however it was quoted', () => {
+      // Nested backticks let a stray pairing capture prose outright; measured
+      // on forms-and-reports as the literal `, carrying an`.
+      expect(lits('See the `previous month` filter in `webapp/src/ts/modules/analytics/a.component.ts`.'))
+        .to.deep.equal([]);
+    });
+
+    it('ignores how a thing is run: a shell command or an env assignment', () => {
+      expect(lits('Run `npm run unit-webapp` against `webapp/tests/mocha/unit/enketo/x.spec.js`.'))
+        .to.deep.equal([]);
+      expect(lits('It must be stubbed under `UNIT_TEST_ENV=1` to satisfy the assertion in `api/src/db.js`.'))
+        .to.deep.equal([]);
+    });
+
+    it('ignores a literal with its holes spelled out, or its middle elided', () => {
+      expect(lits('The key is `sidebar_filter:analytics:<key>:select` in `webapp/src/ts/a.ts`.'))
+        .to.deep.equal([]);
+      expect(lits("`'user-file' + …` in `webapp/src/ts/services/enketo.service.ts`.")).to.deep.equal([]);
+    });
+
+    it('believes a sentence that puts the string inside a binary source', () => {
+      expect(lits('The column header `instance::cht:duration` exists only inside the `.xlsx` workbook, ' +
+        'not in `tests/e2e/default/enketo/forms/phone_widget.xlsx`.')).to.deep.equal([]);
+    });
+
+    it('says nothing when the sentence disclaims the thing it names', () => {
+      expect(lits('Removed the `{ id: "contact-summary" }` shim from ' +
+        '`webapp/src/ts/services/form.service.ts`.')).to.deep.equal([]);
+    });
+  });
+
   // A draft that says a COMMIT is gone is making a claim one `git for-each-ref`
   // settles, and #122's round 4 shipped one that was false. The sentence below is
   // the shape it took.
@@ -485,9 +582,28 @@ describe('enumerate-claims', () => {
         .to.deep.equal([]);
     });
 
+    it('does not read "the commit stays reachable" as an absence claim', () => {
+      expect(shas('The commit `70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87` stays reachable through the ' +
+        'epic PR\'s durable pull ref.')).to.deep.equal([]);
+    });
+
     it('says nothing about commits when the sentence makes no absence claim', () => {
       expect(shas('The fix landed as 70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87 on master.'))
         .to.deep.equal([]);
+    });
+
+    it('fires on the bytes that shipped the defect, and not on the repair', () => {
+      // FIXTURES. `10180-defective-6e43e88.md` is the draft as committed at
+      // scan-forms 6e43e88, whose Provenance says `source_sha` "is absent from
+      // a clone because the epic squashed it away" — false; the commit is
+      // reachable from refs/verify/pr10083. `10180-repaired-a389ae0.md` is the
+      // same draft after the repair, which asserts reachability via the durable
+      // pull ref instead. The repaired prose still discusses the commit at
+      // length, so a cue-and-sha screen that is even slightly loose fires on it.
+      // The sentence abbreviates, as prose does; the frontmatter carries the
+      // full sha on a line of its own that asserts nothing.
+      expect(shas(fixture('10180-defective-6e43e88.md'))).to.deep.equal(['70b7be0b4']);
+      expect(shas(fixture('10180-repaired-a389ae0.md'))).to.deep.equal([]);
     });
 
     it('survives the disclaimer filters that silence ordinary existence claims', () => {

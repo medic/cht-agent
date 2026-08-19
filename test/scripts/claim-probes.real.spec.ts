@@ -13,8 +13,15 @@
  */
 
 import { expect } from 'chai';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { checkClaim, defaultExec, Anchor, Claim, ProbeCtx } from '../../src/scripts/claim-probes';
+import { checkClaim, defaultExec, Anchor, Claim, ProbeCtx, Verdict } from '../../src/scripts/claim-probes';
+import { enumerateClaims } from '../../src/scripts/enumerate-claims';
+
+/** Draft bytes captured from the promote branch with `git show`. */
+const fixture = (name: string): string =>
+  fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'memory-drafts', name), 'utf8');
 
 const CORE = process.env.CHT_CORE_PATH;
 
@@ -43,6 +50,12 @@ const ANCHOR: Anchor = { sha: 'origin/master', subject: 'n/a', isRevert: false }
 describe('probes against real cht-core history', function () {
   this.timeout(60000);
 
+  /** Every claim of one kind the enumerator finds in a fixture, with verdicts. */
+  const adjudicate = (draft: string, kind: Claim['kind'], anchor = ANCHOR): Verdict[] =>
+    enumerateClaims(fixture(draft))
+      .filter(c => c.kind === kind)
+      .map(c => checkClaim(ctx(), anchor, c));
+
   describe('sha-unreachable', () => {
     // cht-agent#122 round 4: a repair commit claimed this sha was gone because
     // the ui-extensions epic squashed it. It is in the clone, reachable from the
@@ -52,6 +65,22 @@ describe('probes against real cht-core history', function () {
 
     beforeEach(function () {
       if (!CORE || !hasRef('refs/verify/pr10083')) this.skip();
+    });
+
+    // The defect exactly as it shipped, and the repair exactly as it landed:
+    // draft bytes read out of the promote branch at 6e43e88 and a389ae0.
+    it('refutes the 10180 draft as committed at 6e43e88', () => {
+      const verdicts = adjudicate('10180-defective-6e43e88.md', 'sha-unreachable');
+      expect(verdicts).to.have.lengthOf(1);
+      expect(verdicts[0].outcome).to.equal('ungrounded');
+      expect(verdicts[0].evidence).to.contain('refs/verify/pr10083');
+    });
+
+    it('has nothing to say about the repaired 10180 draft at a389ae0', () => {
+      // The repair asserts reachability via the pull ref — a true sentence, and
+      // one that discusses the same commit at greater length. Firing here would
+      // punish the fix.
+      expect(adjudicate('10180-repaired-a389ae0.md', 'sha-unreachable')).to.deep.equal([]);
     });
 
     it('refutes the claim: the commit is reachable from refs/verify/pr10083', () => {
@@ -67,6 +96,57 @@ describe('probes against real cht-core history', function () {
         kind: 'sha-unreachable', sha: '0123456789abcdef0123456789abcdef01234567', quote: QUOTE,
       };
       expect(checkClaim(ctx(), ANCHOR, claim).outcome).to.equal('unverifiable');
+    });
+  });
+
+  describe('literal-in-file', () => {
+    const COMPONENT = 'webapp/web-components/cht-form/src/app.component.ts';
+    const SERVICE = 'webapp/src/ts/services/form.service.ts';
+
+    beforeEach(function () {
+      if (!CORE || !hasRef('origin/master')) this.skip();
+    });
+
+    // The 9301 sentence, still on the promote branch at a389ae0 — its fix is a
+    // pending review suggestion. Read against master, the selector is in
+    // form.service.ts and nowhere near the component the sentence names.
+    it('refutes the 9301 draft bytes at origin/master', () => {
+      const verdicts = adjudicate('9301-defective-a389ae0.md', 'literal-in-file')
+        .filter(v => (v.claim as { literal?: string }).literal === 'instance[id="contact-summary"]');
+      expect(verdicts).to.have.lengthOf(1);
+      expect(verdicts[0].outcome).to.equal('ungrounded');
+      expect(verdicts[0].suggestion).to.contain(SERVICE);
+    });
+
+    it('grounds the same literal when it is bound to the file that has it', () => {
+      const v = checkClaim(ctx(), ANCHOR, {
+        kind: 'literal-in-file', literal: 'instance[id="contact-summary"]', file: SERVICE,
+        quote: `${SERVICE} looks it up as \`instance[id="contact-summary"]\`.`,
+      });
+      expect(v.outcome).to.equal('grounded');
+      // form.service.ts:105 spells it with the variable: `instance[id="${instanceId}"]`.
+      expect(v.evidence).to.contain('form.service.ts:105');
+    });
+
+    it('grounds the reviewer\'s replacement sentence for 9301', () => {
+      // The suggested repair names the mechanism the component really has —
+      // app.component.ts:82 — so the check must pass on the corrected text.
+      const fixed = 'The standalone `webapp/web-components/cht-form/src/app.component.ts` takes the ' +
+        'subject summary as a `contactSummary` input and tags it with the instance id this PR gave ' +
+        "it (`{ id: 'contact-summary', context: value }`), then hands it to `EnketoService.renderForm`.";
+      const claims = enumerateClaims(fixed).filter(c => c.kind === 'literal-in-file');
+      expect(claims).to.have.lengthOf(1);
+      const v = checkClaim(ctx(), ANCHOR, claims[0]);
+      expect(v.outcome).to.equal('grounded');
+      expect(v.evidence).to.contain(COMPONENT);
+    });
+
+    it('does not "find" an invented selector through the interpolation tolerance', () => {
+      const v = checkClaim(ctx(), ANCHOR, {
+        kind: 'literal-in-file', literal: 'instance[id="totally-invented-thing"]', file: COMPONENT,
+        quote: `${COMPONENT} looks it up as \`instance[id="totally-invented-thing"]\`.`,
+      });
+      expect(v.outcome).to.equal('unverifiable');
     });
   });
 });
