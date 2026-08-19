@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10041
 issueUrl: https://github.com/medic/cht-core/issues/10041
 title: Add local datasource implementation for updating reports in cht-datasource
-lastUpdated: '2026-08-17'
+lastUpdated: '2026-08-18'
 summary: The cht-datasource shared library lacked a local (direct-database) implementation for updating report documents, so report updates could not be performed through the local data context. This PR adds the local update operation for reports along with unit tests.
 services:
   - api
@@ -49,7 +49,7 @@ stale: false
 
 ## Provenance
 
-PRs #10180 and #10200 were child PRs of the `9835-…` epic branch and are stamped nowhere in cht-core's history — `git log --grep='(#10180)'` finds nothing, and `source_sha` (`70b7be0b4`) is this PR's own merge commit into that epic branch — GitHub still reports it as that PR's merge commit, but it is absent from a clone because the epic squashed it away. The work reaches master only through the epic squash `f382785be` — `feat(#9835): add cht datasource apis for creation and update of contacts and reports (#10083)`. Every path and symbol below is stated as of that squash; the per-child split between #10180 and #10200 comes from the PR descriptions, not from anything verifiable in the git history.
+PRs #10180 and #10200 were child PRs of the `9835-…` epic branch, so nothing on `master` is stamped with them — `git log --grep='(#10180)' origin/master` finds nothing. `source_sha` (`70b7be0b4`) is this PR's merge commit into that epic branch, and it is still checkable: the branch itself was deleted upstream after the epic merged (`git ls-remote origin 'refs/heads/9835*'` returns nothing), but the commit stays reachable through the epic PR's durable pull ref — after `git fetch origin refs/pull/10083/head:refs/verify/pr10083`, `git log --all --grep='(#10180)'` returns it — so claims below can be verified at that commit. The work reaches master only through the epic squash `f382785be` — `feat(#9835): add cht datasource apis for creation and update of contacts and reports (#10083)`. Every path and symbol below is stated as of that squash; the per-child split between #10180 and #10200 is checkable at the child merge commits on the epic branch.
 
 ## Problem
 
@@ -61,7 +61,7 @@ The local report module in cht-datasource only implemented a subset of CRUD oper
 
 ## Solution
 
-Added `Local.Report.v1.update` to shared-libs/cht-datasource/src/local/report.ts, which persists changes to a report document via the local data context: it validates the incoming `Input.v1.UpdateReportInput` (that type arrives with the epic squash, per Provenance above — it is `src/input.ts:36` on master, and `input.ts` is not among the two files #10180 itself changed), loads the original report and its contact by id, asserts the read-only fields (`_rev`, `reported_date`) are unchanged and the form is still supported, then writes through `updateDoc` from src/local/libs/doc.ts. Unit tests were added alongside. Note the naming — the export is `update` inside the `Report.v1` namespace (`Local.Report.v1.update`, `Remote.Report.v1.update`), matching `Person.v1.update` and `Place.v1.update`; there is no flat `updateReport` symbol.
+Added `Local.Report.v1.update` to shared-libs/cht-datasource/src/local/report.ts, which persists changes to a report document via the local data context: it validates the incoming update payload (at this PR's own merge commit `70b7be0b4` that is the older `ReportInput` type from `src/input.ts`, checked by `validateReportUpdatePayload`; the `Input.v1.UpdateReportInput` name first enters `input.ts` with the epic branch's #10522 refactor `a89955a9f` and is `src/input.ts:36` on master; `input.ts` is not among the two files #10180 itself changed), loads the original report and its contact by id, asserts the read-only fields (`_rev`, `reported_date`) are unchanged and the form is still supported, then writes through `updateDoc` from src/local/libs/doc.ts. Unit tests were added alongside. Note the naming — the export is `update` inside the `Report.v1` namespace (`Local.Report.v1.update`, `Remote.Report.v1.update`), matching `Person.v1.update` and `Place.v1.update`; there is no flat `updateReport` symbol.
 
 The remote (API-backed) path completes the same update end to end (PR #10200): an update handler in api/src/controllers/report.js with the route registered in api/src/routing.js; update methods on the report datasource interface (src/report.ts) delegating to remote (src/remote/report.ts, HTTP to API) and local (src/local/report.ts, PouchDB) backends; a reusable doc-update helper in src/local/libs/doc.ts; and input parsing/validation in src/input.ts, with the capability exported via src/index.ts.
 
