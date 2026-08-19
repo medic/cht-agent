@@ -69,6 +69,28 @@ npm run check-coherence -- --dir /tmp/delta --label <l> --concurrency 3
 Measured: 13 drafts per pass instead of 40. Exclude commits that only bump
 `lastUpdated` — those bytes changed, the prose did not.
 
+**For `ground-claims` there is now a flag that does this properly:
+`--added-lines`.** It resolves the repo from `--dir` rather than from the repo
+running the tool, which is the exact thing `--changed-only` gets wrong, so it can
+be pointed straight at the promote worktree:
+
+```sh
+CHT_CORE_PATH=<cht-core> npm run ground-claims -- \
+  --added-lines --dir <promote-worktree>/agent-memory --base <last-clean-gate>
+```
+
+It gates the **lines the diff added**, deterministically and with no LLM call, so
+it is exhaustive over the delta rather than sampled over the corpus and costs
+seconds rather than 40s per draft. That makes it a per-commit check, not a
+per-round one — which is the point, since the measured source of round-N defects
+is round-(N−1)'s repairs. It refuses a dirty tree, on the same frozen-bytes rule
+as the ledger. Exit `1` on any `ungrounded`, `3` when only `unverifiable` remain,
+and every `unverifiable` is printed: an unchecked sentence is not a pass.
+
+Run it *in addition to* the staged-tree passes, not instead of them. It sees only
+code-shaped claims in the delta; the semantic tier and the corpus-wide duplicate
+check still need the full passes below.
+
 ## The round loop
 
 1. Read the review. Fetch the body *and* the inline comments — most of the
@@ -77,7 +99,9 @@ Measured: 13 drafts per pass instead of 40. Exclude commits that only bump
    essentially every time here, but the standard is that you checked, because a
    fix applied on faith is how a wrong claim gets laundered into memory.
 3. Fix. Commit with a message that states what was verified and how.
-4. Gate the delta (stage the prose-changed drafts, above — not `--changed-only`).
+4. Gate the delta: `ground-claims --added-lines --base <last-clean-gate>` on the
+   commit you just made, then the staged-tree passes for the semantic tiers
+   (above — and never `--changed-only`).
 5. Repeat until the convergence bar below is met **on committed bytes**.
 6. Write the reply: worst-first, re-runnable commands, an honest ledger, and an
    explicit list of what you disclosed rather than fixed.
@@ -154,6 +178,7 @@ claim is checkable — that is what stops it recurring every few passes.
 | Package specifier | `enketo-core/src/js/event` | not a repo path |
 | XLSForm column | `instance::cht:duration` | lives inside the `.xlsx`; the rendered attribute (`cht:duration`) is what greps |
 | Dotted prose form | `validation.extra_validations` | source spells it `extra_validations` |
+| Literal spelled nowhere | `context: "false"` for a JSON field | reported `unverifiable`, never `ungrounded` — quote it as the source spells it |
 | Epic-branch symbol | `Input.v1.UpdateReportInput` | real on master, absent at a child PR's anchor |
 
 The durable fix for the last four is to name **both** forms — the one an author
@@ -177,15 +202,19 @@ different question and both need saying.
 |---|---|---|
 | `validate-schema` | free | shape |
 | `verify-drafts` | free, exhaustive | identity, duplicates, near-miss vocab, leakage, cross-field echoes |
-| `ground-claims` | ~40s/draft, sampled | does this symbol/path/status exist, and did this PR touch it |
+| `ground-claims` | ~40s/draft, sampled | does this symbol/path/literal/status exist, and did this PR touch it |
+| `ground-claims --added-lines` | seconds, exhaustive over the delta | the same, for every sentence this commit added — no LLM |
 | `check-coherence` | ~40s/draft, sampled | do two sentences in one draft disagree |
 | a human | slow | **is this the right explanation** |
 
 The residual class is the last row: correctness of causal attribution. `9755`
 misattributed index routing, `8656` inverted a timezone sign, `10917` overstated
 a selector — each internally consistent, every symbol real. When you find a new
-instance, ask whether it is mechanisable before writing prose about it; the
-`introduced-by` probe exists because one of them was.
+instance, ask whether it is mechanisable before writing prose about it. Three of
+them since have been: `introduced-by` for a credit given to the wrong PR,
+`literal-in-file` for a quoted selector attributed to the wrong file (9301), and
+`sha-unreachable` for a commit declared gone that a `for-each-ref` still reaches
+(10180). Each started as a hand-adjudicated review item.
 
 **Anything two string comparisons can settle belongs in `verify-drafts`.** Three
 such checks (`related-issues-desync`, `missing-domain-rationale`, `fit-mismatch`)

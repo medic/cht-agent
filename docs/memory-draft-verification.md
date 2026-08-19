@@ -148,6 +148,78 @@ verdict can flip between runs on identical bytes — which is precisely why a
 "review this draft" prompt is not trustworthy enough to act on, and why this is
 not a CI check.
 
+## What a claim can be
+
+Every claim is one of these shapes, and each is settled by one git command. The
+first five are what a draft asserts *exists*; the last three are the ones a
+reader cannot check by eye, and each was added after a review round found the
+class it catches.
+
+| Kind | The draft is asserting | Settled by |
+|---|---|---|
+| `symbol` | this identifier exists at the anchor | `git grep -F -w` |
+| `symbol-in-file` | …and lives in this file | `git grep -F -w -- <file>` |
+| `literal-in-file` | this **quoted literal** is in this file | `git grep -F` / relaxed `-E`, then the rest of the tree |
+| `path-exists` | this path exists at the anchor | `git ls-tree` |
+| `file-touched` | this PR added / modified / deleted it | `git diff-tree --name-status` |
+| `release-branch` | it was backported to this line | `git branch -r --contains`, plus a cherry-pick search |
+| `introduced-by` | **PR #N** put this symbol there | the symbol's absence at #N's parent, per file |
+| `sha-unreachable` | this **commit** cannot be reached | `git for-each-ref --contains` |
+
+### Literals: the mechanism sentence nothing could check
+
+A symbol has to be identifier-shaped, so every selector, query string and object
+literal a draft quotes went unchecked. #122 round 4 found the consequence: the
+standalone `webapp/web-components/cht-form/src/app.component.ts` was said to
+"look it up as `` `instance[id="contact-summary"]` ``". That selector is in
+exactly one file on master — `webapp/src/ts/services/form.service.ts:105` — and
+every identifier in the sentence is real, so no existence or coherence check
+could see it.
+
+A literal is now bound to the one file its own sentence names and grepped there.
+Two tolerances, because source and prose legitimately differ:
+
+- **whitespace**, since source wraps an object literal across lines;
+- **interpolation**, since prose writes the value where the code has a variable.
+  form.service.ts spells it `` `instance[id="${instanceId}"]` ``, so a plain
+  `-F` search finds the draft's spelling in *neither* file and cannot tell them
+  apart. The tolerance is guarded: the substituted value must itself appear in
+  that file, or `instance[id="anything"]` would match and a fabricated selector
+  would come back "found" with a confidently wrong suggestion.
+
+**Absence is not a defect here.** A literal that occurs nowhere is
+`unverifiable`, not `ungrounded` — prose normalises source constantly, and whole
+documented classes (XLSForm column headers, placeholder templates) can never be
+grepped. Only a literal that is real *somewhere else* is a finding, and the
+report names where. Such a claim also carries its `unverifiable` into the
+pre-fix / "before this PR" / "on master" retries, which otherwise fire only on
+`ungrounded`: 10133 describes the read its own PR deleted, and the parent has it.
+
+Extraction is screened against measured false positives: a call suffix is a
+symbol (`getCurrentHref()` is declared `const getCurrentHref = () =>`), an
+invocation is not file content (`npm run unit-webapp`, `UNIT_TEST_ENV=1`), and a
+backticked English phrase is not code.
+
+### A commit the draft says is gone
+
+The mirror image: a **negative** existence claim, and the only one git settles in
+a line. #122 round 4 shipped a repair asserting that
+`70b7be0b4f0394b22f7d24b5fd1b824fdef0aa87` was "absent from a clone because the
+epic squashed it away". The commit is in the clone, reachable from
+`refs/verify/pr10083` — a fetched `refs/pull/10083/head`, which is exactly the
+ref `git branch --contains` cannot see.
+
+Settled in one direction only:
+
+| What git says | Verdict |
+|---|---|
+| some ref contains it | `ungrounded`, naming the ref |
+| the object is not here | `unverifiable`, with the `git fetch refs/pull/N/head` that would settle it |
+| present but dangling | `unverifiable` — unreferenced *here* is not absent from the repository |
+
+A clone holds only the refs somebody fetched, so "I do not have it" and "it does
+not exist" are different sentences. Conflating them is what wrote the defect.
+
 ## Outcomes
 
 | Outcome | Meaning |
@@ -203,6 +275,38 @@ names the backport PR #9610. Both searches missed, and a true backport was repor
 as invented. What a cherry-pick *must* carry is the original subject, so the anchor's
 own subject is now mined for the reference it was stamped with, and the refusal
 message lists every reference it searched rather than only the draft's PR.
+
+## Gating the delta: `--added-lines`
+
+A full sweep is **sampled** — extraction sees 61–67% of what is checkable per
+pass, which is why the convergence bar is three clean passes. Meanwhile the
+defects that survive are the ones the *repairs* write: on #122, three of the
+seven round-3 items came from the round-2 remediation, and round 4 found two
+more. A replacement sentence is unverified prose.
+
+```sh
+CHT_CORE_PATH=/path/to/cht-core npm run ground-claims -- \
+  --added-lines --dir <promote-worktree>/agent-memory --base <last-clean-gate>
+```
+
+- **No LLM.** Deterministic enumeration only, so it is exhaustive over
+  code-shaped claims in the delta and says nothing about semantic ones. It costs
+  seconds, so run it after every commit rather than once a round.
+- **The repo comes from `--dir`** (`git -C <dir> rev-parse --show-toplevel`),
+  which is why this is not `--changed-only`. That flag diffs in the repo running
+  the tool, and the tools live on a branch with no drafts.
+- **A dirty tree is refused.** A verdict is evidence about specific bytes, and an
+  uncommitted edit is both undiffable and uncitable — its new sentences would be
+  silently out of scope.
+- **Scope is applied by masking, not filtering.** A claim's quote is the first
+  line where the enumerator saw its token, so filtering quotes against added
+  lines reported the 10180 repair as "3 added lines, 0 claims" while its added
+  paragraph named eight symbols. The gate enumerates from the draft with
+  untouched lines blanked and the `## Headings` kept, so every quote is an added
+  line by construction and section-dependent claim kinds still work.
+- Exit `1` on any `ungrounded`, `3` when only `unverifiable` / `anchor-unusable`
+  remain. `unverifiable` items are printed: they are unchecked sentences, not
+  passes.
 
 ## Known blind spots
 
