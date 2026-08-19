@@ -2,7 +2,10 @@ import { expect } from 'chai';
 import * as os from 'os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { groundClaims, renderReport, extractionPrompt, DraftReport, ExtractFn } from '../../src/scripts/ground-claims';
+import {
+  groundClaims, renderReport, extractionPrompt, DraftReport, ExtractFn,
+  addedLinesByFile, gateAddedLines, renderAddedLinesReport,
+} from '../../src/scripts/ground-claims';
 import { Claim, ExecFn } from '../../src/scripts/claim-probes';
 
 const SHA = 'c'.repeat(40);
@@ -300,5 +303,149 @@ describe('renderReport', () => {
     }], meta);
     expect(md).to.contain('Could not be verified');
     expect(md).to.contain('anchor is a revert');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// --added-lines: the sentences an edit ADDED, gated exhaustively
+// ---------------------------------------------------------------------------
+
+describe('addedLinesByFile', () => {
+  const parse = (diff: string): Record<string, number[]> => {
+    const exec: ExecFn = () => diff;
+    return Object.fromEntries(
+      [...addedLinesByFile(exec, '/repo', 'base', '/repo/agent-memory')]
+        .map(([f, ns]) => [f, [...ns].sort((a, b) => a - b)])
+    );
+  };
+
+  it('reads the added line numbers out of a -U0 diff', () => {
+    expect(parse([
+      'diff --git a/x.md b/x.md',
+      '--- a/x.md',
+      '+++ b/x.md',
+      '@@ -5,0 +6,2 @@',
+      '+one',
+      '+two',
+      '@@ -20 +22 @@',
+      '-old',
+      '+new',
+    ].join('\n'))).to.deep.equal({ 'x.md': [6, 7, 22] });
+  });
+
+  it('claims nothing for a pure deletion hunk', () => {
+    // `+12,0` adds no lines; counting it would gate the line after the cut.
+    expect(parse('+++ b/x.md\n@@ -12,3 +12,0 @@\n-gone\n')).to.deep.equal({});
+  });
+
+  it('ignores a file the diff deleted outright', () => {
+    expect(parse('+++ /dev/null\n@@ -1,4 +0,0 @@\n')).to.deep.equal({});
+  });
+});
+
+describe('gateAddedLines', () => {
+  // Body lines land at 18 and 19 with the anchored frontmatter above them.
+  const OLD_LINE = 'The handler calls `real_symbol` before writing.';
+  const NEW_LINE = 'The retry path calls `fabricated_symbol` on failure.';
+  const anchored = ['source_pr: medic/cht-core#10803', `source_sha: ${SHA}`];
+
+  interface DeltaOpts { diff: string; dirty?: string; exists?: string[]; seen?: string[][] }
+  /** The corpus repo is the parent of the `agent-memory` dir tmpCorpus builds. */
+  const repoOf = (dir: string): string => path.dirname(dir);
+  const deltaGit = (dir: string, opts: DeltaOpts): ExecFn => {
+    const noMatch = (): never => { throw Object.assign(new Error('no match'), { status: 1 }); };
+    return (file, args) => {
+      expect(file).to.equal('git');
+      opts.seen?.push(args);
+      const a = args.slice(2);
+      if (a[0] === 'rev-parse' && a[1] === '--show-toplevel') return `${repoOf(dir)}\n`;
+      if (a[0] === 'status') return opts.dirty ?? '';
+      if (a[0] === 'diff') return opts.diff;
+      if (a[0] === 'cat-file') {
+        if (a[2].startsWith(SHA)) return '';
+        throw Object.assign(new Error('bad object'), { status: 128 });
+      }
+      if (a[0] === 'log') return 'fix(#10802): check status';
+      if (a[0] === 'grep') {
+        const needle = a[a.indexOf('-e') + 1];
+        return (opts.exists ?? []).includes(needle) ? `${SHA}:api/src/a.js:10:${needle}` : noMatch();
+      }
+      return noMatch();
+    };
+  };
+
+  /** A corpus dir the gate can read, plus a diff naming it relative to REPO. */
+  const setup = (added: string): { dir: string; diff: string } => {
+    const dir = tmpCorpus({ 'a.md': draft(10802, anchored, `${OLD_LINE}\n${NEW_LINE}`) });
+    return { dir, diff: `+++ b/agent-memory/a.md\n@@ -18,0 +${added} @@\n` };
+  };
+
+  it('gates only the claims whose sentence sits on an added line', async () => {
+    // Line 19 is the new sentence and names a symbol that does not exist; line
+    // 18 is untouched, so its (real) symbol is out of scope entirely.
+    const { dir, diff } = setup('19');
+    const result = await gateAddedLines({
+      dir, base: 'HEAD~1', chtCorePath: '/fake',
+      exec: deltaGit(dir, { diff, exists: ['real_symbol'] }),
+    });
+    expect(result.claimCount).to.equal(1);
+    expect(result.totals.ungrounded).to.equal(1);
+    expect(result.drafts[0].verdicts[0].claim).to.have.property('symbol', 'fabricated_symbol');
+  });
+
+  it('passes when the added sentence checks out', async () => {
+    const { dir, diff } = setup('18');
+    const result = await gateAddedLines({
+      dir, base: 'HEAD~1', chtCorePath: '/fake',
+      exec: deltaGit(dir, { diff, exists: ['real_symbol'] }),
+    });
+    expect(result.totals).to.include({ grounded: 1, ungrounded: 0 });
+  });
+
+  it('takes the diff in the repo that owns the drafts, not the one running the tool', async () => {
+    // The failure this flag exists to avoid: --changed-only diffs in the tool's
+    // own repo, which has no drafts, so every run refused.
+    const { dir, diff } = setup('19');
+    const seen: string[][] = [];
+    await gateAddedLines({
+      dir, base: 'HEAD~1', chtCorePath: '/fake',
+      exec: deltaGit(dir, { diff, exists: ['real_symbol'], seen }),
+    });
+    expect(seen[0]).to.deep.equal(['-C', dir, 'rev-parse', '--show-toplevel']);
+    const diffCall = seen.find(a => a[2] === 'diff');
+    expect(diffCall?.[1]).to.equal(repoOf(dir));
+    expect(diffCall).to.include('HEAD~1..HEAD');
+  });
+
+  it('refuses to gate a dirty tree, because a verdict is about specific bytes', async () => {
+    const { dir, diff } = setup('19');
+    try {
+      await gateAddedLines({
+        dir, base: 'HEAD~1', chtCorePath: '/fake',
+        exec: deltaGit(dir, { diff, dirty: ' M agent-memory/a.md' }),
+      });
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect((err as Error).message).to.contain('uncommitted changes');
+    }
+  });
+
+  it('reports an empty delta as empty rather than as a pass', async () => {
+    const { dir } = setup('19');
+    const result = await gateAddedLines({
+      dir, base: 'HEAD~1', chtCorePath: '/fake', exec: deltaGit(dir, { diff: '' }),
+    });
+    expect(result.claimCount).to.equal(0);
+    expect(renderAddedLinesReport(result)).to.contain('check --base');
+  });
+
+  it('says in its own header that no model was involved', async () => {
+    const { dir, diff } = setup('19');
+    const result = await gateAddedLines({
+      dir, base: 'HEAD~1', chtCorePath: '/fake', exec: deltaGit(dir, { diff }),
+    });
+    const report = renderAddedLinesReport(result);
+    expect(report).to.contain('no LLM extraction');
+    expect(report).to.contain('✗');
   });
 });

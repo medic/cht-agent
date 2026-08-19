@@ -30,6 +30,10 @@
  *   ... -- --limit 5                             # smoke-test the prompt cheaply
  *   ... -- --no-api-resolve                      # fully offline: skip GitHub-API anchor resolution
  *
+ *   # gate only the sentences an edit ADDED — no LLM, exhaustive over the delta:
+ *   CHT_CORE_PATH=... npm run ground-claims -- \
+ *     --added-lines --dir <promote-worktree>/agent-memory --base <last-clean-gate>
+ *
  * Reports land in outputs/verification/<label>/ (gitignored, never committed —
  * a report inside agent-memory/ would become memory a future agent reads).
  */
@@ -467,6 +471,210 @@ function selectDrafts(opts: GroundOptions, dir: string, exec: ExecFn): DraftInpu
   return opts.limit ? picked.slice(0, opts.limit) : picked;
 }
 
+// ---------------------------------------------------------------------------
+// The delta gate: every sentence an edit ADDED, checked deterministically
+// ---------------------------------------------------------------------------
+
+/**
+ * WHY A SECOND MODE. A full sweep is sampled — extraction sees 61-67% of what is
+ * checkable per pass — and the convergence bar is therefore three clean passes,
+ * which is expensive and still probabilistic over NEW prose. Meanwhile the
+ * defects that keep surviving review are written BY the repairs: measured on
+ * #122, three of the seven round-3 items were introduced by the round-2
+ * remediation, and round 4 found two more of the same kind. A replacement
+ * sentence is unverified prose.
+ *
+ * This mode is the cheap complement: take the lines an edit added, enumerate
+ * their claims deterministically, and settle every one. It is exhaustive over
+ * the delta rather than sampled over the corpus, costs no LLM call, and can run
+ * after every commit instead of once a round.
+ */
+export interface AddedLinesOptions {
+  /** The corpus directory. The git repo is resolved FROM this, never from cwd. */
+  dir: string;
+  base: string;
+  chtCorePath?: string;
+  exec?: ExecFn;
+  fallbackRef?: string;
+  apiResolve?: boolean;
+}
+
+export interface AddedLinesDraft {
+  file: string;
+  /** 1-indexed lines this diff added. */
+  addedLines: number[];
+  /** Claims whose sentence sits on one of those lines. */
+  verdicts: Verdict[];
+}
+
+export interface AddedLinesResult {
+  base: string;
+  /** Repo the diff was taken in — printed so a wrong-repo run is visible. */
+  corpusRepo: string;
+  drafts: AddedLinesDraft[];
+  addedLineCount: number;
+  claimCount: number;
+  totals: Record<Outcome, number>;
+}
+
+/** Repo-relative path → the line numbers this diff added to it. */
+export function addedLinesByFile(
+  exec: ExecFn, repo: string, base: string, dir: string
+): Map<string, Set<number>> {
+  const raw = exec('git', ['-C', repo, 'diff', '-U0', `${base}..HEAD`, '--', dir]);
+  const out = new Map<string, Set<number>>();
+  let file = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      const target = line.slice(4).trim();
+      file = target === '/dev/null' ? '' : target.replace(/^b\//, '');
+      continue;
+    }
+    // @@ -old,count +new,count @@ — count defaults to 1 and is 0 for a pure
+    // deletion hunk, which adds no lines and must not claim the line after it.
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+    if (!hunk || !file) continue;
+    const start = Number.parseInt(hunk[1], 10);
+    const count = hunk[2] === undefined ? 1 : Number.parseInt(hunk[2], 10);
+    if (count === 0) continue;
+    const set = out.get(file) ?? new Set<number>();
+    for (let n = start; n < start + count; n++) set.add(n);
+    out.set(file, set);
+  }
+  return out;
+}
+
+/**
+ * The draft with every line the diff did not add blanked out, keeping the
+ * `## Headings` and the line numbering.
+ *
+ * Filtering claims AFTER enumeration does not work, and the reason is worth
+ * recording: a claim's quote is the FIRST line where the enumerator saw its
+ * token, not the line the reader edited. A summary in the frontmatter naming
+ * `Local.Report.v1.update` claims that symbol for line 9, so a repair to the
+ * paragraph at line 64 that adds three new assertions about it matches nothing
+ * and the delta reads as empty — measured on the 10180 repair, which reported
+ * "3 added lines, 0 claims" while the added prose named eight symbols.
+ *
+ * Extracting from the masked document instead makes every quote an added line by
+ * construction. The headings survive because section membership decides claim
+ * KIND (a path under `## Related Files` is a file-touched claim, elsewhere a
+ * path-exists one) and scope (Problem / Root Cause is judged at the parent). The
+ * frontmatter does not survive: unchanged metadata is not part of the delta.
+ */
+export function maskToAddedLines(raw: string, added: Set<number>): string {
+  return raw
+    .split('\n')
+    .map((line, i) => (added.has(i + 1) || line.startsWith('## ') ? line : ''))
+    .join('\n');
+}
+
+/**
+ * Gate the lines an edit added.
+ *
+ * The repo is resolved from `--dir`, which is the whole point of the flag
+ * existing separately from `--changed-only`. That earlier feature diffs in the
+ * repo running the tool, and the tools live on a branch that has no drafts, so
+ * every invocation of it against a promote worktree refuses — documented in the
+ * runbook after a round was spent on it. Here the corpus tells us its own repo.
+ */
+export async function gateAddedLines(opts: AddedLinesOptions): Promise<AddedLinesResult> {
+  const chtCorePath = opts.chtCorePath ?? process.env.CHT_CORE_PATH;
+  if (!chtCorePath) {
+    throw new Error('cht-core checkout required: pass --cht-core <path> or set CHT_CORE_PATH');
+  }
+  const exec = opts.exec ?? defaultExec;
+  const dir = path.resolve(REPO_ROOT, opts.dir);
+  const corpusRepo = exec('git', ['-C', dir, 'rev-parse', '--show-toplevel']).trim();
+
+  // The frozen-bytes rule, mechanised: a verdict is evidence about specific
+  // bytes, and a report that cannot say which bytes it read is worth nothing.
+  // An uncommitted edit also cannot be diffed, so its new sentences would be
+  // silently out of scope — the worst failure available to a verification tool.
+  const dirty = exec('git', ['-C', corpusRepo, 'status', '--porcelain', '--', dir]).trim();
+  if (dirty) {
+    throw new Error(
+      `${dir} has uncommitted changes, so there are no frozen bytes to gate:\n${dirty}\n` +
+        'Commit (or stash) first — a delta gate reports on what HEAD says, not on the working tree.'
+    );
+  }
+
+  const ctx: ProbeCtx = {
+    chtCorePath, exec, fallbackRef: opts.fallbackRef, apiResolve: opts.apiResolve,
+    prFiles: new Map(), treeCache: new Map(), apiCache: loadApiCache(),
+  };
+
+  const added = addedLinesByFile(exec, corpusRepo, opts.base, dir);
+  const drafts: AddedLinesDraft[] = [];
+  let addedLineCount = 0;
+  let claimCount = 0;
+
+  for (const [relative, lineNumbers] of [...added].toSorted((a, b) => a[0].localeCompare(b[0]))) {
+    if (!relative.endsWith('.md')) continue;
+    const abs = path.resolve(corpusRepo, relative);
+    if (!fs.existsSync(abs)) continue;                    // renamed away by a later commit
+    const draft = readDraft(abs, dir);
+    if (!draft) continue;                                 // prose file, nothing to ground
+    addedLineCount += lineNumbers.size;
+
+    const delta = maskToAddedLines(draft.raw, lineNumbers);
+    const claims = mergeClaims(enumerateClaims(delta), [], delta);
+    claimCount += claims.length;
+    if (claims.length === 0) continue;
+
+    const anchor = anchorFor(ctx, draft.frontmatter);
+    const siblings = siblingAnchors(ctx, draft.frontmatter, anchor);
+    drafts.push({
+      file: draft.file,
+      addedLines: [...lineNumbers].toSorted((a, b) => a - b),
+      verdicts: claims.map(c => checkClaim(ctx, anchor, c, siblings, [], draft.raw)),
+    });
+  }
+
+  saveApiCache(ctx.apiCache);
+  const totals = Object.fromEntries(OUTCOMES.map(o => [o, 0])) as Record<Outcome, number>;
+  for (const d of drafts) for (const v of d.verdicts) totals[v.outcome]++;
+  return { base: opts.base, corpusRepo, drafts, addedLineCount, claimCount, totals };
+}
+
+/** Console report for the delta gate — worst first, and honest about its scope. */
+export function renderAddedLinesReport(result: AddedLinesResult): string {
+  const lines = [
+    `added-lines gate: ${result.corpusRepo} @ ${result.base}..HEAD`,
+    `  ${result.drafts.length} draft(s) with claims on added lines, ` +
+      `${result.addedLineCount} added line(s), ${result.claimCount} claim(s): ` +
+      OUTCOMES.map(o => `${result.totals[o]} ${o}`).join(', '),
+    '  Deterministic enumeration only — no LLM extraction, so this is exhaustive over',
+    '  code-shaped claims in the delta and says nothing about semantic ones.',
+  ];
+  for (const d of result.drafts) {
+    const bad = d.verdicts.filter(v => v.outcome === 'ungrounded');
+    for (const v of bad) {
+      lines.push('', `✗ ${d.file} — ${describeClaim(v.claim)}`);
+      lines.push(`  draft says: "${v.claim.quote.trim().slice(0, 200)}"`);
+      lines.push(`  probe: ${v.evidence}`);
+      if (v.suggestion) lines.push(`  real: ${v.suggestion}`);
+    }
+  }
+  // Never silent: an unverifiable claim is an unchecked sentence, and reporting
+  // only failures would let a run of them read as a pass.
+  for (const d of result.drafts) {
+    for (const v of d.verdicts.filter(x => x.outcome !== 'grounded' && x.outcome !== 'ungrounded')) {
+      lines.push('', `~ ${d.file} — ${v.outcome}: ${describeClaim(v.claim)}`);
+      lines.push(`  probe: ${v.evidence}`);
+    }
+  }
+  const drifted = result.drafts.flatMap(d => d.verdicts.filter(v => v.drift).map(v => [d.file, v] as const));
+  for (const [file, v] of drifted) {
+    lines.push('', `~ ${file} — stale as written: ${v.drift?.entity}`);
+    lines.push(`  ${v.drift?.note}`);
+  }
+  if (result.claimCount === 0) {
+    lines.push('', 'No code-shaped claim sits on an added line. If that is a surprise, check --base.');
+  }
+  return lines.join('\n');
+}
+
 export interface GroundResult {
   reports: DraftReport[];
   outDir: string;
@@ -636,6 +844,28 @@ function argValue(argv: string[], flag: string): string | undefined {
 /* istanbul ignore next */
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
+
+  // The delta gate runs before the LLM check on purpose: it needs no model, and
+  // requiring one would keep it out of the loop it is meant to run in.
+  if (argv.includes('--added-lines')) {
+    const dir = argValue(argv, '--dir');
+    const base = argValue(argv, '--base');
+    if (!dir || !base) {
+      console.error('--added-lines needs --dir <corpus dir> and --base <ref-or-sha>');
+      process.exit(1);
+    }
+    const result = await gateAddedLines({
+      dir, base,
+      chtCorePath: argValue(argv, '--cht-core'),
+      fallbackRef: argValue(argv, '--fallback-ref'),
+      apiResolve: argv.includes('--no-api-resolve') ? false : undefined,
+    });
+    console.log(renderAddedLinesReport(result));
+    if (result.totals.ungrounded > 0) process.exit(1);
+    if (result.totals.unverifiable > 0 || result.totals['anchor-unusable'] > 0) process.exit(3);
+    return;
+  }
+
   if (!isUsingCLIProvider() && !process.env.OPENROUTER_API_KEY && !process.env.ANTHROPIC_API_KEY) {
     console.error('No LLM available: set LLM_PROVIDER=claude-cli (uses the claude binary, no API key) ' +
       'or provide OPENROUTER_API_KEY / ANTHROPIC_API_KEY.');
