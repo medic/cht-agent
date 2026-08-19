@@ -6,7 +6,7 @@ subDomain: enketo
 issueNumber: 9301
 issueUrl: https://github.com/medic/cht-core/issues/9301
 title: Expose user's contact summary when filling out forms
-lastUpdated: '2026-08-14'
+lastUpdated: '2026-08-18'
 summary: Made the logged-in user's contact summary data available to Enketo forms via a named external data instance, so forms can reference the user's own summary fields (e.g. stock levels) during data entry, and via a `userSummary` variable in the form-visibility context expressions that decide which forms are listed.
 services:
   - webapp
@@ -37,7 +37,7 @@ Added a dedicated `user-contact-summary.service.ts` that resolves the logged-in 
 - The user's contact summary is computed once and held in a `CacheService` entry that outlives any single form session — it is not re-fetched per question or per form open, and is invalidated only when `ContactChangeFilterService.isRelevantChange()` says a change affects the user's own contact
 - Inside a form, read the user's summary from the `user-contact-summary` external data instance; to gate whether a form is offered at all, use `userSummary` in the form's context expression (bound in `xml-forms.service.ts#evaluateExpression` alongside `contact`, `summary` and `user`)
 - Compute-and-cache a derived view for the current user: resolve user → contact (user-settings.service + contact-view-model-generator.service, plus target-aggregates.service for target docs) → contact-summary.service → cache in a dedicated service (user-contact-summary.service.ts)
-- The standalone `webapp/web-components/cht-form/src/app.component.ts` takes the subject summary as a `contactSummary` input and looks it up as `instance[id="contact-summary"]`, which is the instance-id shape this PR gave it. It does **not** receive the user summary: `user-contact-summary` is webapp-side only, in form.service.ts and xml-forms.service.ts, so an embedded form cannot read it
+- The standalone `webapp/web-components/cht-form/src/app.component.ts` takes the subject summary as a `contactSummary` input and tags it with the instance id this PR gave it (`{ id: 'contact-summary', context: value }`), then hands it to `EnketoService.renderForm`, which injects it as that named instance. It does **not** receive the user summary: the `user-contact-summary` instance is created only in the webapp's `form.service.ts` (whose `instance[id="..."]` probe the web component never runs, since it bypasses `FormService`), and `xml-forms.service.ts` exposes the same data to context expressions as `userSummary`, so an embedded form cannot read it
 - File: `webapp/src/ts/services/user-contact-summary.service.ts` fetches and caches the user's own contact summary
 
 ## Design Choices

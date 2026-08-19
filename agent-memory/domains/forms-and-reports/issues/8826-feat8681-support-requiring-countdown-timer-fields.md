@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8681
 issueUrl: https://github.com/medic/cht-core/issues/8681
 title: Support requiring countdown-timer fields by binding the widget to 'trigger' question types instead of 'note'
-lastUpdated: '2026-08-14'
+lastUpdated: '2026-08-18'
 summary: 'The countdown-timer widget was attached to ''note'' fields, which cannot be marked required, so users could bypass the timer before it finished. The widget was migrated to ''trigger'' question types that support ''required: yes'', enforcing timer completion via a constraint message, with custom durations set through a new instance::cht:duration column.'
 services:
   - api
@@ -62,7 +62,7 @@ Migrated the countdown-timer widget to apply to 'trigger' question types, which 
 
 ## Code Patterns
 
-Custom Enketo widget targeting a specific question/input type in countdown-widget.js; separation of animation concerns into webapp/src/js/enketo/lib/timer-animation.js; custom XLSForm attribute passthrough handled in api/src/services/generate-xform.js, with fixture-based round-trip tests under api/tests/mocha/services/xforms/custom-attributes/. Note the two notations: authors write the XLSForm column `instance::cht:duration`, which exists only inside the `.xlsx` workbook, and generation renders it into the XForm as the `cht:duration` attribute — that second form is the one present in the tree.
+Custom Enketo widget targeting a specific question/input type in countdown-widget.js; separation of animation concerns into webapp/src/js/enketo/lib/timer-animation.js; custom attribute passthrough handled in api/src/services/generate-xform.js, with fixture-based round-trip tests under api/tests/mocha/services/xforms/custom-attributes/. Note the three notations: authors write the XLSForm column `instance::cht:duration`, which exists only inside the `.xlsx` workbook; the XLSForm-to-XForm conversion (pyxform, via cht-conf) renders it as the `cht:duration` attribute on the form instance; and generate-xform.js stamps that onto the rendered HTML as `data-cht-duration` (`getChtAttributeEntries`, `:128-131`) — the form that greps in webapp source.
 
 ## Design Choices
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8226
 issueUrl: https://github.com/medic/cht-core/issues/8226
 title: Skip Enketo form pages for top-level groups with the 'hidden' appearance via new HiddenGroup widget
-lastUpdated: '2026-08-14'
+lastUpdated: '2026-08-18'
 summary: Enketo rendered empty, navigable pages for groups whose contents were all hidden (e.g. a top-level group with the `hidden` appearance), producing blank pages and blocking use of the db-object-widget to load contact data into a hidden group. A new HiddenGroup widget adds the `disabled` class to such groups so Enketo's pager skips them during navigation.
 services:
   - webapp
@@ -58,7 +58,7 @@ Enketo's pager only skips pages for groups it considers non-relevant or disabled
 
 ## Solution
 
-Added a new Enketo widget (HiddenGroup, in webapp/src/js/enketo/widgets/hidden-group.js) whose selector is `.or-group-data.or-appearance-hidden` — a data group carrying the `hidden` appearance — and which adds the `disabled` class to every group it matches, leveraging Enketo's existing behavior of skipping disabled groups during navigation. The widget is registered in webapp/src/js/enketo/widgets.js, which pulls it in by module path — `require( './widgets/hidden-group' )` — rather than by the exported `HiddenGroup` name. Review loosened that matcher, but not to "any group with the `hidden` appearance" — what was dropped is the `field-list` requirement, leaving the two classes above.
+Added a new Enketo widget (HiddenGroup, in webapp/src/js/enketo/widgets/hidden-group.js) whose selector is `.or-group-data.or-appearance-hidden` — a data group carrying the `hidden` appearance — and which adds the `disabled` class to every group it matches, leveraging Enketo's existing behavior of skipping disabled groups during navigation. The widget is registered in webapp/src/js/enketo/widgets.js, which pulls it in by module path — `require( './widgets/hidden-group' )` — rather than by the exported `HiddenGroup` name. Review loosened that matcher, but not to "any group with the `hidden` appearance": the `field-list` requirement was replaced by `.or-group-data`, so the selector is still two classes, which is why the Karma spec asserts a group carrying only one of them does not match.
 
 ## Code Patterns
 
