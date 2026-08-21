@@ -1569,12 +1569,37 @@ export function checkClaim(
     }
   }
 
+
+  /**
+ * The window a scope marker is looked for in. A quote is one line, and prose
+ * wraps: five separate findings on the contacts corpus came from "on master"
+ * sitting on the line above the symbol it scoped — in hand-written drift notes,
+ * in two directions of a re-wrap, and finally in reviewer-authored suggestion
+ * text, which settled that the fix belongs here rather than in ever more careful
+ * wrapping. Joining the quote with the previous non-blank draft line (blockquote
+ * prefixes stripped) covers every observed case while staying too narrow to
+ * inherit a marker from an unrelated paragraph: a blank line — a paragraph
+ * boundary — stops the join.
+ */
+  function scopedContext(draft: string, quote: string): string {
+    if (!draft) return quote;
+    const needle = quote.trim();
+    if (!needle) return quote;
+    const lines = draft.split('\n');
+    const at = lines.findIndex(l => l.includes(needle));
+    if (at <= 0) return quote;
+    const prev = lines[at - 1].trim();
+    if (!prev || prev === '>') return quote;
+    const strip = (x: string): string => x.replace(/^>\s?/, '');
+    return `${strip(prev)} ${strip(needle)}`;
+  }
+
   // The mirror: a claim the draft explicitly scopes to BEFORE the change is
   // judged at the parent. The section-based `pre-fix` path above only fires when
   // extraction tagged the claim; an explicit "before this PR" in the sentence is
   // better evidence than the section it sits in, and survives extraction not
   // volunteering a scope.
-  if (worthRetrying && TREE_SCOPED.has(claim.kind) && BACKWARD_SCOPED.test(claim.quote)) {
+  if (worthRetrying && TREE_SCOPED.has(claim.kind) && BACKWARD_SCOPED.test(scopedContext(draft, claim.quote))) {
     const parent = `${anchor.sha}^`;
     if (commitExists(ctx, parent)) {
       const before = checkAtRef(ctx, parent, claim, 'anchor', anchor);
@@ -1590,7 +1615,7 @@ export function checkClaim(
 
   // A claim the draft explicitly scopes to the current tree must be judged
   // there. Failing it at the anchor is checking the wrong commit, not a defect.
-  if (worthRetrying && TREE_SCOPED.has(claim.kind) && FORWARD_SCOPED.test(claim.quote)) {
+  if (worthRetrying && TREE_SCOPED.has(claim.kind) && FORWARD_SCOPED.test(scopedContext(draft, claim.quote))) {
     const ref = ctx.fallbackRef ?? DEFAULT_FALLBACK_REF;
     if (commitExists(ctx, ref)) {
       const atCurrent = checkAtRef(ctx, ref, claim, 'fallback');

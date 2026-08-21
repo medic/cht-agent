@@ -396,14 +396,14 @@ async function groundOne(ctx: ProbeCtx, draft: DraftInput, extract: ExtractFn): 
     claims = mergeClaims(enumerated, await extract(draft), draft.raw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const verdicts = enumerated.map(c => checkClaim(ctx, anchor, c, siblingAnchors(ctx, draft.frontmatter, anchor)));
+    const verdicts = enumerated.map(c => checkClaim(ctx, anchor, c, siblingAnchors(ctx, draft.frontmatter, anchor), [], draft.raw));
     return {
       ...base, verdicts, counts: tally(verdicts),
       error: `semantic extraction failed (${message}); ${enumerated.length} enumerated claims still checked`,
     };
   }
   const siblings = siblingAnchors(ctx, draft.frontmatter, anchor);
-  const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings)).map(v => {
+  const verdicts = claims.map(c => checkClaim(ctx, anchor, c, siblings, [], draft.raw)).map(v => {
     // The probe only saw the claim's own sentence; the draft may time-scope the
     // entity elsewhere (a "Note on paths" paragraph, an annotated Related File).
     if (v.drift && entityIsTimeScoped(draft.raw, v.drift.entity)) {
