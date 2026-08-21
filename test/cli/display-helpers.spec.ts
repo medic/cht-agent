@@ -180,36 +180,64 @@ const mkPlan = (overrides: Partial<OrchestrationPlan> = {}): OrchestrationPlan =
 
 describe('validateEnvironment (v9c.1)', () => {
   let originalKey: string | undefined;
+  let originalProvider: string | undefined;
   let exitStub: sinon.SinonStub;
   let cap: ReturnType<typeof captureConsole>;
 
+  const setEnv = (name: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  };
+
   beforeEach(() => {
     originalKey = process.env.ANTHROPIC_API_KEY;
+    originalProvider = process.env.LLM_PROVIDER;
     // process.exit is stubbed so the test process does not terminate.
     exitStub = sinon.stub(process, 'exit') as unknown as sinon.SinonStub;
     cap = captureConsole();
   });
 
   afterEach(() => {
-    if (originalKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = originalKey;
+    setEnv('ANTHROPIC_API_KEY', originalKey);
+    setEnv('LLM_PROVIDER', originalProvider);
     exitStub.restore();
     cap.restore();
   });
 
-  it('does NOT exit when ANTHROPIC_API_KEY is set', () => {
-    process.env.ANTHROPIC_API_KEY = 'sk-test';
-    validateEnvironment();
-    expect(exitStub.called).to.equal(false);
+  describe('API provider mode (LLM_PROVIDER unset)', () => {
+    beforeEach(() => delete process.env.LLM_PROVIDER);
+
+    it('does NOT exit when ANTHROPIC_API_KEY is set', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test';
+      validateEnvironment();
+      expect(exitStub.called).to.equal(false);
+    });
+
+    it('prints an error + remediation and calls process.exit(1) when the key is missing', () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      validateEnvironment();
+      expect(exitStub.calledOnceWithExactly(1)).to.equal(true);
+      expect(cap.getErrors()).to.match(/ANTHROPIC_API_KEY not found/);
+      expect(cap.getLog()).to.include('.env file');
+      expect(cap.getLog()).to.include('ANTHROPIC_API_KEY=your_api_key_here');
+    });
   });
 
-  it('prints an error + remediation and calls process.exit(1) when the key is missing', () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    validateEnvironment();
-    expect(exitStub.calledOnceWithExactly(1)).to.equal(true);
-    expect(cap.getErrors()).to.match(/ANTHROPIC_API_KEY not found/);
-    expect(cap.getLog()).to.include('.env file');
-    expect(cap.getLog()).to.include('ANTHROPIC_API_KEY=your_api_key_here');
+  describe('CLI provider mode (LLM_PROVIDER=claude-cli)', () => {
+    beforeEach(() => { process.env.LLM_PROVIDER = 'claude-cli'; });
+
+    it('does NOT exit or print anything when ANTHROPIC_API_KEY is missing', () => {
+      delete process.env.ANTHROPIC_API_KEY;
+      validateEnvironment();
+      expect(exitStub.called).to.equal(false);
+      expect(cap.getErrors()).to.equal('');
+    });
+
+    it('still does NOT exit when the key happens to be set as well', () => {
+      process.env.ANTHROPIC_API_KEY = 'sk-test';
+      validateEnvironment();
+      expect(exitStub.called).to.equal(false);
+    });
   });
 });
 
