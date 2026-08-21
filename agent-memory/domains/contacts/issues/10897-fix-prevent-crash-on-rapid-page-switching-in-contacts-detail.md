@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10878
 issueUrl: https://github.com/medic/cht-core/issues/10878
 title: Prevent null-dereference crash on ContactsContentComponent when navigating away from contacts detail before it finishes loading
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-20'
 summary: Navigating away cleared selectedContact to null while in-flight async callbacks still accessed its .doc property, throwing a TypeError and crashing the contacts detail page. Fixed with optional chaining and early-return guards in the component.
 services:
   - webapp
@@ -68,7 +68,7 @@ Chose minimal defensive null-checks (optional chaining + early returns) over cha
 
 ## Testing
 
-Unit tests added/updated in the Karma spec (contacts-content.component.spec.ts), covering the cleared/null selectedContact scenarios to confirm the early returns and optional chaining prevent the crash.
+Unit tests updated in the Karma spec (contacts-content.component.spec.ts — modified, not added), covering the cleared/null selectedContact scenarios to confirm the early returns and optional chaining prevent the crash.
 
 ## Related Issues
 

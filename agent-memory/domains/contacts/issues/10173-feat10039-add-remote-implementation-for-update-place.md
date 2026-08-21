@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10039
 issueUrl: https://github.com/medic/cht-core/issues/10039
 title: Add remote (HTTP) cht-datasource implementation and API endpoint for updating place contacts
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-20'
 summary: The cht-datasource library could get/create places and could already update one through the local (direct-DB) implementation, but had no remote (HTTP) path to update. This PR adds the remote update-place implementation plus the backing API controller and route, completing update-place support across the local and remote datasource implementations.
 services:
   - api
@@ -87,7 +87,7 @@ Reuses the existing datasource local/remote dual-implementation architecture ins
 
 ## Testing
 
-Extensive unit and integration coverage added/updated: datasource module spec (test/place.spec.ts), remote impl spec (test/remote/place.spec.ts), local impl spec (test/local/place.spec.ts), and public index spec (test/index.spec.ts); API controller unit tests (api/tests/mocha/controllers/place.spec.js); plus end-to-end integration tests for the API controller (tests/integration/api/controllers/place.spec.js) and the datasource (tests/integration/shared-libs/cht-datasource/place.spec.js). The PR checklist marks 'Tested' as done.
+Extensive unit and integration coverage updated — all seven spec files modified, none added: datasource module spec (test/place.spec.ts), remote impl spec (test/remote/place.spec.ts), local impl spec (test/local/place.spec.ts), and public index spec (test/index.spec.ts); API controller unit tests (api/tests/mocha/controllers/place.spec.js); plus end-to-end integration tests for the API controller (tests/integration/api/controllers/place.spec.js) and the datasource (tests/integration/shared-libs/cht-datasource/place.spec.js). The PR checklist marks 'Tested' as done.
 
 ## Related Issues
 

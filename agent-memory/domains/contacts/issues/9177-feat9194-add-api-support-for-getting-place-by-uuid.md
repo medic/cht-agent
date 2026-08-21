@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9194
 issueUrl: https://github.com/medic/cht-core/issues/9194
 title: Add cht-datasource and REST API support for getting a place (contact) by UUID, with optional lineage
-lastUpdated: '2026-08-17'
+lastUpdated: '2026-08-20'
 summary: 'CHT had no unified datasource or REST API for fetching a place-type contact by UUID — only the person equivalents existed — `Person.v1.get` and `Person.v1.getWithLineage`, from #9065. This PR adds get-place and get-place-with-lineage to cht-datasource plus a GET /api/v1/place/{id} endpoint, and refactors several call sites to use the new datasource functions where the contact type was known.'
 services:
   - api
@@ -88,7 +88,7 @@ Mirrored the established get-person datasource structure for consistency. Delibe
 
 ## Testing
 
-Extensive unit tests added/updated: cht-datasource specs (test/place.spec.ts, test/local/place.spec.ts, test/remote/place.spec.ts, test/index.spec.ts), api mocha controller specs (place.spec.js, person.spec.js, login.spec.js, users.spec.js) and the extract-person-contacts migration spec, plus shared-libs/contacts (people/places) and transitions (create_user_for_contacts, death_reporting, registration, update_clinics) and user-management users specs. New tests notably cover the not-found error behavior of refactored call sites that previously relied on PouchDB.get throwing but was untested.
+Test coverage is five specs added and seventeen updated. Added: the three new cht-datasource place specs (test/place.spec.ts, test/local/place.spec.ts, test/remote/place.spec.ts), the api place controller spec (api/tests/mocha/controllers/place.spec.js), and the integration spec (tests/integration/api/controllers/place.spec.js). Updated: test/index.spec.ts, the person/login/users api controller specs and the extract-person-contacts migration spec, plus shared-libs/contacts (people/places) and transitions (create_user_for_contacts, death_reporting, registration, update_clinics) and user-management users specs. New tests notably cover the not-found error behavior of refactored call sites that previously relied on PouchDB.get throwing but was untested.
 
 ## Related Issues
 

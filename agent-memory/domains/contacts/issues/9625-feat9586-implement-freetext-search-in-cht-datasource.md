@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9586
 issueUrl: https://github.com/medic/cht-core/issues/9586
 title: Implement freetext search for contacts and reports in the cht-datasource shared library
-lastUpdated: '2026-08-11'
+lastUpdated: '2026-08-20'
 summary: cht-datasource (the typed read-access library) could only fetch records by identifier and had no freetext search capability. This PR adds a freetext qualifier plus UUID-search functions on a new generic `contact` module (whose search spans both person and place documents) and a new `report` module, across both local (CouchDB view-backed) and remote (API-backed) data contexts, and exposes them via two new API controllers.
 services:
   - api
@@ -89,7 +89,7 @@ Search logic was centralized in cht-datasource so api (and other consumers) shar
 
 ## Testing
 
-Extensive unit tests were added/updated across cht-datasource (test/*.spec.ts for contact, person, place, report, qualifier, parameter-validators, plus local/* and libs/* specs) covering both local and remote search paths and qualifier validation, alongside api mocha controller specs — contact.spec.js and report.spec.js for the new endpoints, with person.spec.js and place.spec.js updated only for the PermissionError/limit refactor.
+Extensive unit tests — seventeen spec files added, eighteen updated, one deleted (test/libs/contact.spec.ts) — across cht-datasource (test/*.spec.ts for contact, person, place, report, qualifier, parameter-validators, plus local/* and libs/* specs) covering both local and remote search paths and qualifier validation, alongside api mocha controller specs: contact.spec.js and report.spec.js are new, for the new endpoints, while person.spec.js and place.spec.js were updated only for the PermissionError/limit refactor.
 
 ## Related Issues
 
