@@ -16,7 +16,9 @@ import { expect } from 'chai';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { checkClaim, defaultExec, Anchor, Claim, ProbeCtx, Verdict } from '../../src/scripts/claim-probes';
+import {
+  checkClaim, defaultExec, resolveAnchor, Anchor, Claim, ProbeCtx, Verdict,
+} from '../../src/scripts/claim-probes';
 import { enumerateClaims } from '../../src/scripts/enumerate-claims';
 
 /** Draft bytes captured from the promote branch with `git show`. */
@@ -147,6 +149,107 @@ describe('probes against real cht-core history', function () {
         quote: `${COMPONENT} looks it up as \`instance[id="totally-invented-thing"]\`.`,
       });
       expect(v.outcome).to.equal('unverifiable');
+    });
+  });
+
+  /**
+   * The LIST regions — `entities:`, `concepts:`, `## Related Files` — read against
+   * the real clone at each draft's real anchor.
+   *
+   * Both defects below were true when their PR shipped and are gone from master
+   * today, which is what makes them expensive: probing only the anchor certifies
+   * them and probing only master refutes them. They survived five clean
+   * full-corpus passes because the only thing reading a YAML list was the LLM
+   * extractor, at roughly two-thirds recall a pass. A list has one assertion per
+   * bullet and needs no model to find, so these run on the enumerated claims.
+   *
+   * The defective and repaired bytes are both fixtures on purpose: a screen that
+   * fires on the defect but also on its fix is not a screen, it is churn.
+   */
+  describe('drift out of the frontmatter and Related Files lists', () => {
+    beforeEach(function () {
+      if (!CORE || !hasRef('origin/master')) this.skip();
+    });
+
+    /**
+     * Every claim in a fixture, adjudicated at ITS OWN anchor (from `source_sha` /
+     * `source_pr`) rather than at a stand-in ref. Drift is the difference between
+     * that commit and master, so an approximate anchor answers a different
+     * question. `draft` is handed to checkClaim so a caveat written anywhere in
+     * the draft still settles the entity, exactly as ground-claims does it.
+     */
+    const atOwnAnchor = (name: string): Verdict[] => {
+      const raw = fixture(name);
+      const sha = /^source_sha:\s*(\S+)/m.exec(raw)?.[1];
+      const pr = /^source_pr:\s*\S+#(\d+)/m.exec(raw)?.[1];
+      const anchor = resolveAnchor(ctx(), {
+        sourceSha: sha,
+        prNumber: pr ? Number.parseInt(pr, 10) : undefined,
+      });
+      expect(anchor, `anchor for ${name} must resolve in this clone`).to.not.equal(null);
+      return enumerateClaims(raw).map(c => checkClaim(ctx(), anchor, c, [], [], raw));
+    };
+
+    /** The stale-as-written finding naming `entity`, if the pass produced one. */
+    const driftOn = (name: string, entity: string): Verdict | undefined =>
+      atOwnAnchor(name).find(v => v.drift?.entity === entity);
+
+    // 10784's `concepts:` bullet read "- prepareForSave lifecycle hook". The hook
+    // is real at that PR's commit and was deleted from master by cccce201e
+    // (#11256, the #10700 save-workflow rewrite).
+    it('flags the unannotated 10784 concepts entry at bdbf090', () => {
+      const v = driftOn('10784-defective-bdbf090.md', 'prepareForSave');
+      expect(v, 'prepareForSave should be reported stale-as-written').to.not.equal(undefined);
+      // True about its own PR — the finding is the tense, not the fact.
+      expect(v?.outcome).to.equal('grounded');
+      expect(v?.drift?.note).to.contain('absent from origin/master');
+    });
+
+    it('says nothing about the annotated 10784 concepts entry at aa398b0', () => {
+      // "- prepareForSave lifecycle hook (removed on master by the #10700
+      // save-workflow rewrite, cccce201e)" — the bullet already says what the
+      // probe would say.
+      expect(driftOn('10784-repaired-aa398b0.md', 'prepareForSave')).to.equal(undefined);
+    });
+
+    // 9512's Related Files listed "- webapp/src/ts/app.module.ts", deleted on
+    // master by a1730c4b1 (#9784, the standalone-components migration).
+    it('flags the unannotated 9512 Related Files bullet at bdbf090', () => {
+      const v = driftOn('9512-defective-bdbf090.md', 'webapp/src/ts/app.module.ts');
+      expect(v, 'app.module.ts should be reported stale-as-written').to.not.equal(undefined);
+      expect(v?.outcome).to.equal('grounded');
+      expect(v?.drift?.note).to.contain('absent from origin/master');
+    });
+
+    it('says nothing about the annotated 9512 Related Files bullet at aa398b0', () => {
+      expect(driftOn('9512-repaired-aa398b0.md', 'webapp/src/ts/app.module.ts')).to.equal(undefined);
+    });
+
+    it('checks a concepts identifier the prose never marks as code', () => {
+      // "- native DOM event dispatch vs jQuery .trigger()". Neither name is
+      // backticked anywhere in 10784, so before the list regions were enumerated
+      // nothing deterministic ever looked either one up — which is the gap, and
+      // why prepareForSave surviving five passes was luck: the body happens to
+      // backtick it, and a concept named only in the list does not get that.
+      const raw = fixture('10784-defective-bdbf090.md');
+      expect(raw).to.not.contain('`jQuery`');
+      expect(raw).to.not.contain('`trigger`');
+      const fromBullet = enumerateClaims(raw)
+        .filter(c => c.kind === 'symbol' && c.quote.startsWith('- native DOM event dispatch'));
+      expect(fromBullet.map(c => (c as { symbol: string }).symbol))
+        .to.have.members(['jQuery', 'trigger']);
+      for (const c of fromBullet) expect(checkClaim(ctx(), ANCHOR, c).outcome).to.equal('grounded');
+    });
+
+    it('neither fixture pair produces a refuted claim', () => {
+      // The repair edits a caveat into two bullets and nothing else, so any
+      // `ungrounded` here is the enumerator inventing a claim out of an
+      // annotation — the failure mode this whole region has to avoid.
+      for (const name of ['10784-defective-bdbf090.md', '10784-repaired-aa398b0.md',
+        '9512-defective-bdbf090.md', '9512-repaired-aa398b0.md']) {
+        const bad = atOwnAnchor(name).filter(v => v.outcome === 'ungrounded');
+        expect(bad.map(v => v.evidence), name).to.deep.equal([]);
+      }
     });
   });
 });

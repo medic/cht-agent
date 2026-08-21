@@ -132,6 +132,92 @@ describe('enumerate-claims', () => {
     });
   });
 
+  describe('the list regions, enumerated rather than sampled', () => {
+    const syms = (raw: string): string[] =>
+      enumerateClaims(raw).filter(c => c.kind === 'symbol').map(c => (c as { symbol: string }).symbol);
+    const fm = (...body: string[]): string => ['---', 'id: x', ...body, '---', '', '## Notes', ''].join('\n');
+
+    it('reads an identifier-shaped entities entry as a symbol', () => {
+      // A curated entity list is the one place a bare name IS the assertion, so
+      // no backticks are written and none are required.
+      const s = syms(fm('entities:',
+        '  - webapp/src/ts/services/enketo.service.ts',
+        '  - CHTDatasourceService',
+        '  - XmlFormsContextUtilsService.get',
+        '  - tasks_by_contact'));
+      expect(s).to.have.members(['CHTDatasourceService', 'XmlFormsContextUtilsService.get', 'tasks_by_contact']);
+    });
+
+    it('does not read a directory or a ddoc id in entities as a symbol', () => {
+      // `shared-libs/validation` and `_design/medic-client` are neither paths
+      // PATH_RE can probe (no extension) nor identifiers; claiming either as a
+      // symbol asks git grep for a string that cannot be in any file.
+      expect(syms(fm('entities:',
+        '  - shared-libs/validation',
+        '  - api/src/services/replication/',
+        '  - _design/medic-client'))).to.be.empty;
+    });
+
+    it('mines identifiers out of a concepts phrase and leaves the phrase alone', () => {
+      const s = syms(fm('concepts:',
+        '  - datasource abstraction layer',
+        '  - prepareForSave lifecycle hook',
+        '  - stubbing Date.prototype.getTimezoneOffset',
+        '  - client-side state persistence (localStorage)',
+        '  - native DOM event dispatch vs jQuery .trigger()'));
+      expect(s).to.include('prepareForSave');
+      expect(s).to.include('Date.prototype.getTimezoneOffset');
+      expect(s).to.include('localStorage');
+      // Written as a call, so the word is marked as code even without a case change.
+      expect(s).to.include('trigger');
+      // Plain English, whatever its shape on the page.
+      for (const word of ['datasource', 'abstraction', 'layer', 'lifecycle', 'hook', 'stubbing', 'state']) {
+        expect(s).to.not.include(word);
+      }
+    });
+
+    it('does not read a PascalCase prose word in concepts as a symbol', () => {
+      // "library-supplied event factories over hand-built CustomEvents" is the
+      // real bullet. `CustomEvents` is a prose plural of a DOM interface and is
+      // absent from cht-core, so probing it manufactures a defect out of a
+      // correct phrase. CODE_SIGNAL accepts it; the stricter concepts rule does
+      // not, because a concepts bullet carries no backticks to mark intent.
+      const s = syms(fm('concepts:',
+        '  - library-supplied event factories over hand-built CustomEvents',
+        '  - native DOM event dispatch',
+        '  - CHT config validation'));
+      expect(s).to.be.empty;
+    });
+
+    it('lets a per-item annotation suppress the item it annotates, and only that one', () => {
+      // The 10784 repair: the bullet says what the probe would have said.
+      const s = syms(fm('concepts:',
+        '  - prepareForSave lifecycle hook (removed on master by the #10700 save-workflow rewrite, cccce201e)',
+        '  - excludeNonRelevant submission pruning'));
+      expect(s).to.not.include('prepareForSave');
+      expect(s).to.include('excludeNonRelevant');
+    });
+
+    it('lets an annotation suppress an entities entry too', () => {
+      const s = syms(fm('entities:',
+        '  - resolveOwnerDoc (deleted — replaced by the save-workflow rewrite)',
+        '  - findFileNodeByFilename'));
+      expect(s).to.not.include('resolveOwnerDoc');
+      expect(s).to.include('findFileNodeByFilename');
+    });
+
+    it('quotes the list item itself, so drift reads the annotation beside the claim', () => {
+      // The quote is what every temporal screen keys on. A claim from a bullet
+      // must carry THAT bullet, not the first prose line that happens to repeat
+      // the token, or an annotation three lines up would excuse it.
+      const raw = fm('concepts:', '  - prepareForSave lifecycle hook');
+      const claim = enumerateClaims(raw).find(
+        c => c.kind === 'symbol' && (c as { symbol: string }).symbol === 'prepareForSave'
+      );
+      expect(claim?.quote).to.equal('- prepareForSave lifecycle hook');
+    });
+  });
+
   describe('normaliseClaim — the same rules applied to MODEL claims', () => {
     // The enumerator filtered these while extracting; the model's claims never
     // passed through them, so every filter leaked on the LLM half.

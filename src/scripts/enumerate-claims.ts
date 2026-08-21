@@ -372,6 +372,151 @@ const CODE_SIGNAL = /_|\.|[a-z][A-Z]/;
 /** Frontmatter keys whose list values are paths. */
 const PATH_LIST_KEYS = ['entities'];
 
+/**
+ * THE LIST REGIONS, AND WHY THEY GET THEIR OWN ENUMERATION.
+ *
+ * Prose is unbounded, so the semantic tier will always sample it. A YAML list is
+ * not: `entities:` and `concepts:` are one assertion per bullet, and so is a
+ * `## Related Files` bullet. Nothing about them needs a model to find, yet two
+ * real drift defects lived in exactly these regions through five clean passes
+ * because only the LLM extractor ever read them, at ~2/3 recall a pass:
+ *
+ *   10784 `concepts: - prepareForSave lifecycle hook` — the hook is gone from
+ *   master (cccce201e, #11256). It was caught in the end only because the body
+ *   also backticks `prepareForSave`; a concept named ONLY in the list is
+ *   invisible to every deterministic probe without this.
+ *
+ *   9512 `## Related Files - webapp/src/ts/app.module.ts` — deleted on master by
+ *   a1730c4b1 (#9784). Already enumerated (the Related Files walk below), and
+ *   this is the region's cheapest region to get right, so it is asserted by test
+ *   rather than left to luck.
+ *
+ * The two frontmatter regions differ in what a bullet IS, and the rules differ
+ * with them:
+ *
+ *   `entities:` is a curated list of code. A bullet is one entity, so the WHOLE
+ *   bullet is tested — path-shaped by the PATH_LIST_KEYS walk, identifier-shaped
+ *   here.
+ *
+ *   `concepts:` is prose. A bullet is a phrase ("datasource abstraction layer")
+ *   that may EMBED an identifier ("prepareForSave lifecycle hook"), so tokens are
+ *   tested individually and only a token carrying a code signal survives.
+ */
+const CONCEPT_LIST_KEYS = ['concepts'];
+
+/**
+ * A token inside a concept phrase, with an optional call suffix. Starts at an
+ * identifier character, so the leading dot of a written-as-called method
+ * (".trigger()") is dropped rather than making the token non-identifier-shaped.
+ */
+const CONCEPT_TOKEN_RE = /[A-Za-z_$][A-Za-z0-9_$.]*(?:\(\s*\))?/g;
+
+/**
+ * The code signal a token must carry to be probed out of a PROSE list, and it is
+ * deliberately stricter than CODE_SIGNAL.
+ *
+ * CODE_SIGNAL accepts any internal case change, which is right for a backticked
+ * span — the author marked it as code. A concepts bullet has no backticks, so the
+ * same rule reads `CustomEvents` out of "library-supplied event factories over
+ * hand-built CustomEvents" and probes a prose plural of a DOM interface as a
+ * cht-core symbol, which is absent and would be reported as a defect. Requiring
+ * a LOWERCASE first character keeps lowerCamelCase (`prepareForSave`,
+ * `excludeNonRelevant`) and drops PascalCase brand and API names (`CustomEvents`,
+ * `DOM`, `CHT`) along with every plain English word.
+ *
+ * `snake_case`, a dotted member path, and a `()` call suffix are accepted on
+ * their own: none of the three occurs in English. The call suffix also waives the
+ * CODE_SIGNAL screen, since an author who wrote `.trigger()` has marked the word
+ * as a call as plainly as backticks would.
+ *
+ * The bullet is mined WHOLE, parenthetical and all. A trailing parenthetical in
+ * `concepts:` is as often the gloss that carries the identifier ("client-side
+ * state persistence (localStorage)") as it is an annotation, and stripping it
+ * costs the very claim the bullet exists to make. The annotation still does its
+ * job: ABSENCE_CONTEXT reads the line before this runs, so "(removed on master by
+ * …)" suppresses the bullet outright.
+ */
+function conceptIdentifiers(item: string): string[] {
+  const out: string[] = [];
+  for (const m of item.matchAll(CONCEPT_TOKEN_RE)) {
+    const called = m[0].endsWith(')');
+    const core = stripCall(m[0]);
+    const shaped = called || /_/.test(core) || /\w\.\w/.test(core)
+      || /^[a-z][A-Za-z0-9_$]*[A-Z]/.test(core);
+    if (!shaped) continue;
+    const tok = listItemSymbol(core, called);
+    if (tok) out.push(tok);
+  }
+  return out;
+}
+
+/**
+ * A list bullet read as one identifier, or null. The same screens the backtick
+ * walk applies, plus the two a list adds: a bullet holding a directory
+ * (`shared-libs/validation`, `api/src/services/replication/`) or a ddoc id
+ * (`_design/medic-client`) is not a symbol, and a path-shaped bullet is already
+ * claimed as a path.
+ *
+ * CODE_SIGNAL is required unless the token was written as a CALL, so a single
+ * bare lowercase word in `entities:` is left alone — the same call the module
+ * header makes for a bare backticked word, for the same reason: `purging` is as
+ * likely to be the concept as the export, and a false "fabricated symbol" is the
+ * expensive direction.
+ */
+function listItemSymbol(text: string, called = false): string | null {
+  const tok = stripCall(text.trim());
+  if (!tok || tok.length < 3 || tok.length > 80) return null;
+  if (/\s/.test(tok) || tok.includes('/') || tok.includes('..')) return null;
+  if (!IDENT_RE.test(tok) || !(called || CODE_SIGNAL.test(tok))) return null;
+  if (FILE_EXT_RE.test(tok)) return null;
+  if (OWN_SCHEMA_KEYS.has(tok)) return null;
+  if (looksLikePath(tok)) return null;
+  return tok;
+}
+
+/**
+ * The indented lines under a `key:` in the frontmatter, up to the next top-level
+ * key.
+ *
+ * Line-walked rather than regexed, for the same reason `section()` is: the
+ * obvious `^key:\s*$([\s\S]*?)(?=^\S)` needs a following top-level key to
+ * terminate, so the block matches nothing at all when its list is the LAST thing
+ * in the frontmatter. Every draft in this corpus happens to carry `related_issues`
+ * after `concepts`, which is the only reason the regex ever appeared to work.
+ */
+function frontmatterBlock(fm: string, key: string): string[] {
+  const lines = fm.split('\n');
+  const start = lines.findIndex(l => l.trim() === `${key}:`);
+  if (start < 0) return [];
+  const out: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^\S/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out;
+}
+
+/**
+ * The bullets of a frontmatter list, each with the source line as its quote.
+ *
+ * Per BULLET, not per block: an annotation belongs to the entry it follows, and
+ * the whole point of reading these regions is that "(removed on master by …)" on
+ * one line must not excuse the unqualified entry three lines down. The quote is
+ * the raw line so the existing ABSENCE_CONTEXT / NOT_TOUCHED / TIME_SCOPED
+ * screens — which all take a line — apply unchanged.
+ */
+function frontmatterItems(fm: string, key: string): Array<{ item: string; quote: string }> {
+  const out: Array<{ item: string; quote: string }> = [];
+  for (const line of frontmatterBlock(fm, key)) {
+    const m = /^\s*-\s+(.+)$/.exec(line);
+    if (m?.[1].trim()) out.push({ item: m[1].trim(), quote: line.trim() });
+  }
+  return out;
+}
+
+/** The entry with a trailing parenthetical annotation removed. */
+const withoutAnnotation = (item: string): string => item.replace(/\s*\([^()]*\)\s*$/, '').trim();
+
 const stripCall = (s: string): string => s.replace(/\(\s*\)$/, '').replace(/[.,;:]+$/, '');
 
 /** The line a match sits on, as the human-locatable quote. */
@@ -580,6 +725,10 @@ export interface EnumerateOptions {
  * Paths named under `## Related Files` become `file-touched` (the draft is
  * asserting its PR changed them); paths named anywhere else, and in the
  * `entities` frontmatter list, become `path-exists`.
+ *
+ * The three LIST regions — `entities:`, `concepts:`, `## Related Files` — are
+ * walked bullet by bullet, so every entry is claimed and each one's annotation
+ * governs only itself. See CONCEPT_LIST_KEYS for why that is worth its own pass.
  */
 export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim[] {
   const lines = raw.split('\n');
@@ -637,10 +786,27 @@ export function enumerateClaims(raw: string, opts: EnumerateOptions = {}): Claim
   const fmEnd = raw.indexOf('\n---', 4);
   const fm = fmEnd > 0 ? raw.slice(0, fmEnd) : '';
   for (const key of PATH_LIST_KEYS) {
-    const block = new RegExp(`^${key}:\\s*$([\\s\\S]*?)(?=^\\S)`, 'm').exec(fm);
-    for (const p of block?.[1].match(PATH_RE) ?? []) {
+    for (const p of frontmatterBlock(fm, key).join('\n').match(PATH_RE) ?? []) {
       const { quote } = lineContaining(lines, p);
       if (!touched.has(p) && usable(p, quote)) add({ kind: 'path-exists', file: p, quote });
+    }
+    // …and the entries that are identifiers rather than paths. A curated entity
+    // list is the one place in a draft where a bare name IS the assertion, so the
+    // whole bullet is the token — no backticks needed, and none written.
+    for (const { item, quote } of frontmatterItems(fm, key)) {
+      if (ABSENCE_CONTEXT.test(quote) || NOT_TOUCHED.test(quote)) continue;
+      const symbol = listItemSymbol(withoutAnnotation(item));
+      if (symbol) add({ kind: 'symbol', symbol, quote });
+    }
+  }
+
+  // concepts: frontmatter — prose bullets, mined for the identifiers they embed
+  for (const key of CONCEPT_LIST_KEYS) {
+    for (const { item, quote } of frontmatterItems(fm, key)) {
+      // The bullet's own annotation, and only its own: "(removed on master by …)"
+      // is the author already saying what the probe would say.
+      if (ABSENCE_CONTEXT.test(quote) || NOT_TOUCHED.test(quote)) continue;
+      for (const symbol of conceptIdentifiers(item)) add({ kind: 'symbol', symbol, quote });
     }
   }
 
