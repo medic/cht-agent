@@ -78,7 +78,7 @@
           "items": { "$ref": "#/definitions/CHTDomain" },
           "uniqueItems": true,
           "minItems": 1,
-          "description": "Additional domains this memory is also relevant to, ranked below the primary `domain`. Human-set on the cht-datasource cluster; not auto-emitted by the distiller. NB retrieval selects candidates by primary-domain directory (see #135), so a secondary domain does not surface a memory until candidate selection reads this field."
+          "description": "Additional domains this memory is also relevant to, ranked below the primary `domain`. To be human-set on the cht-datasource cluster (annotations pending); not auto-emitted by the distiller. Must not include the primary `domain` itself — draft-07 cannot express that, so validate-schema enforces it. NB retrieval selects candidates by primary-domain directory (see #135), so a secondary domain does not surface a memory until candidate selection reads this field."
         },
         "subDomain": {
           "type": "string",

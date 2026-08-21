@@ -2,6 +2,7 @@ import { expect } from 'chai';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { CHT_DOMAINS } from '../../src/constants';
 import { validateTicketFile } from '../../src/utils/ticket-parser';
 
 /**
@@ -83,7 +84,7 @@ describe('Ticket Validation', () => {
       },
       {
         file: 'invalid-domain.md',
-        error: 'Domain must be one of: authentication, contacts, forms-and-reports, tasks-and-targets, messaging, data-sync, configuration, interoperability, infrastructure, data-access',
+        error: `Domain must be one of: ${CHT_DOMAINS.join(', ')}`,
       },
       {
         file: 'invalid-missing-domain.md',

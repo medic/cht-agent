@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-08-17T19:14:39Z",
+  "last_updated": "2026-08-21T01:12:05Z",
   "domains": {
     "contacts": {
       "description": "Contact management - people, places, hierarchies, muting",
@@ -399,6 +399,32 @@
         "selectors": [
           "webapp/src/ts/selectors/index.ts"
         ]
+      }
+    },
+    "infrastructure": {
+      "description": "CI / build / release / deploy tooling - operational lifecycle",
+      "api": {
+        "controllers": [],
+        "services": []
+      },
+      "webapp": {
+        "modules": [],
+        "services": []
+      },
+      "sentinel": {
+        "transitions": []
+      },
+      "shared_libs": [],
+      "tests": {
+        "unit": [],
+        "integration": [],
+        "e2e": []
+      },
+      "ngrx": {
+        "actions": [],
+        "reducers": [],
+        "effects": [],
+        "selectors": []
       }
     },
     "interoperability": {

@@ -398,7 +398,7 @@ export class DocumentationSearchAgent {
       configuration: ['config', 'settings', 'cht-conf'],
       interoperability: ['fhir', 'openhim', 'outbound', 'dhis2', 'openmrs', 'interoperability', 'mediator'],
       infrastructure: ['docker', 'helm', 'kubernetes', 'haproxy', 'ci', 'build', 'deploy', 'upgrade', 'infrastructure'],
-      'data-access': ['cht-datasource', 'datasource', 'qualifier', 'data-access'],
+      'data-access': ['datasource', 'qualifier', 'data-access'],
     };
 
     const relatedDomains: CHTDomain[] = [];
