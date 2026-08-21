@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10038
 issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Add PlaceQualifier type and related validation methods to cht-datasource
-lastUpdated: '2026-08-17'
+lastUpdated: '2026-08-20'
 summary: The cht-datasource shared library lacked a dedicated qualifier for identifying place contacts. This PR adds a PlaceQualifier type plus related validation/type-guard methods to qualifier.ts (WIP).
 services:
   - api
@@ -54,14 +54,16 @@ stale: true
 > before #135 adds union selection would drop it from `contacts` retrieval entirely.
 > Re-key to `domain: data-access` + `secondaryDomains: [contacts]` in that coordinated pass.
 
-> **Drift note (verified 2026-08-17).** None of this draft's five source PRs is an ancestor of
+> **Drift note (verified 2026-08-20).** None of this draft's five source PRs is an ancestor of
 > `origin/master`; the work reached master only through the epic squash #10083 (`f382785be`,
 > 2026-03-10), after a rename pass. On master `PlaceQualifier`, `byPlaceQualifier` and
 > `isPlaceQualifier` no longer exist anywhere in the tree — they were replaced by `PlaceInput`
 > in `src/input.ts` (#10094) — `v1.createPlace` is now `v1.create`, master's `src/input.ts` is
-> types-only (zero runtime declarations), and the create-time parent-fetch /
-> contact_type-check / lineage-shaping logic lives in `src/local/libs/lineage.ts`
-> on master, as `assertHasValidParentType` and `minifyDoc` — both master-only.
+> types-only (zero runtime declarations); on master the contact_type check and the
+> lineage shaping are the shared `assertHasValidParentType` and `minifyDoc` in
+> `src/local/libs/lineage.ts`, while the parent fetch itself stays in the entity
+> modules — `getDocById(medicDb)` in `src/local/person.ts` and `getDocsByIds(medicDb)`
+> in `src/local/place.ts`, both from `./libs/doc`. All of these are master-only.
 > The prose below deliberately describes the state at each cited PR, not master's
 > shape; hence `stale: true`. Read every present-tense sentence below as scoped to
 > its cited PR.

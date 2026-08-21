@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9238
 issueUrl: https://github.com/medic/cht-core/issues/9238
 title: Add Person.v1.getAll AsyncGenerator to cht-datasource for paginated iteration over all people
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-20'
 summary: cht-datasource could only fetch a single page of people at a time — `getPage` took a numeric `skip`, so callers tracked offsets by hand. This adds Person.v1.getAll(ctx)(qualifier), returning an AsyncGenerator that yields individual person docs one at a time — fetching a page at a time internally and following the cursor — across both local and remote data contexts.
 services:
   - api
@@ -42,7 +42,7 @@ concepts:
   - API versioning (v1)
   - curried data-source API signature
 related_issues: []
-stale: false
+stale: true
 ---
 
 > **Domain note.** This draft is a `data-access` candidate: its anchor PR extends the
@@ -93,7 +93,7 @@ This is a feature gap rather than a defect: the Person v1 API exposed only singl
 
 ## Solution
 
-Added Person.v1.getAll(ctx)(qualifier), returning `AsyncGenerator<Person, void>` — it yields **individual person docs one at a time**, paging internally on demand by repeatedly invoking the cursor-paginated fetch until exhausted. `getAll` itself was added **only to the public person.ts facade** — there is no `getAll` in local/person.ts or remote/person.ts, at this commit or on master — plus a thin `getDatasource` wrapper `getByType(personType)` in index.ts that binds it. The facade generator binds the facade's *own* `getPage` (`const getPage = context.bind(v1.getPage)`), so local-vs-remote dispatch is inherited from `getPage`'s existing `adapt` call rather than reimplemented per context. The shared generator helper `getDocumentStream` was added to libs/data-context.ts. The same PR touched local/person.ts and remote/person.ts only to replace getPage's numeric `skip` parameter with a string `cursor`, moving it ahead of `limit` in the signature.
+Added Person.v1.getAll(ctx)(qualifier), returning `AsyncGenerator<Person, void>` — it yields **individual person docs one at a time**, paging internally on demand by repeatedly invoking the cursor-paginated fetch until exhausted. `getAll` itself was added **only to the public person.ts facade** — there is no `getAll` in local/person.ts or remote/person.ts, at this commit or on master — plus a thin `getDatasource` wrapper `getByType(personType)` in index.ts that binds it. The facade generator binds the facade's *own* `getPage` (`const getPage = context.bind(v1.getPage)`), so local-vs-remote dispatch is inherited from `getPage`'s existing `adapt` call rather than reimplemented per context. The shared generator helper `getDocumentStream` was added to libs/data-context.ts. The same PR touched remote/person.ts only to replace getPage's numeric `skip` parameter with a string `cursor`, moving it ahead of `limit` in the signature; local/person.ts got that swap plus a rewrite of `fetchAndFilter`'s paging arithmetic — the end-of-results test moved from `docs.length === 0` to `docs.length < currentLimit`, and the over-fetch bookkeeping was restructured.
 
 ## Code Patterns
 
@@ -119,7 +119,7 @@ The generator yields individual docs rather than pages, so callers iterate with 
 
 ## Testing
 
-Unit tests were added/updated for the public facade (test/person.spec.ts), the generator helper (test/libs/data-context.spec.ts), and the `getDatasource` surface (test/index.spec.ts, which gained a `getByType` case asserting it binds `Person.v1.getAll`). The local and remote person specs (test/local/person.spec.ts, test/remote/person.spec.ts) changed only for getPage's `skip`→`cursor` swap and contain no `getAll` cases at all, matching the facade-only implementation. The helper's own cases state the contract directly — "yields document one by one", "should handle multiple pages", "should handle empty result" — and the facade test drains the generator with `for await` and deep-equals the result against the flat array of people, not against a list of pages.
+Unit tests updated — every spec file in this PR is modified, none added — for the public facade (test/person.spec.ts), the generator helper (test/libs/data-context.spec.ts), and the `getDatasource` surface (test/index.spec.ts, which gained a `getByType` case asserting it binds `Person.v1.getAll`). The local and remote person *specs* changed only for getPage's `skip`→`cursor` plumbing (every changed line in both is the swap) and contain no `getAll` cases, matching the facade-only implementation — which means the `fetchAndFilter` paging-arithmetic rewrite in local/person.ts landed with no new spec assertions in this commit. The helper's own cases state the contract directly — "yields document one by one", "should handle multiple pages", "should handle empty result" — and the facade test drains the generator with `for await` and deep-equals the result against the flat array of people, not against a list of pages.
 
 ## Related Issues
 

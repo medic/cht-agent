@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9193
 issueUrl: https://github.com/medic/cht-core/issues/9193
 title: Add paginated and async-iterable retrieval of places by type to cht-datasource, plus the GET /api/v1/place REST endpoint
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-20'
 summary: cht-datasource could fetch individual places but had no way to retrieve places by contact type in bulk. This PR adds cursor-based pagination (Place.v1.getPage) and an async-generator API (Place.v1.getAll), and exposes the paginated REST endpoint GET /api/v1/place, mirroring the GET /api/v1/person endpoint already added by #9295/#9311.
 services:
   - api
@@ -92,7 +92,7 @@ Offered both paginated pages and async generators so REST/stateless consumers ca
 
 ## Testing
 
-Updated unit tests (mocha) across cht-datasource — all eleven spec files are modified, none added — test/place.spec.ts, test/local/place.spec.ts, test/local/person.spec.ts, test/local/libs/doc.spec.ts, test/remote/place.spec.ts, test/remote/libs/data-context.spec.ts, test/index.spec.ts — plus api controller specs (api/tests/mocha/controllers/place.spec.js and person.spec.js) and integration tests (tests/integration/api/controllers/place.spec.js and person.spec.js) exercising the pagination API, async-generator API, and the new GET /api/v1/place REST endpoint.
+Updated unit tests (mocha) — eleven spec files in all, every one modified and none added: across cht-datasource, test/place.spec.ts, test/local/place.spec.ts, test/local/person.spec.ts, test/local/libs/doc.spec.ts, test/remote/place.spec.ts, test/remote/libs/data-context.spec.ts, test/index.spec.ts — plus api controller specs (api/tests/mocha/controllers/place.spec.js and person.spec.js) and integration tests (tests/integration/api/controllers/place.spec.js and person.spec.js) exercising the pagination API, async-generator API, and the new GET /api/v1/place REST endpoint.
 
 ## Related Issues
 

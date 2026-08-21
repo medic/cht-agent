@@ -6,7 +6,7 @@ subDomain: cht-datasource
 issueNumber: 9835
 issueUrl: https://github.com/medic/cht-core/issues/9835
 title: Add cht-datasource APIs for creation and update of contacts and reports
-lastUpdated: '2026-08-12'
+lastUpdated: '2026-08-20'
 summary: Extended cht-datasource with create and update operations for Person, Place, and Report, exposed as both a TypeScript API and REST endpoints, with a major internal refactoring of validation, lineage handling, and auth.
 source_prs:
   - "medic/cht-core#10022"
@@ -44,7 +44,7 @@ The initial `cht-datasource` implementation focused on reads. Write operations w
 
 **Provenance — read this before citing any PR below.** `#10083` is the *umbrella* PR that squashed the whole `9835` feature branch onto master (squash `f382785be`, 2026-03-10). Everything described in this draft shipped in that one commit; master had no cht-datasource write support at all beforehand. `#10522` (squash `a89955a9f`, 2026-03-03) is an **ancestor of `#10083`'s head branch**, not a follow-up to it: `#10522` refactored the create/update surface that earlier child PRs had built on the branch, and then the branch landed as `#10083`. Every other PR cited here (`#10022`, `#10081`, `#10222`, `#10246`) likewise merged into the feature branch, not into master. Do not read the PR numbers as a chronology of master.
 
-The create/update surface was built incrementally on the feature branch: person/place/report create and update for both the local (PouchDB) and remote (HTTP) data contexts, the `input.ts` module, and new endpoints wired through the person/place/report api controllers, `routing.js`, `auth.js`, and `server-utils.js`. The initial local/API `createPerson` work arrived via branch PRs that cite sub-issue `#10036` rather than `#9835`, so they are deliberately not listed in `source_prs` here. The contact controller was modified as well but received **no** write endpoint — it was only migrated to `auth.assertPermissions`; on master it still exposes only `get`, `getUuids`, `getAll`, `getSummaries`, and `routing.js` gained no contact write route.
+The create/update surface was built incrementally on the feature branch: person/place/report create and update for both the local (PouchDB) and remote (HTTP) data contexts, the `input.ts` module, and new endpoints wired through the person/place/report api controllers, `routing.js`, `auth.js`, and `server-utils.js`. The initial local/API `createPerson` work arrived via branch PRs that cite sub-issue `#10036` rather than `#9835`, so they are deliberately not listed in `source_prs` here. The contact controller was modified as well but received **no** write endpoint — it was migrated to `auth.assertPermissions` and its datasource bindings were reshaped (`getContact`/`getContactWithLineage` bound eagerly instead of per-request); on master it still exposes only `get`, `getUuids`, `getAll`, `getSummaries`, and `routing.js` gained no contact write route.
 
 `#10522` then reworked the internals before the branch merged. Key changes:
 - New `ResourceNotFoundError` for update operations when the target document doesn't exist, replacing a misused `InvalidArgumentError` (pre-refactor all three updates threw `InvalidArgumentError('Person not found')` / `'Place not found'` / `'Report not found'`)
@@ -53,7 +53,7 @@ The create/update surface was built incrementally on the feature branch: person/
 - `createDoc/updateDoc` no longer re-fetch the document after writing (both previously ended in `getDocById(db)(id)`)
 - Lineage handling centralized in `local/libs/lineage.ts` with `minifyDoc`, `assertSameParentLineage`, `getUpdatedContact`. The file itself predates this work; `#10522` consolidated write-side lineage logic into it.
 - Input types cleaned up — `_id` and `_rev` are `never` on create inputs (`ContactInput`, `ReportInput`, `PlaceInput`; `PersonInput extends ContactInput`)
-- Write-input validation moved into `src/libs/parameter-validators.ts` as composable assertion functions — `assertPersonInput`/`assertPlaceInput`/`assertReportInput`, all built on a shared `assertContactInput`. `src/input.ts` was left as a **types-only** module. Earlier on the branch `input.ts` did hold the validators (the controllers called `Input.validatePersonInput(req.body)`), which is why pre-`#10522` history reads differently — see Design Choices.
+- Write-input validation moved into `src/libs/parameter-validators.ts` as composable assertion functions — `assertPersonInput`/`assertPlaceInput`, both built on a shared `assertContactInput`, plus a standalone `assertReportInput` that repeats the same object/reported_date/no-`_id`-or-`_rev` checks against `form` and `contact` instead (ReportInput has no `name`, so it cannot reuse the contact assertion). `src/input.ts` was left as a **types-only** module. Earlier on the branch `input.ts` did hold the validators (the controllers called `Input.validatePersonInput(req.body)`), which is why pre-`#10522` history reads differently — see Design Choices.
 - API controllers simplified with `auth.assertPermissions()`, and the spurious read-permission requirement dropped from the write endpoints: `can_view_contacts` for person/place, `can_view_reports` for report. `#10522` is also where `can_edit` first reached the report endpoints.
 
 Earlier branch work, in merge order:
@@ -125,7 +125,7 @@ Earlier branch work, in merge order:
 
 ## Testing
 
-- Unit tests updated across most changed cht-datasource modules — 19 spec files under `shared-libs/cht-datasource/test/` in the `#10083` landing, against 23 changed `src` files. Not every changed module got a spec: `src/input.ts` was added with no spec at all (there is no `test/input.spec.ts` on master), and `src/libs/error.ts`, `src/libs/doc.ts` and `src/local/libs/data-context.ts` changed without a matching spec change in that commit.
+- Unit tests updated across most changed cht-datasource modules — 19 spec files under `shared-libs/cht-datasource/test/` in the `#10083` landing, against 23 changed `src` files. Not every changed module got a spec: `src/input.ts` was added with no spec at all (there is no `test/input.spec.ts` on master), and `src/libs/error.ts`, `src/libs/doc.ts`, `src/libs/constants.ts` and `src/local/libs/data-context.ts` changed without a matching spec change in that commit.
 - Integration tests for API controllers under `tests/integration/api/controllers/{person,place,report}.spec.js`, plus datasource-level integration tests under `tests/integration/shared-libs/cht-datasource/`
 - Tests verify both create and update flows for persons, places, and reports
 - Tests cover permission validation, lineage validation, and error handling
