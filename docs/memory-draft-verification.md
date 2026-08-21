@@ -200,6 +200,55 @@ symbol (`getCurrentHref()` is declared `const getCurrentHref = () =>`), an
 invocation is not file content (`npm run unit-webapp`, `UNIT_TEST_ENV=1`), and a
 backticked English phrase is not code.
 
+### The list regions: enumerated, never sampled
+
+Three regions of a draft are lists, not prose: frontmatter `entities:`,
+frontmatter `concepts:`, and the `## Related Files` bullets. One bullet is one
+assertion, so nothing about them needs a model — and for a long time nothing but
+the model read them. At ~2/3 recall a pass, that is how two drift defects
+survived **five clean full-corpus passes** and were caught only on the eighth
+cumulative sample:
+
+- `10784` — `concepts: - prepareForSave lifecycle hook`. The hook is real at that
+  PR's commit and was deleted from master by `cccce201e` (#11256). It was caught
+  in the end only because the body *also* backticks `prepareForSave`; a concept
+  named only in the list had nothing looking at it.
+- `9512` — `## Related Files - webapp/src/ts/app.module.ts`, deleted on master by
+  `a1730c4b1` (#9784).
+
+All three regions are now enumerated exhaustively. What a bullet *is* differs
+between them, and the rules differ with it:
+
+| Region | A bullet is | Emits |
+|---|---|---|
+| `entities:` | one code entity | `path-exists` when path-shaped, `symbol` when identifier-shaped |
+| `concepts:` | a prose phrase that may embed code | `symbol` per identifier-shaped **token** |
+| `## Related Files` | a path the PR changed | `file-touched`, downgraded to `path-exists` when the bullet disclaims the edit |
+
+`concepts:` carries no backticks, so it gets a stricter code signal than a
+backticked span does: `snake_case`, a dotted member path, a `()` call suffix, or
+lowerCamelCase. Requiring a **lowercase first character** is what earns its keep
+— the ordinary "any internal case change" rule reads `CustomEvents` out of
+*"library-supplied event factories over hand-built CustomEvents"* and probes a
+prose plural of a DOM interface as a cht-core symbol, which is absent and would
+be filed as a defect. `datasource abstraction layer` emits nothing at all, which
+is the point.
+
+An `entities:` bullet is tested whole, so `_design/medic-client`,
+`shared-libs/validation` and `api/src/services/replication/` emit nothing: a
+directory or a ddoc id is neither a path `ls-tree` can find nor a string that can
+be in a file. A bare lowercase word is also left alone, on the same call the
+module makes for a bare backticked word — `purging` is as likely to be the
+concept as the export.
+
+**The annotation governs its own bullet and no other.** A claim's quote is the
+bullet's own line, so the existing `ABSENCE_CONTEXT` / `NOT_TOUCHED` screens read
+`(removed on master by the #10700 save-workflow rewrite, cccce201e)` or
+`(present at this PR's anchor; removed on master by …, #9784)` and suppress that
+entry, while an unqualified entry three lines down still gets probed. That is
+exactly the difference between the two fixture pairs in
+`test/scripts/claim-probes.real.spec.ts`: `bdbf090` flags, `aa398b0` does not.
+
 ### A commit the draft says is gone
 
 The mirror image: a **negative** existence claim, and the only one git settles in
@@ -234,6 +283,43 @@ commit — settled) or `fallback` (the anchor would not resolve, so the claim wa
 checked against `origin/master`). Absence under `fallback` still refutes a
 fabricated symbol, but cannot distinguish "never existed" from "existed then was
 removed", so treat it as strong evidence rather than proof.
+
+## Stale as written
+
+A fifth thing a verdict can carry, and it is not an outcome: **drift**. The claim
+is `grounded` — true about its own PR — and names something the current tree no
+longer has, with no temporal qualifier. Checking only the anchor certifies it and
+checking only master refutes it; both are wrong. The defect is in how a reader
+will take it, because an agent consuming the memory reads an unqualified path or
+symbol as current.
+
+Reported for `path-exists`, `file-touched`, `symbol`, `symbol-in-file` (its file)
+and `literal-in-file`, in the report's own section and in the `--added-lines`
+gate, and it exits `3` rather than `1`: nothing is disproven.
+
+A finding is settled by time-scoping the entity **anywhere in the draft** — one
+honest mention is enough, since demanding the caveat in every sentence is how a
+correct draft gets churned. Both spellings work:
+
+```yaml
+  - prepareForSave lifecycle hook (removed on master by the #10700 save-workflow rewrite, cccce201e)
+  - webapp/src/ts/app.module.ts (present at this PR's anchor; removed on master by …, #9784)
+```
+
+Read the finding before acting on it: "absent from `origin/master`" has three
+causes and only two are drift.
+
+- **The path moved.** #10823 pulled `api/src/services/{authorization,replication,
+  bulk-docs,db-doc,purged-docs}.js` into `api/src/services/replication/`, so 14
+  findings across 7 data-sync drafts are one directory reshuffle. Real drift, and
+  the fix is the annotation, not a new path.
+- **It was deleted.** `webapp/src/ts/app.module.ts` (#9784),
+  `analytics-target-aggregates-sidebar-filter.component.html` (#10423).
+- **The anchor is not on master at all.** Check
+  `git merge-base --is-ancestor <anchor> origin/master` first. `10390`'s seven
+  `target-interval.*` findings all anchor at `60ca9634fc`, which no remote branch
+  contains — the work never landed, which is a *provenance* problem and a much
+  bigger one than a missing caveat.
 
 ## Attribution: "added" vs "modified"
 

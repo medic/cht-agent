@@ -196,13 +196,41 @@ Then give the squash that carries the work to master, and check merge state via
 `gh api repos/medic/cht-core/pulls/<n> --jq .merged` — git ancestry answers a
 different question and both need saying.
 
+## Stale-as-written findings out of the list regions
+
+`entities:`, `concepts:` and `## Related Files` are lists, so the deterministic
+tier reads **every** bullet — no model, no sampling, and it costs nothing extra on
+a run you are already doing. Two drift defects (`10784`'s `prepareForSave`,
+`9512`'s `app.module.ts`) survived five clean passes because only the LLM
+extractor ever read a YAML list.
+
+Fix one by annotating the bullet, never by deleting the entry:
+
+```yaml
+  - prepareForSave lifecycle hook (removed on master by the #10700 save-workflow rewrite, cccce201e)
+  - webapp/src/ts/app.module.ts (present at this PR's anchor; removed on master by …, #9784)
+```
+
+The annotation only settles **its own** bullet, which is the point — a caveat
+three lines up used to excuse the whole block.
+
+Two things to check before writing the caveat, because "absent from
+`origin/master`" is not always drift:
+
+1. `git merge-base --is-ancestor <anchor> origin/master`. If the anchor is not on
+   master, the finding is provenance, not tense — see *Epic-branch drafts*. On the
+   landed corpus, 8 of 29 stale-as-written findings were this.
+2. Look for the same basename elsewhere in the tree. Most of the rest are one
+   directory reshuffle (#10823 moved five `api/src/services/*.js` into
+   `api/src/services/replication/`), so the caveat should name where it went.
+
 ## What each tier can and cannot decide
 
 | Tier | Cost | Decides |
 |---|---|---|
 | `validate-schema` | free | shape |
 | `verify-drafts` | free, exhaustive | identity, duplicates, near-miss vocab, leakage, cross-field echoes |
-| `ground-claims` | ~40s/draft, sampled | does this symbol/path/literal/status exist, and did this PR touch it |
+| `ground-claims` | ~40s/draft, sampled over prose, **exhaustive over the list regions** | does this symbol/path/literal/status exist, did this PR touch it, and is it still true today |
 | `ground-claims --added-lines` | seconds, exhaustive over the delta | the same, for every sentence this commit added — no LLM |
 | `check-coherence` | ~40s/draft, sampled | do two sentences in one draft disagree |
 | a human | slow | **is this the right explanation** |
