@@ -175,6 +175,37 @@ describe('check-coherence', () => {
       expect(reports[0].error).to.contain('CLI timeout');
     });
 
+    // A run over the contacts delta reported 0 contradictions while silently
+    // failing to check two drafts, both on a JSON parse error that would not
+    // reproduce on the same bytes. One retry recovers the pass; the draft is
+    // still checked, not assumed coherent.
+    it('retries once and keeps the pass when the first call is malformed', async () => {
+      const dir = tmpCorpus({ '10198.md': BODY });
+      let calls = 0;
+      const flaky: FindFn = async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('Failed to parse CLI response as JSON');
+        return [{ quoteA: SOLUTION, quoteB: DESIGN, why: 'scaffolding vs ng-if' }];
+      };
+      const { reports, total } = await checkCoherence({
+        dir, findFn: flaky, outDir: path.join(dir, '..', 'out'),
+      });
+      expect(calls).to.equal(2);
+      expect(total).to.equal(1);
+      expect(reports[0].error).to.equal(undefined);
+    });
+
+    it('gives up after the second failure rather than retrying forever', async () => {
+      // Two failures mean the model cannot answer on this draft. Burying that
+      // under retries is how "not a clean pass" stops meaning anything.
+      const dir = tmpCorpus({ '10198.md': BODY });
+      let calls = 0;
+      const dead: FindFn = async () => { calls += 1; throw new Error('CLI timeout'); };
+      const { reports } = await checkCoherence({ dir, findFn: dead, outDir: path.join(dir, '..', 'out') });
+      expect(calls).to.equal(2);
+      expect(reports[0].error).to.contain('CLI timeout');
+    });
+
     it('writes both report artefacts', async () => {
       const dir = tmpCorpus({ '10198.md': BODY });
       const outDir = path.join(dir, '..', 'written');

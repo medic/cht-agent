@@ -239,15 +239,34 @@ export interface CoherenceOptions {
   concurrency?: number;
 }
 
+/**
+ * One retry before giving up on a draft.
+ *
+ * The failure this exists for is a malformed response, not a wrong answer: a run
+ * over the contacts delta reported 0 contradictions while silently not checking
+ * two drafts, both lost to a JSON parse error that did not reproduce in three
+ * attempts on the same bytes. The report is honest about it — the pass is marked
+ * NOT CLEAN and does not count — but a whole pass thrown away by one intermittent
+ * parse failure is expensive, and every retried pass is a pass whose result is
+ * decided by the model rather than by the draft.
+ *
+ * Deliberately one attempt, not three: a draft that fails twice is a draft the
+ * model genuinely cannot answer on, and burying that under retries is how the
+ * "not a clean pass" signal stops meaning anything.
+ */
 async function checkOne(draft: DraftInput, find: FindFn): Promise<CoherenceReport> {
-  try {
-    const found = await find(draft);
-    const { kept, discarded } = verifyContradictions(draft, found);
-    return { file: draft.file, contradictions: kept, discarded };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { file: draft.file, contradictions: [], discarded: 0, error: `coherence check failed: ${message}` };
+  let last = '';
+  for (const attempt of [1, 2]) {
+    try {
+      const found = await find(draft);
+      const { kept, discarded } = verifyContradictions(draft, found);
+      return { file: draft.file, contradictions: kept, discarded };
+    } catch (err) {
+      last = err instanceof Error ? err.message : String(err);
+      if (attempt === 1) console.error(`[coherence] ${draft.file}: ${last} — retrying once`);
+    }
   }
+  return { file: draft.file, contradictions: [], discarded: 0, error: `coherence check failed: ${last}` };
 }
 
 /** Bounded-concurrency map preserving input order. */

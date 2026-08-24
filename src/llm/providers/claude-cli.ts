@@ -389,8 +389,12 @@ IMPORTANT: Respond with valid JSON only. Do not include any text before or after
     try {
       return JSON.parse(jsonStr) as T;
     } catch (error) {
-      const snippet = jsonStr.substring(0, 500);
-      console.error(`[Claude CLI] JSON parse error. First 500 chars: ${snippet}...`);
+      // Head alone cannot tell a truncated response from a mis-escaped one, and
+      // that is the whole diagnosis: truncation is fixed by asking for less,
+      // bad escaping by repairing the string. Length and tail say which.
+      console.error(`[Claude CLI] JSON parse error (${jsonStr.length} chars): ${error}`);
+      console.error(`[Claude CLI]   head: ${jsonStr.substring(0, 300)}`);
+      console.error(`[Claude CLI]   tail: ${jsonStr.substring(Math.max(0, jsonStr.length - 300))}`);
       throw new Error(`Failed to parse CLI response as JSON: ${error}`);
     }
   };
