@@ -7,7 +7,7 @@ issueNumber: 9238
 issueUrl: https://github.com/medic/cht-core/issues/9238
 title: Add Person.v1.getAll AsyncGenerator to cht-datasource for paginated iteration over all people
 lastUpdated: '2026-08-20'
-summary: cht-datasource could only fetch a single page of people at a time — `getPage` took a numeric `skip`, so callers tracked offsets by hand. This adds Person.v1.getAll(ctx)(qualifier), returning an AsyncGenerator that yields individual person docs one at a time — fetching a page at a time internally and following the cursor — across both local and remote data contexts.
+summary: cht-datasource could only fetch a single page of people at a time — `getPage` took a numeric `skip`, so callers tracked offsets by hand. This adds Person.v1.getAll(ctx)(qualifier), returning an AsyncGenerator that yields individual person docs one at a time — fetching a page at a time internally and following the cursor. It works over both local and remote data contexts without being implemented in either — the generator binds the facade's own cursor-paginated getPage, and that is what dispatches (adapt at person.ts:95).
 services:
   - api
   - webapp
