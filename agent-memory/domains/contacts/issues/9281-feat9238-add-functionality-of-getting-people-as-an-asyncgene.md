@@ -97,7 +97,7 @@ Added Person.v1.getAll(ctx)(qualifier), returning `AsyncGenerator<Person, void>`
 
 ## Code Patterns
 
-AsyncGenerator-based pagination: a generic helper `getDocumentStream` in shared-libs/cht-datasource/src/libs/data-context.ts wraps a page-fetching function plus its argument into an `async function*` that fetches a page, re-yields its documents individually (`for (const doc of docs.data) { yield doc }`), then follows the cursor until the page reports the end of iteration — which at this commit means the sentinel string `cursor === '-1'`, see the banner; reusable for other entity types. Consumed as a flat loop over documents — `for await (const person of Person.v1.getAll(ctx)(Qualifier.byContactType('person'))) { ... }` — with no page-handling in the caller.
+AsyncGenerator-based pagination: a generic helper `getDocumentStream` in shared-libs/cht-datasource/src/libs/data-context.ts wraps a page-fetching function plus its argument into an `async function*` that fetches a page, re-yields its documents individually (`for (const doc of docs.data)` then `yield doc;`), then follows the cursor in a `do … while (hasMoreResults())` loop. At this commit the test is written `const hasMoreResults = () => cursor !== '-1';` — iteration continues while the cursor is not that sentinel, so it ends when the page hands back `'-1'`; see the banner, master never saw this sentinel for people; reusable for other entity types. Consumed as a flat loop over documents — `for await (const person of Person.v1.getAll(ctx)(Qualifier.byContactType('person'))) { ... }` — with no page-handling in the caller.
 
 ## Design Choices
 
