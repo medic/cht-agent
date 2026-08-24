@@ -1271,6 +1271,11 @@ const TIME_SCOPED = new RegExp([
   // enketo.service.ts on master" has been warned; flagging it as stale would
   // demand the caveat twice in one sentence.
   'not (?:yet )?(?:on|in) `?master', 'none of (?:this|it) is', 'epic branch(?:es)? only',
+  // The three forms a runbook-shaped drift banner actually uses. Without them a
+  // banner that states outright the name is epic-only still reads as unscoped:
+  // "renamed before landing", "appears nowhere in origin/master's history",
+  // "treat the helper names below as anchor-only".
+  'renamed before landing', 'appears nowhere in', 'never reached', 'anchor[- ]only',
   // NOT '(added)' or '(modified)': those annotate what the PR did to a file,
   // which says nothing about whether the path still exists today. Treating them
   // as time-scoping let a draft mark a path "(added)" in Related Files and then
@@ -1284,12 +1289,36 @@ const TIME_SCOPED = new RegExp([
  * the same caveat in every sentence, so one honest mention settles the entity.
  */
 export function entityIsTimeScoped(text: string, entity: string): boolean {
-  return text.split('\n').some(line => line.includes(entity) && TIME_SCOPED.test(line));
+  return scopingUnits(text).some(unit => unit.includes(entity) && TIME_SCOPED.test(unit));
 }
-// Gap: this matches the literal path only. A draft that qualifies "the webapp
-// service" in prose and names the dead path elsewhere still flags, and one
-// qualifying the path once can then discuss it loosely anywhere. Deliberate —
-// erring toward flagging is cheap, and a prose alias is not machine-resolvable.
+
+/**
+ * The blank-line-bounded blocks a marker can scope, with blockquote `>` markers
+ * stripped and whitespace flattened.
+ *
+ * The unit has to be the block, not the line. A drift banner is a wrapped
+ * blockquote: 10057 carries `byPlaceQualifier` on one line and "no longer exist
+ * anywhere in the tree" on the next, and 10173's banner names five epic-only
+ * helpers across four lines with one "appears nowhere in" between them. Judged
+ * per line, every banner of that shape reports the very symbols it was written
+ * to scope — and the repair is to reword prose that was already honest, which is
+ * how a checker teaches a drafter to write worse drafts.
+ *
+ * Wider than a line means a marker can reach a second entity in the same
+ * paragraph that nobody scoped deliberately. That is the intended trade: this is
+ * the same "a reader warned once is warned" rule the per-draft lookup already
+ * applies, just at a unit that matches how the notes are actually written.
+ */
+function scopingUnits(text: string): string[] {
+  return text
+    .split(/\n\s*\n/)
+    .map(block => block.split('\n').map(l => l.replace(/^\s*>\s?/, '')).join(' ').replace(/\s+/g, ' '));
+}
+// Gap: this matches the literal entity string only. A draft that qualifies "the
+// webapp service" in prose and names the dead path elsewhere still flags.
+// Deliberate — a prose alias is not machine-resolvable. A second gap comes with
+// the block window: an entity whose own name is split across a line break is not
+// found, since flattening leaves a space inside it.
 
 /**
  * A clause that attributes the entity to a numbered PR in the past tense —
