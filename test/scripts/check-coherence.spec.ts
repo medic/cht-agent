@@ -282,7 +282,27 @@ describe('whyWithdrawsPair — the phrasings that slipped through', () => {
     expect(whyWithdrawsPair('The two statements are compatible; both describe the epic squash.')).to.equal(true);
   });
 
+  // contacts 9266, coherence pass 3 of the final gate: the most explicit
+  // withdrawal the model has produced, and `\bwithdraw\b` could not match it —
+  // the trailing "n" leaves no word boundary.
+  ['Both cannot be true only if the file counts conflict, and they do not — this pair is withdrawn.',
+    'Withdrawing this pair; both describe the same rename.',
+    'The model withdraws it: eight spec files either way.',
+  ].forEach(why => {
+    it(`withdraws on an inflected verdict: "${why.slice(0, 44)}…"`, () => {
+      expect(whyWithdrawsPair(why)).to.equal(true);
+    });
+  });
+
   it('still keeps a genuine contradiction', () => {
     expect(whyWithdrawsPair('Problem says the read hangs while Root Cause says the write does.')).to.equal(false);
+  });
+
+  it('does not withdraw on a noun that merely starts the same', () => {
+    // The inflection list stops at verb forms, so "withdrawal" — a claim about
+    // the code rather than a verdict on the pair — leaves a real contradiction
+    // standing. Pinned because widening to `withdraw\w*` would silently eat it.
+    expect(whyWithdrawsPair('Solution describes a withdrawal of the flag; Problem says it stayed.'))
+      .to.equal(false);
   });
 });
