@@ -35,11 +35,11 @@ PR #9563 added a `validateParentForCreateForm()` method to `ContactsEditComponen
 
 (As of #9563. Master has since replaced the PouchDB fetch with `getContactFromDatasource(Qualifier.byUuid(...))` and split the two branches into `ensureValidTopLevelType()` / `ensureValidChildType()`.)
 
-Person types are not special-cased; they are resolved through the same `contactTypesService.getChildren(parentTypeId)` lookup as places.
+Person types are not special-cased; they are resolved through the same `contactTypesService.getChildren(parent?)` lookup as places.
 
 ## Code Patterns
 
-- Hierarchy validation uses `contactTypesService.getChildren(parentTypeId?)` which returns valid child types for a given parent type
+- Hierarchy validation uses `contactTypesService.getChildren(parent?)`, which returns valid child types for a given parent type. Despite the parameter name, callers pass a contact-*type id* (`getTypeId(parent)`), not the parent document; the service forwards it to `contactTypesUtils.getChildren(config, parent)`
 - Type resolution from a contact document uses `contactTypesService.getTypeId(doc)` which handles both legacy and new-style contact type fields
 - Validation runs before form rendering — if invalid, `contentError = true` prevents any user interaction
 - File: `webapp/src/ts/modules/contacts/contacts-edit.component.ts` — `validateParentForCreateForm()` method

@@ -48,6 +48,17 @@ related_issues: []
 stale: false
 ---
 
+> **Renamed before landing (`stale-as-written`, verified 2026-08-20).** The helper names this
+> draft quotes from `src/local/libs/core.ts` are the epic's, not master's. `checkFieldWithLineage`
+> appears nowhere in `origin/master`'s history — neither added nor removed — and the same is true
+> of `ensureImmutability` (its only caller), `ensureHasRequiredFields`, `addParentToInput` and
+> `dehydrateDoc`; only `isSameLineage` survives on master. The *feature* did land: master has
+> `Place.v1.update` in `src/place.ts` with the usual `adapt(context, Local…, Remote…)` split. What
+> changed is the immutability machinery — master's nearest equivalent, `assertFieldsUnchanged`,
+> compares the named fields by identity and has no lineage-aware branch at all, so the
+> `parent`/`contact` special-casing that `checkFieldWithLineage` implemented is not a rename of
+> it. Treat the helper names below as anchor-only.
+
 ## Problem
 
 The cht-datasource library exposed ways to get and create places, and could already update a place through the local (direct-DB) implementation, but lacked a remote (HTTP-based) implementation for updating a place. Consumers operating against the API over HTTP (rather than with direct database access) had no datasource method to update a place document, and there was no API endpoint to back such an operation.
@@ -58,7 +69,7 @@ Feature gap rather than a defect: the update-place operation had not yet been im
 
 ## Solution
 
-Added a remote implementation for updating a place in shared-libs/cht-datasource/src/remote/place.ts that issues an HTTP request to the API, wired the corresponding update declaration into the place datasource module (src/place.ts), and surfaced it through src/index.ts. On the server side, added an update-place handler in api/src/controllers/place.js and registered the route in api/src/routing.js. src/local/libs/core.ts only widens `checkFieldWithLineage` to an export. src/local/place.ts (which already had `v1.update` from an earlier PR in the #9835 epic) additionally gains two new local update rules: rejecting a `parent` added to a top-of-hierarchy place, and appending the contact's `_id`/lineage when the original doc has no contact.
+Added a remote implementation for updating a place in shared-libs/cht-datasource/src/remote/place.ts that issues an HTTP request to the API, wired the corresponding update declaration into the place datasource module (src/place.ts), and surfaced it through src/index.ts. On the server side, added an update-place handler in api/src/controllers/place.js and registered the route in api/src/routing.js. src/local/libs/core.ts only widens `checkFieldWithLineage` to an export — a name that exists only inside the epic, see the banner. src/local/place.ts (which already had `v1.update` from an earlier PR in the #9835 epic) additionally gains two new local update rules: rejecting a `parent` added to a top-of-hierarchy place, and appending the contact's `_id`/lineage when the original doc has no contact.
 
 ## Code Patterns
 
