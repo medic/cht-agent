@@ -7,7 +7,7 @@ issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
 lastUpdated: '2026-08-24'
-summary: Fixed a validation gap where contacts could be created under any parent by manipulating the URL, bypassing the configured hierarchy. Added parent type validation in the ContactsEditComponent.
+summary: Fixed a validation gap where the webapp's own create form let a contact be created under any parent by manipulating the URL, bypassing the configured hierarchy — that form saves through Enketo and PouchDB, so the one server-side parent-type check that existed (`validatePlace`, on the places API) never ran; see the note below. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp
 techStack:
