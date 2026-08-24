@@ -1292,6 +1292,66 @@ export function entityIsTimeScoped(text: string, entity: string): boolean {
 // erring toward flagging is cheap, and a prose alias is not machine-resolvable.
 
 /**
+ * A clause that attributes the entity to a numbered PR in the past tense —
+ * "`#10022` added `byReportQualifier`/`isReportQualifier` and generalized
+ * `hasFields`". Drift asks whether prose reads as a claim about the current
+ * tree; a sentence whose subject is a PR and whose verb is past is a claim about
+ * history, and cannot be read any other way. Flagging it demands "…which no
+ * longer exists" appended to every historical note, which is how a runbook
+ * teaches drafters to hedge sentences that were already honest.
+ *
+ * Narrow on purpose: the number and the verb must both be present. "added
+ * `byReportQualifier`" alone still flags — plenty of true-at-the-anchor prose is
+ * past tense without ever saying the change is not current.
+ */
+const PR_ATTRIBUTED = new RegExp(
+  '#\\d{3,6}`?\\s+(?:\\S+\\s+){0,3}?' +
+  '(?:added|introduced|created|generalized|generalised|renamed|removed|deleted|landed|shipped|split)\\b',
+  'i'
+);
+
+/**
+ * Does every mention of `entity` sit in a bare manifest entry — a `## Related
+ * Files` bullet or a frontmatter `entities:` item — and nowhere in prose?
+ *
+ * Those two sections record the diff of the draft's own PR. Naming a since-
+ * deleted file there is not stale, it is the history the section exists to keep;
+ * time-scoping it would mean annotating a file list with the fate of every path.
+ * The moment the same path appears in a sentence, this returns false and drift
+ * reports it — which is the discrimination that matters: 9090 named
+ * `src/libs/contact.ts` in Related Files *and* recommended it in Code Patterns,
+ * and only the second is a defect.
+ */
+export function entityOnlyInManifest(text: string, entity: string): boolean {
+  const lines = text.split('\n');
+  let heading = '';
+  let inFrontmatter = false;
+  let frontmatterKey = '';
+  let seen = false;
+  for (const [i, line] of lines.entries()) {
+    if (/^---\s*$/.test(line)) {
+      inFrontmatter = i === 0 ? true : !inFrontmatter;
+      continue;
+    }
+    if (inFrontmatter) {
+      const key = /^([A-Za-z_]+):/.exec(line);
+      if (key) frontmatterKey = key[1];
+    } else if (line.startsWith('## ')) {
+      heading = line.slice(3).trim();
+    }
+    if (!line.includes(entity)) continue;
+    seen = true;
+    const bullet = /^\s*-\s+`?([^`]+)`?\s*$/.exec(line);
+    const bare = bullet !== null && bullet[1].trim() === entity;
+    const manifest = inFrontmatter
+      ? frontmatterKey === 'entities'
+      : /^(?:related files|entities|files(?: changed| touched)?)$/i.test(heading);
+    if (!bare || !manifest) return false;
+  }
+  return seen;
+}
+
+/**
  * Wording that scopes a claim FORWARD — to the current tree rather than to the
  * draft's own commit. "X was replaced by Y in #11050" asserts that Y exists
  * *now*, so probing Y at the anchor, where it does not yet exist, refutes a true
@@ -1378,6 +1438,8 @@ export function driftFor(
   // yet kept being flagged because the quoted line was a different mention.
   // A reader warned once is warned.
   if (draft ? entityIsTimeScoped(draft, entity.value) : TIME_SCOPED.test(claim.quote)) return undefined;
+  if (PR_ATTRIBUTED.test(claim.quote)) return undefined;
+  if (draft && entityOnlyInManifest(draft, entity.value)) return undefined;
   if (!commitExists(ctx, currentRef)) return undefined;
 
   if (entity.kind === 'path') {
