@@ -1186,6 +1186,18 @@ const TREE_SCOPED = new Set<Claim['kind']>([
 ]);
 
 /** Paths belonging to the agent-memory repo itself; cht-core has no such tree. */
+/**
+ * A symbol name that is a stand-in rather than an identifier. 10057 says the PR
+ * "follows the established qualifier convention … (typed qualifier +
+ * isXxxQualifier-style validation/type guard)"; extraction sometimes reads
+ * `isXxxQualifier` as a symbol, and grepping for it correctly finds nothing.
+ * The sentence is true and names no real symbol, so there is nothing to check.
+ *
+ * Keyed on a camel-case placeholder segment — lowercase before, uppercase or end
+ * after — so `isXxxQualifier` matches and `Barcode`, `Foobar`, `Barrier` do not.
+ */
+const PLACEHOLDER_SYMBOL = /[a-z](?:Xxx|XXX|Yyy|Zzz|Foo|Bar|Baz)(?:[A-Z]|$)/;
+
 const MEMORY_REPO_PATH = /^agent-memory\//;
 
 /** Repo an `introduced-by` claim is resolved against when no anchor supplies one. */
@@ -1276,6 +1288,10 @@ const TIME_SCOPED = new RegExp([
   // "renamed before landing", "appears nowhere in origin/master's history",
   // "treat the helper names below as anchor-only".
   'renamed before landing', 'appears nowhere in', 'never reached', 'anchor[- ]only',
+  // 9281's Code Patterns paragraph pins its snippet with "which at this commit
+  // means …, see the banner" and then carries a banner-only symbol. Both are
+  // explicit pointers at a scope; neither was in the list.
+  'at this commit', 'see the banner',
   // NOT '(added)' or '(modified)': those annotate what the PR did to a file,
   // which says nothing about whether the path still exists today. Treating them
   // as time-scoping let a draft mark a path "(added)" in Related Files and then
@@ -1539,6 +1555,11 @@ export function checkClaim(
   // adjudicating it there reports a file that plainly exists as fabricated.
   // Not our tree to settle: `unverifiable`, never `ungrounded`.
   const claimFile = 'file' in claim ? claim.file : undefined;
+  if (claim.kind === 'symbol' && PLACEHOLDER_SYMBOL.test(claim.symbol)) {
+    return verdict(claim, 'unverifiable',
+      `${claim.symbol} is a placeholder standing for a naming convention, not an identifier`);
+  }
+
   if (claimFile && MEMORY_REPO_PATH.test(claimFile)) {
     return verdict(claim, 'unverifiable',
       `${claimFile} is a path in the agent-memory repo, not cht-core — out of this probe's tree`);

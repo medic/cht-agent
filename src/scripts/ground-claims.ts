@@ -797,11 +797,20 @@ export function renderReport(reports: DraftReport[], meta: ReportMeta): string {
 
   const unverifiable = reports.filter(r => r.counts.unverifiable > 0);
   if (unverifiable.length) {
-    lines.push('## Partially unverifiable (anchor unresolved)', '');
+    // Each unverifiable claim carries its own reason, and they are not the same
+    // kind of problem: an unresolved anchor is fixed by fetching, an out-of-tree
+    // path or a placeholder never will be, and a multi-line literal quoted as
+    // one line is a limit of the probe. The old blanket line said "fetch
+    // cht-core and re-run" for all of them — so a reader fetches the epic's pull
+    // ref, nothing changes, and the advice has cost them a verification step.
+    lines.push('## Unverifiable — no verdict either way (reason per claim)', '');
     for (const r of unverifiable) {
-      lines.push(`- \`${r.file}\` — ${r.counts.unverifiable} claim(s) need the anchor commit; fetch cht-core and re-run`);
+      lines.push(`### \`${r.file}\``);
+      for (const v of r.verdicts.filter(x => x.outcome === 'unverifiable')) {
+        lines.push(`- **${describeClaim(v.claim)}** — ${v.evidence ?? 'no reason recorded'}`);
+      }
+      lines.push('');
     }
-    lines.push('');
   }
   return lines.join('\n');
 }

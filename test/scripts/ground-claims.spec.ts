@@ -449,3 +449,49 @@ describe('gateAddedLines', () => {
     expect(report).to.contain('✗');
   });
 });
+
+describe('renderReport — the unverifiable section names the actual obstacle', () => {
+  const meta = {
+    chtCorePath: '/x/cht-core', chtCoreSha: 'e'.repeat(40),
+    totals: { grounded: 0, ungrounded: 0, unverifiable: 2, 'anchor-unusable': 0 },
+  };
+
+  // The blanket line used to read "claim(s) need the anchor commit; fetch
+  // cht-core and re-run" for every unverifiable outcome. On contacts/9281 that
+  // sent me to fetch the epic's pull ref; the anchor was already present and the
+  // real obstacle was a three-line loop quoted as one line. Advice that costs a
+  // verification step and changes nothing is worse than no advice.
+  const report: DraftReport = {
+    file: 'agent-memory/domains/contacts/issues/9281.md',
+    contentHash: 'abc123',
+    anchor: { sha: 'b'.repeat(40), subject: 'feat(#9238): getAll', isRevert: false },
+    counts: { grounded: 0, ungrounded: 0, unverifiable: 2, 'anchor-unusable': 0 },
+    verdicts: [
+      {
+        claim: {
+          kind: 'literal-in-file', literal: 'for (const doc of docs.data) { yield doc }',
+          file: 'shared-libs/cht-datasource/src/libs/data-context.ts', quote: 're-yields individually',
+        },
+        outcome: 'unverifiable',
+        evidence: "git grep -nF 'for (const doc of docs.data) { yield doc }' → 0 hits (spans 3 lines in source)",
+        provenance: 'anchor',
+      },
+      {
+        claim: { kind: 'path-exists', file: 'agent-memory/schema.json', quote: 'PR #152 adds it' },
+        outcome: 'unverifiable',
+        evidence: "agent-memory/schema.json is a path in the agent-memory repo, not cht-core — out of this probe's tree",
+        provenance: 'anchor',
+      },
+    ],
+  };
+
+  it('gives each claim its own recorded reason', () => {
+    const md = renderReport([report], meta);
+    expect(md).to.contain('spans 3 lines in source');
+    expect(md).to.contain("out of this probe's tree");
+  });
+
+  it('no longer tells the reader to fetch cht-core for every unverifiable claim', () => {
+    expect(renderReport([report], meta)).to.not.contain('fetch cht-core and re-run');
+  });
+});
