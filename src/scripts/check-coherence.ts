@@ -123,6 +123,7 @@ Do NOT report:
 - Differences of emphasis, detail, abstraction or wording where both statements can be true at once.
 - A summary being shorter or vaguer than the section it summarises.
 - Anything you would need to read the cht-core source to adjudicate. You are only comparing the document against itself.
+- Inferences about what the repository must contain. "The endpoint is new, so its spec file cannot have existed before, so 'every one modified and none added' is wrong" is reasoning about the repo, not about the document — and it was wrong: the controller spec already existed for the other routes on that controller. If deciding the pair needs a fact about which files exist, when something was introduced, or what a commit touched, it is out of scope.
 - Speculation about whether a statement is correct. Only whether two statements conflict.
 
 For each pair, quote BOTH sides EXACTLY as they appear in the document, character for character, so a human can locate them. Do not paraphrase, do not fix typos, do not add ellipses. Quote a complete sentence or clause, not a whole section. If the document is self-consistent, return an empty array — that is the expected answer for most drafts.

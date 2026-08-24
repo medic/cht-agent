@@ -141,6 +141,19 @@ describe('check-coherence', () => {
       expect(p).to.not.match(/which (?:side|one) is correct/i);
     });
 
+    // contacts 9368 raised the same pair in two separate rounds: "eleven spec
+    // files in all, every one modified and none added" against a sentence saying
+    // the endpoint is new. Verified at `09dc81748`: eleven spec files in the
+    // diff, all M, none A — the draft is right and the controller spec already
+    // existed for that controller's other routes. Deciding the pair needs a fact
+    // about the repo, which the prompt already puts out of scope; it now says so
+    // in the terms the model actually reached for.
+    it('rules out pairs that need a fact about the repository', () => {
+      const p = coherencePrompt(draftInput());
+      expect(p).to.contain('Inferences about what the repository must contain');
+      expect(p).to.contain('which files exist');
+    });
+
     it('tells the model an empty answer is expected', () => {
       expect(coherencePrompt(draftInput())).to.contain('empty array');
     });
