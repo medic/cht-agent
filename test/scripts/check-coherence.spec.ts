@@ -113,6 +113,15 @@ describe('check-coherence', () => {
       });
     });
 
+    it('keeps a pair whose rationale is missing entirely', () => {
+      // An absent `why` cannot withdraw the pair, so it must surface.
+      const { kept, discarded } = verifyContradictions(draftInput(), [
+        { quoteA: SOLUTION, quoteB: DESIGN, why: '' },
+      ]);
+      expect(discarded).to.equal(0);
+      expect(kept).to.have.lengthOf(1);
+    });
+
     it('still keeps a real finding whose rationale merely mentions conflict', () => {
       const { kept, discarded } = verifyContradictions(draftInput(), [
         { quoteA: SOLUTION, quoteB: DESIGN, why: 'These conflict: one denies what the other asserts.' },
@@ -187,6 +196,29 @@ describe('check-coherence', () => {
       expect(md).to.contain('L5:');
       expect(md).to.contain('L9:');
       expect(md).to.contain('discarded (quote not found in draft): 1');
+    });
+
+    // A pass that could not check a draft is not a clean pass. Observed on the
+    // contacts branch: one draft's response omitted `why`, zod threw, that draft
+    // was skipped — and the header still read "drafts checked: 11", so the pass
+    // was counted toward convergence. The count now excludes failures and says
+    // outright that the pass does not count.
+    it('does not count a failed draft as checked', () => {
+      const reports: CoherenceReport[] = [
+        { file: 'ok.md', discarded: 0, contradictions: [] },
+        { file: 'broken.md', discarded: 0, contradictions: [], error: 'coherence check failed: bad response' },
+      ];
+      const md = renderCoherence(reports);
+      expect(md).to.contain('drafts checked: 1 of 2');
+      expect(md).to.contain('NOT CHECKED: 1');
+      expect(md).to.contain('not a clean pass');
+      expect(md).to.contain('broken.md');
+    });
+
+    it('keeps the plain count when every draft was checked', () => {
+      const md = renderCoherence([{ file: 'ok.md', discarded: 0, contradictions: [] }]);
+      expect(md).to.contain('drafts checked: 1 of 1');
+      expect(md).to.not.contain('NOT CHECKED');
     });
 
     it('says so plainly when nothing was found', () => {

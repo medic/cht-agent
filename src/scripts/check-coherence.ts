@@ -77,11 +77,21 @@ export interface CoherenceReport {
   error?: string;
 }
 
+/**
+ * `why` is optional here on purpose. It is required of the MODEL by SHAPE below,
+ * but zod is validating a response, not enforcing a contract: when the model
+ * omitted `why` on one pair of one draft, a `.min(1)` threw and the whole
+ * draft's coherence check was lost — a silent hole in a pass that still
+ * reported itself complete. An absent rationale cannot withdraw a pair
+ * (`whyWithdrawsPair('')` is false), so the pair survives as a finding and a
+ * human sees it, which is the safe direction for a checker whose job is to
+ * surface things.
+ */
 const schema = z.object({
   contradictions: z.array(z.object({
     quoteA: z.string().min(1),
     quoteB: z.string().min(1),
-    why: z.string().min(1),
+    why: z.string().optional(),
   })),
 });
 
@@ -212,7 +222,11 @@ export type FindFn = (draft: DraftInput) => Promise<Array<Omit<Contradiction, 'l
 
 function cliFinder(): FindFn {
   const chain = createStructuredCliChain(schema, SHAPE);
-  return async draft => (await chain.invoke(coherencePrompt(draft))).contradictions;
+  return async draft => (await chain.invoke(coherencePrompt(draft))).contradictions
+    // `why` is optional in the response schema (see above) but required on
+    // Contradiction, so an omitted rationale becomes '' here rather than
+    // throwing away the draft's whole check.
+    .map(c => ({ ...c, why: c.why ?? '' }));
 }
 
 export interface CoherenceOptions {
@@ -271,10 +285,14 @@ export async function checkCoherence(opts: CoherenceOptions = {}): Promise<{
 
 export function renderCoherence(reports: CoherenceReport[]): string {
   const withFindings = reports.filter(r => r.contradictions.length > 0);
+  const failed = reports.filter(r => r.error);
   const lines = [
     '# Internal coherence report',
     '',
-    `- drafts checked: ${reports.length}`,
+    `- drafts checked: ${reports.length - failed.length} of ${reports.length}`,
+    ...(failed.length
+      ? [`- **NOT CHECKED: ${failed.length}** — see the bottom of this report; this pass is not a clean pass`]
+      : []),
     `- self-contradicting: ${withFindings.length}`,
     `- discarded (quote not found in draft): ${reports.reduce((n, r) => n + r.discarded, 0)}`,
     '',
@@ -293,7 +311,6 @@ export function renderCoherence(reports: CoherenceReport[]): string {
     }
     lines.push('');
   }
-  const failed = reports.filter(r => r.error);
   if (failed.length) {
     lines.push('## Not checked', '');
     for (const r of failed) lines.push(`- \`${r.file}\` — ${r.error}`);
