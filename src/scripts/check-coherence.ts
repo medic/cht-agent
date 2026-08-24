@@ -185,6 +185,31 @@ export const whyWithdrawsPair = (why: string): boolean =>
  * locate them. This is the guard that makes an LLM finding safe to act on: a
  * fabricated quote is dropped rather than filed as a defect.
  */
+/**
+ * One quote points the reader at the other's section — "…; see the note below",
+ * "…, see the stale-as-written banner".
+ *
+ * A drafter who writes that pointer has already told the reader the two passages
+ * belong together, which is the opposite of a contradiction. Paired with an
+ * empty rationale it is the only cross-draft signal available, and both of the
+ * pairs it discards were verified false by hand: 9266's summary against the
+ * banner it cites, and 9426's summary against the note it cites.
+ */
+const CROSS_REFERENCE = /\bsee (?:the\s+)?(?:\S+\s+){0,3}?(?:note|banner|section)\b|\bsee below\b/i;
+
+/**
+ * A pair the model filed without saying why, where one side cites the other.
+ *
+ * An absent `why` deliberately does NOT withdraw a pair on its own — a checker
+ * whose job is to surface things must fail toward surfacing, and that rule stays.
+ * This is narrower: no stated reason AND an explicit pointer from one quote to
+ * the other's section. If the model gives any rationale at all, the pair is kept
+ * and a human reads it.
+ */
+function pairIsUnexplainedCrossReference(why: string, quoteA: string, quoteB: string): boolean {
+  return why.trim() === '' && (CROSS_REFERENCE.test(quoteA) || CROSS_REFERENCE.test(quoteB));
+}
+
 export function verifyContradictions(
   draft: DraftInput, found: Array<Omit<Contradiction, 'lineA' | 'lineB'>>
 ): { kept: Contradiction[]; discarded: number } {
@@ -215,6 +240,10 @@ export function verifyContradictions(
       continue;
     }
     if (whyWithdrawsPair(c.why)) {  // filed, then withdrawn in the same breath
+      discarded++;
+      continue;
+    }
+    if (pairIsUnexplainedCrossReference(c.why, c.quoteA, c.quoteB)) {
       discarded++;
       continue;
     }

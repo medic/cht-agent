@@ -113,6 +113,35 @@ describe('check-coherence', () => {
       });
     });
 
+    // Both observed on contacts, one gate round apart, both verified false by
+    // hand: 9266's summary against the banner it cites, 9426's summary against
+    // the note it cites. A drafter who writes "see the note below" has said the
+    // two passages belong together — the opposite of a contradiction — and the
+    // model filed each with no rationale at all.
+    ['Fixed a gap where the create form bypassed the hierarchy — see the note below.',
+      'skip was replaced by a cursor before this reached master; see the stale-as-written banner.',
+      'The helper was renamed before landing, see the banner.',
+    ].forEach(quote => {
+      it(`discards an unexplained pair whose quote cites the other section: "${quote.slice(0, 40)}…"`, () => {
+        const raw = [BODY, '', quote, ''].join('\n');
+        const { kept, discarded } = verifyContradictions(draftInput(raw), [
+          { quoteA: quote, quoteB: SOLUTION, why: '' },
+        ]);
+        expect(kept).to.have.lengthOf(0);
+        expect(discarded).to.equal(1);
+      });
+    });
+
+    it('keeps a cited pair once the model actually says why', () => {
+      // The discard needs BOTH halves. Any stated rationale and a human reads it.
+      const quote = 'Fixed a gap where the create form bypassed the hierarchy — see the note below.';
+      const raw = [BODY, '', quote, ''].join('\n');
+      const { kept } = verifyContradictions(draftInput(raw), [
+        { quoteA: quote, quoteB: SOLUTION, why: 'The note says the check ran; the summary says it did not.' },
+      ]);
+      expect(kept).to.have.lengthOf(1);
+    });
+
     it('keeps a pair whose rationale is missing entirely', () => {
       // An absent `why` cannot withdraw the pair, so it must surface.
       const { kept, discarded } = verifyContradictions(draftInput(), [
