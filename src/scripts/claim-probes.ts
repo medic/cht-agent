@@ -1307,7 +1307,7 @@ const FORWARD_SCOPED = new RegExp([
   // drift note naturally reaches for the second ("master's input.ts is
   // types-only") and without it the claim is judged at the anchor, where a
   // master-era symbol correctly does not exist.
-  'current master', 'on master', "master'?s", 'today',
+  'current master', 'on master', "master'?s", 'master[- ]only', 'today',
   'now (?:lives|reads|tests|uses|is|are|called|spelled)',
   // NOT 'moved to': anchor-era prose says "the guard moved to the top of the
   // function", meaning the PR moved it — not that the current tree differs.
@@ -1583,15 +1583,19 @@ export function checkClaim(
  */
   function scopedContext(draft: string, quote: string): string {
     if (!draft) return quote;
-    const needle = quote.trim();
+    const flat = (x: string): string => x.replace(/^>\s?/gm, '').replace(/\s+/g, ' ').trim();
+    const needle = flat(quote);
     if (!needle) return quote;
-    const lines = draft.split('\n');
-    const at = lines.findIndex(l => l.includes(needle));
-    if (at <= 0) return quote;
-    const prev = lines[at - 1].trim();
-    if (!prev || prev === '>') return quote;
-    const strip = (x: string): string => x.replace(/^>\s?/, '');
-    return `${strip(prev)} ${strip(needle)}`;
+    // Paragraphs, not lines. An extracted quote routinely spans two or three
+    // wrapped lines, so a line index never finds it, and the marker can sit
+    // three lines up: 10057's banner puts "on master" on the first line and
+    // `getDocsByIds` on the fourth. A blank line ends the window, so a marker
+    // is never inherited across a paragraph break.
+    for (const para of draft.split(/\n\s*\n/)) {
+      const f = flat(para);
+      if (f.includes(needle)) return f;
+    }
+    return quote;
   }
 
   // The mirror: a claim the draft explicitly scopes to BEFORE the change is
