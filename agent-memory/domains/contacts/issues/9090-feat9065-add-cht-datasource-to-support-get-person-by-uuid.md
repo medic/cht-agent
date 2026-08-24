@@ -119,4 +119,4 @@ Comprehensive unit tests added across the new library (test/person.spec.ts, test
 
 **Fit:** strong
 
-The concrete capability delivered is retrieving a person (a contact) by UUID, and the only entity modeled (Person, via local/remote implementations and an API person controller) is a contact — person/contact lookup is squarely the contacts domain. The PR also lays down a general data-access layer (cht-datasource), but its first and only vertical slice is contact retrieval, so contacts is the most specific functional fit rather than the data-sync data-layer bucket.
+The concrete capability delivered is retrieving a person (a contact) by UUID — with its parent lineage as well, once the #9176 follow-up landed `getWithLineage` — and the only entity modeled (Person, via local/remote implementations and an API person controller) is a contact — person/contact lookup is squarely the contacts domain. The PR also lays down a general data-access layer (cht-datasource), but its first and only vertical slice is contact retrieval, so contacts is the most specific functional fit rather than the data-sync data-layer bucket.

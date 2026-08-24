@@ -77,7 +77,7 @@ Follows the established cht-datasource pattern of pairing a local implementation
 
 ## Design Choices
 
-Reuses the existing datasource local/remote dual-implementation architecture instead of introducing a new access path, so update-place behaves consistently whether invoked with direct DB access or over HTTP. Scoped to the single update operation as part of incrementally building out full CRUD for places in the datasource.
+Reuses the existing datasource local/remote dual-implementation architecture instead of introducing a new access path, so update-place behaves consistently whether invoked with direct DB access or over HTTP. Scoped to the single update operation — its two new local validation rules included, since those are part of that operation rather than additional surface — as part of incrementally building out full CRUD for places in the datasource.
 
 ## Related Files
 

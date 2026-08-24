@@ -53,7 +53,7 @@ stale: false
 
 ## Problem
 
-There was no clean, tested way to retrieve a place-type contact by UUID through the cht-datasource abstraction or a REST API endpoint — only the person equivalents `Person.v1.get` and `Person.v1.getWithLineage` existed (from #9065). Across the codebase, place retrieval relied on ad-hoc PouchDB.get calls, frequently depending on its implicit not-found-throwing behavior without explicit handling or tests.
+There was no clean, tested way to retrieve a place-type contact by UUID through the cht-datasource abstraction or a REST API endpoint — only the person equivalents `Person.v1.get` and `Person.v1.getWithLineage` existed (issue #9065, delivered by PR #9090 — the same work the Related Issues entry below names by its PR number). Across the codebase, place retrieval relied on ad-hoc PouchDB.get calls, frequently depending on its implicit not-found-throwing behavior without explicit handling or tests.
 
 ## Root Cause
 
