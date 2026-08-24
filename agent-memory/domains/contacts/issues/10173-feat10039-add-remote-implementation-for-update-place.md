@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10039
 issueUrl: https://github.com/medic/cht-core/issues/10039
 title: Add remote (HTTP) cht-datasource implementation and API endpoint for updating place contacts
-lastUpdated: '2026-08-20'
+lastUpdated: '2026-08-24'
 summary: The cht-datasource library could get/create places and could already update one through the local (direct-DB) implementation, but had no remote (HTTP) path to update. This PR adds the remote update-place implementation plus the backing API controller and route, completing update-place support across the local and remote datasource implementations. It also tightens the existing local update path with two validation rules — no `parent` added to a top-of-hierarchy place, and the contact's `_id`/lineage appended when the original doc has none.
 services:
   - api
