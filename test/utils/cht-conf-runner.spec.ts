@@ -153,8 +153,20 @@ describe('cht-conf-runner', () => {
       expect(classifyChtConfOutput(output, 0)).to.equal('uploaded');
     });
 
-    it('defaults to uploaded on a clean exit with ambiguous output', () => {
-      expect(classifyChtConfOutput('done', 0)).to.equal('uploaded');
+    it('returns skipped (never uploaded) on a clean exit with no upload or skip line', () => {
+      expect(classifyChtConfOutput('done', 0)).to.equal('skipped');
+    });
+
+    it('returns skipped when a form filter matched nothing (cht-conf warns and exits 0)', () => {
+      const output = 'No matches found for files matching form filter: pregnency.xml';
+
+      expect(classifyChtConfOutput(output, 0)).to.equal('skipped');
+    });
+
+    it('returns skipped when a bucket input file is missing (e.g. upload-branding without branding.json)', () => {
+      const output = 'No configuration file found at path: /mnt/conf/branding.json';
+
+      expect(classifyChtConfOutput(output, 0)).to.equal('skipped');
     });
   });
 
@@ -258,7 +270,7 @@ describe('cht-conf-runner', () => {
       expect(result.exitCode).to.be.null;
     });
 
-    it('folds a spawn failure into startError instead of rejecting', async () => {
+    it('folds a spawn failure into startError instead of rejecting, naming the binary', async () => {
       const proc = makeFakeProc();
       const { runChtConf } = loadRunner(proc);
 
@@ -266,8 +278,19 @@ describe('cht-conf-runner', () => {
       proc.emit('error', new Error('ENOENT'));
 
       const result = await promise;
-      expect(result.startError).to.equal('ENOENT');
+      expect(result.startError).to.equal('ENOENT (bin=cht)');
       expect(result.exitCode).to.be.null;
+    });
+
+    it('names the cwd too when one was set (a bad cwd raises the same ENOENT as a missing binary)', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf } = loadRunner(proc);
+
+      const promise = runChtConf(execOpts({ cwd: '/nope/missing' }));
+      proc.emit('error', new Error('spawn cht ENOENT'));
+
+      const result = await promise;
+      expect(result.startError).to.equal('spawn cht ENOENT (bin=cht, cwd=/nope/missing)');
     });
   });
 
@@ -369,6 +392,43 @@ describe('cht-conf-runner', () => {
 
       const result = await promise;
       expect(result.warnings.join(' ')).to.include('artifact targeting ignored');
+    });
+
+    it('resolves skipped with a warning when the run had nothing to upload (unmatched form filter)', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ artifact: 'pregnency' }));
+      proc.stdout.emit('data', Buffer.from('No matches found for files matching form filter: pregnency.xml\n'));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('skipped');
+      expect(result.warnings.join(' ')).to.include('nothing to upload');
+    });
+
+    it('resolves skipped with a warning when a clean exit produced no upload or skip line', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts());
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('skipped');
+      expect(result.warnings.join(' ')).to.include('no upload or skip line');
+    });
+
+    it('passes the cwd through to the spawned bucket process', async () => {
+      const proc = makeFakeProc();
+      const { runBucket, spawnLog } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ cwd: '/mnt/conf' }));
+      proc.stdout.emit('data', Buffer.from('Form forms/app/pregnancy.xml uploaded'));
+      proc.emit('close', 0);
+
+      await promise;
+      expect(spawnLog[0].opts.cwd).to.equal('/mnt/conf');
     });
   });
 });

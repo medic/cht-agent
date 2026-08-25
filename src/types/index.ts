@@ -804,14 +804,15 @@ export type ConfigUploadAction =
 
 /**
  * Inputs to applyConfig. `configPath` defaults to cht-core's in-repo
- * `config/default`; for cht-conf tickets it points at the mounted deployment
- * config (CHT_CONF_PATH). `actions` narrows which cht-conf uploads run — omit
- * to run the full set (the cht-core default-config flow).
+ * `config/default`, resolved against the handle's chtCorePath; for cht-conf
+ * tickets it points at the mounted deployment config (CHT_CONF_PATH).
+ * `actions` narrows which cht-conf uploads run — omit to run the standard set
+ * (the cht-core default-config flow).
  */
 export interface ApplyConfigOptions {
-  /** Path to the cht-conf project to compile + upload (default: config/default). */
+  /** cht-conf project to compile + upload (default: config/default under the handle's chtCorePath). */
   configPath?: string;
-  /** Which cht-conf upload buckets to run (default: all four). */
+  /** Which cht-conf upload buckets to run (default: the four standard buckets; app-settings-only is opt-in). */
   actions?: ConfigUploadAction[];
   /**
    * Restrict an upload to a single artifact by name (e.g. a form id like
@@ -821,6 +822,10 @@ export interface ApplyConfigOptions {
    * buckets. Omit to upload the whole bucket.
    */
   artifact?: string;
+  /** Override the cht-conf binary (default: `cht`); lets the apply run a deployment-pinned cht-conf. */
+  bin?: string;
+  /** Per-bucket timeout in ms (convert + validate + upload of a full form set can exceed the default). */
+  timeoutMs?: number;
 }
 
 /**
@@ -870,6 +875,8 @@ export interface ChtConfRunOptions {
   configPath: string;
   /** Optional single-form filter (positional arg on the form-upload verbs). */
   artifact?: string;
+  /** Working directory for the spawned process (see ChtConfExecOptions.cwd). */
+  cwd?: string;
   /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
   bin?: string;
   /** Per-bucket timeout in ms before the process is killed and marked failed. */
@@ -974,7 +981,7 @@ export interface EnvironmentHandle {
   url: string;
   auth: { user: string; password: string };
   network: string;
-  /** Working copy backing this env (set when source-built; needed by applyConfig/rebuild) */
+  /** Working copy backing this env (set when source-built); applyConfig resolves its default config/default against it. */
   chtCorePath?: string;
   source: 'mock' | 'docker';
 }

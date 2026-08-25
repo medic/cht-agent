@@ -46,8 +46,11 @@ import {
   SeededDocCounts,
 } from '../utils/test-data';
 
-// Real-path defaults: the human brings CHT up on cht-agent-net; the agent
-// reaches it at the nginx service hostname with the cht-docker-compose.sh creds.
+// Real-path defaults: scripts/test-env-up.sh brings CHT up on cht-agent-net
+// with these same COUCHDB_* creds. https://nginx is self-signed — the cht-conf
+// child gets --accept-self-signed-certs; the agent's own fetch needs
+// NODE_EXTRA_CA_CERTS (NODE_TLS_REJECT_UNAUTHORIZED=0 disables verification for
+// ALL agent traffic, LLM/MCP included — disposable runner containers only).
 const DEFAULT_ENV_URL = 'https://nginx';
 const DEFAULT_NETWORK = 'cht-agent-net';
 const DEFAULT_AUTH = { user: 'medic', password: 'password' };
@@ -88,15 +91,29 @@ const stripTrailingSlashes = (value: string): string => {
   return result;
 };
 
+/** Single-quote a path for the printed human-gate commands (spaces/metachars stay inert when pasted). */
+const shellQuote = (value: string): string => `'${value.split("'").join("'\\''")}'`;
+
+const hasControlChars = (value: string): boolean => [...value].some((ch) => ch.charCodeAt(0) < 0x20);
+
 /** A resolved real-mode target: a credential-free instance URL + its auth. */
 interface RealTarget {
   url: string;
   auth: { user: string; password: string };
 }
 
+type BasicAuth = { user: string; password: string };
+
+/** The COUCHDB_* env seam is gated on COUCHDB_PASSWORD (COUCHDB_USER falls back to the default user). */
+const resolveRealAuth = (options: ProvisionOptions, embeddedAuth: BasicAuth | undefined): BasicAuth => {
+  const envAuth = process.env.COUCHDB_PASSWORD
+    ? { user: process.env.COUCHDB_USER ?? DEFAULT_AUTH.user, password: process.env.COUCHDB_PASSWORD }
+    : undefined;
+  return options.auth ?? embeddedAuth ?? envAuth ?? DEFAULT_AUTH;
+};
+
 /**
- * Resolve the real-mode instance URL + credentials from the options, the
- * CHT_URL / COUCHDB_* env seams, and any credentials embedded in the URL:
+ * Resolve the real-mode instance URL + credentials:
  * - URL fallback: options.url -> CHT_URL (trimmed; blank ignored) -> the
  *   on-network default; canonicalized (no trailing slash).
  * - Embedded basic-auth creds are stripped OUT of the URL (logged everywhere,
@@ -105,20 +122,6 @@ interface RealTarget {
  * - Auth precedence: options.auth -> embedded creds -> COUCHDB_* env (the same
  *   seam scripts/test-env-up.sh uses) -> the default.
  */
-type BasicAuth = { user: string; password: string };
-
-/**
- * Resolve real-mode credentials by precedence: options.auth -> creds embedded in
- * the URL -> the COUCHDB_USER/COUCHDB_PASSWORD env seam -> the default. The env
- * seam is gated on COUCHDB_PASSWORD (COUCHDB_USER falls back to the default user).
- */
-const resolveRealAuth = (options: ProvisionOptions, embeddedAuth: BasicAuth | undefined): BasicAuth => {
-  const envAuth = process.env.COUCHDB_PASSWORD
-    ? { user: process.env.COUCHDB_USER ?? DEFAULT_AUTH.user, password: process.env.COUCHDB_PASSWORD }
-    : undefined;
-  return options.auth ?? embeddedAuth ?? envAuth ?? DEFAULT_AUTH;
-};
-
 const resolveRealTarget = (options: ProvisionOptions): RealTarget => {
   const envUrl = process.env.CHT_URL?.trim() || undefined;
   const resolved = new URL(options.url ?? envUrl ?? DEFAULT_ENV_URL);
@@ -150,6 +153,12 @@ const credentialedUrl = (handle: EnvironmentHandle): string => {
   url.password = encodeURIComponent(handle.auth.password);
   return url.toString();
 };
+
+/** Default config project: cht-core's in-repo config/default, resolved against the handle's working copy. */
+const defaultConfigPath = (handle: EnvironmentHandle): string =>
+  handle.chtCorePath
+    ? `${stripTrailingSlashes(handle.chtCorePath)}/${DEFAULT_CONFIG_PATH}`
+    : DEFAULT_CONFIG_PATH;
 
 /**
  * Aggregate per-bucket results into the ConfigApplyResult envelope. Shared by
@@ -285,6 +294,9 @@ const runSucceeded = (run: ChtConfExecResult): boolean =>
 interface SeededDataRecord {
   dataPath: string;
   docIds: string[];
+  /** The seed's cht-conf binary/timeout, reused by the reset's reseed (no version/timeout skew). */
+  bin?: string;
+  timeoutMs?: number;
 }
 
 /** cht-conf run options shared by the seeding phases (verbs/logLabel added per call). */
@@ -409,6 +421,8 @@ const reseedTrackedDocs = async (
     instanceUrl: credentialedUrl(handle),
     configPath: tracked.dataPath,
     cwd: tracked.dataPath,
+    bin: tracked.bin,
+    timeoutMs: tracked.timeoutMs,
     logLabel: 'couchdb reset: upload-docs',
   });
   if (!runSucceeded(reseed)) {
@@ -423,10 +437,10 @@ const reseedTrackedDocs = async (
 
 /** Print the human-gated restart/full reset instructions (the agent runs no Docker). */
 const printResetGate = (handle: EnvironmentHandle, tier: ResetTier): void => {
-  const target = handle.chtCorePath ?? '<cht-core>';
+  const target = shellQuote(handle.chtCorePath ?? '<cht-core>');
   console.log(`[Test Environment Agent] HUMAN GATE — reset (${tier}); the agent runs no Docker:`);
   if (tier === 'restart') {
-    console.log(`    (in ${target}/local-build) docker compose restart`);
+    console.log(`    scripts/test-env-restart.sh ${target}`);
   } else {
     console.log(`    scripts/test-env-down.sh ${target} && scripts/test-env-up.sh ${target}`);
   }
@@ -450,6 +464,10 @@ export class TestEnvironmentAgent {
     if (!options.chtCorePath && !options.version) {
       throw new Error('provision requires either chtCorePath or version');
     }
+    if (options.chtCorePath && hasControlChars(options.chtCorePath)) {
+      // The path is interpolated into printed human-gate command lines.
+      throw new Error('provision: chtCorePath contains control characters — must be a plain filesystem path');
+    }
 
     const source = options.chtCorePath
       ? `local code (${options.chtCorePath})`
@@ -460,12 +478,9 @@ export class TestEnvironmentAgent {
     console.log(`[Test Environment Agent] Source: ${source}`);
 
     if (!this.useMockDocker) {
-      // Resolve the instance URL + creds from options / CHT_URL / COUCHDB_* /
-      // any URL-embedded creds (see resolveRealTarget for the exact precedence).
       const { url, auth } = resolveRealTarget(options);
 
-      // The agent runs no Docker — the human brings the environment up.
-      const target = options.chtCorePath ?? '<cht-core>';
+      const target = shellQuote(options.chtCorePath ?? '<cht-core>');
       console.log('[Test Environment Agent] HUMAN GATE — bring the env up (agent runs no Docker):');
       console.log(`    scripts/test-env-up.sh ${target}   # build + start on ${network}`);
       console.log(`[Test Environment Agent] Polling ${url}/api/v2/monitoring until healthy...`);
@@ -502,7 +517,7 @@ export class TestEnvironmentAgent {
     options: string | ApplyConfigOptions = {}
   ): Promise<ConfigApplyResult> {
     const opts: ApplyConfigOptions = typeof options === 'string' ? { configPath: options } : options;
-    const configPath = opts.configPath ?? DEFAULT_CONFIG_PATH;
+    const configPath = opts.configPath ?? defaultConfigPath(handle);
     const actions = opts.actions ?? DEFAULT_CONFIG_ACTIONS;
     const artifact = opts.artifact;
 
@@ -510,7 +525,7 @@ export class TestEnvironmentAgent {
     console.log(`[Test Environment Agent] Applying config: ${configPath} (${scope}) -> ${handle.url}`);
 
     if (!this.useMockDocker) {
-      const results = await this.applyConfigReal(handle, configPath, actions, artifact);
+      const results = await this.applyConfigReal(handle, configPath, actions, opts);
       return toApplyResult(configPath, artifact, results);
     }
 
@@ -528,12 +543,24 @@ export class TestEnvironmentAgent {
     handle: EnvironmentHandle,
     configPath: string,
     actions: ConfigUploadAction[],
-    artifact: string | undefined
+    opts: ApplyConfigOptions
   ): Promise<ConfigActionResult[]> {
     const instanceUrl = credentialedUrl(handle);
+    // Keep cht-conf's report files in the config project (as the seeding path does).
+    const cwd = configPath.startsWith('/') ? configPath : undefined;
     const results: ConfigActionResult[] = [];
     for (const action of actions) {
-      results.push(await runBucket({ action, instanceUrl, configPath, artifact }));
+      results.push(
+        await runBucket({
+          action,
+          instanceUrl,
+          configPath,
+          artifact: opts.artifact,
+          cwd,
+          bin: opts.bin,
+          timeoutMs: opts.timeoutMs,
+        })
+      );
     }
     return results;
   }
@@ -632,7 +659,12 @@ export class TestEnvironmentAgent {
     // empty re-seed must not clobber a live one (docs from the earlier seed are
     // still on the instance).
     if (docsOk && seeded.length > 0) {
-      this.seededData.set(handle.url, { dataPath, docIds: seeded.map((doc) => doc.id) });
+      this.seededData.set(handle.url, {
+        dataPath,
+        docIds: seeded.map((doc) => doc.id),
+        bin: options.bin,
+        timeoutMs: options.timeoutMs,
+      });
     }
 
     return {
@@ -660,8 +692,6 @@ export class TestEnvironmentAgent {
       return;
     }
 
-    // The couchdb tier is the one reset the agent performs itself; restart/full
-    // stay human-gated Docker operations.
     if (tier === 'couchdb') {
       await this.resetCouchdbTier(handle);
       return;
@@ -706,7 +736,7 @@ export class TestEnvironmentAgent {
 
     // The reseeded docs are the new tracked state (the dataset may have
     // changed since the wiped set was seeded).
-    this.seededData.set(handle.url, { dataPath: tracked.dataPath, docIds: onDisk.map((doc) => doc.id) });
+    this.seededData.set(handle.url, { ...tracked, docIds: onDisk.map((doc) => doc.id) });
 
     console.log(
       `[Test Environment Agent] couchdb reset complete — ` +
@@ -722,8 +752,7 @@ export class TestEnvironmentAgent {
       // The environment (and every doc in it) is going away with the volumes.
       this.seededData.delete(handle.url);
 
-      // Teardown is `docker compose down -v` — human-gated, the agent runs none.
-      const target = handle.chtCorePath ?? '<cht-core>';
+      const target = shellQuote(handle.chtCorePath ?? '<cht-core>');
       console.log('[Test Environment Agent] HUMAN GATE — teardown (the agent runs no Docker):');
       console.log(`    scripts/test-env-down.sh ${target}   # docker compose down -v`);
       return;

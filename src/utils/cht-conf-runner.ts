@@ -111,8 +111,6 @@ const buildExecArgs = (options: ChtConfExecOptions): string[] => [
  * embedded creds lives only in the argv passed to spawn). Exported for testing.
  */
 export const buildChtConfArgs = (options: ChtConfRunOptions): string[] => {
-  // A single-form filter is a `--`-separated extra arg consumed by the
-  // form verbs (cht-conf's args-form-filter reads environment.extraArgs).
   const formFilter = options.artifact && FORM_BUCKETS.has(options.action) ? [options.artifact] : [];
   return buildExecArgs({
     verbs: CONFIG_ACTION_COMMANDS[options.action],
@@ -129,15 +127,22 @@ export const buildChtConfArgs = (options: ChtConfRunOptions): string[] => {
 // cht-conf src (upload-forms.js, upload-app-settings.js,
 // upload-custom-translations.js, upload-configuration-docs.js).
 const SKIP_LINE = /no changes|not updated|already up to date|nothing to upload/;
-// Positive upload signals that never appear in a skip line. Note the negative
-// lookahead: "not uploaded" / "not updated" must NOT count as an upload.
+// Positive upload signals. The lookbehind binds to `uploaded` only, so it stops
+// "not uploaded"; "not updated" is excluded by SKIP_LINE winning the per-line test.
 const UPLOAD_LINE = /(?<!not )uploaded|upload complete|updated successfully/;
+// cht-conf warns and still exits 0 when a verb had nothing to do at all — an
+// unmatched form filter (args-form-filter.js) or a missing bucket input file
+// (upload-configuration-docs.js). Nothing changed on the instance, so these
+// must not classify as uploaded.
+const NO_WORK_LINE = /no matches found for files matching form filter|no configuration file found at path/;
 
 /**
  * Classify a finished cht-conf run. cht-conf exits 0 for BOTH a real upload and
  * a hash-based skip, so status is parsed from stdout per line: a bucket counts
- * as `uploaded` if ANY artifact actually uploaded; `skipped` if it only emitted
- * skip lines; a non-zero exit (or spawn error) is `failed`. Exported for testing.
+ * as `uploaded` only when ANY artifact verifiably uploaded; every other clean
+ * exit (hash-based skips, no-work warnings, unrecognized output) is `skipped` —
+ * never assume an upload without evidence. A non-zero exit (or spawn error) is
+ * `failed`. Exported for testing.
  */
 export const classifyChtConfOutput = (output: string, exitCode: number | null): ConfigActionStatus => {
   if (exitCode !== 0) {
@@ -145,11 +150,21 @@ export const classifyChtConfOutput = (output: string, exitCode: number | null): 
   }
   const lines = output.toLowerCase().split('\n');
   const uploadedAny = lines.some((line) => !SKIP_LINE.test(line) && UPLOAD_LINE.test(line));
-  if (uploadedAny) {
-    return 'uploaded';
+  return uploadedAny ? 'uploaded' : 'skipped';
+};
+
+/** Explain a skipped bucket that showed no hash-skip evidence (default-deny for silent runs). */
+const noteSkippedWithoutEvidence = (
+  output: string,
+  action: ConfigUploadAction,
+  warnings: string[]
+): void => {
+  const lower = output.toLowerCase();
+  if (NO_WORK_LINE.test(lower)) {
+    warnings.push(`cht-conf ${action} had nothing to upload (unmatched form filter or missing bucket input)`);
+  } else if (!SKIP_LINE.test(lower)) {
+    warnings.push(`cht-conf ${action} produced no upload or skip line — treated as skipped`);
   }
-  const skippedAny = lines.some((line) => SKIP_LINE.test(line));
-  return skippedAny ? 'skipped' : 'uploaded';
 };
 
 /**
@@ -193,7 +208,9 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
     proc.stderr?.on('data', (data) => chunks.push(data.toString()));
 
     proc.on('error', (error) => {
-      finish({ exitCode: null, timedOut: false, startError: error.message });
+      // ENOENT covers both a missing binary and an unreachable cwd — name both.
+      const where = options.cwd === undefined ? `bin=${bin}` : `bin=${bin}, cwd=${options.cwd}`;
+      finish({ exitCode: null, timedOut: false, startError: `${error.message} (${where})` });
     });
 
     proc.on('close', (code) => {
@@ -221,7 +238,11 @@ const deriveBucketStatus = (
     warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
     return 'failed';
   }
-  return classifyChtConfOutput(run.output, run.exitCode);
+  const status = classifyChtConfOutput(run.output, run.exitCode);
+  if (status === 'skipped') {
+    noteSkippedWithoutEvidence(run.output, options.action, warnings);
+  }
+  return status;
 };
 
 /**
@@ -245,6 +266,7 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     configPath: options.configPath,
     extraArgs: formFilter,
     logLabel: `${options.action}: ${verbs.join(' ')}`,
+    cwd: options.cwd,
     bin: options.bin,
     timeoutMs: options.timeoutMs,
   });
