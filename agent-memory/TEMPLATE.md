@@ -10,8 +10,9 @@ Context files are markdown with YAML frontmatter. Save them under `agent-memory/
 ---
 id: cht-core-<issue-number>
 category: bug|feature|improvement
-domain: contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|authentication|configuration|interoperability
+domain: contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|authentication|configuration|interoperability|infrastructure|data-access
 subDomain: <optional, e.g. "enketo", "replication", "purging", "sms-gateway">
+secondaryDomains: <optional list of other CHTDomain values, ranked below domain; must not include domain>
 issueNumber: <cht-core issue number>
 issueUrl: https://github.com/medic/cht-core/issues/<number>
 title: <brief title>
@@ -82,6 +83,7 @@ techStack:
 | `category` | Yes | One of: `bug`, `feature`, `improvement` |
 | `domain` | Yes | Must match a `CHTDomain` value from `src/types/index.ts` |
 | `subDomain` | No | More specific area within the domain |
+| `secondaryDomains` | No | Additional domains the memory also serves, ranked below `domain`; must not include `domain` itself |
 | `issueNumber` | Yes | The cht-core GitHub issue number |
 | `issueUrl` | Yes | Full URL to the issue |
 | `title` | Yes | Short descriptive title |

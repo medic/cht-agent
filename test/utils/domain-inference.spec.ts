@@ -2,6 +2,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { IssueTemplate, CHTDomain } from '../../src/types';
+import { CHT_DOMAINS } from '../../src/constants';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../../src/utils/domain-inference';
 
 const proxyquire = require('proxyquire').noCallThru();
@@ -122,6 +123,20 @@ describe('domain-inference', () => {
       expect(DOMAIN_EXAMPLES).to.match(/data-sync/);
     });
   });
+
+  describe('data-access domain scoping guidance', () => {
+    it('routes work on the cht-datasource library itself to data-access', () => {
+      expect(DOMAIN_EXAMPLES).to.match(/→ Domain: data-access/);
+      expect(DOMAIN_EXAMPLES).to.match(/cht-datasource/i);
+      expect(DOMAIN_PITFALLS).to.match(/cht-datasource library itself/i);
+      expect(DOMAIN_PITFALLS).to.match(/is data-access/);
+    });
+
+    it('keeps library consumption in the consumer functional domain', () => {
+      expect(DOMAIN_EXAMPLES).to.match(/CONSUMES the library/);
+      expect(DOMAIN_EXAMPLES).to.match(/stays in its own functional domain/i);
+    });
+  });
 });
 
 describe('domain-inference (mocked LLM)', () => {
@@ -182,7 +197,9 @@ describe('domain-inference (mocked LLM)', () => {
     const res = await mod.inferDomainAndComponents(makeIssue());
     expect(res.domain).to.equal('messaging');
     expect(res.components).to.deep.equal(['api/sms']);
-    expect(invokeStub.firstCall.args[0]).to.include('infrastructure -'); // 9th domain present
+    for (const d of CHT_DOMAINS) {
+      expect(invokeStub.firstCall.args[0]).to.include(`${d} -`);
+    }
   });
 
   it('stringifies non-string message content before parsing', async () => {

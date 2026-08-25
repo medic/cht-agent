@@ -36,6 +36,7 @@ const DOMAIN_DESCRIPTIONS: Record<CHTDomain, string> = {
   configuration: 'App configuration, settings, translations, admin features',
   interoperability: 'FHIR, OpenHIM, DHIS2, outbound push, external system integration',
   infrastructure: 'CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling — operational lifecycle',
+  'data-access': 'cht-datasource library API surface — entity modules, local/remote implementations, qualifiers, and the api controllers/routes that back the remote path. Use when the work extends the data-access layer itself, not when it merely consumes it',
 };
 
 /** Numbered domain roster injected into the inference prompt, derived from CHT_DOMAINS. */
@@ -111,6 +112,10 @@ Seeds/Examples (Correct Domain Classifications):
 8. "Migrate document ID generation from UUID v4 to v7" / "Add a length limit to Nouveau search index fields"
    → Domain: data-sync (weak fit is fine)
    → Reasoning: In-application code and data-layer/storage-engine internals (ID generation, CouchDB/Nouveau/Lucene index documents, B-tree concerns) are NOT infrastructure even when cross-cutting — keep them in the closest functional domain (here data-sync), not the ops bucket.
+
+9. "Add createReport to the cht-datasource local adapter and export ReportQualifier" / "Create the REST API endpoint and controller for getting people through cht-datasource" / "Convert cht-script-api into the cht-datasource library"
+   → Domain: data-access
+   → Reasoning: Work that extends the cht-datasource library itself — entity modules, qualifiers, local/remote implementations, and the api controllers/routes that back the remote path — is data-access even when the entity is a contact or report. Code that merely CONSUMES the library (a caller migration, a service reading through it) stays in its own functional domain.
 `;
 
 /**
@@ -137,6 +142,7 @@ Pitfalls (Common Misclassifications to Avoid):
 6. Infrastructure is for OPERATIONAL lifecycle only (CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling, runtime-dependency maintenance) — it is NOT a catch-all for cross-cutting code.
    → Don't put CI/build/deploy/upgrade-lifecycle PRs into configuration — those are infrastructure.
    → Don't put in-application code refactors, data-layer/storage-engine internals (UUID/ID generation, CouchDB/Nouveau/Lucene index design docs, B-tree concerns), or library dependency bumps that change app behavior into infrastructure — keep those in the closest functional domain (often data-sync).
+   → Exception: work on the cht-datasource library itself (entity modules, qualifiers, local/remote adapters, and the api controllers/routes backing them) is data-access, not data-sync and not the entity's product domain — data-sync keeps only genuine replication and storage-engine internals.
 `;
 
 // Derived from the single taxonomy source so it can't drift from CHT_DOMAINS.

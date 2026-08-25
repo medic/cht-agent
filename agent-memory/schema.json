@@ -16,7 +16,8 @@
         "data-sync",
         "configuration",
         "interoperability",
-        "infrastructure"
+        "infrastructure",
+        "data-access"
       ],
       "description": "One of the functional domains in CHT"
     },
@@ -71,6 +72,13 @@
           "type": "string",
           "enum": ["strong", "weak"],
           "description": "Whether the chosen domain is a principled match (strong) or a forced least-bad pick (weak)"
+        },
+        "secondaryDomains": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CHTDomain" },
+          "uniqueItems": true,
+          "minItems": 1,
+          "description": "Additional domains this memory is also relevant to, ranked below the primary `domain`. To be human-set on the cht-datasource cluster (annotations pending); not auto-emitted by the distiller. Must not include the primary `domain` itself — draft-07 cannot express that, so validate-schema enforces it. NB retrieval selects candidates by primary-domain directory (see #135), so a secondary domain does not surface a memory until candidate selection reads this field."
         },
         "subDomain": {
           "type": "string",

@@ -17,7 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ValidateFunction, ErrorObject } from 'ajv';
 import matter from 'gray-matter';
-import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
+import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter, crossFieldErrors } from './schema-utils';
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -138,8 +138,9 @@ function validateFile(filePath: string, validate: ValidateFunction): FileResult 
   const data = normalizeFrontmatter(parsed.data as Record<string, unknown>);
   const valid = validate(data) as boolean;
   const errors = valid ? [] : (validate.errors ?? []).map(formatError);
+  errors.push(...crossFieldErrors(data));
 
-  return { file: filePath, passed: valid, skipped: false, errors };
+  return { file: filePath, passed: errors.length === 0, skipped: false, errors };
 }
 
 // ---------------------------------------------------------------------------
