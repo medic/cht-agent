@@ -2,6 +2,7 @@ import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState } from '../types';
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
+import { isUsingCLIProvider } from '../llm';
 
 /**
  * H.4 (v6): per-issueType headings for the HC2 unresolved-issues banner.
@@ -80,10 +81,12 @@ export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: str
 };
 
 export const validateEnvironment = () => {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!isUsingCLIProvider() && !process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');
     console.log('\nPlease create a .env file with your Anthropic API key:');
-    console.log('ANTHROPIC_API_KEY=your_api_key_here\n');
+    console.log('ANTHROPIC_API_KEY=your_api_key_here');
+    console.log('\nOr use Claude Code CLI mode:');
+    console.log('LLM_PROVIDER=claude-cli\n');
     process.exit(1);
   }
 };
