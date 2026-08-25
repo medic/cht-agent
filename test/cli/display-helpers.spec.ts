@@ -205,7 +205,7 @@ describe('validateEnvironment (v9c.1)', () => {
   });
 
   describe('API provider mode (LLM_PROVIDER unset)', () => {
-    beforeEach(() => delete process.env.LLM_PROVIDER);
+    beforeEach(() => { delete process.env.LLM_PROVIDER; });
 
     it('does NOT exit when ANTHROPIC_API_KEY is set', () => {
       process.env.ANTHROPIC_API_KEY = 'sk-test';
@@ -220,6 +220,14 @@ describe('validateEnvironment (v9c.1)', () => {
       expect(cap.getErrors()).to.match(/ANTHROPIC_API_KEY not found/);
       expect(cap.getLog()).to.include('.env file');
       expect(cap.getLog()).to.include('ANTHROPIC_API_KEY=your_api_key_here');
+      expect(cap.getLog()).to.include('LLM_PROVIDER=claude-cli');
+    });
+
+    it('exits when LLM_PROVIDER=anthropic is set explicitly and the key is missing', () => {
+      process.env.LLM_PROVIDER = 'anthropic';
+      delete process.env.ANTHROPIC_API_KEY;
+      validateEnvironment();
+      expect(exitStub.calledOnceWithExactly(1)).to.equal(true);
     });
   });
 
