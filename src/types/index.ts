@@ -845,6 +845,13 @@ export interface ConfigActionResult {
   /** The cht-conf verbs this bucket ran (for evidence/logging). */
   commands: string[];
   warnings: string[];
+  /**
+   * True when cht-conf found nothing to act on (an artifact filter that matched
+   * no file, or a missing bucket input). Distinct from a hash-based skip, which
+   * means the artifact WAS found and was already current. applyConfig uses this
+   * to decide whether an artifact-targeted apply actually happened.
+   */
+  matchedNothing?: boolean;
 }
 
 /**
@@ -972,6 +979,12 @@ export interface ProvisionOptions {
   auth?: { user: string; password: string };
   /** Readiness polling tuning (the human may take minutes to bring the env up). */
   readiness?: ReadinessOptions;
+  /**
+   * Permit a target that is not a recognised disposable test host. This layer
+   * runs cht-conf with `--force` and deletes docs, so provision refuses an
+   * unknown host unless this (or CHT_TEST_ENV_ALLOW_EXTERNAL=1) is set.
+   */
+  allowExternalTarget?: boolean;
 }
 
 /**
@@ -1009,3 +1022,33 @@ export interface TestDataResult {
  * Reset granularity (see Test Environment Layer recommendation, three-tier reset)
  */
 export type ResetTier = 'couchdb' | 'restart' | 'full';
+
+/**
+ * Inputs to reset(). The couchdb tier defaults to whatever the last
+ * prepareTestData tracked for this environment; pass these to drive a reset
+ * from a handle that was reloaded in another process (the agent's tracking is
+ * in-memory and does not survive a restart).
+ */
+export interface ResetOptions {
+  /** Data project to reseed from (default: the tracked one). */
+  dataPath?: string;
+  /** Doc ids to wipe (default: the tracked ones). */
+  docIds?: string[];
+}
+
+/**
+ * Outcome of reset(). Returned for every tier so a caller can assert what
+ * happened instead of scraping logs: a no-op reports zero counts rather than
+ * being indistinguishable from a completed wipe.
+ */
+export interface ResetResult {
+  tier: ResetTier;
+  /** Docs actually tombstoned and acknowledged by CouchDB. */
+  wiped: number;
+  /** Docs re-uploaded from the data project. */
+  reseeded: number;
+  /** `agent` for the couchdb tier; `human-gate` when the tier only printed instructions. */
+  performedBy: 'agent' | 'human-gate';
+  /** Tracked ids refused as protected config docs (never wiped). */
+  protectedSkipped: string[];
+}

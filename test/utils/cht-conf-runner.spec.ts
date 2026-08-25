@@ -394,12 +394,26 @@ describe('cht-conf-runner', () => {
       expect(result.warnings.join(' ')).to.include('artifact targeting ignored');
     });
 
-    it('resolves skipped with a warning when the run had nothing to upload (unmatched form filter)', async () => {
+    it('flags an artifact-targeted miss without judging it (applyConfig weighs the buckets)', async () => {
       const proc = makeFakeProc();
       const { runBucket } = loadRunner(proc);
 
       const promise = runBucket(baseOpts({ artifact: 'pregnency' }));
       proc.stdout.emit('data', Buffer.from('No matches found for files matching form filter: pregnency.xml\n'));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('skipped');
+      expect(result.matchedNothing).to.equal(true);
+      expect(result.warnings.join(' ')).to.include('matched no artifact named "pregnency"');
+    });
+
+    it('keeps a missing bucket input as skipped (cht-core config/default has no branding.json)', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ action: 'resources' }));
+      proc.stdout.emit('data', Buffer.from('No configuration file found at path: /mnt/conf/branding.json\n'));
       proc.emit('close', 0);
 
       const result = await promise;
@@ -417,6 +431,53 @@ describe('cht-conf-runner', () => {
       const result = await promise;
       expect(result.status).to.equal('skipped');
       expect(result.warnings.join(' ')).to.include('no upload or skip line');
+    });
+
+    it('surfaces cht-conf output on a failed bucket (a bare exit code explains nothing)', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts());
+      proc.stderr.emit('data', Buffer.from('ERROR Form pregnancy.xml is invalid: missing instance\n'));
+      proc.emit('close', 1);
+
+      const result = await promise;
+      expect(result.status).to.equal('failed');
+      expect(result.warnings.join(' ')).to.include('missing instance');
+    });
+
+    it('redacts credentials cht-conf echoed into its own output', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf } = loadRunner(proc);
+
+      const promise = runChtConf({
+        verbs: ['upload-docs'],
+        instanceUrl: 'https://medic:password@nginx/',
+        configPath: '/mnt/data',
+      });
+      proc.stdout.emit('data', Buffer.from('INFO Using url https://medic:password@nginx/medic\n'));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.output).to.include('https://***:***@nginx/medic');
+      expect(result.output).to.not.include('password');
+    });
+
+    it('redacts a password containing @ without leaking its tail', async () => {
+      const proc = makeFakeProc();
+      const { runChtConf } = loadRunner(proc);
+
+      const promise = runChtConf({
+        verbs: ['upload-docs'],
+        instanceUrl: 'https://admin:p@ssw0rd@nginx/',
+        configPath: '/mnt/data',
+      });
+      proc.stdout.emit('data', Buffer.from('INFO url https://admin:p@ssw0rd@nginx/medic\n'));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.output).to.include('https://***:***@nginx/medic');
+      expect(result.output).to.not.include('ssw0rd');
     });
 
     it('passes the cwd through to the spawned bucket process', async () => {

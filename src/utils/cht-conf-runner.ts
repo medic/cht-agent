@@ -69,7 +69,7 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 export const resolveChtConfBin = (): string => process.env.CHT_CONF_BIN || 'cht';
 
 /** Buckets whose verbs accept a positional single-form filter. */
-const FORM_BUCKETS = new Set<ConfigUploadAction>(['app-forms', 'contact-forms']);
+export const FORM_BUCKETS = new Set<ConfigUploadAction>(['app-forms', 'contact-forms']);
 
 /**
  * cht-conf executes code from the `--source` project (app-settings build,
@@ -153,19 +153,50 @@ export const classifyChtConfOutput = (output: string, exitCode: number | null): 
   return uploadedAny ? 'uploaded' : 'skipped';
 };
 
-/** Explain a skipped bucket that showed no hash-skip evidence (default-deny for silent runs). */
-const noteSkippedWithoutEvidence = (
-  output: string,
-  action: ConfigUploadAction,
+const OUTPUT_TAIL_LINES = 5;
+
+/** The last few non-empty output lines — cht-conf's own account of what went wrong. */
+const outputTail = (output: string): string[] =>
+  output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(-OUTPUT_TAIL_LINES);
+
+/**
+ * Explain a bucket that produced no upload evidence, and upgrade a targeted miss
+ * to `failed`: if the caller named an artifact and cht-conf matched nothing, the
+ * requested upload did not happen — a failure of intent, not a no-op. A missing
+ * bucket input (cht-core's config/default has no branding.json, for instance)
+ * stays `skipped`.
+ */
+const classifySkippedBucket = (
+  run: ChtConfExecResult,
+  options: ChtConfRunOptions,
   warnings: string[]
-): void => {
-  const lower = output.toLowerCase();
+): { status: ConfigActionStatus; matchedNothing: boolean } => {
+  const lower = run.output.toLowerCase();
   if (NO_WORK_LINE.test(lower)) {
-    warnings.push(`cht-conf ${action} had nothing to upload (unmatched form filter or missing bucket input)`);
-  } else if (!SKIP_LINE.test(lower)) {
-    warnings.push(`cht-conf ${action} produced no upload or skip line — treated as skipped`);
+    const what =
+      options.artifact !== undefined && FORM_BUCKETS.has(options.action)
+        ? `no artifact named "${options.artifact}"`
+        : 'nothing to upload (missing bucket input)';
+    warnings.push(`cht-conf ${options.action} matched ${what}`);
+    return { status: 'skipped', matchedNothing: true };
   }
+  if (!SKIP_LINE.test(lower)) {
+    warnings.push(`cht-conf ${options.action} produced no upload or skip line — treated as skipped`);
+  }
+  return { status: 'skipped', matchedNothing: false };
 };
+
+/**
+ * Strip basic-auth userinfo from any URL in text. cht-conf runs with the
+ * credentialed `--url` under `--verbose` and echoes URLs on some paths, so its
+ * output is redacted at this boundary — no caller (a log line, a trace span, an
+ * error message) can leak the instance password by forwarding it.
+ */
+export const redactUrlCreds = (text: string): string => text.replace(/(\/\/)[^/\s:@]+:[^/\s]*@/g, '$1***:***@');
 
 /**
  * Run one `cht` process for an ordered verb list. Resolves with the raw
@@ -196,7 +227,7 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
       }
       settled = true;
       clearTimeout(timeoutId);
-      resolve({ ...result, output: chunks.join('') });
+      resolve({ ...result, output: redactUrlCreds(chunks.join('')) });
     };
 
     const timeoutId = setTimeout(() => {
@@ -228,21 +259,25 @@ const deriveBucketStatus = (
   run: ChtConfExecResult,
   options: ChtConfRunOptions,
   warnings: string[]
-): ConfigActionStatus => {
+): { status: ConfigActionStatus; matchedNothing: boolean } => {
   if (run.timedOut) {
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     warnings.push(`cht-conf ${options.action} timed out after ${timeoutMs}ms`);
-    return 'failed';
+    return { status: 'failed', matchedNothing: false };
   }
   if (run.startError !== undefined) {
     warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
-    return 'failed';
+    return { status: 'failed', matchedNothing: false };
   }
   const status = classifyChtConfOutput(run.output, run.exitCode);
   if (status === 'skipped') {
-    noteSkippedWithoutEvidence(run.output, options.action, warnings);
+    return classifySkippedBucket(run, options, warnings);
   }
-  return status;
+  if (status === 'failed') {
+    // A non-zero exit otherwise arrives with no explanation at all.
+    warnings.push(...outputTail(run.output).map((line) => `cht-conf: ${line}`));
+  }
+  return { status, matchedNothing: false };
 };
 
 /**
@@ -271,10 +306,12 @@ export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActio
     timeoutMs: options.timeoutMs,
   });
 
+  const { status, matchedNothing } = deriveBucketStatus(run, options, warnings);
   return {
     action: options.action,
-    status: deriveBucketStatus(run, options, warnings),
+    status,
     commands: [...verbs],
     warnings,
+    matchedNothing,
   };
 };

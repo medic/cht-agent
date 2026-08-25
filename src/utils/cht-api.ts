@@ -84,8 +84,15 @@ const request = async (
       ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(hasBody ? { body: options.body } : {}),
+    // Never follow a redirect on an authenticated request: these endpoints do not
+    // redirect in normal operation, and following one would replay the call (and
+    // its body) wherever the target host chose to point.
+    redirect: 'manual',
     signal: AbortSignal.timeout(timeoutMs),
   });
+  if (response.status >= 300 && response.status < 400) {
+    throw new Error(`CHT request failed: ${method} ${path} -> unexpected redirect (HTTP ${response.status})`);
+  }
   if (!response.ok) {
     throw new Error(`CHT request failed: ${method} ${path} -> HTTP ${response.status}`);
   }
@@ -167,7 +174,9 @@ export const fetchDocRevs = async (
 /**
  * Submit docs to POST /medic/_bulk_docs (the couchdb reset submits
  * {_id, _rev, _deleted: true} tombstones). Returns the per-doc outcome rows;
- * callers decide whether an `error` row (e.g. a conflict) is fatal.
+ * callers decide whether an `error` row (e.g. a conflict) is fatal. A 2xx body
+ * that is not an array throws rather than reading as "zero failures" — the
+ * destructive caller must not mistake an unexpected response for a clean wipe.
  */
 export const bulkDocs = async (
   url: string,
@@ -183,5 +192,8 @@ export const bulkDocs = async (
     method: 'POST',
     body: JSON.stringify({ docs }),
   });
-  return Array.isArray(body) ? (body as BulkDocResultRow[]) : [];
+  if (!Array.isArray(body)) {
+    throw new Error('CHT request failed: POST /medic/_bulk_docs returned a non-array body');
+  }
+  return body as BulkDocResultRow[];
 };

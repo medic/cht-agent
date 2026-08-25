@@ -26,6 +26,8 @@ import {
   EnvironmentHandle,
   PrepareTestDataOptions,
   ProvisionOptions,
+  ResetOptions,
+  ResetResult,
   ResetTier,
   RoleConfig,
   TestDataResult,
@@ -33,7 +35,7 @@ import {
 } from '../types';
 import { MOCK_TEST_ENV_DATA, mockConfigActionResult } from './test-environment-agent.mock-data';
 import { waitForReady } from '../utils/cht-readiness';
-import { runBucket, runChtConf } from '../utils/cht-conf-runner';
+import { FORM_BUCKETS, runBucket, runChtConf } from '../utils/cht-conf-runner';
 import { BulkDoc, bulkDocs, DocRevRow, fetchDocRevs, fetchFormRevs, fetchSettings } from '../utils/cht-api';
 import {
   classifySeededDocs,
@@ -104,12 +106,62 @@ interface RealTarget {
 
 type BasicAuth = { user: string; password: string };
 
-/** The COUCHDB_* env seam is gated on COUCHDB_PASSWORD (COUCHDB_USER falls back to the default user). */
-const resolveRealAuth = (options: ProvisionOptions, embeddedAuth: BasicAuth | undefined): BasicAuth => {
+/** Hosts treated as disposable test instances (see assertDisposableTarget). */
+const DISPOSABLE_HOSTS = new Set(['nginx', 'localhost', '127.0.0.1', '[::1]']);
+
+const isDisposableHost = (hostname: string): boolean =>
+  DISPOSABLE_HOSTS.has(hostname) ||
+  hostname.endsWith('.local') ||
+  hostname.endsWith('.localhost') ||
+  // cht-docker-helper (the published-version bring-up) serves the stack here.
+  hostname.endsWith('.local-ip.medicmobile.org');
+
+/**
+ * The COUCHDB_* env seam is gated on COUCHDB_PASSWORD (COUCHDB_USER falls back to
+ * the default user). `isDefault` reports that nobody supplied credentials, so the
+ * guard can refuse to send the built-in medic/password to an unknown host.
+ */
+const resolveRealAuth = (
+  options: ProvisionOptions,
+  embeddedAuth: BasicAuth | undefined
+): { auth: BasicAuth; isDefault: boolean } => {
   const envAuth = process.env.COUCHDB_PASSWORD
     ? { user: process.env.COUCHDB_USER ?? DEFAULT_AUTH.user, password: process.env.COUCHDB_PASSWORD }
     : undefined;
-  return options.auth ?? embeddedAuth ?? envAuth ?? DEFAULT_AUTH;
+  const supplied = options.auth ?? embeddedAuth ?? envAuth;
+  return supplied ? { auth: supplied, isDefault: false } : { auth: DEFAULT_AUTH, isDefault: true };
+};
+
+/**
+ * Refuse to aim the destructive paths at anything but a disposable test instance:
+ * applyConfig runs cht-conf with `--force` and reset('couchdb') deletes docs, so a
+ * stale CHT_URL pointing at staging must fail loudly rather than clobber it.
+ * Override per call with allowExternalTarget, or with CHT_TEST_ENV_ALLOW_EXTERNAL=1.
+ */
+const assertDisposableTarget = (target: URL, options: ProvisionOptions, defaultCreds: boolean): void => {
+  const disposable = isDisposableHost(target.hostname);
+  if (target.protocol !== 'https:' && !(target.protocol === 'http:' && disposable)) {
+    throw new Error(
+      `provision: refusing ${target.protocol}//${target.host} — https is required ` +
+        '(http only for a local disposable instance)'
+    );
+  }
+  if (disposable) {
+    return;
+  }
+  if (options.allowExternalTarget !== true && process.env.CHT_TEST_ENV_ALLOW_EXTERNAL !== '1') {
+    throw new Error(
+      `provision: ${target.host} is not a known disposable test instance, and this layer runs ` +
+        'cht-conf --force and deletes docs. Set allowExternalTarget (or ' +
+        'CHT_TEST_ENV_ALLOW_EXTERNAL=1) if that really is the target.'
+    );
+  }
+  if (defaultCreds) {
+    throw new Error(
+      `provision: refusing the built-in default credentials against ${target.host} — pass auth ` +
+        'explicitly or set COUCHDB_USER/COUCHDB_PASSWORD.'
+    );
+  }
 };
 
 /**
@@ -125,13 +177,17 @@ const resolveRealAuth = (options: ProvisionOptions, embeddedAuth: BasicAuth | un
 const resolveRealTarget = (options: ProvisionOptions): RealTarget => {
   const envUrl = process.env.CHT_URL?.trim() || undefined;
   const resolved = new URL(options.url ?? envUrl ?? DEFAULT_ENV_URL);
-  const embeddedAuth = resolved.username
-    ? { user: decodeUserinfo(resolved.username), password: decodeUserinfo(resolved.password) }
-    : undefined;
+  // Both halves must be present: `https://medic@host` is not a credential, and
+  // treating it as one would slip a blank password past the default-creds guard.
+  const embeddedAuth =
+    resolved.username && resolved.password
+      ? { user: decodeUserinfo(resolved.username), password: decodeUserinfo(resolved.password) }
+      : undefined;
   resolved.username = '';
   resolved.password = '';
-  const url = stripTrailingSlashes(resolved.toString());
-  return { url, auth: resolveRealAuth(options, embeddedAuth) };
+  const { auth, isDefault } = resolveRealAuth(options, embeddedAuth);
+  assertDisposableTarget(resolved, options, isDefault);
+  return { url: stripTrailingSlashes(resolved.toString()), auth };
 };
 
 /** Build the deterministic mock-mode handle (no instance, no Docker). */
@@ -168,13 +224,27 @@ const toApplyResult = (
   configPath: string,
   artifact: string | undefined,
   results: ConfigActionResult[]
-): ConfigApplyResult => ({
-  configPath,
-  ...(artifact ? { artifact } : {}),
-  actions: results,
-  succeeded: results.every((result) => result.status !== 'failed'),
-  warnings: results.flatMap((result) => result.warnings),
-});
+): ConfigApplyResult => {
+  // An artifact filter legitimately matches nothing in the OTHER form bucket
+  // (targeting an app form never matches contact-forms), so a miss only means
+  // the request failed when EVERY form bucket came up empty.
+  const formResults = results.filter((result) => FORM_BUCKETS.has(result.action));
+  const artifactMissed =
+    artifact !== undefined &&
+    formResults.length > 0 &&
+    formResults.every((result) => result.matchedNothing === true);
+  const warnings = results.flatMap((result) => result.warnings);
+  if (artifactMissed) {
+    warnings.push(`no configured form bucket contains an artifact named "${artifact}"`);
+  }
+  return {
+    configPath,
+    ...(artifact ? { artifact } : {}),
+    actions: results,
+    succeeded: results.every((result) => result.status !== 'failed') && !artifactMissed,
+    warnings,
+  };
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -290,10 +360,34 @@ const describeRunFailure = (label: string, run: ChtConfExecResult): string => {
 const runSucceeded = (run: ChtConfExecResult): boolean =>
   run.exitCode === 0 && !run.timedOut && run.startError === undefined;
 
-/** What prepareTestData tracked for a provisioned env, keyed by handle URL. */
+/**
+ * Doc ids the couchdb reset must never delete: deployed configuration and user
+ * accounts. The worklist comes from project-supplied csv-to-docs output (or a
+ * caller-supplied docIds list), so it is filtered rather than trusted — a data
+ * project containing a doc called `settings` must not be able to wipe the
+ * instance's app settings.
+ */
+const PROTECTED_DOC_ID =
+  /^(settings|resources|branding|partners|extension-libs)$|^_design\/|^form:|^org\.couchdb\.user:|^messages-/;
+
+const partitionProtected = (ids: string[]): { safe: string[]; protectedIds: string[] } => {
+  const safe: string[] = [];
+  const protectedIds: string[] = [];
+  for (const id of ids) {
+    (PROTECTED_DOC_ID.test(id) ? protectedIds : safe).push(id);
+  }
+  return { safe, protectedIds };
+};
+
+/** Tracking key — the URL alone collides when parallel envs share the service hostname. */
+const trackingKey = (handle: EnvironmentHandle): string => `${handle.network}|${handle.url}`;
+
+/** What prepareTestData tracked for a provisioned env. */
 interface SeededDataRecord {
   dataPath: string;
   docIds: string[];
+  /** Ids refused as protected config docs (reported by reset, never wiped). */
+  protectedSkipped: string[];
   /** The seed's cht-conf binary/timeout, reused by the reset's reseed (no version/timeout skew). */
   bin?: string;
   timeoutMs?: number;
@@ -389,21 +483,28 @@ const buildTombstones = (rows: DocRevRow[]): BulkDoc[] => {
 
 /**
  * couchdb reset — wipe: delete the tracked docs at their CURRENT revs (sentinel
- * may have bumped them). Throws if any deletion is rejected — a half-reset
- * environment must not pass as clean.
+ * may have bumped them). Returns how many were actually tombstoned. Throws
+ * unless CouchDB acknowledged every submitted deletion with `ok` — a half-reset
+ * environment, or a truncated response, must not pass as clean.
  */
-const wipeTrackedDocs = async (handle: EnvironmentHandle, tracked: SeededDataRecord): Promise<void> => {
-  const rows = await fetchDocRevs(handle.url, handle.auth, tracked.docIds);
+const wipeTrackedDocs = async (handle: EnvironmentHandle, docIds: string[]): Promise<number> => {
+  const rows = await fetchDocRevs(handle.url, handle.auth, docIds);
   const deletions = buildTombstones(rows);
   if (deletions.length === 0) {
-    return;
+    return 0;
   }
   const outcomes = await bulkDocs(handle.url, handle.auth, deletions);
-  const failed = outcomes.filter((row) => row.error);
+  if (outcomes.length !== deletions.length) {
+    throw new Error(
+      `couchdb reset: _bulk_docs acknowledged ${outcomes.length} of ${deletions.length} deletion(s)`
+    );
+  }
+  const failed = outcomes.filter((row) => row.error !== undefined || row.ok !== true);
   if (failed.length > 0) {
     const failedIds = failed.map((row) => row.id ?? 'unknown').slice(0, 5).join(', ');
     throw new Error(`couchdb reset failed to delete ${failed.length} doc(s): ${failedIds}`);
   }
+  return deletions.length;
 };
 
 /**
@@ -415,7 +516,7 @@ const reseedTrackedDocs = async (
   handle: EnvironmentHandle,
   tracked: SeededDataRecord,
   onDisk: SeededDoc[]
-): Promise<void> => {
+): Promise<number> => {
   const reseed = await runChtConf({
     verbs: ['upload-docs'],
     instanceUrl: credentialedUrl(handle),
@@ -428,11 +529,16 @@ const reseedTrackedDocs = async (
   if (!runSucceeded(reseed)) {
     throw new Error(`couchdb reset: reseed failed — ${describeRunFailure('upload-docs', reseed)}`);
   }
+  // upload-docs re-uploads the whole json_docs directory, protected ids included;
+  // only the docs this layer owns count towards a complete reseed (a protected doc
+  // conflicting with deployed config must not fail every future reset).
+  const expected = partitionProtected(onDisk.map((doc) => doc.id)).safe.length;
   const summary = parseUploadDocsSummary(reseed.output);
   const uploadedCount = summary?.uploaded ?? 0;
-  if (uploadedCount < onDisk.length) {
-    throw new Error(`couchdb reset: reseed uploaded only ${uploadedCount} of ${onDisk.length} docs`);
+  if (uploadedCount < expected) {
+    throw new Error(`couchdb reset: reseed uploaded only ${uploadedCount} of ${expected} docs`);
   }
+  return expected;
 };
 
 /** Print the human-gated restart/full reset instructions (the agent runs no Docker). */
@@ -659,9 +765,17 @@ export class TestEnvironmentAgent {
     // empty re-seed must not clobber a live one (docs from the earlier seed are
     // still on the instance).
     if (docsOk && seeded.length > 0) {
-      this.seededData.set(handle.url, {
+      const { safe, protectedIds } = partitionProtected(seeded.map((doc) => doc.id));
+      if (protectedIds.length > 0) {
+        warnings.push(
+          `${protectedIds.length} seeded doc id(s) name deployed config and are excluded from ` +
+            `reset: ${protectedIds.slice(0, 3).join(', ')}`
+        );
+      }
+      this.seededData.set(trackingKey(handle), {
         dataPath,
-        docIds: seeded.map((doc) => doc.id),
+        docIds: safe,
+        protectedSkipped: protectedIds,
         bin: options.bin,
         timeoutMs: options.timeoutMs,
       });
@@ -682,21 +796,64 @@ export class TestEnvironmentAgent {
    * Reset the environment to a known state. See the three-tier reset strategy
    * in the recommendation doc. The couchdb tier is the one reset the agent
    * performs itself (CouchDB HTTP API — no Docker): it wipes the docs the last
-   * prepareTestData seeded and re-uploads pristine copies, leaving the deployed
-   * config untouched. restart/full remain human-gated Docker operations.
+   * prepareTestData seeded and re-uploads pristine copies. Ids that name deployed
+   * configuration or user accounts are refused, so the deployed config survives
+   * whatever the data project contains. restart/full stay human-gated.
    */
-  async reset(handle: EnvironmentHandle, tier: ResetTier): Promise<void> {
+  async reset(
+    handle: EnvironmentHandle,
+    tier: ResetTier,
+    options: ResetOptions = {}
+  ): Promise<ResetResult> {
+    const gated = (performedBy: ResetResult['performedBy']): ResetResult => ({
+      tier,
+      wiped: 0,
+      reseeded: 0,
+      performedBy,
+      protectedSkipped: [],
+    });
+
     if (this.useMockDocker) {
       console.log(`[Test Environment Agent] Reset (${tier}) -> ${handle.url}`);
       console.log('[Test Environment Agent] (mock) reset complete');
-      return;
+      return gated(tier === 'couchdb' ? 'agent' : 'human-gate');
     }
 
     if (tier === 'couchdb') {
-      await this.resetCouchdbTier(handle);
-      return;
+      return this.resetCouchdbTier(handle, options);
     }
     printResetGate(handle, tier);
+    return gated('human-gate');
+  }
+
+  /**
+   * Reset worklist: explicit options win (they let a handle reloaded in another
+   * process drive the reset — the agent's tracking is in-memory), otherwise fall
+   * back to what prepareTestData recorded for this environment.
+   */
+  private resolveResetWorklist(
+    handle: EnvironmentHandle,
+    options: ResetOptions
+  ): SeededDataRecord | undefined {
+    const tracked = this.seededData.get(trackingKey(handle));
+    const dataPath = options.dataPath ?? tracked?.dataPath;
+    const docIds = options.docIds ?? tracked?.docIds ?? [];
+    if (dataPath === undefined) {
+      if (options.docIds !== undefined) {
+        throw new Error('reset: options.docIds also needs options.dataPath (the project to reseed from)');
+      }
+      return undefined;
+    }
+    if (docIds.length === 0) {
+      return undefined;
+    }
+    return {
+      dataPath,
+      docIds,
+      protectedSkipped: tracked?.protectedSkipped ?? [],
+      bin: tracked?.bin,
+      timeoutMs: tracked?.timeoutMs,
+    };
   }
 
   /**
@@ -707,14 +864,14 @@ export class TestEnvironmentAgent {
    * Throws when the wipe or the reseed does not fully apply — a half-reset
    * environment must not pass as clean.
    */
-  private async resetCouchdbTier(handle: EnvironmentHandle): Promise<void> {
-    const tracked = this.seededData.get(handle.url);
-    if (!tracked || tracked.docIds.length === 0) {
+  private async resetCouchdbTier(handle: EnvironmentHandle, options: ResetOptions): Promise<ResetResult> {
+    const tracked = this.resolveResetWorklist(handle, options);
+    if (tracked === undefined) {
       console.log(
         `[Test Environment Agent] couchdb reset: no seeded docs tracked for ${handle.url} — ` +
-          'nothing to wipe (seed with prepareTestData first)'
+          'nothing to wipe (seed with prepareTestData, or pass docIds + dataPath)'
       );
-      return;
+      return { tier: 'couchdb', wiped: 0, reseeded: 0, performedBy: 'agent', protectedSkipped: [] };
     }
 
     // Pre-flight the reseed source BEFORE the destructive wipe: if the data
@@ -728,20 +885,33 @@ export class TestEnvironmentAgent {
       );
     }
 
-    console.log(
-      `[Test Environment Agent] couchdb reset: wiping ${tracked.docIds.length} seeded doc(s) -> ${handle.url}`
-    );
-    await wipeTrackedDocs(handle, tracked);
-    await reseedTrackedDocs(handle, tracked, onDisk);
+    // Defence in depth — tracking already filters, but options.docIds does not.
+    const { safe, protectedIds } = partitionProtected(tracked.docIds);
+    const refused = [...new Set([...tracked.protectedSkipped, ...protectedIds])];
+    if (protectedIds.length > 0) {
+      console.warn(
+        `[Test Environment Agent] couchdb reset: refusing to wipe ${protectedIds.length} protected ` +
+          `config doc(s): ${protectedIds.slice(0, 5).join(', ')}`
+      );
+    }
+
+    console.log(`[Test Environment Agent] couchdb reset: wiping ${safe.length} seeded doc(s) -> ${handle.url}`);
+    const wiped = await wipeTrackedDocs(handle, safe);
+    const reseeded = await reseedTrackedDocs(handle, tracked, onDisk);
 
     // The reseeded docs are the new tracked state (the dataset may have
     // changed since the wiped set was seeded).
-    this.seededData.set(handle.url, { ...tracked, docIds: onDisk.map((doc) => doc.id) });
+    const nextWorklist = partitionProtected(onDisk.map((doc) => doc.id));
+    this.seededData.set(trackingKey(handle), {
+      ...tracked,
+      docIds: nextWorklist.safe,
+      protectedSkipped: nextWorklist.protectedIds,
+    });
 
     console.log(
-      `[Test Environment Agent] couchdb reset complete — ` +
-        `${tracked.docIds.length} doc(s) wiped, ${onDisk.length} reseeded`
+      `[Test Environment Agent] couchdb reset complete — ${wiped} doc(s) wiped, ${reseeded} reseeded`
     );
+    return { tier: 'couchdb', wiped, reseeded, performedBy: 'agent', protectedSkipped: refused };
   }
 
   /**
@@ -750,7 +920,7 @@ export class TestEnvironmentAgent {
   async teardown(handle: EnvironmentHandle): Promise<void> {
     if (!this.useMockDocker) {
       // The environment (and every doc in it) is going away with the volumes.
-      this.seededData.delete(handle.url);
+      this.seededData.delete(trackingKey(handle));
 
       const target = shellQuote(handle.chtCorePath ?? '<cht-core>');
       console.log('[Test Environment Agent] HUMAN GATE — teardown (the agent runs no Docker):');

@@ -188,12 +188,27 @@ describe('cht-api', () => {
       }
     });
 
-    it('normalizes a non-array response body to []', async () => {
+    it('refuses to follow a redirect on an authenticated request', async () => {
+      fetchStub.resolves(jsonResponse({}, 302));
+
+      try {
+        await bulkDocs(URL_BASE, auth, [{ _id: 'doc-1' }]);
+        expect.fail('expected bulkDocs to reject');
+      } catch (error) {
+        expect((error as Error).message).to.include('unexpected redirect');
+      }
+      expect(fetchStub.firstCall.args[1].redirect).to.equal('manual');
+    });
+
+    it('throws on a non-array response body (a wipe must not read as zero failures)', async () => {
       fetchStub.resolves(jsonResponse({ unexpected: true }));
 
-      const outcome = await bulkDocs(URL_BASE, auth, [{ _id: 'doc-1' }]);
-
-      expect(outcome).to.deep.equal([]);
+      try {
+        await bulkDocs(URL_BASE, auth, [{ _id: 'doc-1' }]);
+        expect.fail('expected bulkDocs to reject');
+      } catch (error) {
+        expect((error as Error).message).to.include('non-array body');
+      }
     });
   });
 });
