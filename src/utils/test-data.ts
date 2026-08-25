@@ -6,7 +6,7 @@
  * the way cht-readiness.ts isolates fetch), classifying seeded docs against
  * the discovered config, and parsing cht-conf's stdout (upload-docs summary,
  * create-users progress). cht-conf logs every level to STDOUT with ANSI color
- * prefixes (src/lib/log.js), so the parsers strip escapes first.
+ * prefixes (cht-conf's src/lib/log.js), so the parsers strip escapes first.
  *
  * Verified against the installed cht-conf 6.5.0 src: csv-to-docs.js writes
  * `<project>/json_docs/<id>.doc.json`; upload-docs.js logs

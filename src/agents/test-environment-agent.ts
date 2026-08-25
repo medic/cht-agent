@@ -96,6 +96,15 @@ const stripTrailingSlashes = (value: string): string => {
 /** Single-quote a path for the printed human-gate commands (spaces/metachars stay inert when pasted). */
 const shellQuote = (value: string): string => `'${value.split("'").join("'\\''")}'`;
 
+/**
+ * Argument for a printed gate command: a quoted path, or nothing when we don't
+ * know one — the scripts resolve CHT_CORE_PATH (or their managed checkout)
+ * themselves, so a bare command is runnable while a `'<cht-core>'` placeholder
+ * would not be.
+ */
+const gateArg = (chtCorePath: string | undefined): string =>
+  chtCorePath === undefined ? '' : ` ${shellQuote(chtCorePath)}`;
+
 const hasControlChars = (value: string): boolean => [...value].some((ch) => ch.charCodeAt(0) < 0x20);
 
 /** A resolved real-mode target: a credential-free instance URL + its auth. */
@@ -543,12 +552,12 @@ const reseedTrackedDocs = async (
 
 /** Print the human-gated restart/full reset instructions (the agent runs no Docker). */
 const printResetGate = (handle: EnvironmentHandle, tier: ResetTier): void => {
-  const target = shellQuote(handle.chtCorePath ?? '<cht-core>');
+  const target = gateArg(handle.chtCorePath);
   console.log(`[Test Environment Agent] HUMAN GATE — reset (${tier}); the agent runs no Docker:`);
   if (tier === 'restart') {
-    console.log(`    scripts/test-env-restart.sh ${target}`);
+    console.log(`    scripts/test-env-restart.sh${target}`);
   } else {
-    console.log(`    scripts/test-env-down.sh ${target} && scripts/test-env-up.sh ${target}`);
+    console.log(`    scripts/test-env-down.sh${target} && scripts/test-env-up.sh${target}`);
   }
   console.log('[Test Environment Agent] Re-confirm health with provision()/waitForReady after.');
 };
@@ -586,9 +595,9 @@ export class TestEnvironmentAgent {
     if (!this.useMockDocker) {
       const { url, auth } = resolveRealTarget(options);
 
-      const target = shellQuote(options.chtCorePath ?? '<cht-core>');
+      const target = gateArg(options.chtCorePath);
       console.log('[Test Environment Agent] HUMAN GATE — bring the env up (agent runs no Docker):');
-      console.log(`    scripts/test-env-up.sh ${target}   # build + start on ${network}`);
+      console.log(`    scripts/test-env-up.sh${target}   # build + start on ${network}`);
       console.log(`[Test Environment Agent] Polling ${url}/api/v2/monitoring until healthy...`);
 
       await waitForReady(url, { maxWaitMs: DEFAULT_PROVISION_WAIT_MS, ...options.readiness });
@@ -922,9 +931,9 @@ export class TestEnvironmentAgent {
       // The environment (and every doc in it) is going away with the volumes.
       this.seededData.delete(trackingKey(handle));
 
-      const target = shellQuote(handle.chtCorePath ?? '<cht-core>');
+      const target = gateArg(handle.chtCorePath);
       console.log('[Test Environment Agent] HUMAN GATE — teardown (the agent runs no Docker):');
-      console.log(`    scripts/test-env-down.sh ${target}   # docker compose down -v`);
+      console.log(`    scripts/test-env-down.sh${target}   # docker compose down -v`);
       return;
     }
 

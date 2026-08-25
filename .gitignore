@@ -16,3 +16,6 @@ log
 
 # Research output files
 outputs/
+
+# Managed cht-core checkout (scripts/test-env-up.sh with no path)
+.cht-core/

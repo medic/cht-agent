@@ -28,7 +28,7 @@ export const mockConfigActionResult = (action: ConfigUploadAction): ConfigAction
 
 export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
   url: 'https://nginx',
-  // matches the defaults set by cht-core's scripts/docker-helper/cht-docker-compose.sh
+  // matches the creds scripts/test-env-up.sh brings the stack up with (and the agent's DEFAULT_AUTH)
   auth: { user: 'medic', password: 'password' },
   network: 'cht-agent-net',
   config: {

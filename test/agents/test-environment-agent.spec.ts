@@ -141,6 +141,19 @@ describe('TestEnvironmentAgent', () => {
         expect(lines.some((line) => line.includes("scripts/test-env-up.sh '/workspace/cht-core'"))).to.equal(true);
       });
 
+      it('should print a runnable bring-up gate when no cht-core path is known', async () => {
+        fetchStub.resolves({ ok: true, status: 200 });
+        const logSpy = sinon.spy(console, 'log');
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        await realAgent.provision({ version: '4.18.0' });
+
+        const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+        const gate = lines.find((line) => line.includes('scripts/test-env-up.sh'));
+        expect(gate).to.be.a('string');
+        expect(gate).to.not.include('<cht-core>');
+      });
+
       it('should reject if the environment never becomes ready', async () => {
         fetchStub.resolves({ ok: false, status: 503 });
         const realAgent = new TestEnvironmentAgent({ useMockDocker: false });

@@ -67,7 +67,7 @@ describe('cht-conf-runner', () => {
     it('appends the artifact as a `--`-separated form filter for form buckets', () => {
       const args = buildChtConfArgs(baseOpts({ action: 'app-forms', artifact: 'pregnancy' }));
 
-      // main.js rejects bare positionals as unsupported actions; only
+      // cht-conf's main.js rejects bare positionals as unsupported actions; only
       // `-- <arg>` reaches environment.extraArgs / args-form-filter.
       expect(args.slice(-2)).to.deep.equal(['--', 'pregnancy']);
     });
@@ -278,7 +278,8 @@ describe('cht-conf-runner', () => {
       proc.emit('error', new Error('ENOENT'));
 
       const result = await promise;
-      expect(result.startError).to.equal('ENOENT (bin=cht)');
+      expect(result.startError).to.include('ENOENT (bin=cht)');
+      expect(result.startError).to.include('cht-conf is on PATH');
       expect(result.exitCode).to.be.null;
     });
 
@@ -290,7 +291,7 @@ describe('cht-conf-runner', () => {
       proc.emit('error', new Error('spawn cht ENOENT'));
 
       const result = await promise;
-      expect(result.startError).to.equal('spawn cht ENOENT (bin=cht, cwd=/nope/missing)');
+      expect(result.startError).to.include('spawn cht ENOENT (bin=cht, cwd=/nope/missing)');
     });
   });
 
@@ -444,6 +445,28 @@ describe('cht-conf-runner', () => {
       const result = await promise;
       expect(result.status).to.equal('failed');
       expect(result.warnings.join(' ')).to.include('missing instance');
+    });
+
+    it('prefers the ERROR line over the stack frames that follow it, without ANSI codes', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+      // Shaped like a real cht-conf failure: the reason is buried above the trace.
+      const output = [
+        '\x1b[31mERROR EROFS: read-only file system, unlink \'/cfg/forms/app/death_report.xml\'\x1b[0m',
+        '    at Object.execute (/usr/local/lib/node_modules/cht-conf/src/fn/convert-app-forms.js:18:18)',
+        '    at executeAction (/usr/local/lib/node_modules/cht-conf/src/lib/main.js:262:40)',
+        '    at module.exports (/usr/local/lib/node_modules/cht-conf/src/lib/main.js:194:11)',
+        '    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)',
+        '    at async /usr/local/lib/node_modules/cht-conf/src/bin/index.js:16:5',
+      ].join('\n');
+
+      const promise = runBucket(baseOpts());
+      proc.stderr.emit('data', Buffer.from(output));
+      proc.emit('close', 1);
+
+      const result = await promise;
+      expect(result.warnings).to.have.lengthOf(1);
+      expect(result.warnings[0]).to.equal('cht-conf: ERROR EROFS: read-only file system, unlink \'/cfg/forms/app/death_report.xml\'');
     });
 
     it('redacts credentials cht-conf echoed into its own output', async () => {

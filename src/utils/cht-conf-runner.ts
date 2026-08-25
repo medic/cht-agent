@@ -154,14 +154,25 @@ export const classifyChtConfOutput = (output: string, exitCode: number | null): 
 };
 
 const OUTPUT_TAIL_LINES = 5;
+// cht-conf colours its log lines (test-data.ts strips the same escapes for parsing);
+// warnings are read by humans and end up in JSON, so strip them here too.
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPES = /\x1b\[[0-9;]*m/g;
 
-/** The last few non-empty output lines — cht-conf's own account of what went wrong. */
-const outputTail = (output: string): string[] =>
-  output
+/**
+ * cht-conf's own account of what went wrong. Its failures end in a long stack
+ * trace with the one useful `ERROR <reason>` line at the bottom, so prefer the
+ * ERROR lines when there are any and fall back to the tail otherwise.
+ */
+const outputTail = (output: string): string[] => {
+  const lines = output
+    .replace(ANSI_ESCAPES, '')
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .slice(-OUTPUT_TAIL_LINES);
+    .filter((line) => line.length > 0);
+  const errors = lines.filter((line) => /\berror\b/i.test(line));
+  return (errors.length > 0 ? errors : lines).slice(-OUTPUT_TAIL_LINES);
+};
 
 /**
  * Explain a bucket that produced no upload evidence, and upgrade a targeted miss
@@ -239,9 +250,13 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
     proc.stderr?.on('data', (data) => chunks.push(data.toString()));
 
     proc.on('error', (error) => {
-      // ENOENT covers both a missing binary and an unreachable cwd — name both.
+      // ENOENT covers both a missing binary and an unreachable cwd — name both,
+      // and say so, because the bare errno sends people hunting the wrong one.
       const where = options.cwd === undefined ? `bin=${bin}` : `bin=${bin}, cwd=${options.cwd}`;
-      finish({ exitCode: null, timedOut: false, startError: `${error.message} (${where})` });
+      const hint = error.message.includes('ENOENT')
+        ? ' — check that cht-conf is on PATH (or set CHT_CONF_BIN) and that the cwd exists'
+        : '';
+      finish({ exitCode: null, timedOut: false, startError: `${error.message} (${where})${hint}` });
     });
 
     proc.on('close', (code) => {
