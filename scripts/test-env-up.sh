@@ -62,8 +62,10 @@ fi
 # without them it dies on an opaque `cp: cannot stat` deep inside the build.
 if [[ ! -d "$TARGET/node_modules" ]]; then
   echo "Installing cht-core dependencies in $TARGET (npm ci — several minutes, ~1.2GB)."
-  # NOSONAR: --ignore-scripts would skip cht-core's patch-package postinstall,
-  # which is required for a working install.
+  # Lifecycle scripts must run: cht-core's postinstall is patch-package, and skipping
+  # it leaves the patches unapplied and the build broken. This is why --ignore-scripts
+  # is not used here. The code being installed is the same tree we are about to build
+  # images from and run, so npm scripts add no privilege beyond what follows.
   ( cd "$TARGET" && npm ci )
 elif [[ ! -e "$TARGET/node_modules/bowser/bundled.js" ]] || [[ ! -x "$TARGET/node_modules/.bin/uglifyjs" ]]; then
   echo "error: cht-core dependencies in $TARGET look incomplete (the image build needs" >&2
