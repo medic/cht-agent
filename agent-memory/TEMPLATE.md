@@ -12,6 +12,7 @@ id: cht-core-<issue-number>
 category: bug|feature|improvement
 domain: contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|authentication|configuration|interoperability|infrastructure|data-access
 subDomain: <optional, e.g. "enketo", "replication", "purging", "sms-gateway">
+secondaryDomains: <optional list of other CHTDomain values, ranked below domain; must not include domain>
 issueNumber: <cht-core issue number>
 issueUrl: https://github.com/medic/cht-core/issues/<number>
 title: <brief title>
