@@ -61,6 +61,13 @@ const basicAuth = (auth: ChtAuth): string => {
   return `Basic ${encoded}`;
 };
 
+/** These endpoints never redirect in normal operation; following one would replay an authed call. */
+const assertNotRedirect = (status: number, method: string, path: string): void => {
+  if (status >= 300 && status < 400) {
+    throw new Error(`CHT request failed: ${method} ${path} -> unexpected redirect (HTTP ${status})`);
+  }
+};
+
 /**
  * Bounded, authenticated request. Throws on a non-2xx status with the path
  * and status only (the base URL is the handle's cred-free URL, so the full
@@ -90,9 +97,7 @@ const request = async (
     redirect: 'manual',
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (response.status >= 300 && response.status < 400) {
-    throw new Error(`CHT request failed: ${method} ${path} -> unexpected redirect (HTTP ${response.status})`);
-  }
+  assertNotRedirect(response.status, method, path);
   if (!response.ok) {
     throw new Error(`CHT request failed: ${method} ${path} -> HTTP ${response.status}`);
   }
@@ -193,7 +198,7 @@ export const bulkDocs = async (
     body: JSON.stringify({ docs }),
   });
   if (!Array.isArray(body)) {
-    throw new Error('CHT request failed: POST /medic/_bulk_docs returned a non-array body');
+    throw new TypeError('CHT request failed: POST /medic/_bulk_docs returned a non-array body');
   }
   return body as BulkDocResultRow[];
 };

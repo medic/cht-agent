@@ -542,7 +542,7 @@ describe('TestEnvironmentAgent', () => {
 
         const passed = runBucketStub.firstCall.args[0];
         expect(passed.configPath).to.equal('config/default');
-        expect(passed.cwd).to.equal(undefined);
+        expect(passed.cwd).to.be.undefined;
       });
 
       it('should thread bin and timeoutMs through to the runner (deployment-pinned cht-conf, long form sets)', async () => {

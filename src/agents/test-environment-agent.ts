@@ -68,6 +68,10 @@ const DEFAULT_CONFIG_ACTIONS: ConfigUploadAction[] = [
   'resources',
 ];
 
+// cht-conf verbs used by the seeding + reset paths.
+const CSV_TO_DOCS = 'csv-to-docs';
+const UPLOAD_DOCS = 'upload-docs';
+
 // CouchDB id prefix of installed form docs (form:pregnancy -> pregnancy).
 const FORM_DOC_PREFIX = 'form:';
 
@@ -94,7 +98,9 @@ const stripTrailingSlashes = (value: string): string => {
 };
 
 /** Single-quote a path for the printed human-gate commands (spaces/metachars stay inert when pasted). */
-const shellQuote = (value: string): string => `'${value.split("'").join("'\\''")}'`;
+// POSIX single-quote escaping: close the quote, emit an escaped one, reopen.
+const SINGLE_QUOTE_ESCAPE = String.raw`'\''`;
+const shellQuote = (value: string): string => `'${value.replaceAll("'", SINGLE_QUOTE_ESCAPE)}'`;
 
 /**
  * Argument for a printed gate command: a quoted path, or nothing when we don't
@@ -105,7 +111,8 @@ const shellQuote = (value: string): string => `'${value.split("'").join("'\\''")
 const gateArg = (chtCorePath: string | undefined): string =>
   chtCorePath === undefined ? '' : ` ${shellQuote(chtCorePath)}`;
 
-const hasControlChars = (value: string): boolean => [...value].some((ch) => ch.charCodeAt(0) < 0x20);
+const hasControlChars = (value: string): boolean =>
+  [...value].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20);
 
 /** A resolved real-mode target: a credential-free instance URL + its auth. */
 interface RealTarget {
@@ -147,9 +154,16 @@ const resolveRealAuth = (
  * stale CHT_URL pointing at staging must fail loudly rather than clobber it.
  * Override per call with allowExternalTarget, or with CHT_TEST_ENV_ALLOW_EXTERNAL=1.
  */
+/** https is always allowed; http only when the host is a local disposable one. */
+const isSchemeAllowed = (target: URL, disposable: boolean): boolean =>
+  target.protocol === 'https:' || (target.protocol === 'http:' && disposable);
+
+const isExternalTargetAllowed = (options: ProvisionOptions): boolean =>
+  options.allowExternalTarget === true || process.env.CHT_TEST_ENV_ALLOW_EXTERNAL === '1';
+
 const assertDisposableTarget = (target: URL, options: ProvisionOptions, defaultCreds: boolean): void => {
   const disposable = isDisposableHost(target.hostname);
-  if (target.protocol !== 'https:' && !(target.protocol === 'http:' && disposable)) {
+  if (!isSchemeAllowed(target, disposable)) {
     throw new Error(
       `provision: refusing ${target.protocol}//${target.host} — https is required ` +
         '(http only for a local disposable instance)'
@@ -158,7 +172,7 @@ const assertDisposableTarget = (target: URL, options: ProvisionOptions, defaultC
   if (disposable) {
     return;
   }
-  if (options.allowExternalTarget !== true && process.env.CHT_TEST_ENV_ALLOW_EXTERNAL !== '1') {
+  if (!isExternalTargetAllowed(options)) {
     throw new Error(
       `provision: ${target.host} is not a known disposable test instance, and this layer runs ` +
         'cht-conf --force and deletes docs. Set allowExternalTarget (or ' +
@@ -197,6 +211,24 @@ const resolveRealTarget = (options: ProvisionOptions): RealTarget => {
   const { auth, isDefault } = resolveRealAuth(options, embeddedAuth);
   assertDisposableTarget(resolved, options, isDefault);
   return { url: stripTrailingSlashes(resolved.toString()), auth };
+};
+
+/** A docIds worklist with no dataPath to reseed from is a caller error, not an empty reset. */
+const assertNoOrphanDocIds = (options: ResetOptions): void => {
+  if (options.docIds !== undefined) {
+    throw new Error('reset: options.docIds also needs options.dataPath (the project to reseed from)');
+  }
+};
+
+/** Reject provision inputs before anything is printed or polled. */
+const validateProvisionOptions = (options: ProvisionOptions): void => {
+  if (!options.chtCorePath && !options.version) {
+    throw new Error('provision requires either chtCorePath or version');
+  }
+  // The path is interpolated into printed human-gate command lines.
+  if (options.chtCorePath && hasControlChars(options.chtCorePath)) {
+    throw new Error('provision: chtCorePath contains control characters — must be a plain filesystem path');
+  }
 };
 
 /** Build the deterministic mock-mode handle (no instance, no Docker). */
@@ -439,13 +471,13 @@ const prepareDocs = async (
   }
 
   const docsRun = await runChtConf({
-    verbs: ['csv-to-docs', 'upload-docs'],
-    logLabel: 'test-data: csv-to-docs upload-docs',
+    verbs: [CSV_TO_DOCS, UPLOAD_DOCS],
+    logLabel: `test-data: ${CSV_TO_DOCS} ${UPLOAD_DOCS}`,
     ...shared,
   });
   const docsOk = runSucceeded(docsRun);
   if (!docsOk) {
-    warnings.push(describeRunFailure('csv-to-docs/upload-docs', docsRun));
+    warnings.push(describeRunFailure(`${CSV_TO_DOCS}/${UPLOAD_DOCS}`, docsRun));
   }
 
   const seeded = readSeededDocs(dataPath);
@@ -527,16 +559,16 @@ const reseedTrackedDocs = async (
   onDisk: SeededDoc[]
 ): Promise<number> => {
   const reseed = await runChtConf({
-    verbs: ['upload-docs'],
+    verbs: [UPLOAD_DOCS],
     instanceUrl: credentialedUrl(handle),
     configPath: tracked.dataPath,
     cwd: tracked.dataPath,
     bin: tracked.bin,
     timeoutMs: tracked.timeoutMs,
-    logLabel: 'couchdb reset: upload-docs',
+    logLabel: `couchdb reset: ${UPLOAD_DOCS}`,
   });
   if (!runSucceeded(reseed)) {
-    throw new Error(`couchdb reset: reseed failed — ${describeRunFailure('upload-docs', reseed)}`);
+    throw new Error(`couchdb reset: reseed failed — ${describeRunFailure(UPLOAD_DOCS, reseed)}`);
   }
   // upload-docs re-uploads the whole json_docs directory, protected ids included;
   // only the docs this layer owns count towards a complete reseed (a protected doc
@@ -576,13 +608,7 @@ export class TestEnvironmentAgent {
    * (chtCorePath, built via local-images) or a published version.
    */
   async provision(options: ProvisionOptions): Promise<EnvironmentHandle> {
-    if (!options.chtCorePath && !options.version) {
-      throw new Error('provision requires either chtCorePath or version');
-    }
-    if (options.chtCorePath && hasControlChars(options.chtCorePath)) {
-      // The path is interpolated into printed human-gate command lines.
-      throw new Error('provision: chtCorePath contains control characters — must be a plain filesystem path');
-    }
+    validateProvisionOptions(options);
 
     const source = options.chtCorePath
       ? `local code (${options.chtCorePath})`
@@ -774,20 +800,8 @@ export class TestEnvironmentAgent {
     // empty re-seed must not clobber a live one (docs from the earlier seed are
     // still on the instance).
     if (docsOk && seeded.length > 0) {
-      const { safe, protectedIds } = partitionProtected(seeded.map((doc) => doc.id));
-      if (protectedIds.length > 0) {
-        warnings.push(
-          `${protectedIds.length} seeded doc id(s) name deployed config and are excluded from ` +
-            `reset: ${protectedIds.slice(0, 3).join(', ')}`
-        );
-      }
-      this.seededData.set(trackingKey(handle), {
-        dataPath,
-        docIds: safe,
-        protectedSkipped: protectedIds,
-        bin: options.bin,
-        timeoutMs: options.timeoutMs,
-      });
+      const base = { dataPath, bin: options.bin, timeoutMs: options.timeoutMs };
+      this.trackSeededDocs(handle, seeded, base, warnings);
     }
 
     return {
@@ -799,6 +813,26 @@ export class TestEnvironmentAgent {
       succeeded: docsOk && usersOk,
       seededDocIds: seeded.map((doc) => doc.id),
     };
+  }
+
+  /**
+   * Record the reset worklist for this environment, refusing ids that name
+   * deployed configuration (see PROTECTED_DOC_ID).
+   */
+  private trackSeededDocs(
+    handle: EnvironmentHandle,
+    seeded: SeededDoc[],
+    base: { dataPath: string; bin?: string; timeoutMs?: number },
+    warnings: string[]
+  ): void {
+    const { safe, protectedIds } = partitionProtected(seeded.map((doc) => doc.id));
+    if (protectedIds.length > 0) {
+      warnings.push(
+        `${protectedIds.length} seeded doc id(s) name deployed config and are excluded from ` +
+          `reset: ${protectedIds.slice(0, 3).join(', ')}`
+      );
+    }
+    this.seededData.set(trackingKey(handle), { ...base, docIds: safe, protectedSkipped: protectedIds });
   }
 
   /**
@@ -846,23 +880,15 @@ export class TestEnvironmentAgent {
   ): SeededDataRecord | undefined {
     const tracked = this.seededData.get(trackingKey(handle));
     const dataPath = options.dataPath ?? tracked?.dataPath;
-    const docIds = options.docIds ?? tracked?.docIds ?? [];
     if (dataPath === undefined) {
-      if (options.docIds !== undefined) {
-        throw new Error('reset: options.docIds also needs options.dataPath (the project to reseed from)');
-      }
+      assertNoOrphanDocIds(options);
       return undefined;
     }
+    const docIds = options.docIds ?? tracked?.docIds ?? [];
     if (docIds.length === 0) {
       return undefined;
     }
-    return {
-      dataPath,
-      docIds,
-      protectedSkipped: tracked?.protectedSkipped ?? [],
-      bin: tracked?.bin,
-      timeoutMs: tracked?.timeoutMs,
-    };
+    return { ...tracked, dataPath, docIds, protectedSkipped: tracked?.protectedSkipped ?? [] };
   }
 
   /**

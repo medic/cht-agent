@@ -36,15 +36,15 @@ CHT_CORE_BRANCH="${CHT_CORE_BRANCH:-master}"
 # cht-core's own engines require Node >= 22.15; npm ci and the image build both
 # fail in confusing ways on older runtimes.
 NODE_MAJOR="$(node -v 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/')"
-if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 22 ]; then
+if [[ -z "$NODE_MAJOR" ]] || [[ "$NODE_MAJOR" -lt 22 ]]; then
   echo "error: cht-core needs Node >= 22.15 (found: $(node -v 2>/dev/null || echo 'no node')). Try 'nvm use 22'." >&2
   exit 1
 fi
 
 TARGET="${1:-${CHT_CORE_PATH:-}}"
-if [ -z "$TARGET" ]; then
+if [[ -z "$TARGET" ]]; then
   TARGET="$CLONE_DIR"
-  if [ ! -d "$TARGET/.git" ]; then
+  if [[ ! -d "$TARGET/.git" ]]; then
     echo "No cht-core path given — cloning $CHT_CORE_BRANCH into $TARGET (shallow)."
     echo "Pass a path, or set CHT_CORE_PATH, to build from a working copy instead."
     # Shallow is safe: cht-core derives its image version from the branch name
@@ -53,17 +53,19 @@ if [ -z "$TARGET" ]; then
   fi
 fi
 
-if [ ! -d "$TARGET" ]; then
+if [[ ! -d "$TARGET" ]]; then
   echo "error: cht-core path not found: $TARGET" >&2
   exit 1
 fi
 
 # `npm run local-images` builds from node_modules (bowser, uglifyjs, cleancss);
 # without them it dies on an opaque `cp: cannot stat` deep inside the build.
-if [ ! -d "$TARGET/node_modules" ]; then
+if [[ ! -d "$TARGET/node_modules" ]]; then
   echo "Installing cht-core dependencies in $TARGET (npm ci — several minutes, ~1.2GB)."
+  # NOSONAR: --ignore-scripts would skip cht-core's patch-package postinstall,
+  # which is required for a working install.
   ( cd "$TARGET" && npm ci )
-elif [ ! -e "$TARGET/node_modules/bowser/bundled.js" ] || [ ! -x "$TARGET/node_modules/.bin/uglifyjs" ]; then
+elif [[ ! -e "$TARGET/node_modules/bowser/bundled.js" ]] || [[ ! -x "$TARGET/node_modules/.bin/uglifyjs" ]]; then
   echo "error: cht-core dependencies in $TARGET look incomplete (the image build needs" >&2
   echo "       bowser + uglifyjs). Run 'npm ci' there yourself — this script will not" >&2
   echo "       replace an existing node_modules." >&2
@@ -77,7 +79,7 @@ docker network create "$NETWORK" 2>/dev/null || true
 # build-service-images.sh copies into api/build/static/, which is created by
 # build-prepare.sh (ddocs, enketo css, admin app) and filled by build-webapp-dev.
 # npm ci alone does not produce it — build-dev also runs the per-module installs.
-if [ ! -d "$TARGET/api/build/static" ] || [ "${CHT_CORE_REBUILD:-}" = "1" ]; then
+if [[ ! -d "$TARGET/api/build/static" ]] || [[ "${CHT_CORE_REBUILD:-}" = "1" ]]; then
   echo "Building cht-core in $TARGET (npm run build-dev — several minutes)."
   ( cd "$TARGET" && npm run build-dev )
 else
