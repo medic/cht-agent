@@ -337,7 +337,11 @@ PREV=none      # the one you just finished, or none
 cd ~/ai_medic/medic-cht-agent/demo-conf
 [ "$PREV" != none ] && git add -A && git commit -q -m "$PREV: agent-generated fix (demo run)"
 git checkout -q -B fix/maisha-$TICKET maisha-baseline
-git clean -qfd                     # drop .cht-agent scratch, generated specs
+git clean -qfd                     # drop generated specs + the fix descriptor
+rm -rf .cht-agent/pr               # ⚠️ REQUIRED: the bundle dir is gitignored, so
+#   `git clean -fd` leaves it, and the writer only overwrites its two files. A run
+#   that ends in HC5 `abandon` (or dies before the bundle) writes nothing — leave
+#   the old one there and Phase D archives the PREVIOUS ticket's PR as this one's.
 git status --short                 # MUST be empty
 
 # A2. restore the instance to the frozen baseline
@@ -403,6 +407,10 @@ The config repo is bind-mounted, so the bundle is already on the host — no
 
 ```bash
 BUNDLE=~/ai_medic/medic-cht-agent/demo-conf/.cht-agent/pr
+# freshness first — a missing/stale bundle means the run did NOT produce one
+# (HC5 abandon, or an abort). Never archive a bundle you cannot date to this run.
+ls -l --time-style=+%H:%M $BUNDLE/PR.md $BUNDLE/changes.patch
+head -5 $BUNDLE/PR.md                      # must name THIS ticket's artifact
 mkdir -p ~/maisha-pr-archive/$TICKET && cp $BUNDLE/PR.md $BUNDLE/changes.patch ~/maisha-pr-archive/$TICKET/
 # does it apply to the PRISTINE partner clone? (the real acceptance test)
 git -C ~/ai_medic/medic-cht-agent/site-config apply --check --binary \
@@ -701,6 +709,7 @@ two sibling forms).
 | Reused browser profile after a restore | client checkpoints ahead of the server; nothing looks right | fresh incognito window per ticket |
 | Stale OAuth mount | `401 OAuth access token has been revoked` mid-run | host `claude -p` + `--force-recreate` |
 | Config repo missing `npm ci` | dev convert / QA apply / P4 compile / tier-2 all fail differently | §1.5 |
+| Stale PR bundle survives the reset | you archive the previous ticket's PR as this ticket's | `rm -rf .cht-agent/pr` in Phase A + the freshness check in Phase D |
 | Expecting M3's cards to vanish post-fix | looks like the fix did nothing | the change is *which* card clears (§3.5) |
 | Expecting M4's flag on an older child | flag never renders | it is newborn-only (§1.9) |
 
