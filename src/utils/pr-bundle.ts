@@ -32,7 +32,18 @@ const execFileAsync = promisify(execFile);
 
 /** Bundle location, relative to the config project root. */
 export const PR_BUNDLE_DIR = path.join('.cht-agent', 'pr');
-const GITIGNORE_ENTRY = '.cht-agent';
+/**
+ * Only the BUNDLE is ignored — never all of `.cht-agent`.
+ *
+ * A bare `.cht-agent` line also hides `.cht-agent/xlsform-fix.json` from
+ * `git ls-files --others --exclude-standard`, which is how the code-gen CLI's
+ * diff capture finds the XLSForm fix descriptor. That made every XLSForm ticket
+ * AFTER the first bundle die as `execute-no-op` on a repo whose only sin was
+ * having run this pipeline once. Ignore the bundle directory, nothing else.
+ */
+const GITIGNORE_ENTRY = '.cht-agent/pr';
+/** The over-broad entry earlier versions appended; narrowed on sight. */
+const LEGACY_GITIGNORE_ENTRIES = ['.cht-agent', '.cht-agent/'];
 
 export interface PrBundleInput {
   /** The config project root (CHT_CONF_PATH). */
@@ -115,8 +126,21 @@ export const ensureGitignored = (configRoot: string): void => {
   let current = '';
   if (fs.existsSync(gitignorePath)) {
     current = fs.readFileSync(gitignorePath, 'utf8');
-    const alreadyListed = current
-      .split('\n')
+    const lines = current.split('\n');
+    // Narrow an over-broad entry from an earlier version of this module: left in
+    // place it hides the fix descriptor and breaks every later XLSForm ticket.
+    const legacyIndex = lines.findIndex(line => LEGACY_GITIGNORE_ENTRIES.includes(line.trim()));
+    if (legacyIndex !== -1) {
+      lines[legacyIndex] = GITIGNORE_ENTRY;
+      fs.writeFileSync(gitignorePath, lines.join('\n'), 'utf8');
+      console.log(
+        `[PR bundle] Narrowed the over-broad \`.cht-agent\` ignore entry in ${gitignorePath} ` +
+          `to \`${GITIGNORE_ENTRY}\` — the bare entry hid the XLSForm fix descriptor from ` +
+          'git, aborting XLSForm tickets as execute-no-op.'
+      );
+      return;
+    }
+    const alreadyListed = lines
       .map(line => line.trim())
       .some(line => line === GITIGNORE_ENTRY || line === `${GITIGNORE_ENTRY}/`);
     if (alreadyListed) return;

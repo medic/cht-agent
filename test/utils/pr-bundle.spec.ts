@@ -80,7 +80,29 @@ describe('pr-bundle', () => {
     it('appends .cht-agent when absent', () => {
       const dir = track(makeRepo(true));
       ensureGitignored(dir);
-      expect(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8')).to.contain('.cht-agent');
+      expect(fs.readFileSync(path.join(dir, '.gitignore'), 'utf8')).to.contain('.cht-agent/pr');
+    });
+
+    it('ignores only the bundle dir, not all of .cht-agent (descriptor must stay visible)', () => {
+      const dir = track(makeRepo(true));
+      ensureGitignored(dir);
+      const lines = fs.readFileSync(path.join(dir, '.gitignore'), 'utf8').split('\n').map(l => l.trim());
+      expect(lines).to.include('.cht-agent/pr');
+      expect(lines).to.not.include('.cht-agent');
+    });
+
+    // An over-broad entry from an earlier version of this module hid
+    // .cht-agent/xlsform-fix.json from `ls-files --others --exclude-standard`,
+    // so every XLSForm ticket after the first bundle aborted as execute-no-op.
+    it('narrows a legacy bare .cht-agent entry in place', () => {
+      const dir = track(makeRepo(true));
+      const gitignore = path.join(dir, '.gitignore');
+      fs.writeFileSync(gitignore, 'node_modules\n.cht-agent\napp_settings.json\n', 'utf8');
+
+      ensureGitignored(dir);
+
+      const lines = fs.readFileSync(gitignore, 'utf8').split('\n').map(l => l.trim()).filter(Boolean);
+      expect(lines).to.deep.equal(['node_modules', '.cht-agent/pr', 'app_settings.json']);
     });
 
     it('is idempotent', () => {
@@ -90,7 +112,7 @@ describe('pr-bundle', () => {
       const occurrences = fs
         .readFileSync(path.join(dir, '.gitignore'), 'utf8')
         .split('\n')
-        .filter(l => l.trim() === '.cht-agent').length;
+        .filter(l => l.trim() === '.cht-agent/pr').length;
       expect(occurrences).to.equal(1);
     });
 

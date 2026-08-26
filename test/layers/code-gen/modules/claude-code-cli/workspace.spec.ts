@@ -111,6 +111,35 @@ describe('workspace.ts (A.2b)', () => {
       expect(files[0].path).to.equal('.cht-agent/xlsform-fix.json');
     });
 
+    // A partner repo that has run this pipeline once carries a `.cht-agent`
+    // ignore entry (older PR bundles appended exactly that), and
+    // `ls-files --others --exclude-standard` honours .gitignore — so the
+    // descriptor vanished from the capture and the run died as execute-no-op
+    // with the file sitting on disk. Our own contract files are captured
+    // regardless of the partner's ignore rules.
+    it('captures the descriptor even when .gitignore hides it from ls-files', async () => {
+      const ws = loadWorkspace({
+        'git diff --name-status abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: '' }, // gitignored
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['.cht-agent/xlsform-fix.json']);
+    });
+
+    it('does not invent a descriptor when the file is absent', async () => {
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubExecFile({
+            'git diff --name-status abc1234': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: '' },
+          }),
+        },
+        'node:fs/promises': { readFile: sinon.stub().rejects(new Error('ENOENT')) },
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      expect(files).to.have.length(0);
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
         'git diff --name-status abc1234': { stdout: 'D\tsrc/deleted.ts\nA\tsrc/new.ts\n' },

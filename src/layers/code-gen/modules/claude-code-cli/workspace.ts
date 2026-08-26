@@ -18,6 +18,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { XLSFORM_FIX_DESCRIPTOR_PATH } from '../../../../utils/xlsform-fix';
 import { GeneratedFile } from '../../interface';
 
 const execFileAsync = promisify(execFile);
@@ -136,7 +137,33 @@ export async function captureChtCoreDiff(
   const files: GeneratedFile[] = [];
   await collectTrackedChanges(files, nameList, chtCorePath, preRunSha);
   await collectUntrackedCreates(files, untrackedList, chtCorePath, preRunSha);
+  await collectIgnoreProofPaths(files, chtCorePath, preRunSha);
   return files;
+}
+
+/**
+ * Paths this pipeline OWNS and must capture even when the project's .gitignore
+ * hides them. `ls-files --others --exclude-standard` honours .gitignore, so a
+ * config repo carrying a bare `.cht-agent` ignore line (the PR bundle used to
+ * append exactly that) made the XLSForm fix descriptor invisible — the run then
+ * died as `execute-no-op` with the descriptor sitting right there on disk.
+ * Observed on a real partner repo after its first PR bundle was written.
+ *
+ * These are OUR contract files, so their capture must not depend on the
+ * partner's ignore rules.
+ */
+const IGNORE_PROOF_PATHS: readonly string[] = [XLSFORM_FIX_DESCRIPTOR_PATH];
+
+async function collectIgnoreProofPaths(
+  files: GeneratedFile[],
+  chtCorePath: string,
+  preRunSha: string,
+): Promise<void> {
+  for (const relPath of IGNORE_PROOF_PATHS) {
+    if (files.some((f) => f.path === relPath)) continue; // already captured
+    const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
+    if (file) files.push(file);
+  }
 }
 
 async function collectTrackedChanges(
