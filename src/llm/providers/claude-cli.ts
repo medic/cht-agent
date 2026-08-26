@@ -34,8 +34,6 @@ export interface ClaudeCLIConfig {
   maxTurns?: number;
   /** Model to use (passed via prompt context, CLI uses account default) */
   model?: string;
-  /** Default temperature */
-  temperature?: number;
   /** Default max tokens */
   maxTokens?: number;
   /** Pass --dangerously-skip-permissions to the CLI. Default: true (preserves prior behavior). */
@@ -106,8 +104,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   const maxTurns = config.maxTurns ?? 20; // Multiple turns needed - test files can need 15+
   const modelName = config.model ?? 'claude-cli';
   const skipPermissions = config.skipPermissions ?? true;
-  // Note: CLI doesn't support temperature/maxTokens directly via flags
-  // These would be handled by account settings or model defaults
+  // Note: the CLI takes no maxTokens flag; the account/model defaults govern it.
 
   // Track active processes for cleanup
   const activeProcesses = new Set<ChildProcess>();

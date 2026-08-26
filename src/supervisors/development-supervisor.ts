@@ -557,9 +557,7 @@ Respond with a JSON object:
 }`;
 
     try {
-      const result = await this.llm.invokeForJSON<ImplementationValidation>(prompt, {
-        temperature: 0.2,
-      });
+      const result = await this.llm.invokeForJSON<ImplementationValidation>(prompt);
       return result;
     } catch {
       // Fallback validation based on heuristics

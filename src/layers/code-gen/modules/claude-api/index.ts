@@ -406,7 +406,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     const llm = this.getProvider();
     const prompt = this.buildPlanPrompt(input, manifest);
 
-    const response = await llm.invoke(prompt, { temperature: 0.3, maxTokens: 8192 });
+    const response = await llm.invoke(prompt, { maxTokens: 8192 });
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
 
     const plan = this.parsePlan(response.content);
@@ -685,7 +685,6 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
   ): Promise<Awaited<ReturnType<LLMProvider['invoke']>> | null> {
     try {
       return await this.getProvider().invoke(prompt, {
-        temperature: 0.3,
         maxTokens: 65536,
         ...(codeGenTools ? { tools: codeGenTools.tools, toolHandler: codeGenTools.toolHandler } : {}),
       });
@@ -839,7 +838,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     const prompt = this.buildContinuationPrompt(lastLines, planItem, input);
     let response;
     try {
-      response = await this.getProvider().invoke(prompt, { temperature: 0.3, maxTokens: 65536 });
+      response = await this.getProvider().invoke(prompt, { maxTokens: 65536 });
     } catch (error) {
       console.error(`[Code Gen Module]   Continuation call ${iteration + 1} failed:`, error);
       return false;

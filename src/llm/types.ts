@@ -24,7 +24,6 @@ export interface APIProviderConfig {
   provider: APIProviderType;
   apiKey: string;
   model: string;
-  temperature?: number;
   maxTokens?: number;
 }
 
@@ -40,7 +39,6 @@ export interface CLIProviderConfig {
   timeout: number;
   maxTurns: number;
   model: string;
-  temperature?: number;
   maxTokens?: number;
   /** Pass --dangerously-skip-permissions to the CLI. Default: true (preserves prior behavior). */
   skipPermissions?: boolean;
@@ -83,7 +81,6 @@ export type ToolHandler = (toolName: string, toolInput: Record<string, unknown>)
  * Options for invoking the LLM
  */
 export interface InvokeOptions {
-  temperature?: number;
   maxTokens?: number;
   stopSequences?: string[];
   /** Override max agentic turns for CLI provider */
@@ -158,7 +155,6 @@ export interface LLMProvider {
  * Default configuration values
  */
 export const DEFAULT_CONFIG = {
-  temperature: 0.3,
   maxTokens: 65536, // Opus 4.6 supports 128K output, Sonnet/Haiku 4.x support 64K
 } as const;
 

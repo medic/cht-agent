@@ -447,7 +447,7 @@ export class ResearchSupervisor {
 
     const prompt = this.buildPlanPrompt(ctx);
 
-    const response = await this.llm.invoke(prompt, { temperature: 0.3 });
+    const response = await this.llm.invoke(prompt);
     const content = response.content;
 
     // Parse the response into structured plan
