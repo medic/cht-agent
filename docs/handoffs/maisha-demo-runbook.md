@@ -1,5 +1,11 @@
 # Maisha demo runbook — four tickets, reset-per-ticket (M8 → M7 → M4 → M3)
 
+> **Superseded as the entry point.** `maisha-demo-full-procedure.md` is now
+> the canonical runbook: it covers all FIVE tickets (M5 + M8/M7/M4/M3) as one
+> procedure, from a bare machine through per-ticket PR bundles. This document
+> is kept for its depth on the reset model (§2) and the per-ticket browser
+> walkthroughs (§5) — start with the full procedure and come here for detail.
+
 Operator sequence for demoing the four grounded Maisha Meds tickets
 (`tickets/maisha-m*.md`) back-to-back on ONE throwaway CHT 4.21.1 instance,
 with a **full, provable data reset between tickets**. It generalises the M5
@@ -239,7 +245,7 @@ The `--qa`/`--qa-tier2` support for these four tickets exists ONLY on the
 local branch stack (P1–P5, `feat/all-artifacts-p5-tier2-testgen` tip) — an
 image built before 2026-07-18 has the old guards and aborts QA for every
 non-`form` artifact. The agent is also its own compose project:
-`start`ing the CHT stack does NOT start (or rebuild) `cht-agent`.
+`start`ing the CHT stack does NOT start (or rebuild) `cht-agent`. 
 
 ```bash
 cd <cht-agent-workbench>
