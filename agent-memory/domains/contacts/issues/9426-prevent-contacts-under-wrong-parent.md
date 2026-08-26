@@ -6,13 +6,17 @@ subDomain: hierarchy-validation
 issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
-lastUpdated: 2026-03-16
-summary: Fixed a validation gap where contacts could be created under any parent by manipulating the URL, bypassing the configured hierarchy. Added parent type validation in the ContactsEditComponent.
+lastUpdated: '2026-08-25'
+summary: Fixed a validation gap where the webapp's own create form let a contact be created under any parent by manipulating the URL, bypassing the configured hierarchy — that form saves through Enketo and PouchDB, so the one server-side parent-type check that existed (`validatePlace`, on the places API) never ran; see the note below. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp
 techStack:
   - typescript
   - angular
+source_prs:
+  - "medic/cht-core#9563"
+related_issues:
+  - cht-core-6363
 ---
 
 ## Problem
@@ -27,11 +31,15 @@ The `ContactsEditComponent.getForm()` method, when handling contact creation, as
 
 PR #9563 added a `validateParentForCreateForm()` method to `ContactsEditComponent` that runs before the form is rendered. It has two branches:
 1. **No parent (top-level creation):** Calls `contactTypesService.getChildren()` with no argument to get valid top-level types. If the contact type is not in that list, throws an error.
-2. **Parent present:** Fetches the parent document from PouchDB, resolves its type via `contactTypesService.getTypeId()`, then calls `getChildren(parentType)` to get valid direct children. If the contact type is not in that list, throws an error setting `contentError = true` and preventing form rendering.
+2. **Parent present:** Fetches the parent document from PouchDB, resolves its type via `contactTypesService.getTypeId()`, then calls `getChildren(parentType)` to get valid direct children. If the contact type is not in that list, throws an error; `initForm()`'s catch block sets `contentError = true`, preventing form rendering.
+
+(As of #9563. Master has since replaced the PouchDB fetch with `getContactFromDatasource(Qualifier.byUuid(...))` and split the two branches into `ensureValidTopLevelType()` / `ensureValidChildType()`.)
+
+Person types are not special-cased; they are resolved through the same `contactTypesService.getChildren(parent?)` lookup as places.
 
 ## Code Patterns
 
-- Hierarchy validation uses `contactTypesService.getChildren(parentTypeId?)` which returns valid child types for a given parent type
+- Hierarchy validation uses `contactTypesService.getChildren(parent?)`, which returns valid child types for a given parent type. Despite the parameter name, callers pass a contact-*type id* (`getTypeId(parent)`), not the parent document; the service forwards it to `contactTypesUtils.getChildren(config, parent)`
 - Type resolution from a contact document uses `contactTypesService.getTypeId(doc)` which handles both legacy and new-style contact type fields
 - Validation runs before form rendering — if invalid, `contentError = true` prevents any user interaction
 - File: `webapp/src/ts/modules/contacts/contacts-edit.component.ts` — `validateParentForCreateForm()` method
@@ -44,18 +52,20 @@ PR #9563 added a `validateParentForCreateForm()` method to `ContactsEditComponen
 - Fails closed — an invalid parent prevents form rendering entirely rather than showing a warning
 - Only applies to creation, not editing (editing a contact doesn't change its parent relationship)
 
-> **Note:** This fix is client-side only. Neither `validate_doc_update.js` (medic nor medic-client) enforces parent-child hierarchy rules. A direct CouchDB write with an invalid parent would still succeed. Server-side hierarchy validation does not exist as of this fix.
+> **Note:** This fix is client-side only for the webapp form path. Neither `validate_doc_update.js` (medic nor medic-client) enforces parent-child hierarchy rules, so a direct CouchDB write with an invalid parent would still succeed. Server-side validation does exist, but only on API write paths: at this PR's anchor the only one was `validatePlace` in `shared-libs/contacts/src/places.js`, rejecting a wrong parent type via `contactTypesUtils.isParentOf(parentType, type)` (`places.js:83`) for `POST /api/v1/places`; that check is still on master, and master additionally enforces parent type on the cht-datasource write routes added by #10083 (`POST /api/v1/place` → `getParentForCreate` → `assertHasValidParentType` (`local/libs/lineage.ts:296`, called at `local/place.ts:91`); `POST /api/v1/person` → `assertParent` in `local/person.ts`).
 
 ## Related Files
 
 - webapp/src/ts/modules/contacts/contacts-edit.component.ts
 - webapp/src/ts/services/contact-types.service.ts
+- webapp/tests/karma/ts/modules/contacts/contacts-edit.component.spec.ts (PR #9563)
 
 ## Testing
 
 - Unit test verifying that creating a contact under an invalid parent type sets `contentError = true` and never calls `formService.render`
 - Updated existing tests to provide `parent_id` in route params and stub the parent document lookup
+- Karma unit tests in `webapp/tests/karma/ts/modules/contacts/contacts-edit.component.spec.ts` covering both valid and invalid parent/contact_type combinations (PR #9563)
 
 ## Related Issues
 
-- #6363: Related discussion on contact hierarchy integrity
+- #6363: Duplicate-contact prevention/merging; touches hierarchy only through its move-between-parents proposal
