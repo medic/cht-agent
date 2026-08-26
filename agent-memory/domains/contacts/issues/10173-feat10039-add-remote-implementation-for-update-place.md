@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10039
 issueUrl: https://github.com/medic/cht-core/issues/10039
 title: Add remote (HTTP) cht-datasource implementation and API endpoint for updating place contacts
-lastUpdated: '2026-08-24'
+lastUpdated: '2026-08-25'
 summary: The cht-datasource library could get/create places and could already update one through the local (direct-DB) implementation, but had no remote (HTTP) path to update. This PR adds the remote update-place implementation plus the backing API controller and route, completing update-place support across the local and remote datasource implementations. It also tightens the existing local update path with two validation rules — no `parent` added to a top-of-hierarchy place, and the contact's `_id`/lineage appended when the original doc has none.
 services:
   - api
@@ -45,19 +45,21 @@ concepts:
   - contact/place hierarchy
   - CRUD operations on place contacts
 related_issues: []
-stale: false
+stale: true
 ---
 
-> **Renamed before landing (`stale-as-written`, verified 2026-08-20).** The helper names this
+> **Renamed before landing (`stale-as-written`, verified 2026-08-23).** The helper names this
 > draft quotes from `src/local/libs/core.ts` are the epic's, not master's. `checkFieldWithLineage`
 > appears nowhere in `origin/master`'s history — neither added nor removed — and the same is true
-> of `ensureImmutability` (its only caller), `ensureHasRequiredFields`, `addParentToInput` and
+> of `ensureImmutability` (its only caller before this PR; this PR adds a second in `src/local/place.ts`), `ensureHasRequiredFields`, `addParentToInput` and
 > `dehydrateDoc`; only `isSameLineage` survives on master. The *feature* did land: master has
 > `Place.v1.update` in `src/place.ts` with the usual `adapt(context, Local…, Remote…)` split. What
 > changed is the immutability machinery — master's nearest equivalent, `assertFieldsUnchanged`,
-> compares the named fields by identity and has no lineage-aware branch at all, so the
-> `parent`/`contact` special-casing that `checkFieldWithLineage` implemented is not a rename of
-> it. Treat the helper names below as anchor-only.
+> compares the named fields by identity and has no lineage-aware branch; the lineage-aware part
+> now lives in `assertSameParentLineage` (`local/libs/lineage.ts:232`, on `isSameLineage`), which
+> master's update path calls (`local/person.ts:165`, and via `getUpdatedContact` in
+> `local/place.ts`). So the `parent`/`contact` special-casing that `checkFieldWithLineage`
+> implemented was split, not renamed. Treat the helper names below as anchor-only.
 
 ## Problem
 

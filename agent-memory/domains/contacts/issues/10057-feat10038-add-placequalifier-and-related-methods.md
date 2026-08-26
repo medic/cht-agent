@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10038
 issueUrl: https://github.com/medic/cht-core/issues/10038
 title: Add PlaceQualifier type and related validation methods to cht-datasource
-lastUpdated: '2026-08-20'
+lastUpdated: '2026-08-25'
 summary: The cht-datasource shared library lacked a dedicated qualifier for identifying place contacts. This PR adds a PlaceQualifier type plus related validation/type-guard methods to qualifier.ts (WIP).
 services:
   - api
@@ -63,7 +63,7 @@ stale: true
 > lineage shaping are the shared `assertHasValidParentType` and `minifyDoc` in
 > `src/local/libs/lineage.ts`, while the parent fetch itself stays in the entity
 > modules — `getDocById(medicDb)` in `src/local/person.ts` and `getDocsByIds(medicDb)`
-> in `src/local/place.ts`, both from `./libs/doc`. All of these are master-only.
+> in `src/local/place.ts`, both from `./libs/doc`. The two lineage helpers are master-only; the `./libs/doc` fetchers already exist at the anchor, only their use in the `create` paths is new.
 > The prose below deliberately describes the state at each cited PR, not master's
 > shape; hence `stale: true`. Read every present-tense sentence below as scoped to
 > its cited PR.

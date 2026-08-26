@@ -6,7 +6,7 @@ subDomain: hierarchy-validation
 issueNumber: 9426
 issueUrl: https://github.com/medic/cht-core/issues/9426
 title: Prevent creating contacts under non-direct parent type
-lastUpdated: '2026-08-24'
+lastUpdated: '2026-08-25'
 summary: Fixed a validation gap where the webapp's own create form let a contact be created under any parent by manipulating the URL, bypassing the configured hierarchy — that form saves through Enketo and PouchDB, so the one server-side parent-type check that existed (`validatePlace`, on the places API) never ran; see the note below. Added parent type validation in the ContactsEditComponent.
 services:
   - webapp
@@ -52,7 +52,7 @@ Person types are not special-cased; they are resolved through the same `contactT
 - Fails closed — an invalid parent prevents form rendering entirely rather than showing a warning
 - Only applies to creation, not editing (editing a contact doesn't change its parent relationship)
 
-> **Note:** This fix is client-side only for the webapp form path. Neither `validate_doc_update.js` (medic nor medic-client) enforces parent-child hierarchy rules, so a direct CouchDB write with an invalid parent would still succeed. Server-side validation does exist, but only on API write paths: at this PR's anchor the only one was `validatePlace` in `shared-libs/contacts/src/places.js`, rejecting a wrong parent type via `contactTypesUtils.isParentOf(parentType, type)` (`places.js:83`) for `POST /api/v1/places`; that check is still on master, and master additionally enforces parent type on the cht-datasource write routes added by #10083 (`POST /api/v1/place` → `getParentForCreate` → `assertHasValidParentType` in `local/place.ts`; `POST /api/v1/person` → `assertParent` in `local/person.ts`).
+> **Note:** This fix is client-side only for the webapp form path. Neither `validate_doc_update.js` (medic nor medic-client) enforces parent-child hierarchy rules, so a direct CouchDB write with an invalid parent would still succeed. Server-side validation does exist, but only on API write paths: at this PR's anchor the only one was `validatePlace` in `shared-libs/contacts/src/places.js`, rejecting a wrong parent type via `contactTypesUtils.isParentOf(parentType, type)` (`places.js:83`) for `POST /api/v1/places`; that check is still on master, and master additionally enforces parent type on the cht-datasource write routes added by #10083 (`POST /api/v1/place` → `getParentForCreate` → `assertHasValidParentType` (`local/libs/lineage.ts:296`, called at `local/place.ts:91`); `POST /api/v1/person` → `assertParent` in `local/person.ts`).
 
 ## Related Files
 
