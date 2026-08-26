@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10041
 issueUrl: https://github.com/medic/cht-core/issues/10041
 title: Add local datasource implementation for updating reports in cht-datasource
-lastUpdated: '2026-08-18'
+lastUpdated: '2026-08-19'
 summary: The cht-datasource shared library lacked a local (direct-database) implementation for updating report documents, so report updates could not be performed through the local data context. This PR adds the local update operation for reports along with unit tests.
 services:
   - api
@@ -61,7 +61,7 @@ The local report module in cht-datasource only implemented a subset of CRUD oper
 
 ## Solution
 
-Added `Local.Report.v1.update` to shared-libs/cht-datasource/src/local/report.ts, which persists changes to a report document via the local data context: it validates the incoming update payload (at this PR's own merge commit `70b7be0b4` that is the older `ReportInput` type from `src/input.ts`, checked by `validateReportUpdatePayload`; the `Input.v1.UpdateReportInput` name first enters `input.ts` with the epic branch's #10522 refactor `a89955a9f` and is `src/input.ts:36` on master; `input.ts` is not among the two files #10180 itself changed), loads the original report and its contact by id, asserts the read-only fields (`_rev`, `reported_date`) are unchanged and the form is still supported, then writes through `updateDoc` from src/local/libs/doc.ts. Unit tests were added alongside. Note the naming — the export is `update` inside the `Report.v1` namespace (`Local.Report.v1.update`, `Remote.Report.v1.update`), matching `Person.v1.update` and `Place.v1.update`; there is no flat `updateReport` symbol.
+Added `Local.Report.v1.update` to shared-libs/cht-datasource/src/local/report.ts, which persists changes to a report document via the local data context: it validates the incoming update payload (at this PR's own merge commit `70b7be0b4` the payload is an untyped `Record<string, unknown>`, narrowed by `isDoc` and checked by `validateReportUpdatePayload`; `ReportInput` from `src/input.ts` is used there only on the create path; the `Input.v1.UpdateReportInput` name first enters `input.ts` with the epic branch's #10522 refactor `a89955a9f` and is `src/input.ts:36` on master; `input.ts` is not among the two files #10180 itself changed), loads the original report and its contact by id, asserts the read-only fields (`_rev`, `reported_date`) are unchanged and the form is still supported, then writes through `updateDoc` from src/local/libs/doc.ts. Unit tests were added alongside. Note the naming — the export is `update` inside the `Report.v1` namespace (`Local.Report.v1.update`, `Remote.Report.v1.update`), matching `Person.v1.update` and `Place.v1.update`; there is no flat `updateReport` symbol.
 
 The remote (API-backed) path completes the same update end to end (PR #10200): an update handler in api/src/controllers/report.js with the route registered in api/src/routing.js; update methods on the report datasource interface (src/report.ts) delegating to remote (src/remote/report.ts, HTTP to API) and local (src/local/report.ts, PouchDB) backends; a reusable doc-update helper in src/local/libs/doc.ts; and input parsing/validation in src/input.ts, with the capability exported via src/index.ts.
 
