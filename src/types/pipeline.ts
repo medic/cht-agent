@@ -58,6 +58,10 @@ export interface ScrapedPR {
   reviewComments: ReviewComment[];
   /** GitHub login of the PR author */
   author: string;
+  /** Branch the PR merged into; absent when gh omitted the field. */
+  baseRefName?: string;
+  /** The repo's default branch; absent when the lookup failed (gate fails open). */
+  defaultBranch?: string;
 }
 
 /**

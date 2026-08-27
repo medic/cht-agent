@@ -158,28 +158,36 @@ describe('scrapePR', () => {
 
     const DEFAULT_MASTER = () => JSON.stringify({ defaultBranchRef: { name: 'master' } });
 
-    it('scrapes a PR merged into the default branch', () => {
+    it('carries baseRefName and defaultBranch for a PR merged into the default branch', () => {
       const { scrapePR } = loadWithBase(metaWithBase('master'), DEFAULT_MASTER);
-      expect(scrapePR(7).prNumber).to.equal(7);
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.equal('master');
+      expect(pr.defaultBranch).to.equal('master');
     });
 
-    it('throws ScraperError for a PR merged into a feature branch', () => {
+    it('does not throw for a PR merged into a feature branch; the filter decides', () => {
       const { scrapePR } = loadWithBase(metaWithBase('10224-ui-extensions'), DEFAULT_MASTER);
-      expect(() => scrapePR(7)).to.throw(ScraperError, /non-default branch '10224-ui-extensions'/);
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.equal('10224-ui-extensions');
+      expect(pr.defaultBranch).to.equal('master');
     });
 
-    it('fails open when the default-branch lookup fails', () => {
+    it('leaves defaultBranch undefined when the lookup fails, so the gate fails open', () => {
       const { scrapePR } = loadWithBase(metaWithBase('10224-ui-extensions'), () => {
         throw new Error('gh unavailable');
       });
-      expect(scrapePR(7).prNumber).to.equal(7);
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.equal('10224-ui-extensions');
+      expect(pr.defaultBranch).to.be.undefined;
     });
 
-    it('skips the gate when metadata carries no baseRefName', () => {
+    it('does not look up the default branch when metadata carries no baseRefName', () => {
       const { scrapePR } = loadWithBase(metaWithBase(), () => {
         throw new Error('repo view must not be called');
       });
-      expect(scrapePR(7).prNumber).to.equal(7);
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.be.undefined;
+      expect(pr.defaultBranch).to.be.undefined;
     });
   });
 

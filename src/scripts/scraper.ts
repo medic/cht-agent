@@ -273,24 +273,16 @@ function defaultBranch(repo: string): string | null {
 }
 
 /**
- * Throws when the PR merged into a branch other than the repo default — a merge
- * into a feature branch is not shipped work: the branch may be abandoned and its
- * symbols never reach the default branch. Fails open when baseRefName is absent
- * or the default-branch lookup fails.
+ * Base branch plus the repo default, so the filter can skip PRs merged into a
+ * feature branch as an audited exclusion. Empty when gh omitted `baseRefName`.
  */
-function assertMergedIntoDefaultBranch(meta: Record<string, unknown>, prNumber: number, repo: string): void {
-  const base = meta.baseRefName as string | undefined;
-  if (!base) return;
-  const def = defaultBranch(repo);
-  if (def !== null && base !== def) {
-    throw new ScraperError(
-      `PR #${prNumber} merged into non-default branch '${base}' (default is '${def}')`,
-      prNumber
-    );
-  }
+function baseBranchFields(meta: Record<string, unknown>, repo: string): Pick<ScrapedPR, 'baseRefName' | 'defaultBranch'> {
+  const baseRefName = meta.baseRefName as string | undefined;
+  if (!baseRefName) return {};
+  return { baseRefName, defaultBranch: defaultBranch(repo) ?? undefined };
 }
 
-/** Fetch + parse PR metadata, asserting the PR is merged into the default branch. */
+/** Fetch + parse PR metadata, asserting the PR is merged. */
 function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, unknown> {
   const metaRaw = fetchMetadata(prNumber, repo);
   let meta;
@@ -302,7 +294,6 @@ function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, u
   if (meta.mergedAt === null || meta.mergedAt === undefined) {
     throw new ScraperError(`PR #${prNumber} is not merged`, prNumber);
   }
-  assertMergedIntoDefaultBranch(meta, prNumber, repo);
   return meta;
 }
 
@@ -377,6 +368,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
     linkedIssues,
     reviewComments: buildReviewComments(reviews),
     author: (meta.author as { login?: string })?.login ?? '',
+    ...baseBranchFields(meta, repo),
   };
 }
 

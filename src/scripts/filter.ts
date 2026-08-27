@@ -93,6 +93,9 @@ function checkSkipRules(pr: ScrapedPR): string | null {
   if (/^(chore|docs|ci|build)(\(.+\))?(!)?\s*:/i.test(pr.prTitle)) {
     return `Conventional commit type: ${conventionalCommitType(pr.prTitle)}`;
   }
+  if (pr.baseRefName && pr.defaultBranch && pr.baseRefName !== pr.defaultBranch) {
+    return `Merged into non-default branch '${pr.baseRefName}' (default is '${pr.defaultBranch}')`;
+  }
   if (isLockfileOnly(pr)) return 'Lockfile-only changes';
   if (isTranslationOnly(pr)) return 'Translation-only changes';
   return null;

@@ -98,6 +98,24 @@ describe('filterPR', () => {
     });
   });
 
+  describe('SKIP: non-default base branch', () => {
+    it('skips a PR merged into a non-default branch and writes the audit row', async () => {
+      const { filterPR } = loadFilter();
+      const logPath = tmpLogPath();
+      const result = await filterPR(makePR({ baseRefName: '10224-ui-extensions', defaultBranch: 'master' }), { logPath });
+      expect(result.decision).to.equal('skip');
+      expect(result.reason).to.include("non-default branch '10224-ui-extensions'");
+      expect(fs.readFileSync(logPath, 'utf8')).to.include('non-default branch');
+    });
+
+    it('does not skip on base branch when defaultBranch is unknown (fails open)', async () => {
+      const { filterPR } = loadFilter();
+      const logPath = tmpLogPath();
+      const result = await filterPR(makePR({ baseRefName: '10224-ui-extensions' }), { logPath, skipLlm: true });
+      expect(result.reason).to.not.include('non-default branch');
+    });
+  });
+
   describe('SKIP: revert PR', () => {
     it('should return skip for title starting with "Revert"', async () => {
       const { filterPR } = loadFilter();
