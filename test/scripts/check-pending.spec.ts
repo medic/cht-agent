@@ -85,6 +85,14 @@ describe('checkPending', () => {
     expect(failures[0].reason).to.include('schema invalid');
   });
 
+  it('ignores drafts parked under _collapsed/ (D6)', () => {
+    const pendingDir = setupPendingDir({});
+    const collapsedDir = path.join(pendingDir, '_collapsed', 'contacts');
+    fs.mkdirSync(collapsedDir, { recursive: true });
+    fs.writeFileSync(path.join(collapsedDir, '99-broken.md'), 'no frontmatter at all', 'utf8');
+    expect(checkPending(pendingDir)).to.deep.equal([]);
+  });
+
   it('fails a draft with no frontmatter block', () => {
     const dir = setupPendingDir({ '42-plain.md': '# Just markdown\n' });
     const failures = checkPending(dir);

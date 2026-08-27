@@ -348,7 +348,16 @@ function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): Co
   return { plans, skipped, kept, dropped };
 }
 
-/** Remove and audit duplicates only after the canonical draft's PR is created. */
+/** `<pendingDir>/_collapsed/<domain>/<file>` for a draft at `<pendingDir>/<domain>/<file>`. */
+export function collapsedPath(draftPath: string): string {
+  const domainDir = path.dirname(draftPath);
+  return path.join(path.dirname(domainDir), '_collapsed', path.basename(domainDir), path.basename(draftPath));
+}
+
+/**
+ * Move duplicates out of the promotion set only after the canonical draft's PR
+ * is created. Content is never deleted: a human can merge from `_collapsed/`.
+ */
 function finalizeDedupDrops(
   dropped: DedupDrop[],
   promotedPaths: Set<string>,
@@ -356,9 +365,11 @@ function finalizeDedupDrops(
 ): void {
   for (const drop of dropped) {
     if (!promotedPaths.has(drop.canonicalPath)) continue;
+    const target = collapsedPath(drop.path);
     try {
-      fs.unlinkSync(drop.path);
-      writeSkipEntry(logPath, drop.path, drop.reason);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(drop.path, target);
+      writeSkipEntry(logPath, drop.path, `${drop.reason}; "${drop.title}" moved to ${path.relative(path.dirname(path.dirname(drop.path)), target)}`);
     } catch {
       // Already gone — don't report an action that did not occur in this run.
     }

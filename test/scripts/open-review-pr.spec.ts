@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'node:fs';
 import matter from 'gray-matter';
 import type { ReviewPRResult } from '../../src/types/pipeline';
-import { discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
+import { collapsedPath, discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
 import { buildValidator } from '../../src/scripts/schema-utils';
 
 // ---------------------------------------------------------------------------
@@ -626,7 +626,7 @@ describe('openReviewPR — dedup lifecycle', () => {
     expect(fs.existsSync(logPath)).to.equal(false);
   });
 
-  it('apply promotes the lowest-PR-numbered canonical with source_prs and removes the duplicate from _pending', () => {
+  it('apply promotes the lowest-PR-numbered canonical with source_prs and moves the duplicate to _collapsed (D6)', () => {
     const pendingDir = setupPendingDir('contacts', {
       '42-original.md': VALID_FRONTMATTER,
       '99-backport.md': BACKPORT_FRONTMATTER,
@@ -653,9 +653,17 @@ describe('openReviewPR — dedup lifecycle', () => {
     expect(results).to.have.length(1);
     expect(results[0].filesPromoted).to.equal(1);
 
-    // The duplicate is gone from _pending — it must not resurface as a fresh
-    // singleton group on the next run.
+    // The duplicate leaves the promotion set but its content survives under
+    // _collapsed/, where a human can merge it by hand.
     expect(fs.existsSync(backportPath)).to.equal(false);
+    const moved = collapsedPath(backportPath);
+    expect(moved).to.equal(path.join(pendingDir, '_collapsed', 'contacts', '99-backport.md'));
+    expect(fs.readFileSync(moved, 'utf8')).to.equal(BACKPORT_FRONTMATTER);
+    expect(discoverDraftsByDomain(pendingDir).size).to.equal(0);
+    const auditRow = JSON.parse(fs.readFileSync(logPath, 'utf8').trim().split('\n').pop() as string);
+    expect(auditRow.decision).to.equal('flag-for-human');
+    expect(auditRow.reason).to.include('4.7.x backport: Prevent duplicate contact creation');
+    expect(auditRow.reason).to.include('_collapsed/contacts/99-backport.md');
 
     // The canonical (lowest source PR number) draft was promoted, carrying source_prs.
     const promotedPath = path.join(domainsDir, 'contacts', 'issues', '42-original.md');
