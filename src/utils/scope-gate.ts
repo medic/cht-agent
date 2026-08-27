@@ -343,14 +343,32 @@ export function assessScope(args: {
   };
 }
 
+/**
+ * Deferral reasons that mean "recorded from the mid-loop LLM reviewer, not
+ * acted on" — i.e. the item was written BEFORE the deterministic apply, QA and
+ * test verification produced their verdicts. Such items routinely claim the
+ * fix "was not implemented" because the reviewer only ever saw the raw
+ * code-gen output (on the XLSForm path: the JSON descriptor). Observed on m5,
+ * m8, m7 and m4 — every run's most confusing HC5 lines were these.
+ */
+const PRE_VERDICT_DEFERRAL_RE =
+  /deterministic XLSForm apply owns the verdict|recommendation-driven refinement is off|recorded for human review/i;
+
 function appendDeferred(lines: string[], findings: ScopeGateFindings): void {
   if (findings.open.length === 0) {
     return;
   }
-  lines.push('❗ DEFERRED CORRECTNESS ITEMS — the shipped fix does NOT do these', RULE);
+  lines.push('❗ DEFERRED ITEMS — reviewer claims recorded during development, NOT acted on', RULE);
   findings.open.slice(0, MAX_PANEL_ITEMS).forEach((rec, i) => {
     lines.push(` ${i + 1}. ${rec.text}`);
     lines.push(`      why deferred: ${rec.deferralReason ?? '(no reason recorded)'}`);
+    if (PRE_VERDICT_DEFERRAL_RE.test(rec.deferralReason ?? '')) {
+      lines.push(
+        '      ⓘ written by the PRE-VERDICT reviewer (it never saw the apply/QA results above) —',
+        '        judge it against the machine evidence; "the fix was not implemented" claims are',
+        '        superseded by a verified apply.',
+      );
+    }
     if (rec.targetFiles.length > 0) {
       lines.push(`      files: ${rec.targetFiles.join(', ')}`);
     }
@@ -392,8 +410,20 @@ function appendTier2(lines: string[], findings: ScopeGateFindings): void {
   lines.push(findings.tier2.excerpt, '');
 }
 
-/** The whole gate as one screen. Printing is the caller's job. */
-export function renderScopeGatePanel(findings: ScopeGateFindings): string {
+/**
+ * The whole gate as one screen. Printing is the caller's job.
+ *
+ * `machineEvidence` — deterministic verdicts produced AFTER the reviewer wrote
+ * its recommendations (apply verified, QA red→green, tier-2, spec
+ * verification). Rendered first because it OUTRANKS reviewer prose: the m5–m4
+ * runs each opened this gate with items claiming the fix "was not
+ * implemented" minutes after QA proved it deployed, and the operator had no
+ * way to see that the claims predated the proof.
+ */
+export function renderScopeGatePanel(
+  findings: ScopeGateFindings,
+  machineEvidence?: ReadonlyArray<string>,
+): string {
   const lines: string[] = [
     '',
     '╔════════════════════════════════════════════════════════════════╗',
@@ -403,16 +433,30 @@ export function renderScopeGatePanel(findings: ScopeGateFindings): string {
     `Why this gate opened: ${findings.reason}`,
     '',
   ];
+  if (machineEvidence && machineEvidence.length > 0) {
+    lines.push(
+      '⚙️  MACHINE EVIDENCE (deterministic verdicts — these outrank reviewer prose)',
+      RULE,
+      ...machineEvidence.map((line) => `  ✓ ${line}`),
+      '',
+      '  The items below were written by the mid-loop LLM reviewer BEFORE these verdicts',
+      '  existed — it reviews the raw code-gen output and never sees the apply, QA or test',
+      '  runs. Judge each item against the evidence above: some are already answered by it,',
+      '  some are real follow-ups. You are the classifier.',
+      '',
+    );
+  }
   appendDeferred(lines, findings);
   appendScopeLimited(lines, findings);
   appendTier2(lines, findings);
   lines.push(
     'WHAT THIS MEANS',
     RULE,
-    '  This change stayed inside the scope the ticket declared. The items above say that',
-    '  scope is not enough to be correct: fixing one portion of the config left another',
-    '  portion wrong. Accepting ships a recorded gap. Widening renegotiates the ticket and',
-    '  re-runs development. Abandoning writes no PR bundle.',
+    '  These are recorded reviewer claims, not verdicts. Some may already be answered by',
+    '  the machine evidence (the reviewer cannot see later phases); others are genuine',
+    '  gaps or follow-ups. `accept` ships them into the PR body as a checklist for human',
+    '  review — it does NOT discard them, and annotating them there is the normal',
+    '  workflow. `abandon` writes no PR bundle.',
     '',
   );
   return lines.join('\n');

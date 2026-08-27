@@ -25,6 +25,7 @@ import {
 import { askYesNo, askWithOptions } from '../utils/prompt';
 import {
   tier2TailExcerpt,
+  tier2PassLine,
   isTier2EnvironmentalFailure,
   tier2FailuresArePreExisting,
 } from '../utils/cht-conf-tier2';
@@ -131,6 +132,51 @@ const isScopeGateInteractive = (qaOptions?: QaOptions): boolean =>
  *
  * Returns undefined when there is nothing to decide.
  */
+/**
+ * The deterministic verdicts HC5 shows ABOVE the reviewer's deferred items, so
+ * an operator can tell a stale pre-verdict claim ("the fix was not
+ * implemented") from a genuine gap at a glance. Facts only — every line here
+ * is machine-produced; nothing is inferred.
+ */
+export const buildMachineEvidence = (
+  development: DevelopmentWorkflowResult,
+  qa: QaResult | undefined,
+): string[] => {
+  const lines: string[] = [];
+  const apply = development.result?.xlsformApply;
+  if (apply) {
+    lines.push(
+      `XLSForm apply VERIFIED: the descriptor was applied to the workbook, reconverted ` +
+        `offline, and the corrected bind asserted (${apply.bindDiff?.nodeset ?? apply.form})`,
+    );
+  }
+  if (qa?.ran) {
+    if (qa.reproduced && qa.verified) {
+      const rev = qa.revChanged ? `; artifact rev changed ${qa.preFormRev ?? '?'} → ${qa.postFormRev ?? '?'}` : '';
+      lines.push(`QA red→green on the LIVE instance: bug reproduced pre-fix, deployed artifact verified post-fix${rev}`);
+    } else if (qa.reproduced) {
+      lines.push('QA: bug reproduced pre-fix, but GREEN did NOT verify — see the QA panel above');
+    }
+    const wholeDoc = qa.messages.find((m) => m.startsWith('GREEN oracle: whole-document'));
+    if (wholeDoc) {
+      lines.push(wholeDoc);
+    }
+    if (qa.tier2?.ran && qa.tier2.passed) {
+      lines.push(`${tier2PassLine(qa.tier2.outputTail)}${qa.tier2.specs ? ` — ${qa.tier2.specs.join(', ')}` : ''}`);
+    }
+  }
+  const specVerification = development.result?.testGeneration?.verification;
+  if (specVerification?.verified) {
+    const repairs = specVerification.repairs > 0 ? ` after ${specVerification.repairs} fixture repair(s)` : '';
+    lines.push(`generated specs PROVEN red→green (fail pre-fix, pass post-fix)${repairs}`);
+  } else if (specVerification?.droppedSpecs?.length) {
+    lines.push(
+      `generated specs DROPPED as unproven (${specVerification.droppedSpecs.join(', ')}) — ${specVerification.reason ?? ''}`,
+    );
+  }
+  return lines;
+};
+
 const askScopeGate = async (
   ticket: IssueTemplate,
   development: DevelopmentWorkflowResult,
@@ -150,7 +196,7 @@ const askScopeGate = async (
   if (!findings.opens) {
     return undefined;
   }
-  console.log(renderScopeGatePanel(findings));
+  console.log(renderScopeGatePanel(findings, buildMachineEvidence(development, qa)));
   if (!isScopeGateInteractive(qaOptions)) {
     const why = qaOptions?.autoApprove ? 'non-interactive run (--qa-auto)' : 'no TTY on stdin';
     console.log(`ℹ️  ${why}: not prompting. Recording ACCEPT — every item above rides into the PR body.\n`);

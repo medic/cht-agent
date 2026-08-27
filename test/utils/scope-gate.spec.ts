@@ -550,7 +550,43 @@ describe('scope-gate (HC5) — the panel and the abandon banner', () => {
     const panel = renderScopeGatePanel(assessScope({ ticket: ticketWith([]), ledger: M4_DEFERRED }));
     expect(panel).to.not.contain('TIER-2 FAILURES');
     expect(panel).to.not.contain('LIMITED SCOPE');
-    expect(panel).to.contain('DEFERRED CORRECTNESS ITEMS');
+    expect(panel).to.contain('DEFERRED ITEMS');
+  });
+
+  it('renders machine evidence FIRST when supplied, and omits the block when not', () => {
+    const findings = assessScope({ ticket: ticketWith([]), ledger: M4_DEFERRED });
+    const withEvidence = renderScopeGatePanel(findings, [
+      'XLSForm apply VERIFIED: the corrected bind asserted',
+      'QA red→green on the LIVE instance',
+    ]);
+    expect(withEvidence).to.contain('MACHINE EVIDENCE');
+    expect(withEvidence).to.contain('✓ XLSForm apply VERIFIED');
+    expect(withEvidence).to.contain('✓ QA red→green on the LIVE instance');
+    // Evidence renders before the deferred items so it frames them.
+    expect(withEvidence.indexOf('MACHINE EVIDENCE')).to.be.lessThan(withEvidence.indexOf('DEFERRED ITEMS'));
+
+    const without = renderScopeGatePanel(findings);
+    expect(without).to.not.contain('MACHINE EVIDENCE');
+    expect(without).to.not.contain('✓ ');
+    const empty = renderScopeGatePanel(findings, []);
+    expect(empty).to.not.contain('MACHINE EVIDENCE');
+  });
+
+  it('stamps items deferred by the PRE-VERDICT blanket reasons, and only those', () => {
+    const ledger: TriagedRecommendation[] = [
+      rec({
+        text: 'Actually implement the fix: edit the workbook cell',
+        deferralReason: 'blocking — the deterministic XLSForm apply owns the verdict on this path',
+      }),
+      rec({
+        text: 'A genuinely open follow-up',
+        deferralReason: 'score above the refinement threshold',
+      }),
+    ];
+    const panel = renderScopeGatePanel(assessScope({ ticket: ticketWith([]), ledger }));
+    expect(panel).to.contain('written by the PRE-VERDICT reviewer');
+    // Exactly one stamped item — the blanket-reason one.
+    expect(panel.match(/PRE-VERDICT reviewer/g)).to.have.property('length', 1);
   });
 
   it('the abandon banner names the files HC2 already wrote and the exact revert command', () => {

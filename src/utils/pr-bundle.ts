@@ -566,6 +566,14 @@ const recommendationSection = (
     `${counts.applied} applied during refinement · ${counts.deferredBlocking} deferred (correctness) · ` +
       `${counts.deferredAdvisory} deferred (advisory)`,
     '',
+    '> **Provenance:** these were written by the development-phase LLM reviewer BEFORE the',
+    '> deterministic apply, the QA red→green run and the test verification produced their',
+    '> verdicts — it reviews the raw code-gen output and never sees those later phases. The',
+    "> QA section above OUTRANKS any claim here that the fix 'was not implemented'. Judge",
+    '> each unchecked item against that evidence: some are already answered by it, some are',
+    '> genuine follow-ups. Annotating and checking items off in this list is the intended',
+    '> review workflow.',
+    '',
   ];
   if (blocking.length > 0) {
     lines.push('### Deferred — correctness (review before merging)', '');
@@ -575,7 +583,7 @@ const recommendationSection = (
     }
     lines.push(
       '',
-      '> These were raised by validation and NOT applied. Each is a candidate defect in this change.',
+      '> Each item above is a REVIEWER CLAIM recorded during development, not a verdict.',
       '',
     );
   }
