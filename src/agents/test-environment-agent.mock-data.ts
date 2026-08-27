@@ -1,4 +1,5 @@
-import { DiscoveredConfig, TestDataResult } from '../types';
+import { ConfigActionResult, ConfigUploadAction, DiscoveredConfig, TestDataResult } from '../types';
+import { CONFIG_ACTION_COMMANDS } from '../utils/cht-conf-runner';
 
 /**
  * Raw deterministic fixtures for the Test Environment Agent's mock mode.
@@ -15,9 +16,19 @@ export type MockTestEnvData = {
   testData: TestDataResult;
 };
 
+/**
+ * Build a successful (uploaded), warning-free mock result for a single bucket.
+ */
+export const mockConfigActionResult = (action: ConfigUploadAction): ConfigActionResult => ({
+  action,
+  status: 'uploaded',
+  commands: [...CONFIG_ACTION_COMMANDS[action]],
+  warnings: [],
+});
+
 export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
   url: 'https://nginx',
-  // matches the defaults set by cht-core's scripts/docker-helper/cht-docker-compose.sh
+  // matches the creds scripts/test-env-up.sh brings the stack up with (and the agent's DEFAULT_AUTH)
   auth: { user: 'medic', password: 'password' },
   network: 'cht-agent-net',
   config: {
@@ -40,6 +51,11 @@ export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
       death_reporting: { disable: false },
     },
     forms: ['delivery', 'pregnancy', 'assessment'],
+    formVersions: {
+      delivery: '1-mockrev',
+      pregnancy: '1-mockrev',
+      assessment: '1-mockrev',
+    },
   },
   testData: {
     placesCreated: 3,
@@ -47,5 +63,21 @@ export const MOCK_TEST_ENV_DATA: MockTestEnvData = {
     reportsCreated: 4,
     usersCreated: 2,
     warnings: [],
+    succeeded: true,
+    // One id per mock place/person/report (users are accounts, not docs).
+    seededDocIds: [
+      'mock-place-district-1',
+      'mock-place-health-center-1',
+      'mock-place-clinic-1',
+      'mock-person-1',
+      'mock-person-2',
+      'mock-person-3',
+      'mock-person-4',
+      'mock-person-5',
+      'mock-report-delivery-1',
+      'mock-report-pregnancy-1',
+      'mock-report-pregnancy-2',
+      'mock-report-assessment-1',
+    ],
   },
 };
