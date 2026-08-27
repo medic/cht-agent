@@ -2,19 +2,21 @@ import { expect } from 'chai';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'node:fs';
+import matter from 'gray-matter';
 import type { ReviewPRResult } from '../../src/types/pipeline';
-import { discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
+import { collapsedPath, discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
+import { buildValidator } from '../../src/scripts/schema-utils';
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
 const VALID_FRONTMATTER = `---
-id: cht-core-42
+id: cht-core-1042
 category: bug
 domain: contacts
-issueNumber: 42
-issueUrl: https://github.com/medic/cht-core/issues/42
+issueNumber: 1042
+issueUrl: https://github.com/medic/cht-core/issues/1042
 title: Prevent duplicate contact creation
 lastUpdated: "2026-05-20"
 summary: "Race condition caused duplicate contacts"
@@ -56,11 +58,11 @@ const NO_FRONTMATTER = `# Just markdown, no YAML\n\nSome content.`;
 // A second complete draft using the canonical camelCase `lastUpdated` field —
 // confirms the converged schema validates camelCase natively (no aliasing).
 const CAMELCASE_FRONTMATTER = `---
-id: cht-core-43
+id: cht-core-1043
 category: improvement
 domain: contacts
-issueNumber: 43
-issueUrl: https://github.com/medic/cht-core/issues/43
+issueNumber: 1043
+issueUrl: https://github.com/medic/cht-core/issues/1043
 title: Fix duplicate detection using the canonical lastUpdated field
 lastUpdated: "2026-05-20"
 summary: "Confirms a full camelCase draft validates without aliasing"
@@ -589,5 +591,118 @@ describe('openReviewPR — branch collision handling', () => {
     });
 
     expect(results[0].branch).to.equal('memory/review/contacts-20260520-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openReviewPR — dedup lifecycle (R3)
+// ---------------------------------------------------------------------------
+
+// A backport duplicate of VALID_FRONTMATTER's issue (same id/issueNumber, higher source PR).
+const BACKPORT_FRONTMATTER = VALID_FRONTMATTER
+  .replace('source_pr: medic/cht-core#42', 'source_pr: medic/cht-core#99')
+  .replace('title: Prevent duplicate contact creation', 'title: "4.7.x backport: Prevent duplicate contact creation"');
+
+describe('openReviewPR — dedup lifecycle', () => {
+  it('dry-run collapses duplicates in its count without mutating any pending file', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const originalPath = path.join(pendingDir, 'contacts', '42-original.md');
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+    const beforeOriginal = fs.readFileSync(originalPath, 'utf8');
+    const beforeBackport = fs.readFileSync(backportPath, 'utf8');
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+
+    const results = openReviewPR({ pendingDir, logPath, date: '20260520' });
+
+    expect(results).to.have.length(1);
+    expect(results[0].filesPromoted).to.equal(1);
+    // Dry-run must not touch _pending file contents, even the canonical draft
+    // that would gain a `source_prs` field once applied.
+    expect(fs.readFileSync(originalPath, 'utf8')).to.equal(beforeOriginal);
+    expect(fs.readFileSync(backportPath, 'utf8')).to.equal(beforeBackport);
+    expect(fs.existsSync(logPath)).to.equal(false);
+  });
+
+  it('apply promotes the lowest-PR-numbered canonical with source_prs and moves the duplicate to _collapsed (D6)', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const domainsDir = makeTmpDir();
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      'gh-pr': () => 'https://github.com/medic/cht-agent/pull/99\n',
+    });
+
+    const results = openReviewPR({ apply: true, pendingDir, domainsDir, logPath, date: '20260520', execFn: exec.fn });
+
+    expect(results).to.have.length(1);
+    expect(results[0].filesPromoted).to.equal(1);
+
+    // The duplicate leaves the promotion set but its content survives under
+    // _collapsed/, where a human can merge it by hand.
+    expect(fs.existsSync(backportPath)).to.equal(false);
+    const moved = collapsedPath(backportPath);
+    expect(moved).to.equal(path.join(pendingDir, '_collapsed', 'contacts', '99-backport.md'));
+    expect(fs.readFileSync(moved, 'utf8')).to.equal(BACKPORT_FRONTMATTER);
+    expect(discoverDraftsByDomain(pendingDir).size).to.equal(0);
+    const auditRow = JSON.parse(fs.readFileSync(logPath, 'utf8').trim().split('\n').pop() as string);
+    expect(auditRow.decision).to.equal('flag-for-human');
+    expect(auditRow.reason).to.include('4.7.x backport: Prevent duplicate contact creation');
+    expect(auditRow.reason).to.include('_collapsed/contacts/99-backport.md');
+
+    // The canonical (lowest source PR number) draft was promoted, carrying source_prs.
+    const promotedPath = path.join(domainsDir, 'contacts', 'issues', '42-original.md');
+    expect(fs.existsSync(promotedPath)).to.equal(true);
+    const promotedFm = matter(fs.readFileSync(promotedPath, 'utf8')).data as Record<string, unknown>;
+    expect(promotedFm.source_pr).to.equal('medic/cht-core#42');
+    expect(promotedFm.source_prs).to.deep.equal(['medic/cht-core#42', 'medic/cht-core#99']);
+
+    // The rewritten frontmatter still validates against the schema.
+    const validate = buildValidator();
+    expect(validate(promotedFm)).to.equal(true);
+  });
+
+  it('keeps duplicate drafts when the canonical promotion fails', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const domainsDir = makeTmpDir();
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      'gh-pr': () => { throw new Error('GitHub unavailable'); },
+    });
+
+    const results = openReviewPR({ apply: true, pendingDir, domainsDir, logPath, date: '20260520', execFn: exec.fn });
+
+    expect(results[0].status).to.equal('failed');
+    expect(fs.existsSync(backportPath)).to.equal(true);
+    expect(fs.readFileSync(path.join(pendingDir, 'contacts', '42-original.md'), 'utf8')).not.to.include('source_prs:');
+    expect(fs.existsSync(logPath)).to.equal(false);
   });
 });

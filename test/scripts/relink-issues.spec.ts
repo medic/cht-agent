@@ -173,8 +173,8 @@ describe('relinkIssues (classification)', () => {
 
   it('offline: flags a non-alias draft whose issueNumber disagrees with the token', () => {
     const dir = tmpDir();
-    makeDraft(dir, { name: '200-fix60-x.md', issueNumber: 137, pr: 200 }); // token 60 ≠ issueNumber 137
-    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-fix60-x.md');
+    makeDraft(dir, { name: '200-fix6000-x.md', issueNumber: 137, pr: 200 }); // token 6000 ≠ issueNumber 137
+    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-fix6000-x.md');
     expect(r.status).to.equal('flagged');
     expect(r.reason).to.match(/suspect/);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -182,9 +182,27 @@ describe('relinkIssues (classification)', () => {
 
   it('offline: leaves a non-alias draft whose issueNumber matches the token unchanged', () => {
     const dir = tmpDir();
-    makeDraft(dir, { name: '200-fix137-x.md', issueNumber: 137, pr: 200 }); // token 137 === issueNumber
-    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-fix137-x.md');
+    makeDraft(dir, { name: '200-fix6000-x.md', issueNumber: 6000, pr: 200 }); // token 6000 === issueNumber
+    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-fix6000-x.md');
     expect(r.status).to.equal('unchanged');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('offline: ignores ambiguous hyphen-separated numeric slugs', () => {
+    const dir = tmpDir();
+    makeDraft(dir, { name: '200-fix-6000-x.md', issueNumber: 200, pr: 200 });
+    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-fix-6000-x.md');
+    expect(r.status).to.equal('flagged');
+    expect(r.reason).to.match(/tokenless/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('offline: parses an explicit low-number issue token', () => {
+    const dir = tmpDir();
+    makeDraft(dir, { name: '200-issue-137-fix-137-x.md', issueNumber: 200, pr: 200 });
+    const r = byName(relinkIssues({ dir, offline: true, exec: fakeExec({}) }), '200-issue-137-fix-137-x.md');
+    expect(r.status).to.equal('relinked');
+    expect(r.to).to.equal(137);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

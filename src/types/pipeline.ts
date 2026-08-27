@@ -34,6 +34,8 @@ export interface ReviewComment {
  * Combines PR metadata, file changes, linked issues, and review comments.
  */
 export interface ScrapedPR {
+  /** GitHub repository in owner/name form. */
+  repo?: string;
   /** The GitHub PR number */
   prNumber: number;
   /** PR title */
@@ -56,6 +58,10 @@ export interface ScrapedPR {
   reviewComments: ReviewComment[];
   /** GitHub login of the PR author */
   author: string;
+  /** Branch the PR merged into; absent when gh omitted the field. */
+  baseRefName?: string;
+  /** The repo's default branch; absent when the lookup failed (gate fails open). */
+  defaultBranch?: string;
 }
 
 /**
@@ -73,8 +79,9 @@ export type FilterDecision = 'distill' | 'skip' | 'flag-for-human';
 export interface SkipLogEntry {
   /** The GitHub PR number that was filtered */
   prNumber: number;
-  /** The filter decision that caused this log entry */
-  decision: FilterDecision;
+  /** The filter decision that caused this log entry; 'warn' records a non-fatal
+   *  anomaly (e.g. PR title contradicts issue resolution) on a draft that WAS written. */
+  decision: FilterDecision | 'warn';
   /** Human-readable explanation for the decision */
   reason: string;
   /** ISO-8601 timestamp when the decision was recorded */
@@ -147,6 +154,13 @@ export interface DistillResult {
   /** Absolute path of the written draft file — set only when status === 'written' */
   outputPath?: string;
   reason: string;
+  /**
+   * Ground-truth check: fraction of the draft's relatedFiles/entities not found
+   * in the PR's real fileList. Set only when status === 'written'. Noisy by
+   * construction (entities may name a module/concept, not a literal path) — a
+   * reporting signal, never a gate.
+   */
+  hallucinationRate?: number;
 }
 
 /** Options for distillPR — used to inject test doubles and override defaults */

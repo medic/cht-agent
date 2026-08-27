@@ -98,6 +98,24 @@ describe('filterPR', () => {
     });
   });
 
+  describe('SKIP: non-default base branch', () => {
+    it('skips a PR merged into a non-default branch and writes the audit row', async () => {
+      const { filterPR } = loadFilter();
+      const logPath = tmpLogPath();
+      const result = await filterPR(makePR({ baseRefName: '10224-ui-extensions', defaultBranch: 'master' }), { logPath });
+      expect(result.decision).to.equal('skip');
+      expect(result.reason).to.include("non-default branch '10224-ui-extensions'");
+      expect(fs.readFileSync(logPath, 'utf8')).to.include('non-default branch');
+    });
+
+    it('does not skip on base branch when defaultBranch is unknown (fails open)', async () => {
+      const { filterPR } = loadFilter();
+      const logPath = tmpLogPath();
+      const result = await filterPR(makePR({ baseRefName: '10224-ui-extensions' }), { logPath, skipLlm: true });
+      expect(result.reason).to.not.include('non-default branch');
+    });
+  });
+
   describe('SKIP: revert PR', () => {
     it('should return skip for title starting with "Revert"', async () => {
       const { filterPR } = loadFilter();
@@ -191,7 +209,7 @@ describe('filterPR', () => {
         labels: ['Type: Bug'],
         linkedIssues: [LINKED_ISSUE],
         fileList: ['api/a.ts', 'webapp/b.ts'],
-      }), { logPath: tmpLogPath() });
+      }));
       expect(result.decision).to.equal('distill');
       expect(result.reason).to.include('Bug');
     });
@@ -204,7 +222,7 @@ describe('filterPR', () => {
         labels: ['Type: Feature'],
         linkedIssues: [LINKED_ISSUE],
         fileList: ['api/a.ts'],
-      }), { logPath: tmpLogPath() });
+      }));
       expect(result.decision).to.equal('distill');
       expect(result.reason).to.include('Feature');
     });
@@ -215,7 +233,7 @@ describe('filterPR', () => {
       const { filterPR } = loadFilter();
       const result: FilterResult = await filterPR(makePR({
         fileList: ['shared-libs/foo/index.ts', 'api/bar.ts', 'webapp/baz.ts'],
-      }), { logPath: tmpLogPath() });
+      }));
       expect(result.decision).to.equal('distill');
       expect(result.reason).to.include('Shared library');
     });
@@ -226,6 +244,7 @@ describe('filterPR', () => {
   describe('touchesMultipleServices: single service does not trigger distill rule', () => {
     it('bug + linked issue touching only one service should not match multi-service distill', async () => {
       const { filterPR } = loadFilter();
+      const logPath = tmpLogPath();
       // Bug label + linked issue, but every file is under api/ — a single service.
       // The bug distill rule requires ≥2 services, so it must NOT fire; with the LLM
       // skipped the PR falls through to flag-for-human.
@@ -233,7 +252,7 @@ describe('filterPR', () => {
         labels: ['Type: Bug'],
         linkedIssues: [LINKED_ISSUE],
         fileList: ['api/a.ts', 'api/b.ts'],
-      }), { skipLlm: true, logPath: tmpLogPath() });
+      }), { logPath, skipLlm: true });
       expect(result.decision).to.equal('flag-for-human');
     });
   });
@@ -245,7 +264,7 @@ describe('filterPR', () => {
         labels: ['Type: Bug'],
         linkedIssues: [LINKED_ISSUE],
         fileList: ['api/a.ts', 'webapp/b.ts'],
-      }), { logPath: tmpLogPath() });
+      }));
       expect(result.decision).to.equal('distill');
     });
   });

@@ -20,6 +20,8 @@ import matter from 'gray-matter';
 import type { SkipLogEntry, OpenReviewOptions, ReviewPRResult } from '../types/pipeline';
 import { CHT_DOMAINS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { REPO_ROOT, buildValidator, normalizeFrontmatter, hasFrontmatter } from './schema-utils';
+import { ciGuardReason, dedupeByIssueId, DedupEntry, DedupDrop } from './dedup';
+import { formatReconciliation, reconcile } from './reconcile';
 
 const DEFAULT_DOMAINS_DIR = path.join(REPO_ROOT, 'agent-memory', 'domains');
 
@@ -163,6 +165,23 @@ function writeSkipEntry(logPath: string, draftPath: string, reason: string): voi
   fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
 }
 
+function auditOffset(logPath: string): number {
+  try { return fs.statSync(logPath).size; } catch { return 0; }
+}
+
+function reconciliationSince(logPath: string, offset: number): string {
+  try {
+    const entries = fs.readFileSync(logPath).subarray(offset).toString('utf8')
+      .split('\n')
+      .flatMap(line => {
+        try { return [JSON.parse(line) as SkipLogEntry]; } catch { return []; }
+      });
+    return formatReconciliation(reconcile(entries));
+  } catch {
+    return '';
+  }
+}
+
 const MAX_BRANCH_SUFFIX = 99;
 
 /**
@@ -222,19 +241,23 @@ function parseDraft(draftPath: string, logPath: string): ReturnType<typeof matte
 }
 
 /**
- * Filters a list of draft paths to those that pass schema validation.
+ * Validates one domain's draft paths against the schema and the CI guard
+ * (`ciGuardReason` — rejects a mislinked draft or a slug/issueNumber
+ * contradiction). Passing drafts are returned as `DedupEntry` objects so the
+ * caller can run cross-domain dedup before promotion.
  *
+ * @param domain     - CHT domain these drafts were discovered under.
  * @param draftPaths - Array of absolute draft file paths to validate.
  * @param logPath    - Path to the NDJSON audit log file.
- * @returns Array of draft paths that passed schema validation.
+ * @returns Array of entries that passed schema validation and the CI guard.
  *
  * @example
  * ```typescript
- * const valid = findValidDrafts(['/tmp/drafts/42-foo.md'], '/tmp/skipped.ndjson');
+ * const valid = findValidEntries('contacts', ['/tmp/drafts/42-foo.md'], '/tmp/skipped.ndjson');
  * ```
  */
-function findValidDrafts(draftPaths: string[], logPath: string): string[] {
-  const valid: string[] = [];
+function findValidEntries(domain: string, draftPaths: string[], logPath: string): DedupEntry[] { // NOSONAR typescript:S3776 -- straight-line validation chain, not worth splitting
+  const valid: DedupEntry[] = [];
   for (const draftPath of draftPaths) {
     const parsed = parseDraft(draftPath, logPath);
     if (parsed === null) continue;
@@ -244,38 +267,113 @@ function findValidDrafts(draftPaths: string[], logPath: string): string[] {
       writeSkipEntry(logPath, draftPath, `Schema invalid: ${errors}`);
       continue;
     }
-    valid.push(draftPath);
+    const guardReason = ciGuardReason(draftPath, data);
+    if (guardReason !== null) {
+      writeSkipEntry(logPath, draftPath, `CI guard: ${guardReason}`);
+      continue;
+    }
+    valid.push({ domain, path: draftPath, frontmatter: data });
   }
   return valid;
 }
 
 /**
- * Collects valid draft plans per domain and separates skipped domains.
- *
- * @param byDomain - Map of domain to its discovered draft paths.
- * @param logPath  - Path to the NDJSON audit log file.
- * @returns Object with `plans` (valid domains) and `skipped` (ReviewPRResult for empty domains).
+ * Rewrites a draft's YAML frontmatter in place, preserving its markdown body.
+ * Used after dedup adds `source_prs` to a canonical draft's frontmatter.
  *
  * @example
  * ```typescript
- * const { plans, skipped } = collectValidPlans(byDomain, '/tmp/skipped.ndjson');
+ * rewriteFrontmatterOnDisk('/tmp/drafts/42-foo.md', { ...frontmatter, source_prs: [...] });
  * ```
  */
-function collectValidPlans(
-  byDomain: Map<string, string[]>,
-  logPath: string
-): { plans: Map<string, string[]>; skipped: ReviewPRResult[] } {
+function rewriteFrontmatterOnDisk(draftPath: string, frontmatter: Record<string, unknown>): void {
+  const sourcePrs = frontmatter.source_prs;
+  if (!Array.isArray(sourcePrs) || !sourcePrs.every(s => typeof s === 'string')) return;
+  const content = fs.readFileSync(draftPath, 'utf8');
+  const lines = ['source_prs:', ...sourcePrs.map(s => `  - ${s}`), ''];
+  const insertion = lines.join('\n');
+  fs.writeFileSync(draftPath, content.replace(/^(---\r?\n[\s\S]*?)(---\r?\n)/, `$1${insertion}$2`), 'utf8');
+}
+
+/** Return value of `collectValidPlans` — the dedup outcome plus derived per-domain plans. */
+interface CollectedPlans {
+  plans: Map<string, string[]>;
+  skipped: ReviewPRResult[];
+  /** Surviving entries after dedup; a `source_prs`-bearing entry needs its on-disk frontmatter rewritten before staging. */
+  kept: DedupEntry[];
+  /** Duplicates collapsed away by dedup; their _pending files must be removed so they don't resurface as a fresh singleton next run. */
+  dropped: DedupDrop[];
+}
+
+/**
+ * Collects valid draft plans per domain and separates skipped domains. Pure
+ * planning only — does not touch `_pending` file contents; the caller decides
+ * whether to apply the resulting frontmatter rewrites/deletions (dry-run must
+ * not mutate any files).
+ *
+ * Validates every domain's drafts against the schema and CI guard, then runs a
+ * single cross-domain dedup pass (`dedupeByIssueId`) over all surviving drafts
+ * so backport cherry-picks and multi-PR epics collapse into one canonical
+ * draft — regardless of which domain each duplicate landed in.
+ *
+ * @param byDomain - Map of domain to its discovered draft paths.
+ * @param logPath  - Path to the NDJSON audit log file.
+ * @returns `plans`/`skipped` for building results, plus `kept`/`dropped` for the caller to apply.
+ *
+ * @example
+ * ```typescript
+ * const { plans, skipped, kept, dropped } = collectValidPlans(byDomain, '/tmp/skipped.ndjson');
+ * ```
+ */
+function collectValidPlans(byDomain: Map<string, string[]>, logPath: string): CollectedPlans { // NOSONAR typescript:S3776 -- straight-line plan assembly, not worth splitting
+  const allValid = Array.from(byDomain.entries()).flatMap(([domain, draftPaths]) =>
+    findValidEntries(domain, draftPaths, logPath)
+  );
+
+  const { kept, dropped } = dedupeByIssueId(allValid);
+
   const plans = new Map<string, string[]>();
+  for (const entry of kept) {
+    const existing = plans.get(entry.domain);
+    if (existing) existing.push(entry.path);
+    else plans.set(entry.domain, [entry.path]);
+  }
+
   const skipped: ReviewPRResult[] = [];
-  for (const [domain, draftPaths] of byDomain) {
-    const validDrafts = findValidDrafts(draftPaths, logPath);
-    if (validDrafts.length > 0) {
-      plans.set(domain, validDrafts);
-    } else {
+  for (const domain of byDomain.keys()) {
+    if (!plans.has(domain)) {
       skipped.push({ domain, branch: '', filesPromoted: 0, status: 'skipped' });
     }
   }
-  return { plans, skipped };
+  return { plans, skipped, kept, dropped };
+}
+
+/** `<pendingDir>/_collapsed/<domain>/<file>` for a draft at `<pendingDir>/<domain>/<file>`. */
+export function collapsedPath(draftPath: string): string {
+  const domainDir = path.dirname(draftPath);
+  return path.join(path.dirname(domainDir), '_collapsed', path.basename(domainDir), path.basename(draftPath));
+}
+
+/**
+ * Move duplicates out of the promotion set only after the canonical draft's PR
+ * is created. Content is never deleted: a human can merge from `_collapsed/`.
+ */
+function finalizeDedupDrops(
+  dropped: DedupDrop[],
+  promotedPaths: Set<string>,
+  logPath: string
+): void {
+  for (const drop of dropped) {
+    if (!promotedPaths.has(drop.canonicalPath)) continue;
+    const target = collapsedPath(drop.path);
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(drop.path, target);
+      writeSkipEntry(logPath, drop.path, `${drop.reason}; "${drop.title}" moved to ${path.relative(path.dirname(path.dirname(drop.path)), target)}`);
+    } catch {
+      // Already gone — don't report an action that did not occur in this run.
+    }
+  }
 }
 
 /**
@@ -320,14 +418,20 @@ function buildDryRunResults(plans: Map<string, string[]>, date: string): ReviewP
  *
  * @example
  * ```typescript
- * const paths = stageDrafts(['/tmp/pending/contacts/42-foo.md'], '/repo/agent-memory/domains/contacts/issues');
+ * const paths = stageDrafts(['/tmp/pending/contacts/42-foo.md'], '/repo/agent-memory/domains/contacts/issues', new Map());
  * ```
  */
-function stageDrafts(validDrafts: string[], targetDir: string): string[] {
+function stageDrafts(
+  validDrafts: string[],
+  targetDir: string,
+  frontmatterByPath: Map<string, Record<string, unknown>>
+): string[] {
   fs.mkdirSync(targetDir, { recursive: true });
   return validDrafts.map(draftPath => {
     const targetPath = path.join(targetDir, path.basename(draftPath));
     fs.copyFileSync(draftPath, targetPath);
+    const frontmatter = frontmatterByPath.get(draftPath);
+    if (frontmatter?.source_prs !== undefined) rewriteFrontmatterOnDisk(targetPath, frontmatter);
     return path.relative(REPO_ROOT, targetPath);
   });
 }
@@ -353,7 +457,7 @@ function deleteRemoteBranch(exec: ExecFn, branch: string): void {
 function promoteDomain(
   domain: string,
   validDrafts: string[],
-  opts: { domainsDir: string; date: string; exec: ExecFn }
+  opts: { domainsDir: string; date: string; exec: ExecFn; frontmatterByPath: Map<string, Record<string, unknown>> }
 ): ReviewPRResult {
   const { domainsDir, date, exec } = opts;
   const branch = uniqueBranchName(`memory/review/${domain}-${date}`, exec);
@@ -362,7 +466,7 @@ function promoteDomain(
 
   let pushed = false;
   try {
-    const addPaths = stageDrafts(validDrafts, path.join(domainsDir, domain, 'issues'));
+    const addPaths = stageDrafts(validDrafts, path.join(domainsDir, domain, 'issues'), opts.frontmatterByPath);
     exec('git', ['add', ...addPaths]);
     exec('git', ['commit', '-m',
       `feat(memory): promote ${validDrafts.length} ${domain} draft(s) for review`]);
@@ -413,7 +517,7 @@ function promoteDomain(
 function promoteDomainSafely(
   domain: string,
   validDrafts: string[],
-  config: { domainsDir: string; date: string; exec: ExecFn }
+  config: { domainsDir: string; date: string; exec: ExecFn; frontmatterByPath: Map<string, Record<string, unknown>> }
 ): ReviewPRResult {
   try {
     return promoteDomain(domain, validDrafts, config);
@@ -430,7 +534,7 @@ function promoteDomainSafely(
 
 function executeApply(
   plans: Map<string, string[]>,
-  config: { domainsDir: string; date: string; exec: ExecFn }
+  config: { domainsDir: string; date: string; exec: ExecFn; frontmatterByPath: Map<string, Record<string, unknown>> }
 ): ReviewPRResult[] {
   const { exec } = config;
   const results: ReviewPRResult[] = [];
@@ -475,14 +579,22 @@ export function openReviewPR(opts: OpenReviewOptions = {}): ReviewPRResult[] {
   const exec: ExecFn = opts.execFn ??
     ((file: string, args: string[]) => execFileSync(file, args, { encoding: 'utf8' }) as string);
 
-  const { plans, skipped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
+  const { plans, skipped, kept, dropped } = collectValidPlans(discoverDraftsByDomain(pendingDir), logPath);
   if (!apply) return [...skipped, ...buildDryRunResults(plans, date)];
-  return [...skipped, ...executeApply(plans, { domainsDir, date, exec })];
+
+  const frontmatterByPath = new Map(kept.map(entry => [entry.path, entry.frontmatter]));
+  const results = executeApply(plans, { domainsDir, date, exec, frontmatterByPath });
+  const promotedPaths = new Set(results
+    .filter(result => result.status === 'created')
+    .flatMap(result => plans.get(result.domain) ?? []));
+  finalizeDedupDrops(dropped, promotedPaths, logPath);
+  return [...skipped, ...results];
 }
 
 // CLI entry point
 if (require.main === module) {
   const apply = process.argv.includes('--apply');
+  const offset = auditOffset(DEFAULT_PIPELINE_LOG_PATH);
 
   if (!apply) {
     console.log('Dry-run — pass --apply to create PRs\n');
@@ -502,4 +614,7 @@ if (require.main === module) {
   if (results.every(r => r.status === 'skipped')) {
     console.log('No pending drafts found.');
   }
+
+  const reconciliation = reconciliationSince(DEFAULT_PIPELINE_LOG_PATH, offset);
+  if (reconciliation) console.log(reconciliation);
 }

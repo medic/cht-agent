@@ -1,6 +1,7 @@
 import { expect } from 'chai';
 import { ScraperError } from '../../src/types/pipeline';
 import { GhTransientError } from '../../src/scripts/gh-classify';
+import { stripBoilerplate } from '../../src/scripts/scraper';
 
 // Use require for proxyquire to avoid ESM conflicts
 const proxyquire = require('proxyquire').noCallThru();
@@ -128,6 +129,65 @@ describe('scrapePR', () => {
 
       const result = scrapePR(7);
       expect(result.linkedIssues).to.deep.equal([]);
+    });
+  });
+
+  describe('base-branch gate', () => {
+    function metaWithBase(baseRefName?: string): string {
+      return JSON.stringify({
+        number: 7,
+        title: 'No links PR',
+        body: 'This PR has no linked issues.',
+        labels: [],
+        mergeCommit: { oid: 'deadbeef' },
+        mergedAt: '2024-02-01T00:00:00Z',
+        files: [],
+        ...(baseRefName === undefined ? {} : { baseRefName }),
+      });
+    }
+
+    function loadWithBase(meta: string, repoView: () => string) {
+      return loadScraper((_file, args) => {
+        if (args[0] === 'repo' && args[1] === 'view') return repoView();
+        if (args[0] === 'pr' && args[1] === 'view') return meta;
+        if (args[0] === 'pr' && args[1] === 'diff') return '';
+        if (args[0] === 'api' && args[1].startsWith('repos/')) return '[]';
+        throw new Error(`Unexpected: ${args.join(' ')}`);
+      });
+    }
+
+    const DEFAULT_MASTER = () => JSON.stringify({ defaultBranchRef: { name: 'master' } });
+
+    it('carries baseRefName and defaultBranch for a PR merged into the default branch', () => {
+      const { scrapePR } = loadWithBase(metaWithBase('master'), DEFAULT_MASTER);
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.equal('master');
+      expect(pr.defaultBranch).to.equal('master');
+    });
+
+    it('does not throw for a PR merged into a feature branch; the filter decides', () => {
+      const { scrapePR } = loadWithBase(metaWithBase('10224-ui-extensions'), DEFAULT_MASTER);
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.equal('10224-ui-extensions');
+      expect(pr.defaultBranch).to.equal('master');
+    });
+
+    it('leaves defaultBranch undefined when the lookup fails, so the gate fails open', () => {
+      const { scrapePR } = loadWithBase(metaWithBase('10224-ui-extensions'), () => {
+        throw new Error('gh unavailable');
+      });
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.equal('10224-ui-extensions');
+      expect(pr.defaultBranch).to.be.undefined;
+    });
+
+    it('does not look up the default branch when metadata carries no baseRefName', () => {
+      const { scrapePR } = loadWithBase(metaWithBase(), () => {
+        throw new Error('repo view must not be called');
+      });
+      const pr = scrapePR(7);
+      expect(pr.baseRefName).to.be.undefined;
+      expect(pr.defaultBranch).to.be.undefined;
     });
   });
 
@@ -965,5 +1025,25 @@ describe('scrapePR', () => {
       expect(orgCheckCount).to.equal(1);
       expect(result.reviewComments).to.have.lengthOf(2);
     });
+  });
+});
+
+describe('stripBoilerplate', () => {
+  it('removes an HTML comment block', () => {
+    expect(stripBoilerplate('<!-- PHI warning -->\nActual content')).to.equal('Actual content');
+  });
+
+  it('removes a multi-line HTML comment', () => {
+    const input = '<!--\nDo not include PHI\nin this report\n-->\nReal body text here.';
+    expect(stripBoilerplate(input)).to.equal('Real body text here.');
+  });
+
+  it('leaves text with no comments untouched (aside from trimming)', () => {
+    expect(stripBoilerplate('Just a plain PR body.')).to.equal('Just a plain PR body.');
+  });
+
+  it('removes multiple comments in the same body', () => {
+    const input = '<!-- a -->Keep this<!-- b -->and this<!-- c -->';
+    expect(stripBoilerplate(input)).to.equal('Keep thisand this');
   });
 });
