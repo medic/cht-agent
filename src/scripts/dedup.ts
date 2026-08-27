@@ -143,7 +143,7 @@ export function dedupeByIssueId(entries: DedupEntry[]): DedupResult { // NOSONAR
       dropped.push({
         path: dup.path,
         canonicalPath: canonical.path,
-        title: String(dup.frontmatter.title ?? ''),
+        title: typeof dup.frontmatter.title === 'string' ? dup.frontmatter.title : '',
         reason:
           `duplicate of ${String(canonical.frontmatter.id)} — collapsed into ` +
           `${sourcePrRef(canonical.frontmatter) ?? 'canonical'}${provenance}`,
