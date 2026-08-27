@@ -1416,6 +1416,33 @@ export interface TestScenarioChecklistItem {
  * is the types-local GeneratedFile (same as CodeGenerationResult.files); the
  * adapter converts the layer's LayerGeneratedFile output to this shape.
  */
+/**
+ * Red→green verdict for THIS run's generated specs (test-gen verification,
+ * TEST_GEN_VERIFY=1). A spec is proven only when it RUNS (no fixture crash),
+ * FAILS against the pre-fix sources (red — it can detect the bug) and PASSES
+ * with the fix applied (green). Unproven specs are dropped from the shipped
+ * files and the reason recorded here, so PR.md never carries a vacuous test.
+ */
+export interface SpecVerification {
+  /** Verification was attempted (flag on, harness runnable, sandbox built). */
+  ran: boolean;
+  /** ran + red + green all hold for the final spec set. */
+  verified: boolean;
+  /** The specs FAILED on the pre-fix sources (discriminating). */
+  red?: boolean;
+  /** The specs PASSED with the fix applied. */
+  green?: boolean;
+  /** Repair iterations spent (0 = first attempt was proven). */
+  repairs: number;
+  /** Why verification was skipped or the specs remain unproven. */
+  reason?: string;
+  /** Repo-relative spec paths DROPPED because they could not be proven. */
+  droppedSpecs?: string[];
+  /** Bounded mocha tails, for the PR/HC2 evidence. */
+  redTail?: string;
+  greenTail?: string;
+}
+
 export interface TestGenerationResult {
   files: GeneratedFile[];
   explanation: string;
@@ -1423,6 +1450,8 @@ export interface TestGenerationResult {
   warnings?: string[];
   tokensUsed?: number;
   modelUsed?: string;
+  /** Present when test-gen verification ran (or was attempted) for this result. */
+  verification?: SpecVerification;
 }
 
 /**

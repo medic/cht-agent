@@ -71,6 +71,14 @@ export interface Tier2RunOptions {
    * a missing entry is an honest self-skip that names it.
    */
   qaSpecs?: string[];
+  /**
+   * Specs THIS run's test-gen layer wrote (repo-relative `*.agent.spec.js`).
+   * Unioned into the selection so pinned `qaSpecs` AUGMENT rather than displace
+   * them — observed on m4: the pinned regression specs ran while the generated
+   * fix-proving specs shipped without ever executing. Entries that do not exist
+   * on disk are dropped silently (the write may have been rejected at HC2).
+   */
+  generatedSpecs?: string[];
   timeoutMs?: number;
   /** Override the mocha binary path (tests point this at a fake script). */
   mochaBin?: string;
@@ -84,6 +92,8 @@ export interface Tier2SpecSelection {
   artifactName: string;
   /** Pinned repo-relative specs; when present they win over the defaults. */
   qaSpecs?: string[];
+  /** This run's generated specs — unioned into whatever the base selection is. */
+  generatedSpecs?: string[];
 }
 
 /**
@@ -183,6 +193,25 @@ const resolveQaSpecEntry = (
  */
 export const findTier2Specs = (configRoot: string, selection: Tier2SpecSelection): Tier2SpecResult => {
   const { configArtifact, artifactName, qaSpecs } = selection;
+  const base = baseTier2Selection(configRoot, { configArtifact, artifactName, ...(qaSpecs ? { qaSpecs } : {}) });
+  // Generated specs AUGMENT the base selection, never rescue a broken pin: a
+  // missing pinned entry stays a loud config error. An empty base WITH only a
+  // default-selection reason is rescued — the generated spec is then the only
+  // coverage this run has, and skipping it would ship it unexecuted (m4).
+  const generated = (selection.generatedSpecs ?? []).filter(
+    (rel) => rel !== '' && fs.existsSync(path.join(configRoot, rel)),
+  );
+  if (generated.length === 0) {
+    return base;
+  }
+  if (base.specs.length === 0 && qaSpecs && qaSpecs.length > 0) {
+    return base; // pinned-but-missing: config error, do not paper over it
+  }
+  return { specs: [...new Set([...base.specs, ...generated])] };
+};
+
+const baseTier2Selection = (configRoot: string, selection: Tier2SpecSelection): Tier2SpecResult => {
+  const { configArtifact, artifactName, qaSpecs } = selection;
 
   if (qaSpecs && qaSpecs.length > 0) {
     const found: string[] = [];
@@ -255,7 +284,7 @@ export const findTier2Specs = (configRoot: string, selection: Tier2SpecSelection
  * the `cht-conf-test-harness` dependency are both present. A missing either ⇒
  * honest self-skip.
  */
-const harnessRunnable = (configRoot: string, mochaBin: string): { ok: true } | { ok: false; reason: string } => {
+export const harnessRunnable = (configRoot: string, mochaBin: string): { ok: true } | { ok: false; reason: string } => {
   if (!fs.existsSync(mochaBin)) {
     return { ok: false, reason: `repo-pinned mocha not found at ${path.relative(configRoot, mochaBin) || mochaBin}` };
   }
@@ -438,6 +467,15 @@ export const runTier2Baseline = async (
     if (!sandbox) {
       return { ran: false, reason: 'could not reconstruct the pre-fix sources (not a git repo, or no HEAD)' };
     }
+    // Specs this run GENERATED do not exist pre-fix (the revert removes them).
+    // Run the baseline over the specs that DO exist there; when none do, the
+    // baseline is trivially clean — every post-fix failure of a generated spec
+    // is by definition new to this change, which is the correct attribution.
+    const preFixSpecs = specs.filter((rel) => fs.existsSync(path.join(sandbox as string, rel)));
+    if (preFixSpecs.length === 0) {
+      console.log('[tier-2] baseline: no selected spec exists pre-fix (all generated this run) — trivially clean');
+      return { ran: true, passed: true, failing: 0 };
+    }
     console.log(`[tier-2] baseline: same specs against pre-fix sources (sandbox=${sandbox})`);
     const result = await runTier2({
       ...options,
@@ -445,7 +483,9 @@ export const runTier2Baseline = async (
       // The sandbox has no .bin of its own when node_modules is a symlink to a
       // relative install; resolve mocha from the real project.
       mochaBin: options.mochaBin ?? resolveRepoMocha(configRoot),
-      qaSpecs: specs,
+      qaSpecs: preFixSpecs,
+      // The selection is already concrete; never re-union generated specs here.
+      generatedSpecs: [],
     });
     if (!result.ran) {
       return { ran: false, reason: result.reason ?? 'baseline run did not start' };
@@ -581,6 +621,7 @@ export const runTier2 = async (options: Tier2RunOptions): Promise<QaTier2Result>
     configArtifact,
     artifactName,
     ...(options.qaSpecs ? { qaSpecs: options.qaSpecs } : {}),
+    ...(options.generatedSpecs ? { generatedSpecs: options.generatedSpecs } : {}),
   });
   if (selection.specs.length === 0) {
     return { ran: false, reason: selection.reason ?? `no harness spec for ${artifactName} under test/forms/` };

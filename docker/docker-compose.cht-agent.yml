@@ -80,7 +80,13 @@ services:
       # MAX_ITERATIONS). Parsed as an int, clamped 1–10; leave empty for the
       # default (3). Raise it when a fix legitimately needs more descriptor
       # retries; a non-default value is logged at run start.
-      DEV_MAX_ITERATIONS: ${DEV_MAX_ITERATIONS:-}
+      DEV_MAX_ITERATIONS: ${DEV_MAX_ITERATIONS:-5}
+      # Test-gen verification: prove generated specs red→green in a sandbox
+      # before they ship (docs/handoffs/test-gen-verification-plan.md), with a
+      # bounded fixture-repair loop. Opt-in — two harness boots (+ offline
+      # compiles for settings artifacts) per attempt is real wall-clock.
+      TEST_GEN_VERIFY: ${TEST_GEN_VERIFY:-}
+      TEST_GEN_MAX_REPAIRS: ${TEST_GEN_MAX_REPAIRS:-}
       # CLI provider: the agent drives the baked Claude Code CLI (`claude -p`)
       # via the OAuth mount below — no API key. Default 'anthropic' needs one.
       LLM_PROVIDER: ${LLM_PROVIDER:-claude-cli}
@@ -88,16 +94,38 @@ services:
       # --model flag (src/llm/providers/claude-cli.ts). Pinned off Fable so
       # demo runs don't burn the session budget.
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-8}
+      # Reasoning effort for every `claude -p` the pipeline spawns. Same
+      # mechanism as ANTHROPIC_MODEL above: the CLI provider forwards
+      # process.env to the claude binary (env: { ...process.env } in
+      # src/llm/providers/claude-cli.ts), and these env vars outrank
+      # settings.json — only --model/--effort flags rank higher. "max" is
+      # env/flag-only; settings.json effortLevel cannot express it. Mirrors
+      # SEEDER_EFFORT in docker-compose.seeder.yml. Left EMPTY by default so the
+      # CLI's own default applies: raising effort raises latency and burns the
+      # subscription budget, and a demo run already spends minutes per phase.
+      CLAUDE_CODE_EFFORT_LEVEL: ${CLAUDE_CODE_EFFORT_LEVEL:-max}
       # Version parity (#66): QA cht-conf calls run the deployment-pinned
       # binary that the config repo's own `npm ci` installed into the mount
       # above — never the image-global cht.
       CHT_CONF_BIN: ${CHT_CONF_BIN:-/workspace/cht-conf-project/node_modules/.bin/cht}
       # TLS trust for the agent's own fetch (readiness poll, discoverConfig,
-      # verifyArtifact — cht-conf has its own --accept-self-signed-certs).
-      # Self-signed test instance: NODE_TLS_REJECT_UNAUTHORIZED=0. Local-CA
-      # cert: prefer NODE_EXTRA_CA_CERTS + the :ro cert mount stub below
-      # (keeps verification on).
-      NODE_TLS_REJECT_UNAUTHORIZED: ${NODE_TLS_REJECT_UNAUTHORIZED:-}
+      # verifyArtifact — cht-conf has its own --accept-self-signed-certs, which
+      # is why only the agent's fetch fails, and with a bare "fetch failed").
+      #
+      # DEFAULTS TO 0 because the test instance nginx serves a SELF-SIGNED cert:
+      # Node's fetch rejects it exactly as plain `curl` does (`curl -k` works,
+      # the agent does not), and the readiness poll then burns its full 300s
+      # before aborting the QA phase. This previously defaulted to empty and had
+      # to be exported in the host shell before `up`; that does not survive a new
+      # terminal, so it silently regressed on every rebuild.
+      #
+      # Scope of the trade-off: this disables TLS verification for the agent's
+      # own HTTP inside a sandboxed container that only ever talks to a
+      # throwaway test instance on cht-agent-net. If this container is ever
+      # pointed at something real, set NODE_TLS_REJECT_UNAUTHORIZED=1 in the
+      # host env (it overrides this default) and use NODE_EXTRA_CA_CERTS with
+      # the :ro cert mount stub below, which keeps verification ON.
+      NODE_TLS_REJECT_UNAUTHORIZED: ${NODE_TLS_REJECT_UNAUTHORIZED:-0}
       NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
       # QA auth to the throwaway instance — must match step 1's .env. Embedded
       # CHT_URL credentials would win over these (test-environment-agent.ts).

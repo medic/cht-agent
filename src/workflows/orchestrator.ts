@@ -502,12 +502,14 @@ export const executeFullWorkflow = async (
       developmentResult.result?.recommendationLedger ?? [],
       scopeGate,
     );
+    const testVerification = developmentResult.result?.testGeneration?.verification;
     await writePrBundle({
       configRoot,
       ticket: prTicket,
       filesWritten: [...ticketFiles],
       ...(qa ? { qa } : {}),
       ...(ledger.length > 0 ? { recommendations: ledger } : {}),
+      ...(testVerification ? { testVerification } : {}),
     });
   }
 

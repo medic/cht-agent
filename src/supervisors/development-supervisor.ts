@@ -25,6 +25,7 @@ import {
   CodeContextFindings,
   CodeGenerationResult,
   PlanSummaryItem,
+  SpecVerification,
   TestGenerationResult,
   ImplementationValidation,
   GeneratedFile,
@@ -50,6 +51,13 @@ import {
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
 import { isShutdownRequested } from '../utils/shutdown';
 import { applyXlsformFixToProject } from '../utils/xlsform-apply';
+import {
+  artifactNeedsCompile,
+  buildSpecRepairBrief,
+  testGenMaxRepairs,
+  testGenVerifyEnabled,
+  verifyGeneratedSpecs,
+} from '../layers/test-gen/lib/verify';
 import { parseXlsformFixDescriptor, XLSFORM_FIX_DESCRIPTOR_PATH } from '../utils/xlsform-fix';
 import { generateHarnessSpec, generateContactFormSpec } from '../utils/cht-conf-test-spec';
 import { createTwoFilesPatch, structuredPatch } from 'diff';
@@ -1074,14 +1082,102 @@ export class DevelopmentSupervisor {
   ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
     this.todos.start(todoId);
     try {
-      const result = await this.testGenAgent.generate(input);
+      let result = await this.testGenAgent.generate(input);
       console.log(`[Development Supervisor] Generated ${result.files.length} test file(s)`);
+      result = await this.verifyAndRepairGeneratedSpecs(input, result);
       return this.finishTestGeneration(todoId, result);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       console.warn(`[Development Supervisor] Test generation failed (non-fatal): ${message}`);
       return this.finishTestGeneration(todoId, emptyResult);
     }
+  }
+
+  /**
+   * Test-gen verification (TEST_GEN_VERIFY=1): prove the generated specs
+   * red→green against a sandbox of the config before they ship, repairing the
+   * spec fixtures with the mocha evidence up to TEST_GEN_MAX_REPAIRS times.
+   *
+   * Motivated by m4 (2026-08-26): both generated specs shipped with broken
+   * fixtures (wrong report field name; short lineage) and nothing had ever
+   * executed them — pinned qaSpecs displaced them in tier-2 and this node is
+   * the graph's terminal one. The rule enforced here is the pipeline's own:
+   * the spec is trustworthy only when a deterministic run proves it FAILS
+   * pre-fix and PASSES post-fix. Unproven specs are DROPPED loudly (a vacuous
+   * test in the PR is worse than none) with the verdict recorded on the
+   * result for PR.md.
+   *
+   * Applies to cht-conf tickets on the LLM test-gen path only (the
+   * deterministic form/contact-form specs are bindDiff-derived and executed
+   * by QA tier-2's default selection). Never throws — verification is
+   * evidence, and failing to obtain it must not take down the run.
+   */
+  private async verifyAndRepairGeneratedSpecs(
+    input: TestGenerationInput,
+    initial: TestGenerationResult,
+  ): Promise<TestGenerationResult> {
+    if (!testGenVerifyEnabled()) {
+      return initial;
+    }
+    if (input.issue.issue.technical_context.layer !== 'cht-conf') {
+      return initial; // no config harness to run against
+    }
+    const configRoot = input.chtCorePath;
+    const needsCompile = artifactNeedsCompile(input.issue.issue.technical_context.configArtifact);
+    const maxRepairs = testGenMaxRepairs();
+
+    let result = initial;
+    let verification: SpecVerification = { ran: false, verified: false, repairs: 0, reason: 'not attempted' };
+    for (let attempt = 0; ; attempt++) {
+      try {
+        verification = await verifyGeneratedSpecs({
+          configRoot,
+          specFiles: result.files,
+          fixFiles: input.codeGeneration.files,
+          needsCompile,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        verification = { ran: false, verified: false, repairs: attempt, reason: `verification errored: ${message}` };
+      }
+      verification.repairs = attempt;
+      if (!verification.ran) {
+        // Honest self-skip (flag off upstream, harness missing, sandbox failed):
+        // nothing was measured, so nothing is dropped and nothing is repaired.
+        console.log(`[test-gen verify] skipped — ${verification.reason}`);
+        return { ...result, verification };
+      }
+      if (verification.verified) {
+        console.log(`[test-gen verify] ✅ specs proven red→green (repairs: ${attempt})`);
+        return { ...result, verification };
+      }
+      if (attempt >= maxRepairs) {
+        break;
+      }
+      console.log(`[test-gen verify] ❌ unproven (${verification.reason}) — repair ${attempt + 1}/${maxRepairs}`);
+      result = await this.testGenAgent.generate({
+        ...input,
+        additionalContext: [input.additionalContext, buildSpecRepairBrief(verification)]
+          .filter(Boolean)
+          .join('\n\n'),
+      });
+    }
+
+    // Exhausted: drop the unproven specs — loudly, never silently.
+    const dropped = result.files.map((f) => f.relativePath);
+    console.warn(
+      `[test-gen verify] ❌ specs remain unproven after ${maxRepairs} repair(s) — DROPPING ${dropped.length} ` +
+        `spec file(s) from the change (${dropped.join(', ')}). Reason: ${verification.reason}`,
+    );
+    return {
+      ...result,
+      files: [],
+      warnings: [
+        ...(result.warnings ?? []),
+        `generated specs dropped — unproven after ${maxRepairs} repair(s): ${verification.reason}`,
+      ],
+      verification: { ...verification, droppedSpecs: dropped },
+    };
   }
 
   /**
@@ -1212,6 +1308,10 @@ Look for:
 - Real logic and functionality (not just stubs or TODO comments)
 - Proper handling of the described feature
 - Code that would actually work in a CHT environment
+
+NOTE: test specs are generated by a LATER pipeline stage that runs after this
+review — do NOT report missing/absent tests as a defect or recommendation; the
+absence of test files here is expected and not evidence of anything.
 
 ## Scoring Rules
 - overallScore must be consistent with your itemized evaluation: (requirements met / total requirements * 50) + (criteria passed / total criteria * 50) ± 10 for code quality.

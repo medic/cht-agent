@@ -18,7 +18,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { IssueTemplate, QaResult, TriagedRecommendation } from '../types';
+import { IssueTemplate, QaResult, SpecVerification, TriagedRecommendation } from '../types';
 import { summarizeLedger } from './recommendation-triage';
 import {
   isTier2EnvironmentalFailure,
@@ -69,6 +69,13 @@ export interface PrBundleInput {
    * flagged and the pipeline did NOT fix.
    */
   recommendations?: ReadonlyArray<TriagedRecommendation>;
+  /**
+   * Test-gen verification verdict (TEST_GEN_VERIFY=1): whether this run's
+   * generated specs were proven red→green before shipping. Rendered under
+   * "Tests added" so a reviewer can trust a shipped spec without re-deriving
+   * it — and can see when specs were DROPPED as unproven.
+   */
+  testVerification?: SpecVerification;
 }
 
 /** Why a dirty file is not in the patch. Rendered verbatim in PR.md. */
@@ -578,6 +585,34 @@ const recommendationSection = (
   return `${lines.join('\n')}\n`;
 };
 
+/**
+ * The provenance line under "Tests added": what the red→green verification
+ * proved (or that it was skipped, or that unproven specs were dropped).
+ * '' when verification never ran and nothing was dropped — the section then
+ * reads exactly as it did before the feature existed.
+ */
+const testVerificationLine = (v: SpecVerification | undefined): string => {
+  if (!v) {
+    return '';
+  }
+  if (v.verified) {
+    const repairs = v.repairs > 0 ? ` after ${v.repairs} fixture repair(s)` : '';
+    return `\n_Proven red→green against the config${repairs}: the specs FAIL on the pre-fix sources and PASS with this change applied._\n`;
+  }
+  if (v.droppedSpecs && v.droppedSpecs.length > 0) {
+    return (
+      '\n> **Warning:** generated spec(s) were DROPPED as unproven after ' +
+      `${v.repairs} repair(s) — ${v.reason ?? 'no reason recorded'}:\n` +
+      v.droppedSpecs.map((s) => `> - \`${s}\``).join('\n') +
+      '\n'
+    );
+  }
+  if (v.ran) {
+    return `\n> **Warning:** the shipped specs were NOT proven red→green — ${v.reason ?? 'no reason recorded'}.\n`;
+  }
+  return '';
+};
+
 export const buildPrDescription = (input: PrBundleInput, patch: PatchScopeResult): string => {
   const { ticket, qa, recommendations } = input;
   const issue = ticket.issue;
@@ -617,6 +652,7 @@ ${bulletList(sourceFiles, '_no source files changed_')}
 ## Tests added
 
 ${bulletList(testFiles, '_no test files added_')}
+${testVerificationLine(input.testVerification)}
 
 ${qaSection(qa, ticket)}
 ${recommendationSection(recommendations)}${excludedSection(patch)}## Applying this change

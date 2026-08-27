@@ -576,11 +576,16 @@ export const executeQaWorkflow = async (
     // P5: select the tier-2 specs per artifact (form/contact-form → the form's
     // harness spec; task/target → test/tasks/*; contact-summary → its suite),
     // or run EXACTLY the ticket's pinned `qaSpecs` when present.
+    // Specs this run's test-gen wrote are unioned into the selection so a
+    // pinned regression surface (qaSpecs) cannot displace the fix-proving
+    // specs — they'd otherwise ship without ever executing (observed on m4).
+    const generatedSpecs = (input.fixFiles ?? []).filter((rel) => /\.agent\.spec\.[jt]s$/.test(rel));
     tier2 = await runTier2({
       configRoot: input.configPath,
       configArtifact: input.verify.configArtifact,
       artifactName: artifact,
       ...(input.qaSpecs ? { qaSpecs: input.qaSpecs } : {}),
+      ...(generatedSpecs.length > 0 ? { generatedSpecs } : {}),
     });
     if (tier2.ran) {
       if (tier2.specs && tier2.specs.length > 0) {

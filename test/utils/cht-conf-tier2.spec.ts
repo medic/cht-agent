@@ -214,6 +214,58 @@ describe('cht-conf-tier2 (F7 runner)', () => {
       expect(res.reason).to.match(/qaSpecs/);
     });
 
+    it('generatedSpecs: unioned with pinned qaSpecs (pins must not displace them — m4)', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'immunization_service.spec.js');
+      writeSpec(root, 'test', 'contact-summary.agent.spec.js');
+      const res = findTier2Specs(root, {
+        configArtifact: 'contact-summary',
+        artifactName: 'is_immunization_defaulter',
+        qaSpecs: ['test/tasks/immunization_service.spec.js'],
+        generatedSpecs: [path.join('test', 'contact-summary.agent.spec.js')],
+      });
+      expect(res.specs).to.deep.equal([
+        'test/tasks/immunization_service.spec.js',
+        path.join('test', 'contact-summary.agent.spec.js'),
+      ]);
+    });
+
+    it('generatedSpecs: nonexistent entries are dropped silently', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'tasks', 'a.spec.js');
+      const res = findTier2Specs(root, {
+        configArtifact: 'task',
+        artifactName: 'x',
+        generatedSpecs: [path.join('test', 'tasks', 'never-written.agent.spec.js')],
+      });
+      expect(res.specs).to.deep.equal([path.join('test', 'tasks', 'a.spec.js')]);
+    });
+
+    it('generatedSpecs: rescue an empty DEFAULT selection (they are the only coverage)', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'contact-summary.agent.spec.js');
+      const res = findTier2Specs(root, {
+        configArtifact: 'app-settings', // default selection has no specs, only a reason
+        artifactName: 'x',
+        generatedSpecs: [path.join('test', 'contact-summary.agent.spec.js')],
+      });
+      expect(res.specs).to.deep.equal([path.join('test', 'contact-summary.agent.spec.js')]);
+      expect(res.reason).to.equal(undefined);
+    });
+
+    it('generatedSpecs: never rescue a MISSING pinned entry (config error stays loud)', () => {
+      root = mkTmp();
+      writeSpec(root, 'test', 'contact-summary.agent.spec.js');
+      const res = findTier2Specs(root, {
+        configArtifact: 'contact-summary',
+        artifactName: 'x',
+        qaSpecs: ['test/tasks/does-not-exist.spec.js'],
+        generatedSpecs: [path.join('test', 'contact-summary.agent.spec.js')],
+      });
+      expect(res.specs).to.deep.equal([]);
+      expect(res.reason).to.match(/pinned qaSpecs not found/);
+    });
+
     it('qaSpecs: runs EXACTLY the pinned specs (defaults ignored)', () => {
       root = mkTmp();
       writeSpec(root, 'test', 'tasks', 'immunization_service.spec.js');
