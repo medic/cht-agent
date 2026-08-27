@@ -174,6 +174,106 @@ pipeline tests prove the mechanism is wired to the right channel.
 
 ---
 
+## Verification standard: test at the pipeline boundary
+
+### The problem this solves
+
+The review rounds on #138 repeat one shape. The author fixes a mechanism and cites a
+unit test. The reviewer traces the mechanism through the pipeline and finds it lands
+in the wrong channel.
+
+The D3 blocker is the clearest case. The base-branch gate works: `scraper.spec.ts`
+proves the scraper rejects a PR merged into a feature branch. But the rejection
+travels as a `ScraperError`. In `run-pipeline.ts` that path increments `failures` and
+exits 1. The nightly dies and no audit row is written. The unit test passed; the
+behaviour was still wrong.
+
+The same shape appears in other review findings:
+
+| Finding | Unit test says | Pipeline says |
+|---|---|---|
+| Base-branch gate | Scraper rejects the PR | Whole batch fails, no audit row |
+| `scraper.spec.ts:178` | Guard throws | Throw is swallowed by the fail-open `catch`; the test cannot fail |
+| `stripBoilerplate` | Function strips comments | Neither production call site is covered |
+| `warn` audit entry | Entry is written | Nothing reads it; a human never sees it |
+
+### The standard
+
+**A behavioural claim is "fixed" only when a test at the pipeline boundary proves it.**
+
+The pipeline boundary is `runPipeline` (nightly path) and `openReviewPR` (promotion
+path). Those two functions are where a decision becomes observable: an exit code, a
+written draft, a row in `_skipped.ndjson`, or a `git` action.
+
+Each boundary test asserts two things:
+
+1. **The exit signal.** For `runPipeline`: `state.failures` and whether `process.exit`
+   was called. For `openReviewPR`: the returned status per domain.
+2. **The audit row.** One appended entry in `_skipped.ndjson` with the expected
+   `decision` and a `reason` that names the case.
+
+If a change alters neither the exit signal nor the audit trail, it is not a
+behavioural change and a unit test is enough.
+
+### Why this shape
+
+- **It is already the house pattern.** `test/scripts/run-pipeline.spec.ts` has
+  "processes every PR and does not exit when all succeed" and "records a failure and
+  exits 1 when a PR throws". The D3 test is a third sibling. No new harness.
+- **It ends "which channel" arguments.** The open blockers are all about channel:
+  error versus skip, delete versus move, log versus surface. A boundary test names the
+  channel in its assertion.
+- **It gives the review a citation.** A reviewer writes "covered by
+  `runPipeline › skips a non-default-base PR without failing the batch`" instead of
+  re-tracing the code.
+- **It exposes tests that cannot fail.** Delete the guard, run the test, watch it
+  fail. That mutation check is how the `scraper.spec.ts:178` gap was found.
+
+### Applied to the two open blockers
+
+**D3**
+
+```
+runPipeline([excludedPR, normalPR])
+  → failures === 0
+  → process.exit not called
+  → _skipped.ndjson gained one row: { prNumber: excludedPR, decision: 'skip', reason: /non-default branch/ }
+  → normalPR still produced a draft
+```
+
+**D6**
+
+```
+openReviewPR(domain with two same-issue drafts)
+  → canonical promoted
+  → dropped draft exists at _pending/_collapsed/<domain>/<file>
+  → dropped draft no longer in _pending/<domain>/
+  → audit row: { decision: 'skip', reason: /duplicate of .* "<dropped title>"/ }
+  → check-pending over the tree passes (ignores _collapsed/)
+```
+
+### Cost
+
+One extra `it` block per behavioural change, about 15 to 30 lines. The `runPipeline`
+tests already stub `processSinglePR`; the D3 test needs a stub that returns a skip
+decision and writes the row. No new fixtures, no new frameworks.
+
+### What it does not cover
+
+- **Distillation quality.** Whether a draft is good is a judgement, not an assertion.
+- **Live `gh` behaviour.** Boundary tests stub `gh`. Live checks (like the 10767/10432
+  validation) stay a manual step, recorded in the PR comment.
+- **Workflow YAML.** `run-pipeline.yml` steps are not reachable from mocha. D1 needs a
+  real run to prove itself.
+
+### In one sentence
+
+Every behavioural claim in review gets a test at `runPipeline` or `openReviewPR` that
+asserts the exit signal and the audit row. Unit tests prove a mechanism exists;
+boundary tests prove it reaches the right channel.
+
+---
+
 ## Open items this doc does NOT decide
 
 - Whether `LinkedIssue.comments` (written, never read) should feed the distiller
