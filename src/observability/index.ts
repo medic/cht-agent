@@ -10,7 +10,7 @@
  *   const { trace } = startTrace({ name: 'my-workflow', sessionId, input, tags });
  *   const span = trace.span({ name: 'fetch' }); span.end({ output });
  *   trace.update({ output: result });
- *   await getLangfuse().flushAsync();
+ *   await getLangfuse().shutdownAsync();
  */
 
 import Langfuse from 'langfuse';
@@ -25,7 +25,7 @@ let _client: Langfuse | undefined;
  *
  * @example
  * ```typescript
- * await getLangfuse().flushAsync(); // flush buffered traces before exit
+ * await getLangfuse().shutdownAsync(); // flush buffered traces before exit
  * ```
  */
 export function getLangfuse(): Langfuse {
@@ -35,9 +35,16 @@ export function getLangfuse(): Langfuse {
       secretKey: process.env.LANGFUSE_SECRET_KEY,
       baseUrl: process.env.LANGFUSE_BASE_URL ?? 'https://cloud.langfuse.com',
       enabled: process.env.LANGFUSE_ENABLED !== 'false',
+      requestTimeout: 3000,
+      fetchRetryCount: 1,
     });
   }
   return _client;
+}
+
+/** Drop the cached client so the next getLangfuse() re-reads process.env. */
+export function resetLangfuseForTests(): void {
+  _client = undefined;
 }
 
 /** A Langfuse trace rooted at a workflow execution. */
@@ -45,19 +52,56 @@ export interface TraceContext {
   trace: ReturnType<Langfuse['trace']>;
 }
 
-/** Record a model invocation and ensure failed calls are represented in Langfuse. */
+/** Parsed model output plus whatever usage/cost the provider reported. */
+export interface GenerationResult<T> {
+  parsed: T;
+  model?: string;
+  usage?: { input?: number; output?: number; total?: number };
+  costUsd?: number;
+}
+
+/** Map a LangChain `withStructuredOutput(schema, { includeRaw: true })` result to a GenerationResult. */
+export function fromLangChain<T>(res: {
+  raw: { usage_metadata?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; response_metadata?: { model_name?: string; model?: string } };
+  parsed: T;
+}): GenerationResult<T> {
+  const u = res.raw.usage_metadata;
+  const meta = res.raw.response_metadata;
+  return {
+    parsed: res.parsed,
+    model: meta?.model_name ?? meta?.model,
+    usage: u ? { input: u.input_tokens, output: u.output_tokens, total: u.total_tokens } : undefined,
+  };
+}
+
+/**
+ * Record a model invocation as a Langfuse generation, including tokens and cost.
+ * Failed calls end the generation with `level: 'ERROR'` so they show in Langfuse error views.
+ *
+ * @example
+ * ```typescript
+ * const parsed = await observeGeneration(trace, { name: 'classify', model: 'claude-cli', input: prompt },
+ *   () => chain.invoke(prompt));
+ * ```
+ */
 export async function observeGeneration<T>(
   trace: TraceContext['trace'] | undefined,
   opts: { name: string; model: string; input: string },
-  invoke: () => Promise<T>
+  invoke: () => Promise<GenerationResult<T>>
 ): Promise<T> {
   const generation = trace?.generation(opts);
   try {
-    const output = await invoke();
-    generation?.end({ output });
-    return output;
+    const result = await invoke();
+    generation?.end({
+      output: result.parsed,
+      model: result.model ?? opts.model,
+      usageDetails: result.usage,
+      costDetails: result.costUsd === undefined ? undefined : { total: result.costUsd },
+    });
+    return result.parsed;
   } catch (err) {
-    generation?.end({ output: { error: err instanceof Error ? err.message : String(err) } });
+    const message = err instanceof Error ? err.message : String(err);
+    generation?.end({ output: { error: message }, level: 'ERROR', statusMessage: message });
     throw err;
   }
 }
