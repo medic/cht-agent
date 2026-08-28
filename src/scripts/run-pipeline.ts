@@ -316,25 +316,30 @@ async function runFilter(
   return result;
 }
 
+/** Scrape inside a Langfuse span; the span records the error when the scraper throws. */
+function scrapeTraced(prNum: number, repo: string, trace: ReturnType<typeof startTrace>['trace']): ReturnType<typeof scrapePR> {
+  const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
+  try {
+    const pr = scrapePR(prNum, repo);
+    scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
+    return pr;
+  } catch (err) {
+    scrapeSpan.end({ output: { error: errorMessage(err) }, level: 'ERROR', statusMessage: errorMessage(err) });
+    throw err;
+  }
+}
+
 async function runTracedPipeline(
   prNum: number,
   repo: string,
   opts: { force: boolean; tag: string; trace: ReturnType<typeof startTrace>['trace'] }
 ): Promise<void> {
   const { force, tag, trace } = opts;
-  const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
   console.log(`${tag} scraping...`);
-  let pr: ReturnType<typeof scrapePR>;
-  try {
-    pr = scrapePR(prNum, repo);
-  } catch (err) {
-    scrapeSpan.end({ output: { error: errorMessage(err) }, level: 'ERROR', statusMessage: errorMessage(err) });
-    throw err;
-  }
+  const pr = scrapeTraced(prNum, repo, trace);
   console.log(`${tag} title:  ${pr.prTitle}`);
   console.log(`${tag} labels: ${pr.labels.join(', ') || '(none)'}`);
   console.log(`${tag} files:  ${pr.fileList.length}`);
-  scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
 
   const filterResult = await runFilter(pr, force, tag, trace);
   const output: Record<string, unknown> = { decision: filterResult.decision, reason: filterResult.reason };
