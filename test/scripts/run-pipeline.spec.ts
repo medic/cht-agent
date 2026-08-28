@@ -9,8 +9,33 @@ type ExecHandler = (file: string, args: string[]) => string;
 interface PipelineMocks {
   exec?: ExecHandler;
   scrapePR?: (prNum: number, repo: string) => unknown;
-  filterPR?: (pr: unknown) => Promise<{ decision: string; reason: string }>;
-  distillPR?: (pr: unknown) => Promise<{ status: string; reason: string; outputPath?: string }>;
+  filterPR?: (pr: unknown, opts?: { langfuseTrace?: unknown }) => Promise<{ decision: string; reason: string }>;
+  distillPR?: (pr: unknown, opts?: { langfuseTrace?: unknown }) => Promise<{ status: string; reason: string; outputPath?: string }>;
+  langfuse?: LangfuseSpy;
+}
+
+/** Records every Langfuse SDK call the pipeline makes. */
+interface LangfuseSpy {
+  spans: Array<{ name: string; end?: Record<string, unknown> }>;
+  traceUpdates: Record<string, unknown>[];
+  shutdowns: number;
+  flushes: number;
+  trace: Record<string, unknown>;
+}
+
+function makeLangfuseSpy(): LangfuseSpy {
+  const spy: LangfuseSpy = { spans: [], traceUpdates: [], shutdowns: 0, flushes: 0, trace: {} };
+  spy.trace = {
+    span: (opts: { name: string }) => {
+      const rec: { name: string; end?: Record<string, unknown> } = { name: opts.name };
+      spy.spans.push(rec);
+      return { end: (body: Record<string, unknown>) => { rec.end = body; } };
+    },
+    generation: () => ({ end: () => {} }),
+    score: () => {},
+    update: (body: Record<string, unknown>) => { spy.traceUpdates.push(body); },
+  };
+  return spy;
 }
 
 /**
@@ -19,8 +44,10 @@ interface PipelineMocks {
  */
 function loadPipeline(mocks: PipelineMocks = {}) {
   const fakePr = { prTitle: 'T', labels: [], fileList: [] };
+  const langfuse = mocks.langfuse ?? makeLangfuseSpy();
   return proxyquire('../../src/scripts/run-pipeline', {
     dotenv: { config: () => ({}), '@noCallThru': true },
+    'node:crypto': { randomUUID: () => 'test-session-id', '@noCallThru': true },
     'node:child_process': {
       execFileSync: ((file: string, args: string[]) =>
         mocks.exec ? mocks.exec(file, args) : '[]') as unknown,
@@ -37,6 +64,14 @@ function loadPipeline(mocks: PipelineMocks = {}) {
     './distiller': {
       distillPR:
         mocks.distillPR ?? (async () => ({ status: 'written', reason: 'ok', outputPath: '/tmp/x.md' })),
+      '@noCallThru': true,
+    },
+    '../observability': {
+      startTrace: () => ({ trace: langfuse.trace }),
+      getLangfuse: () => ({
+        flushAsync: async () => { langfuse.flushes++; },
+        shutdownAsync: async () => { langfuse.shutdowns++; },
+      }),
       '@noCallThru': true,
     },
   });
@@ -226,10 +261,41 @@ describe('run-pipeline processSinglePR', () => {
       filterPR: async () => { filtered = true; return { decision: 'skip', reason: 'would-skip' }; },
       distillPR: async () => { distilled = true; return { status: 'written', reason: 'ok', outputPath: '/tmp/f.md' }; },
     });
-    await processSinglePR(9, 'medic/cht-core', true);
+    await processSinglePR(9, 'medic/cht-core', { force: true });
     expect(filtered).to.equal(false);
     expect(distilled).to.equal(true);
     expect(logs.join('\n')).to.include('BYPASSED (--force)');
+  });
+
+  it('passes the Langfuse trace to both filterPR and distillPR', async () => {
+    const langfuse = makeLangfuseSpy();
+    const received: unknown[] = [];
+    const { processSinglePR } = loadPipeline({
+      langfuse,
+      filterPR: async (_pr, opts) => { received.push(opts?.langfuseTrace); return { decision: 'distill', reason: 'r' }; },
+      distillPR: async (_pr, opts) => { received.push(opts?.langfuseTrace); return { status: 'written', reason: 'ok' }; },
+    });
+    await processSinglePR(10, 'medic/cht-core');
+    expect(received).to.deep.equal([langfuse.trace, langfuse.trace]);
+  });
+
+  it('ends the scrape span with an error and records it on the trace when scrapePR throws', async () => {
+    const langfuse = makeLangfuseSpy();
+    const { processSinglePR } = loadPipeline({ langfuse, scrapePR: () => { throw new Error('gh exploded'); } });
+    let thrown: unknown;
+    try { await processSinglePR(11, 'medic/cht-core'); } catch (e) { thrown = e; }
+    expect((thrown as Error).message).to.equal('gh exploded');
+    expect(langfuse.spans).to.have.length(1);
+    expect(langfuse.spans[0].end).to.deep.equal({ output: { error: 'gh exploded' }, level: 'ERROR', statusMessage: 'gh exploded' });
+    expect(langfuse.traceUpdates).to.deep.equal([{ output: { error: 'gh exploded' } }]);
+  });
+
+  it('does not flush per PR', async () => {
+    const langfuse = makeLangfuseSpy();
+    const { processSinglePR } = loadPipeline({ langfuse });
+    await processSinglePR(12, 'medic/cht-core');
+    expect(langfuse.flushes).to.equal(0);
+    expect(langfuse.shutdowns).to.equal(0);
   });
 });
 
@@ -335,6 +401,22 @@ describe('run-pipeline runPipeline', () => {
     await runPipeline([1, 2, 3, 4], 'medic/cht-core', false, 2);
     expect(seen.sort((a, b) => a - b)).to.deep.equal([1, 2, 3, 4]);
     expect(exitCode).to.be.undefined;
+  });
+
+  it('shuts Langfuse down exactly once per run, before exiting, even when PRs fail', async () => {
+    const langfuse = makeLangfuseSpy();
+    let shutdownsAtExit = -1;
+    process.exit = ((code?: number) => { exitCode = code; shutdownsAtExit = langfuse.shutdowns; }) as never;
+    const { runPipeline } = loadPipeline({
+      langfuse,
+      scrapePR: (prNum: number) => { if (prNum === 2) throw new Error('boom'); return { prTitle: 'T', labels: [], fileList: [] }; },
+      filterPR: async () => ({ decision: 'skip', reason: 'x' }),
+    });
+    await runPipeline([1, 2, 3], 'medic/cht-core', false, 2);
+    expect(exitCode).to.equal(1);
+    expect(langfuse.shutdowns).to.equal(1);
+    expect(shutdownsAtExit).to.equal(1);
+    expect(langfuse.flushes).to.equal(0);
   });
 });
 

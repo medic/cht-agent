@@ -13,8 +13,9 @@ import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
-import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { createLangChainStructuredChain, createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { isBatchFatalError } from '../llm/rate-limit';
+import { observeGeneration, type GenerationResult } from '../observability';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../utils/domain-inference';
 import { z } from 'zod';
 import type {
@@ -107,8 +108,7 @@ function createApiChain(): any {
       maxTokens: 2000,
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(draftSchema);
+    return createLangChainStructuredChain(llm, draftSchema);
   }
   if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
@@ -116,8 +116,7 @@ function createApiChain(): any {
       apiKey: process.env.ANTHROPIC_API_KEY,
       maxTokens: 2000,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(draftSchema);
+    return createLangChainStructuredChain(llm, draftSchema);
   }
   return null;
 }
@@ -130,6 +129,12 @@ function getDistillChain() {
     ? createStructuredCliChain(draftSchema, DRAFT_SHAPE)
     : createApiChain();
   return _distillChain;
+}
+
+function getDistillModel(): string {
+  if (isUsingCLIProvider()) return 'claude-cli';
+  if (process.env.OPENROUTER_API_KEY) return process.env.DISTILL_MODEL ?? DEFAULT_DISTILL_MODEL;
+  return ANTHROPIC_DISTILL_MODEL;
 }
 
 /**
@@ -210,12 +215,15 @@ Respond with a JSON object matching this structure exactly:
  * Call the LLM to generate a DistillDraft from a ScrapedPR.
  * Returns a DistillDraft or throws — callers handle errors.
  *
+ * @param pr      - The PR to distill.
+ * @param trace - Optional Langfuse trace for this LLM call.
+ *
  * @example
  * ```typescript
  * // Not called directly in tests — injected via opts.distillFn
  * ```
  */
-async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
+async function llmDistill(pr: ScrapedPR, trace?: DistillOptions['langfuseTrace']): Promise<DistillDraft> {
   const chain = getDistillChain();
 
   if (!chain) {
@@ -223,7 +231,8 @@ async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
   }
 
   const prompt = buildPrompt(pr);
-  return await chain.invoke(prompt) as DistillDraft;
+  return await observeGeneration(trace, { name: 'distill-draft', model: getDistillModel(), input: prompt },
+    () => chain.invoke(prompt) as Promise<GenerationResult<DistillDraft>>);
 }
 
 /**
@@ -406,7 +415,7 @@ function resolveDistillOpts(opts: DistillOptions): {
   return {
     logPath: opts.logPath ?? DEFAULT_PIPELINE_LOG_PATH,
     outputDir: opts.outputDir ?? DEFAULT_PIPELINE_OUTPUT_DIR,
-    distillFn: opts.distillFn ?? llmDistill,
+    distillFn: opts.distillFn ?? ((p: ScrapedPR) => llmDistill(p, opts.langfuseTrace)),
   };
 }
 

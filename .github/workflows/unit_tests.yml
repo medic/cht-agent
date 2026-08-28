@@ -32,4 +32,6 @@ jobs:
         run: npm run validate-schema
 
       - name: Test with coverage
+        env:
+          LANGFUSE_ENABLED: 'false'
         run: npm run test:coverage
