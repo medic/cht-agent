@@ -326,7 +326,13 @@ async function runTracedPipeline(
   const { force, tag, trace } = opts;
   const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
   console.log(`${tag} scraping...`);
-  const pr = scrapePR(prNum, repo);
+  let pr: ReturnType<typeof scrapePR>;
+  try {
+    pr = scrapePR(prNum, repo);
+  } catch (err) {
+    scrapeSpan.end({ output: { error: errorMessage(err) }, level: 'ERROR', statusMessage: errorMessage(err) });
+    throw err;
+  }
   console.log(`${tag} title:  ${pr.prTitle}`);
   console.log(`${tag} labels: ${pr.labels.join(', ') || '(none)'}`);
   console.log(`${tag} files:  ${pr.fileList.length}`);
@@ -381,8 +387,6 @@ export async function processSinglePR(
   } catch (err) {
     trace.update({ output: { error: errorMessage(err) } });
     throw err;
-  } finally {
-    await getLangfuse().flushAsync();
   }
 }
 
@@ -533,6 +537,8 @@ export async function runPipeline(prNumbers: number[], repo: string, force = fal
   const count = Math.min(concurrency, prNumbers.length);
   const workers = Array.from({ length: count }, () => runWorker(ctx));
   await Promise.all(workers);
+  // One shutdown per run: flushes and awaits in-flight posts before reportOutcome's process.exit.
+  await getLangfuse().shutdownAsync();
   reportOutcome(prNumbers.length, state, prNumbers, auditOffset);
 }
 
