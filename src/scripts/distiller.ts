@@ -13,9 +13,9 @@ import * as path from 'node:path';
 import * as yaml from 'js-yaml';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
-import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { createLangChainStructuredChain, createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { isBatchFatalError } from '../llm/rate-limit';
-import { observeGeneration } from '../observability';
+import { observeGeneration, type GenerationResult } from '../observability';
 import { DOMAIN_EXAMPLES, DOMAIN_PITFALLS } from '../utils/domain-inference';
 import { z } from 'zod';
 import type {
@@ -108,8 +108,7 @@ function createApiChain(): any {
       maxTokens: 2000,
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(draftSchema).withConfig({ runName: 'distill-draft' });
+    return createLangChainStructuredChain(llm, draftSchema);
   }
   if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
@@ -117,8 +116,7 @@ function createApiChain(): any {
       apiKey: process.env.ANTHROPIC_API_KEY,
       maxTokens: 2000,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(draftSchema).withConfig({ runName: 'distill-draft' });
+    return createLangChainStructuredChain(llm, draftSchema);
   }
   return null;
 }
@@ -234,7 +232,7 @@ async function llmDistill(pr: ScrapedPR, trace?: DistillOptions['langfuseTrace']
 
   const prompt = buildPrompt(pr);
   return await observeGeneration(trace, { name: 'distill-draft', model: getDistillModel(), input: prompt },
-    () => chain.invoke(prompt) as Promise<DistillDraft>);
+    () => chain.invoke(prompt) as Promise<GenerationResult<DistillDraft>>);
 }
 
 /**

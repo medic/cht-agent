@@ -43,9 +43,8 @@ function loadFilter(fakeInvoke?: () => Promise<unknown>) {
   const invoke = fakeInvoke ?? (async () => ({ decision: 'distill', reason: 'LLM says distill' }));
   class FakeChat {
     constructor(_opts: unknown) {}
-    withStructuredOutput(_schema: unknown) {
-      const chain = { invoke, withConfig: (_cfg: unknown) => chain };
-      return chain;
+    withStructuredOutput(_schema: unknown, _opts: unknown) {
+      return { invoke: async () => ({ raw: { usage_metadata: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } }, parsed: await invoke() }) };
     }
   }
 
