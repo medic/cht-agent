@@ -101,17 +101,14 @@ Follow these when adding instrumentation to new workflows:
    });
    ```
 
-3. Wrap each model call in a generation. This works for both LangChain API calls
-   and the Claude CLI adapter:
+3. Wrap each model call in `observeGeneration`. It records the prompt, the parsed
+   output, `usageDetails` (API path) or `costDetails` (Claude CLI path), and ends
+   the generation with `level: 'ERROR'` on failure. Build the chain with
+   `createLangChainStructuredChain` (API) or `createStructuredCliChain` (CLI) so
+   `invoke` returns a `GenerationResult` (`{ parsed, model?, usage?, costUsd? }`):
    ```typescript
-   const generation = trace.generation({ name: 'classify', model, input: prompt });
-   try {
-     const result = await chain.invoke(prompt);
-     generation.end({ output: result });
-   } catch (err) {
-     generation.end({ output: { error: String(err) } });
-     throw err;
-   }
+   const parsed = await observeGeneration(trace, { name: 'classify', model, input: prompt },
+     () => chain.invoke(prompt));
    ```
 
 4. Use `trace.span()` for non-LangChain operations:
@@ -127,17 +124,21 @@ Follow these when adding instrumentation to new workflows:
    trace.update({ output: { result } });
    ```
 
-6. Always flush at the end of your workflow:
+6. Shut the client down **once** at the end of the whole run, not per item. It
+   flushes the buffer and awaits in-flight requests; a per-item `flushAsync` is
+   slow when Langfuse is unreachable and can still lose events on `process.exit`:
    ```typescript
-   await getLangfuse().flushAsync();
+   await getLangfuse().shutdownAsync();
    ```
 
-7. In tests, mock the observability module with proxyquire:
+7. In tests, stub the observability module with proxyquire. Record calls so the
+   spec can assert the trace was actually passed to each stage (see
+   `test/scripts/run-pipeline.spec.ts` for a full recording spy):
    ```typescript
-   const noopTrace = { span: () => ({ end: () => {} }), score: () => {}, update: () => {} };
+   const trace = { span: () => ({ end: () => {} }), generation: () => ({ end: () => {} }), score: () => {}, update: () => {} };
    '../observability': {
-     startTrace: () => ({ trace: noopTrace, handler: undefined }),
-     getLangfuse: () => ({ flushAsync: async () => {} }),
+     startTrace: () => ({ trace }),
+     getLangfuse: () => ({ shutdownAsync: async () => {} }),
      '@noCallThru': true,
    }
    ```
@@ -156,10 +157,16 @@ or omit it before it reaches a trace `input`, span, or prompt.
 
 ## Token and Cost Data
 
-The direct generations record the selected model, prompt, completion, latency, and
-errors on both API and `claude-cli` paths. The current Claude CLI adapter returns
-parsed JSON rather than provider usage metadata, so it cannot report token or cost
-data. Add usage fields to the provider result before claiming token or cost tracking.
+Every generation records the model, prompt, completion, latency, and errors. Cost
+data differs by path:
+
+| Path | What is sent | How Langfuse prices it |
+|---|---|---|
+| API (OpenRouter / Anthropic) | `usageDetails` from LangChain `usage_metadata` (input/output/total tokens) and the provider's reported model name | Inferred from the model definition in Langfuse |
+| Claude CLI (`claude -p`) | `costDetails.total` from the CLI's `total_cost_usd` and the configured model name; the CLI reports no token counts | Ingested USD directly |
+
+The client is created with `requestTimeout: 3000` and `fetchRetryCount: 1` so an
+unreachable Langfuse costs at most a few seconds per run, not per PR.
 
 ---
 
