@@ -112,7 +112,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
    */
   private async runGeneration(
     input: CodeGenModuleInput,
-    snapshot: { headSha: string },
+    snapshot: ChtCoreSnapshot,
     chtCorePath: string,
   ): Promise<CodeGenModuleOutput> {
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before plan');
@@ -127,6 +127,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
     const captureResult = await this.captureWithRelaxedRetry({
       input, plan, executeResult, snapshotSha: snapshot.headSha, chtCorePath,
+      baselineUntracked: snapshot.baselineUntracked,
     });
     const compileResult = await runCompileGate(chtCorePath);
     const moduleIssues = collectModuleIssues({
@@ -170,10 +171,11 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       executeResult: { partialCompletion: boolean; reason?: string; resultText: string };
       snapshotSha: string;
       chtCorePath: string;
+      baselineUntracked: readonly string[];
     },
   ): Promise<{ files: Awaited<ReturnType<typeof captureChtCoreDiff>>; executeNoOp: boolean }> {
-    const { input, plan, executeResult, snapshotSha, chtCorePath } = opts;
-    let files = await captureChtCoreDiff(chtCorePath, snapshotSha);
+    const { input, plan, executeResult, snapshotSha, chtCorePath, baselineUntracked } = opts;
+    let files = await captureChtCoreDiff(chtCorePath, snapshotSha, baselineUntracked);
     console.log(`[claude-code-cli] Captured ${files.length} file change(s) from CLI session`);
 
     const shouldRetry =
@@ -187,7 +189,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       '[claude-code-cli] Zero files captured on STRICT execute; attempting relaxed retry (R17)'
     );
     await this.runExecutePhase(input, plan, chtCorePath, buildRelaxedExecutePrompt);
-    files = await captureChtCoreDiff(chtCorePath, snapshotSha);
+    files = await captureChtCoreDiff(chtCorePath, snapshotSha, baselineUntracked);
     console.log(
       `[claude-code-cli] After relaxed retry: ${files.length} file change(s) captured`
     );

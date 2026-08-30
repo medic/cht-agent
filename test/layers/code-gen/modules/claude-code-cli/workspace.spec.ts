@@ -35,6 +35,12 @@ const loadWorkspace = (responses: Record<string, { stdout: string }>) => {
 
 describe('workspace.ts (A.2b)', () => {
   describe('snapshotChtCore', () => {
+    // M3 verifies OUR marker is on top of the stack before trusting the ref, so
+    // the stash name must be predictable in tests that stash successfully.
+    const SNAP_NOW = 1700000000000;
+    const SNAP_STASH_NAME = `cht-agent-claude-code-cli-${SNAP_NOW}`;
+    beforeEach(() => sinon.stub(Date, 'now').returns(SNAP_NOW));
+    afterEach(() => sinon.restore());
     it('captures HEAD SHA and null stash ref when working tree is clean', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
@@ -50,10 +56,250 @@ describe('workspace.ts (A.2b)', () => {
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         'git status --porcelain': { stdout: ' M file.ts\n' },
         'git stash push': { stdout: 'Saved working directory and index state\n' },
-        'git stash list': { stdout: 'stash@{0}\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.stashRef).to.equal('stash@{0}');
+    });
+
+    it('records the post-stash untracked baseline (#140)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M .gitignore\n' },
+        'git stash push': { stdout: 'Saved working directory\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+        // Stashing the .gitignore edit unmasked these pre-existing files.
+        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0.aider.tags\0' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.baselineUntracked).to.deep.equal(['.aider.chat', '.aider.tags']);
+    });
+
+    it('reads the baseline even on a clean tree (no stash taken)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: 'ignored-by-committed-rules.log\0' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.stashRef).to.be.null;
+      expect(snap.baselineUntracked).to.deep.equal(['ignored-by-committed-rules.log']);
+    });
+
+    it('refuses to start when a previous run leaked a cht-agent stash (#140)', async () => {
+      const ws = loadWorkspace({
+        'git stash list --format=%gd %gs': {
+          stdout: 'stash@{0} On main: cht-agent-claude-code-cli-1700000000000\n',
+        },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      let threw = false;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        threw = true;
+        const msg = (err as Error).message;
+        expect(msg).to.match(/leftover cht-agent stash/i);
+        // Lookup form, not `stash pop <name>` (not a valid ref) and not a bare
+        // stash@{N} (goes stale as soon as anything else is stashed).
+        expect(msg).to.include('stash list | grep');
+        expect(msg).to.include('git -C /tmp/cht-core stash pop <the stash@{N} shown>');
+      }
+      expect(threw).to.equal(true);
+    });
+
+    it('proceeds past a leaked stash when CHT_AGENT_IGNORE_LEAKED_STASH=true', async () => {
+      const prev = process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
+      process.env.CHT_AGENT_IGNORE_LEAKED_STASH = 'true';
+      try {
+        const ws = loadWorkspace({
+          'git stash list --format=%gd %gs': {
+            stdout: 'stash@{0} On main: cht-agent-claude-code-cli-1700000000000\n',
+          },
+          'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+          'git status --porcelain': { stdout: '' },
+        });
+        const snap = await ws.snapshotChtCore('/tmp/cht-core');
+        expect(snap.headSha).to.equal('abc1234deadbeef');
+      } finally {
+        if (prev === undefined) delete process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
+        else process.env.CHT_AGENT_IGNORE_LEAKED_STASH = prev;
+      }
+    });
+
+    it('ignores an unrelated third-party stash', async () => {
+      const ws = loadWorkspace({
+        'git stash list --format=%gd %gs': { stdout: 'stash@{0} On main: my own wip\n' },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.headSha).to.equal('abc1234deadbeef');
+    });
+
+    it('does not false-positive on a user stash that merely mentions the marker (#140 F-7)', async () => {
+      const ws = loadWorkspace({
+        'git stash list --format=%gd %gs': {
+          stdout: 'stash@{0} On main: wip after cht-agent-claude-code-cli-1700000000000 crashed\n',
+        },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      // Marker is present but not in terminal position: this is the user's stash.
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.headSha).to.equal('abc1234deadbeef');
+    });
+
+    it('reports EVERY leaked stash, not just the first line (#140 F-7)', async () => {
+      const ws = loadWorkspace({
+        'git stash list --format=%gd %gs': {
+          stdout:
+            'stash@{0} On main: my own wip\n' +
+            'stash@{1} On main: cht-agent-claude-code-cli-1700000000001\n' +
+            'stash@{2} On main: cht-agent-claude-code-cli-1700000000000\n',
+        },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      let msg = '';
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        msg = (err as Error).message;
+      }
+      // A real leak can sit under a user stash; naming only the first sends the
+      // operator to the wrong ref.
+      expect(msg).to.include('stash@{1}');
+      expect(msg).to.include('stash@{2}');
+      expect(msg).to.not.include('my own wip');
+    });
+
+    it('accepts the flag with stray casing and whitespace (#140 M6)', async () => {
+      const prev = process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
+      process.env.CHT_AGENT_IGNORE_LEAKED_STASH = ' TRUE ';
+      try {
+        const ws = loadWorkspace({
+          'git stash list --format=%gd %gs': {
+            stdout: 'stash@{0} On main: cht-agent-claude-code-cli-1700000000000\n',
+          },
+          'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+          'git status --porcelain': { stdout: '' },
+        });
+        const snap = await ws.snapshotChtCore('/tmp/cht-core');
+        expect(snap.headSha).to.equal('abc1234deadbeef');
+      } finally {
+        if (prev === undefined) delete process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
+        else process.env.CHT_AGENT_IGNORE_LEAKED_STASH = prev;
+      }
+    });
+
+    it('leaves stashRef null when a zero-exit stash push saved nothing (#140 M3)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M file.ts\n' },
+        'git stash push': { stdout: 'No local changes to save\n' }, // exits 0, saved nothing
+        // Top of stack is somebody else's stash, NOT ours.
+        'git stash list -1 --format=%gs': { stdout: 'On main: someone elses wip\n' },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      // Must not adopt a third-party stash that rollback would then pop.
+      expect(snap.stashRef).to.be.null;
+      expect(snap.stashName).to.be.null;
+    });
+
+    it('warns when the stashed work includes a .gitignore edit (#140)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M .gitignore\n M src/a.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      const warned = warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])));
+      expect(warned).to.exist;
+    });
+
+    it('warns for a renamed-away .gitignore and a C-quoted path (#140 F-6)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // Rename AWAY from .gitignore (old side), and a quoted non-ASCII dir.
+        'git status --porcelain': { stdout: 'R  .gitignore -> .gitignore.bak\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.exist;
+    });
+
+    it('warns for a C-quoted nested .gitignore path (#140 F-6)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M "caf\\303\\251/.gitignore"\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.exist;
+    });
+
+    it('warns without promising the CLI cannot touch the unmasked files (#140 C-3)', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M .gitignore\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      const msg = String(warnSpy.getCalls().find(c => /ignore rules revert/.test(String(c.args[0])))?.args[0]);
+      // v1 said the files "will be left untouched", which is false of the CLI.
+      expect(msg).to.not.match(/left untouched/);
+      expect(msg).to.match(/CLI can still read, overwrite, or delete them/);
+    });
+
+    it('does not warn about ignore rules for ordinary edits', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M src/a.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -1 --format=%gs': { stdout: `On main: ${SNAP_STASH_NAME}\n` },
+        'git stash list -1 --format=%gd': { stdout: 'stash@{0}\n' },
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      const warned = warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])));
+      expect(warned).to.be.undefined;
     });
 
     it('refuses to run if cht-core has unmerged paths', async () => {
@@ -75,11 +321,11 @@ describe('workspace.ts (A.2b)', () => {
   describe('captureChtCoreDiff', () => {
     it('parses git diff --name-status A as create and M as modify', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: 'A\tsrc/new.ts\nM\tsrc/changed.ts\n' },
+        'git diff --name-status -z abc1234': { stdout: 'A\0src/new.ts\0M\0src/changed.ts\0' },
         'git ls-files --others --exclude-standard': { stdout: '' },
         'git show': { stdout: 'old content' },
       });
-      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       const create = files.find((f: { path: string }) => f.path === 'src/new.ts');
       const modify = files.find((f: { path: string }) => f.path === 'src/changed.ts');
       expect(create).to.exist;
@@ -90,19 +336,71 @@ describe('workspace.ts (A.2b)', () => {
 
     it('includes untracked files as create', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: '' },
-        'git ls-files --others --exclude-standard': { stdout: 'src/untracked.ts\n' },
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: 'src/untracked.ts\0' },
       });
-      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/untracked.ts')).to.exist;
+    });
+
+    it('excludes baseline untracked files and keeps CLI-created ones (#140)', async () => {
+      const ws = loadWorkspace({
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': {
+          stdout: '.aider.chat\0.aider.tags\0operator-notes.md\0src/cli-made.ts\0',
+        },
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', [
+        '.aider.chat',
+        '.aider.tags',
+        'operator-notes.md',
+      ]);
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/cli-made.ts']);
+    });
+
+    it('stays in phase on a rename entry, which carries two paths (#140 F-2)', async () => {
+      // -z renames emit STATUS\0OLD\0NEW\0; consuming only one path would treat
+      // the old path as the next status and desynchronize the whole stream.
+      const ws = loadWorkspace({
+        'git diff --name-status -z abc1234': {
+          stdout: 'R100\0src/old.ts\0src/new.ts\0M\0src/after.ts\0',
+        },
+        'git ls-files --others --exclude-standard': { stdout: '' },
+        'git show': { stdout: 'old content' },
+      });
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
+      // NEW path kept for the rename, and the following entry still parses.
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/new.ts', 'src/after.ts']);
+    });
+
+    it('V3-1: a non-array baseline throws instead of misattributing operator files (#140)', async () => {
+      // Symmetry with the clean path's guard. Without it, `new Set(undefined)` is
+      // empty, so every pre-existing untracked file is reported as a session
+      // CREATE and offered for approval into cht-core (silent RC-1 misattribution).
+      const ws = loadWorkspace({
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0operator-notes.md\0' },
+      });
+
+      for (const bad of [undefined, null, 'operator-notes.md']) {
+        let threw = false;
+        try {
+          await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', bad);
+        } catch (err) {
+          threw = true;
+          expect((err as Error).message).to.match(/baselineUntracked is missing or not an array/);
+          expect((err as Error).message).to.include('captureChtCoreDiff');
+        }
+        expect(threw, `expected a throw for baseline ${JSON.stringify(bad)}`).to.equal(true);
+      }
     });
 
     it('skips deletes', async () => {
       const ws = loadWorkspace({
-        'git diff --name-status abc1234': { stdout: 'D\tsrc/deleted.ts\nA\tsrc/new.ts\n' },
+        'git diff --name-status -z abc1234': { stdout: 'D\0src/deleted.ts\0A\0src/new.ts\0' },
         'git ls-files --others --exclude-standard': { stdout: '' },
       });
-      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234');
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/deleted.ts')).to.not.exist;
       expect(files.find((f: { path: string }) => f.path === 'src/new.ts')).to.exist;
     });
@@ -120,18 +418,81 @@ describe('workspace.ts (A.2b)', () => {
       return fn;
     };
 
-    it('always runs reset + clean; pops stash if present', async () => {
+    /** trackingStub with per-prefix stdout, so `ls-files` can produce a delta. */
+    const trackingStubWith = (calls: string[], responses: Record<string, string>) => {
+      const fn = (_cmd: string, _args: string[], _opts: object, cb: (e: Error | null, s: string, t: string) => void) => {
+        cb(null, '', '');
+      };
+      (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+        const key = `${cmd} ${args.join(' ')}`;
+        calls.push(key);
+        for (const k of Object.keys(responses)) {
+          if (key.startsWith(k)) return Promise.resolve({ stdout: responses[k], stderr: '' });
+        }
+        return Promise.resolve({ stdout: '', stderr: '' });
+      };
+      return fn;
+    };
+
+    it('always runs reset; pops stash if present', async () => {
       const calls: string[] = [];
       const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
         'node:child_process': { execFile: trackingStub(calls) },
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
       });
 
-      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: 'stash@{0}' });
+      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: 'stash@{0}', baselineUntracked: [] });
 
       expect(calls.some(c => c.startsWith('git reset --hard abc1234'))).to.equal(true);
-      expect(calls.some(c => c.startsWith('git clean -fd'))).to.equal(true);
       expect(calls.some(c => c.startsWith('git stash pop stash@{0}'))).to.equal(true);
+    });
+
+    it('cleans ONLY session-created paths, sparing the baseline (#140)', async () => {
+      const calls: string[] = [];
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: trackingStubWith(calls, {
+            'git ls-files --others --exclude-standard': '.aider.chat\0src/cli-made.ts\0',
+          }),
+        },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234',
+        stashRef: null,
+        stashName: null,
+        baselineUntracked: ['.aider.chat'],
+      });
+
+      const cleanCall = calls.find(c => c.startsWith('git clean'));
+      // :(literal) so a metachar in a session filename cannot fnmatch-delete an
+      // operator file (#140 F-1).
+      expect(cleanCall).to.equal('git clean -fd -- :(literal)src/cli-made.ts');
+      expect(cleanCall).to.not.include('.aider.chat'); // operator's file spared
+    });
+
+    it('skips the clean entirely when the delta is empty (no blanket clean) (#140)', async () => {
+      const calls: string[] = [];
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: trackingStubWith(calls, {
+            // Everything untracked is the operator's; nothing of ours to remove.
+            'git ls-files --others --exclude-standard': '.aider.chat\0operator-notes.md\0',
+          }),
+        },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234',
+        stashRef: null,
+        stashName: null,
+        baselineUntracked: ['.aider.chat', 'operator-notes.md'],
+      });
+
+      expect(calls.some(c => c.startsWith('git clean'))).to.equal(false);
+      expect(result.clean).to.equal('ok');
     });
 
     it('skips stash pop when stashRef is null', async () => {
@@ -141,7 +502,7 @@ describe('workspace.ts (A.2b)', () => {
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
       });
 
-      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null });
+      await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
 
       expect(calls.some(c => c.startsWith('git stash pop'))).to.equal(false);
     });
@@ -232,7 +593,8 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard abc1234': { error: new Error('warning during reset') },
-            'git rev-parse HEAD': { stdout: 'abc1234\n' }, // verify says reset landed
+            // verify (tree diff vs the snapshot) says the reset landed
+            'git diff --quiet abc1234': { stdout: '' },
             'git status --porcelain': { stdout: '' },     // clean succeeded by default
           }),
         },
@@ -242,7 +604,7 @@ describe('workspace.ts (A.2b)', () => {
       // Should not throw and should not log a "during rollback failed" warning.
       const warnSpy = sinon.spy(console, 'warn');
       try {
-        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null });
+        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [] });
       } finally {
         warnSpy.restore();
       }
@@ -250,26 +612,185 @@ describe('workspace.ts (A.2b)', () => {
       expect(failureWarn).to.be.undefined;
     });
 
-    it('A.5: clean -fd exits non-zero but working tree is clean → no warning', async () => {
+    it('M1: reset failure is reported when the tree does NOT match the snapshot (#140)', async () => {
+      // v1 verified `rev-parse HEAD === snapshot.headSha`, which nothing in a
+      // session can falsify, so a real reset failure verified as success and the
+      // session's edits silently stayed in the operator's tree.
       const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
         'node:child_process': {
           execFile: stubWithErrors({
-            'git reset --hard': { stdout: '' },
-            'git clean -fd': { error: new Error('warning: could not remove') },
-            'git status --porcelain': { stdout: '' }, // verify says clean landed
+            'git reset --hard': { error: new Error('fatal: Unable to create index.lock') },
+            'git rev-parse HEAD': { stdout: 'abc1234\n' },      // v1's check would say "ok"
+            'git diff --quiet abc1234': { error: new Error('tree still differs') },
           }),
         },
         'node:fs/promises': { readFile: sinon.stub().resolves('') },
       });
 
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+      expect(result.reset).to.equal('failed');
+      expect(result.errors[0]).to.match(/^reset: /);
+    });
+
+    it('F-4: a baseline-less snapshot throws instead of blanket-cleaning (#140)', async () => {
+      const calls: string[] = [];
+      const fn = (_c: string, _a: string[], _o: object, cb: (e: Error | null, s: string, t: string) => void) => cb(null, '', '');
+      (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+        calls.push(`${cmd} ${args.join(' ')}`);
+        if (`${cmd} ${args.join(' ')}`.startsWith('git ls-files')) {
+          return Promise.resolve({ stdout: 'operator-file.txt\0', stderr: '' });
+        }
+        return Promise.resolve({ stdout: '', stderr: '' });
+      };
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': { execFile: fn },
+        'node:fs/promises': { readFile: sinon.stub().resolves('') },
+      });
+
+      // An untyped caller (or a stale spec literal) omitting the baseline.
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null,
+      });
+
+      expect(result.clean).to.equal('failed');
+      expect(result.errors.join(' ')).to.match(/baselineUntracked is missing or not an array/);
+      expect(calls.some(c => c.startsWith('git clean'))).to.equal(false); // nothing deleted
+    });
+
+    it('M5: a failing chunk does not stop later chunks from being cleaned (#140)', async () => {
+      // >1000 delta paths means >1 `git clean` invocation. Aborting on the first
+      // failure would leave every later chunk's session file on disk.
+      const paths = Array.from({ length: 1500 }, (_, i) => `session/f${i}.ts`);
+      const cleanCalls: string[][] = [];
+      const fn = (_c: string, _a: string[], _o: object, cb: (e: Error | null, s: string, t: string) => void) => cb(null, '', '');
+      (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+        const key = `${cmd} ${args.join(' ')}`;
+        if (key.startsWith('git ls-files')) {
+          return Promise.resolve({ stdout: paths.join('\0') + '\0', stderr: '' });
+        }
+        if (args[0] === 'clean') {
+          cleanCalls.push(args);
+          // Fail the FIRST chunk only.
+          if (cleanCalls.length === 1) return Promise.reject(new Error('chunk 1 blew up'));
+        }
+        return Promise.resolve({ stdout: '', stderr: '' });
+      };
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': { execFile: fn },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          lstat: sinon.stub().resolves({}), // chunk 1's paths still present -> genuinely failed
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+
+      expect(cleanCalls).to.have.length(2);          // second chunk still attempted
+      expect(result.clean).to.equal('failed');       // and the failure is reported
+      expect(result.errors.join(' ')).to.match(/chunk 1 blew up/);
+    });
+
+    it('M2: a non-ENOENT stat error counts as NOT removed → clean failed (#140)', async () => {
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
+            'git clean -fd': { error: new Error('permission denied') },
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          // v1 caught every error as "removed"; EACCES means the clean did NOT work.
+          lstat: sinon.stub().rejects(Object.assign(new Error('EACCES'), { code: 'EACCES' })),
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+      expect(result.clean).to.equal('failed');
+    });
+
+    it('A.5: clean exits non-zero but the delta paths are gone → no warning', async () => {
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
+            'git clean -fd': { error: new Error('warning: could not remove') },
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          // Verifier asserts removal: ENOENT means the file is gone.
+          lstat: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+        },
+      });
+
       const warnSpy = sinon.spy(console, 'warn');
+      let result;
       try {
-        await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, stashName: null });
+        result = await ws.rollbackChtCore('/tmp/cht-core', {
+          headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+        });
       } finally {
         warnSpy.restore();
       }
       const failureWarn = warnSpy.getCalls().find(c => /clean -fd during rollback failed/.test(String(c.args[0])));
       expect(failureWarn).to.be.undefined;
+      expect(result.clean).to.equal('ok');
+    });
+
+    it('A.5: clean does NOT report failure just because the tree is legitimately dirty (#140)', async () => {
+      // The operator's own untracked files survive rollback by design, so the old
+      // "status --porcelain is empty" verifier would have misreported a failure.
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0src/cli-made.ts\0' },
+            'git clean -fd': { error: new Error('warning: could not remove') },
+            'git status --porcelain': { stdout: '?? .aider.chat\n' }, // still dirty, legitimately
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          lstat: sinon.stub().rejects(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })),
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: ['.aider.chat'],
+      });
+      expect(result.clean).to.equal('ok');
+      expect(result.errors).to.deep.equal([]);
+    });
+
+    it('A.5: clean reports failure when a delta path still exists', async () => {
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': {
+          execFile: stubWithErrors({
+            'git reset --hard': { stdout: '' },
+            'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
+            'git clean -fd': { error: new Error('permission denied') },
+          }),
+        },
+        'node:fs/promises': {
+          readFile: sinon.stub().resolves(''),
+          lstat: sinon.stub().resolves({}), // file is still there
+        },
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', {
+        headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      });
+      expect(result.clean).to.equal('failed');
+      expect(result.errors[0]).to.match(/^clean: /);
     });
 
     it('A.5: stash pop exits non-zero but stash was popped (by name) → no warning', async () => {
@@ -293,6 +814,7 @@ describe('workspace.ts (A.2b)', () => {
           headSha: 'abc1234',
           stashRef: 'stash@{0}',
           stashName: 'cht-agent-claude-code-cli-1700000000000',
+          baselineUntracked: [],
         });
       } finally {
         warnSpy.restore();
@@ -318,6 +840,7 @@ describe('workspace.ts (A.2b)', () => {
         headSha: 'abc1234',
         stashRef: 'stash@{0}',
         stashName: 'cht-agent-claude-code-cli-1700000000000',
+        baselineUntracked: [],
       });
       expect(result.reset).to.equal('ok');
       expect(result.clean).to.equal('ok');
@@ -341,6 +864,7 @@ describe('workspace.ts (A.2b)', () => {
         headSha: 'abc1234',
         stashRef: null,
         stashName: null,
+        baselineUntracked: [],
       });
       expect(result.stashPop).to.equal('skipped');
     });
@@ -350,8 +874,8 @@ describe('workspace.ts (A.2b)', () => {
         'node:child_process': {
           execFile: stubWithErrors({
             'git reset --hard': { error: new Error('reset blew up') },
-            // Verify says HEAD is NOT at the snapshot SHA, so reset is judged failed.
-            'git rev-parse HEAD': { stdout: 'somethingelse\n' },
+            // Verify says the tree still differs from the snapshot, so reset is judged failed.
+            'git diff --quiet abc1234': { error: new Error('tree still differs') },
             'git clean -fd': { stdout: '' },
             'git status --porcelain': { stdout: '' },
           }),
@@ -363,6 +887,7 @@ describe('workspace.ts (A.2b)', () => {
         headSha: 'abc1234',
         stashRef: null,
         stashName: null,
+        baselineUntracked: [],
       });
       expect(result.reset).to.equal('failed');
       expect(result.errors).to.have.length(1);
@@ -390,6 +915,7 @@ describe('workspace.ts (A.2b)', () => {
           headSha: 'abc1234',
           stashRef: 'stash@{0}',
           stashName: 'cht-agent-claude-code-cli-1700000000000',
+          baselineUntracked: [],
         });
       } finally {
         warnSpy.restore();
