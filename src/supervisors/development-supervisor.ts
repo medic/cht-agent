@@ -13,7 +13,7 @@
  * loops back to code generation with feedback (up to MAX_ITERATIONS).
  */
 
-import { StateGraph, START, Annotation } from '@langchain/langgraph';
+import { StateGraph, START, END, Annotation } from '@langchain/langgraph';
 import {
   IssueTemplate,
   DevelopmentState,
@@ -24,11 +24,13 @@ import {
   ContextAnalysisResult,
   CodeGenerationResult,
   ImplementationValidation,
+  TestGenerationResult,
   GeneratedFile,
   FileValidationFeedback,
   FailingFileRef,
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
+import { TestGenerationAgent, TestGenerationInput } from '../agents/test-generation-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
@@ -61,8 +63,16 @@ function renderBulletSection<T>(heading: string, items: T[], format: (item: T) =
 export interface ValidateImplEdgeState {
   validationResult?: { overallScore?: number };
   iterationCount?: number;
-  codeGeneration?: { crossFileIssues?: { issueType?: string }[] };
+  codeGeneration?: { crossFileIssues?: { issueType?: string }[]; files?: unknown[] };
 }
+
+/**
+ * Cross-file issue types that are advisory, not blocking (F-C): the CLI code-gen
+ * module's reconcilePlanAdherence emits these for a valid file touched outside the
+ * narrow HC1 plan. They must NOT re-trigger the refinement loop (they stay visible
+ * in the HC2 banner, which reads crossFileIssues directly).
+ */
+const WARN_ONLY_ISSUE_TYPES = new Set(['plan-adherence-extra', 'plan-adherence-missing']);
 
 /**
  * Decide what edge the validateImpl node should take next. Pure function so
@@ -73,24 +83,46 @@ export interface ValidateImplEdgeState {
  *  - Score below threshold OR any cross-file issue → 'generateCode' (refine) if iterations left
  *  - Otherwise → '__end__'
  */
-export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generateCode' | '__end__' {
+/**
+ * Log message for an unconditional early-END (shutdown, execute-no-op, or 0 files),
+ * or null when none applies. Reads crossFileIssues but never mutates state, so the
+ * HC2 banner still sees the full issue set.
+ */
+function earlyEndReason(state: ValidateImplEdgeState): string | null {
   if (isShutdownRequested()) {
-    console.log('[Development Supervisor] Shutdown requested; ending workflow');
-    return '__end__';
+    return 'Shutdown requested; ending workflow';
   }
-  const score = state.validationResult?.overallScore ?? 0;
-  const iterations = state.iterationCount ?? 0;
   const issues = state.codeGeneration?.crossFileIssues ?? [];
   // R17 (v7): when the CLI abstained even after the relaxed retry, looping
   // cannot help — it would just repeat the same abstain pattern with the
   // same plan. End cleanly so the user sees the HC2 banner.
   if (issues.some(i => i.issueType === 'execute-no-op')) {
-    console.log('[Development Supervisor] execute-no-op detected; ending workflow (refinement loop cannot help)');
+    return 'execute-no-op detected; ending workflow (refinement loop cannot help)';
+  }
+  // F-C: 0 files cannot be improved by looping, and on a 0-file re-iteration
+  // reconcilePlanAdherence flips every plan path to plan-adherence-missing, which
+  // would otherwise keep belowBar true forever. End cleanly (the guard lives here,
+  // not validationNode, because the resolver ignores currentPhase).
+  if ((state.codeGeneration?.files?.length ?? 0) === 0) {
+    return '0 files generated; ending workflow (refinement loop cannot help)';
+  }
+  return null;
+}
+
+export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generateCode' | '__end__' {
+  const end = earlyEndReason(state);
+  if (end !== null) {
+    console.log(`[Development Supervisor] ${end}`);
     return '__end__';
   }
-  const belowBar = score < REFINEMENT_THRESHOLD || issues.length > 0;
+  const score = state.validationResult?.overallScore ?? 0;
+  const iterations = state.iterationCount ?? 0;
+  const issues = state.codeGeneration?.crossFileIssues ?? [];
+  // Only BLOCKING issues re-trigger refinement; plan-adherence-* are warn-only.
+  const blockingIssues = issues.filter(i => !WARN_ONLY_ISSUE_TYPES.has(i.issueType ?? ''));
+  const belowBar = score < REFINEMENT_THRESHOLD || blockingIssues.length > 0;
   if (belowBar && iterations < MAX_ITERATIONS) {
-    logRefinementLoop(score, issues, iterations);
+    logRefinementLoop(score, blockingIssues, iterations);
     return 'generateCode';
   }
   if (belowBar) {
@@ -124,10 +156,10 @@ function checkAcceptanceCriteria(issue: IssueTemplate, codeGen: CodeGenerationRe
   });
 }
 
-function logRefinementLoop(score: number, issues: { issueType?: string }[], iterations: number): void {
+function logRefinementLoop(score: number, blockingIssues: { issueType?: string }[], iterations: number): void {
   const reason = score < REFINEMENT_THRESHOLD
     ? `Score ${score}% < ${REFINEMENT_THRESHOLD}% threshold`
-    : `${issues.length} cross-file issue(s)`;
+    : `${blockingIssues.length} blocking cross-file issue(s)`;
   console.log(`[Development Supervisor] ${reason}, iteration ${iterations + 1}/${MAX_ITERATIONS} — looping back to code generation`);
 }
 
@@ -170,6 +202,10 @@ const DevelopmentStateAnnotation = Annotation.Root({
     reducer: (_current, update) => update ?? _current,
     default: () => undefined,
   }),
+  testGeneration: Annotation<TestGenerationResult | undefined>({
+    reducer: (_current, update) => update ?? _current,
+    default: () => undefined,
+  }),
   currentPhase: Annotation<DevelopmentState['currentPhase']>({
     reducer: (_current, update) => update,
     default: () => 'init' as const,
@@ -197,6 +233,7 @@ const DevelopmentStateAnnotation = Annotation.Root({
 export class DevelopmentSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly codeGenAgent: CodeGenerationAgent;
+  private readonly testGenAgent: TestGenerationAgent;
   private readonly llm: LLMProvider;
   private readonly todos: TodoTracker;
 
@@ -207,6 +244,8 @@ export class DevelopmentSupervisor {
       llmProvider: this.llm,
       codeGenRegistry: options.codeGenRegistry,
     });
+
+    this.testGenAgent = new TestGenerationAgent({ llmProvider: this.llm });
 
     this.todos = createSupervisorTodoTracker('Development');
 
@@ -221,11 +260,26 @@ export class DevelopmentSupervisor {
       // Define nodes
       .addNode('generateCode', this.codeGenerationNode.bind(this))
       .addNode('validateImpl', this.validationNode.bind(this))
+      // Node name is 'generateTests' (not 'testGeneration'): LangGraph forbids a
+      // node name that collides with a state channel, and 'testGeneration' is the
+      // channel this node writes.
+      .addNode('generateTests', this.testGenerationNode.bind(this))
 
-      // Define edges with conditional routing from validation
+      // Define edges with conditional routing from validation. The resolver
+      // stays pure (returns 'generateCode' | END); the path map remaps its
+      // terminal branch through the test-generation node before END, while the
+      // refinement self-loop back to generateCode is unchanged.
       .addEdge(START, 'generateCode')
       .addEdge('generateCode', 'validateImpl')
-      .addConditionalEdges('validateImpl', (state) => resolveValidateImplEdge(state));
+      .addConditionalEdges(
+        'validateImpl',
+        (state) => resolveValidateImplEdge(state),
+        {
+          generateCode: 'generateCode',
+          [END]: 'generateTests',
+        },
+      )
+      .addEdge('generateTests', END);
 
     return workflow.compile();
   }
@@ -392,7 +446,10 @@ export class DevelopmentSupervisor {
   ): Record<string, unknown> {
     const feedbackUpdate: Record<string, unknown> = {
       validationResult: validation,
-      currentPhase: 'complete' as const,
+      // Validation is done; the terminal testGeneration node owns 'complete'.
+      // The resolver routes on score/issues, not on currentPhase, so this is
+      // routing-inert. A refinement-loop iteration overwrites it on re-entry.
+      currentPhase: 'test-generation' as const,
       messages: [
         {
           role: 'assistant' as const,
@@ -409,6 +466,118 @@ export class DevelopmentSupervisor {
     }
 
     return feedbackUpdate;
+  }
+
+  /**
+   * Node: Test Generation.
+   *
+   * Terminal node, reachable after the validation branch and outside the
+   * refinement loop, so it owns the final progress-tracker bookkeeping and printSummary.
+   * It builds input via buildTestGenModuleInput and runs the test-gen agent.
+   *
+   * Failure is non-fatal: it logs a warning and returns an empty result. It
+   * never writes errors/validationFeedback/perFileFeedback, so test generation
+   * cannot feed the validation score or trip the refinement loop. It no-ops on
+   * shutdown and when there is no generated code to test.
+   */
+  private async testGenerationNode(
+    state: typeof DevelopmentStateAnnotation.State,
+  ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
+    const todoId = 'development-3';
+    const emptyResult: TestGenerationResult = { files: [], explanation: '', requirementsChecklist: [] };
+
+    if (isShutdownRequested()) {
+      console.log('[Development Supervisor] Shutdown requested; skipping test generation node');
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+
+    console.log('\n=== TEST GENERATION NODE ===');
+
+    if (!state.issue || !state.options || !state.researchFindings || !state.orchestrationPlan) {
+      console.log('[Development Supervisor] Skipping test generation — missing required data');
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+    if (!state.codeGeneration || state.codeGeneration.files.length === 0) {
+      console.log('[Development Supervisor] Skipping test generation — no generated code to test');
+      return this.finishTestGeneration(todoId, emptyResult);
+    }
+
+    const input: TestGenerationInput = {
+      issue: state.issue,
+      researchFindings: state.researchFindings,
+      orchestrationPlan: state.orchestrationPlan,
+      codeGeneration: state.codeGeneration,
+      chtCorePath: state.options.chtCorePath,
+      // Thread refinement feedback into test-gen (mirrors codeGenerationNode), so
+      // the "Feedback from Previous Iteration" prompt branch is actually fed (M6).
+      additionalContext: state.validationFeedback || undefined,
+    };
+    return this.runTestGenWithFallback(input, todoId, emptyResult);
+  }
+
+  /**
+   * Run the test-gen agent and finish the node, with the non-fatal fallback: a
+   * generation failure logs a warning and returns an empty result so the run
+   * completes. Extracted from testGenerationNode to keep that method flat.
+   */
+  private async runTestGenWithFallback(
+    input: TestGenerationInput,
+    todoId: string,
+    emptyResult: TestGenerationResult,
+  ): Promise<{ testGeneration: TestGenerationResult; currentPhase: 'complete' }> {
+    this.todos.start(todoId);
+    try {
+      const result = await this.testGenAgent.generate(input);
+      console.log(`[Development Supervisor] Generated ${result.files.length} test file(s)`);
+      // A no-file result that carries warnings means work was attempted and lost
+      // (all plan items dropped, or every file failed the content gate) — report
+      // it as a failed TodoTracker entry, not a green no-op. A warning-free empty
+      // result is an intentional no-op (e.g. genuinely empty plan) and stays complete.
+      if (result.files.length === 0 && (result.warnings?.length ?? 0) > 0) {
+        return this.failTestGeneration(
+          todoId,
+          result,
+          `Test generation produced no files: ${result.warnings!.join('; ')}`,
+        );
+      }
+      return this.finishTestGeneration(todoId, result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.warn(`[Development Supervisor] Test generation failed (non-fatal): ${message}`);
+      const reason = `Test generation failed: ${message}`;
+      return this.failTestGeneration(todoId, { ...emptyResult, warnings: [reason] }, reason);
+    }
+  }
+
+  /**
+   * Complete the test-generation tracker entry, print the terminal run summary, and
+   * return the terminal state update. Shared by every testGenerationNode path
+   * so the summary fires exactly once and reads 3/3 at the end of a run.
+   */
+  private finishTestGeneration(
+    todoId: string,
+    result: TestGenerationResult,
+  ): { testGeneration: TestGenerationResult; currentPhase: 'complete' } {
+    this.todos.complete(todoId);
+    this.todos.printSummary();
+    return { testGeneration: result, currentPhase: 'complete' as const };
+  }
+
+  /**
+   * Mark the test-generation tracker entry FAILED (with a reason) and print the
+   * terminal summary. Test generation stays non-fatal: currentPhase remains
+   * 'complete' and no errors/validationFeedback/perFileFeedback are written, so
+   * it can never feed the validation score or trip the refinement loop — only the
+   * TodoTracker entry/summary reflects the failure.
+   */
+  private failTestGeneration(
+    todoId: string,
+    result: TestGenerationResult,
+    reason: string,
+  ): { testGeneration: TestGenerationResult; currentPhase: 'complete' } {
+    this.todos.fail(todoId, reason);
+    this.todos.printSummary();
+    return { testGeneration: result, currentPhase: 'complete' as const };
   }
 
   /**
@@ -725,6 +894,7 @@ Respond with a JSON object:
     this.todos.addMany([
       { content: 'Generate code', activeForm: 'Generating code' },
       { content: 'Validate implementation', activeForm: 'Validating implementation' },
+      { content: 'Generate tests', activeForm: 'Generating tests' },
     ]);
 
     const initialState: typeof DevelopmentStateAnnotation.State = {
@@ -741,6 +911,7 @@ Respond with a JSON object:
       contextAnalysis: input.contextAnalysis,
       options: input.options,
       codeGeneration: undefined,
+      testGeneration: undefined,
       validationResult: undefined,
       currentPhase: 'init',
       errors: [],
@@ -774,6 +945,19 @@ Respond with a JSON object:
   /**
    * Write generated files to staging directory
    */
+  /**
+   * F-D: collapse duplicate relativePaths, keeping the LAST writer. Test-gen files
+   * are appended after code-gen, so test-gen wins — preserving the existing
+   * last-writer-wins semantics while ensuring one write per path and a
+   * non-double-counted writtenFiles. After F-A + F-D the paths are disjoint, so
+   * this is a defensive guard.
+   */
+  private dedupeByRelativePath(files: GeneratedFile[]): GeneratedFile[] {
+    const byPath = new Map<string, GeneratedFile>();
+    for (const file of files) byPath.set(file.relativePath, file);
+    return [...byPath.values()];
+  }
+
   async writeToStaging(state: DevelopmentState): Promise<{
     stagingPath: string;
     writtenFiles: string[];
@@ -786,7 +970,11 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
 
-    const writtenFiles = await writeToStaging(allFiles, stagingPath);
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
+    }
+
+    const writtenFiles = await writeToStaging(this.dedupeByRelativePath(allFiles), stagingPath);
 
     console.log(`[Development Supervisor] Written ${writtenFiles.length} files to staging: ${stagingPath}`);
 
@@ -803,7 +991,11 @@ Respond with a JSON object:
       allFiles.push(...state.codeGeneration.files);
     }
 
-    const writtenFiles = await writeToChtCore(allFiles, chtCorePath);
+    if (state.testGeneration) {
+      allFiles.push(...state.testGeneration.files);
+    }
+
+    const writtenFiles = await writeToChtCore(this.dedupeByRelativePath(allFiles), chtCorePath);
 
     console.log(`[Development Supervisor] Written ${writtenFiles.length} files to ${chtCorePath}`);
 
