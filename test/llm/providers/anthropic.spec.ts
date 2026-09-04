@@ -25,7 +25,7 @@ interface ChatResponseShape {
 /**
  * Stub the `@langchain/anthropic` ChatAnthropic class with one whose `invoke`
  * is a sinon stub. The production code constructs new instances per call
- * (when options override temperature/maxTokens); we install a captured
+ * (when options override maxTokens); we install a captured
  * `lastInstance` reference so tests can read the constructor args.
  */
 const buildChatAnthropicStub = () => {
@@ -64,16 +64,42 @@ const baseConfig: APIProviderConfig = {
 };
 
 describe('createAnthropicProvider (v9a.6) — wiring', () => {
-  it('constructs ChatAnthropic with the config api key, model, and a default temperature', () => {
+  it('constructs ChatAnthropic with the config api key and model, and NO temperature (#148)', () => {
     const stub = buildChatAnthropicStub();
     const { createAnthropicProvider } = loadProvider(stub);
     createAnthropicProvider(baseConfig);
+    // This is the BASE model (createModel() with no overrides) — the instance every
+    // non-override call path uses, and the one that used to carry DEFAULT_CONFIG's
+    // 0.3 and 400 on current models.
     const ctor = stub.getLastCtorArgs();
     expect(ctor).to.not.be.undefined;
     expect(ctor!.modelName).to.equal('claude-opus-4-6');
     expect(ctor!.anthropicApiKey).to.equal('sk-test');
-    expect(ctor!.temperature).to.equal(0.3); // DEFAULT_CONFIG.temperature
+    expect(ctor!.temperature).to.be.undefined;
+    expect(Object.hasOwn(ctor!, 'temperature')).to.equal(false); // key omitted, not just undefined
+    expect(ctor!.maxTokens).to.equal(65536); // DEFAULT_CONFIG.maxTokens, under opus 4.6's cap
     expect(ctor!.streaming).to.equal(true);
+  });
+
+  it('applies the invokeForJSON maxTokens default of 16384', async () => {
+    const stub = buildChatAnthropicStub();
+    stub.invokeStub.resolves({ content: '{"ok":true}' } as ChatResponseShape);
+    const { createAnthropicProvider } = loadProvider(stub);
+    const provider = createAnthropicProvider(baseConfig);
+    await provider.invokeForJSON('prompt');
+    // development-supervisor relies on this default now that it passes no options.
+    expect(stub.getLastCtorArgs()!.maxTokens).to.equal(16384);
+  });
+
+  it('honors a per-call maxTokens on invokeWithMessages too', async () => {
+    const stub = buildChatAnthropicStub();
+    stub.invokeStub.resolves({ content: 'ok' } as ChatResponseShape);
+    const { createAnthropicProvider } = loadProvider(stub);
+    const provider = createAnthropicProvider(baseConfig);
+    await provider.invokeWithMessages([{ role: 'user', content: 'hi' }], { maxTokens: 4096 });
+    // Second of the two narrowed conditionals; only invoke's was covered before.
+    expect(stub.getLastCtorArgs()!.maxTokens).to.equal(4096);
+    expect(stub.getLastCtorArgs()!.temperature).to.be.undefined;
   });
 
   it('caps maxTokens to the model limit (128000 for opus 4.6)', () => {
@@ -83,7 +109,7 @@ describe('createAnthropicProvider (v9a.6) — wiring', () => {
     expect(stub.getLastCtorArgs()!.maxTokens).to.equal(128000);
   });
 
-  it('honors per-call temperature and maxTokens via a fresh ChatAnthropic instance', async () => {
+  it('honors a per-call maxTokens via a fresh ChatAnthropic instance', async () => {
     const stub = buildChatAnthropicStub();
     stub.invokeStub.resolves({
       content: 'ok',
@@ -92,10 +118,10 @@ describe('createAnthropicProvider (v9a.6) — wiring', () => {
     } as ChatResponseShape);
     const { createAnthropicProvider } = loadProvider(stub);
     const provider = createAnthropicProvider(baseConfig);
-    await provider.invoke('hi', { temperature: 0.9, maxTokens: 10000 });
+    await provider.invoke('hi', { maxTokens: 10000 });
     // The override-instance ctor args are the most recent.
-    expect(stub.getLastCtorArgs()!.temperature).to.equal(0.9);
     expect(stub.getLastCtorArgs()!.maxTokens).to.equal(10000);
+    expect(stub.getLastCtorArgs()!.temperature).to.be.undefined; // no sampling param (#148)
   });
 });
 
