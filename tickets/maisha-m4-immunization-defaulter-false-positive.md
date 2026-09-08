@@ -50,8 +50,19 @@ CHPs and eroding trust in the task list.
   and `tasks.js:1329` with the coverage-based predicate already used at
   `contact-summary.templated.js:458-460`
   (`vaccinesNotReceivedByAge(contact, reports).length > 0`).
-- Remove or fix the unreachable `imm_schedule_upto_date` predicate at
-  `tasks.js:1007` (config owners' call: retire vs re-key).
+- RE-KEY (do not retire) the unreachable `imm_schedule_upto_date` predicate
+  (`tasks.js` ~1004, the `immunization_referral_follow_up` task): change its
+  `appliesIf` to read the field the u5_assessment form actually emits —
+  `immunization_screening.immunization_upto_date === 'no'`. The referenced
+  `imm_schedule_upto_date` node exists nowhere in the config; the field name
+  is a typo-class defect, not dead code.
+  CONFIG-OWNER CALL, stated explicitly: whether this task should exist at
+  all remains the config owners' decision — surface it in the PR. But the
+  updated upstream config REGISTERED this task (a `data/tasks.json` key and
+  a shipped translation), signalling intent to keep it, and the open-ended
+  "retire vs re-key" wording has previously caused automated runs to retire
+  it — which would now delete a feature the partner just added. This ticket
+  therefore prescribes re-keying; owners can veto in review.
 
 ## Acceptance Criteria
 

@@ -1,45 +1,10 @@
 # Maisha demo — full procedure v2: five tickets, five PR bundles
 
-**Canonical runbook, v2 (2026-08-25).** Supersedes
-`maisha-demo-full-procedure.md` (v1). One continuous procedure that takes a
+**Canonical runbook, v2 (2026-08-25).** Supersedes the v1 runbook (removed from the tree; every finding from its
+review is folded in below). One continuous procedure that takes a
 machine with nothing set up to five reviewed PR bundles — one per Maisha Meds
 ticket — each produced by the agent pipeline against a reconstructed partner
 deployment, with a provable data reset between tickets.
-
-**What changed since v1** (every item was hit live during the 2026-08-25
-verification run — see `maisha-demo-full-procedure-review.md` for evidence):
-
-- **§0.1 environment block**: every path is a variable, exported once and used
-  verbatim in every command. The working copy is now `demo-conf-neutralized`.
-- **Auth**: the agent authenticates via a one-time in-container `/login`
-  persisted in a named volume (or `CLAUDE_CODE_OAUTH_TOKEN`). The v1 story
-  (host credential mount, `--force-recreate` for a rotated file) is obsolete.
-- **`127.0.0.1`, never `localhost`**, for every host-side `cht` command: the
-  API's `AuthSession` cookie is set for domain `localhost`, and the
-  tough-cookie version `npm ci` installs rejects `localhost` as a special-use
-  domain — every upload verb then dies with
-  `Unable to fetch xml attachment … status code = undefined`.
-- **The baseline tag moves LAST.** v1 tagged in §1.4 and kept committing into
-  the baseline afterwards; the reset then restored a tag missing the harness
-  fix (and once, missing the M5 bug). v2 tags once, after every baseline
-  commit, behind an explicit five-bug assertion.
-- **pyxform is optional on the host.** The standard route keeps the
-  `convert-*` verbs (install medic's pyxform fork if missing), but the
-  partner repo commits the generated `.xml` next to each `.xlsx`, so §1.7 now
-  documents an upload-only variant and the in-container convert (the agent
-  image bakes pyxform).
-- **`NODE_OPTIONS=--openssl-legacy-provider`** for host `compile-app-settings`
-  (webpack-4 MD4 vs OpenSSL 3 on Node ≥17).
-- **Workbench `npm ci`** is now an explicit step (v1 never installed the
-  workbench deps; `demo:build-seed` needs ts-node).
-- **Phase A removes all of `.cht-agent/`** (not just `pr/`) and has a
-  remediation line for a non-empty `git status`.
-- **Phase C documents the preview prompt** (answer **yes** — it is what arms
-  HC2) and corrects HC5: this build offers **accept / abandon** only (the
-  widen paths are implemented but deliberately cut — `scope-gate.ts`,
-  "DEMO SAFETY CUT").
-- **Verify the container mounts after `up`** — bringing the agent up in a
-  shell without `$CHT_CONF_PATH` silently mounts the placeholder config.
 
 **What you end with:** `$PR_ARCHIVE/<ticket>/{PR.md,changes.patch}` ×5, each
 patch applying cleanly to the pristine clone at `$SITE_CONFIG`, plus
@@ -251,6 +216,16 @@ fix bit v1 exactly this way.)
 cd $CHT_CONF_PATH
 echo "M5 (first line must have NO relevant=):"
 grep -o '<bind nodeset="[^"]*next_pnc_visit_date"[^>]*>' forms/app/postnatal_care_service.xml | head -1
+#   ⚠ CONTAMINATION TRAP (bit us live, 2026-08-26): if a ticket's HC2 has
+#   ever written a fix into the mount, a reset that relies on `checkout -B`
+#   alone CARRIES the fixed .xlsx over (the dirty-tree gotcha above), and a
+#   later canonicalize commit then SWALLOWS the agent's fix into the baseline
+#   tag. The tell: this grep shows the fix present in the tree while the
+#   DEPLOYED form is still buggy, and the ticket's HC2 diff reads
+#   `expr → expr` (whitespace only). Verify the WORKBOOK, not just the xml:
+#     python3 -c "import zipfile; s=zipfile.ZipFile('forms/app/postnatal_care_service.xlsx').read('xl/sharedStrings.xml').decode(); print('babies_delivered} != 0' in s)"   # must print False
+#   Decontaminate by restoring the file from the ORIGINAL import commit,
+#   reconverting, committing, and re-tagging.
 echo "M8 (expect 1 — attribute order varies, so match the bind first, then calculate):"
 grep -o '<bind[^>]*hh_member_education_lvl"[^>]*>' forms/contact/f_client-create.xml | grep -c 'calculate='
 echo "M7 (expect the age-only gate):"
@@ -311,6 +286,16 @@ Define the compose alias used by every stack stop/start below:
 alias cht-stack='docker compose --env-file '$STACK_DIR'/.env -f '$STACK_DIR'/cht-core.yml -f '$STACK_DIR'/cht-couchdb.yml -f '$WORKBENCH'/docker/cht-agent-net.override.yml'
 ```
 
+⚠ The alias (or a `CS="docker compose …"` variable) works only in an
+INTERACTIVE shell. In a script — and in zsh especially, which does not
+word-split unquoted variables — `$CS stop` becomes ONE command word and fails
+with "no such file or directory", **while the surrounding steps keep going**:
+the automated run's restore once ran against a LIVE CouchDB because its
+stop/start silently failed this way. In anything scripted, write the full
+`docker compose … stop` command inline (or `bash -c "…"`), and treat a
+suspiciously instant post-restart "API warm" as the tell that no restart
+actually happened.
+
 ### 1.7 [OPERATOR] Upload the buggy config with the repo-pinned cht-conf
 
 Standard route (host has pyxform — most cht-conf machines do; cht-conf
@@ -358,6 +343,28 @@ $CHT --url=$URL --source=. $FLAGS upload-contact-forms
 
 Always the repo-pinned binary (`$CHT`), never a global cht-conf. Always
 `$URL` (127.0.0.1) — see §0.1.
+
+**VERIFY EVERY UPLOAD VERB — never pipe its output through `tail`/`grep` and
+walk away** (bit the automated run: `set -e` cannot see the left side of a
+pipe, so a dead `upload-app-forms` read as success and QA later 404'd on the
+missing form). After the uploads, count what actually landed:
+
+```bash
+curl -sk -u medic:password 'https://localhost:10443/medic/_all_docs?startkey=%22form:%22&endkey=%22form:%EF%BF%B0%22' \
+  | grep -o '"form:[^"]*"' | sort -u | wc -l    # ≈ app forms + contact forms + a few CHT built-ins
+```
+
+**cht-conf's overwrite prompt is tty-only and `--force` does NOT cover it.**
+`upload-forms` compares each form against the deployed doc and, on a hash
+mismatch (e.g. a half-written doc from an earlier crashed upload), asks
+`[1,2,3] Overwrite?` via readline-sync reading `/dev/tty` directly — piped
+stdin never reaches it, and a scripted run dies with "The current
+environment doesn't support interactive reading from TTY". Unattended
+remedy: run the verb under a pseudo-tty with the standard answer scripted:
+
+```bash
+printf '1\n1\n1\n1\n' | script -qec "$CHT --url=$URL --source=. $FLAGS upload-app-forms" /dev/null
+```
 
 ### 1.8 [OPERATOR] Seed the hierarchy + an offline CHV user
 
@@ -568,8 +575,8 @@ Run this six-phase loop once per ticket, in the §0 order. Everything is
 ### Phase A — reset (≈3 min; run it before ticket 1 too)
 
 ```bash
-TICKET=m4      # m5 | m8 | m7 | m4 | m3 — the one you are ABOUT to run
-PREV=m7      # the one you just finished, or none
+TICKET=m3      # m5 | m8 | m7 | m4 | m3 — the one you are ABOUT to run
+PREV=m4      # the one you just finished, or none
 
 # A1. capture the finished ticket's work, then re-baseline the repo
 cd $CHT_CONF_PATH
@@ -998,6 +1005,31 @@ mechanical) + the ticket's patch applied on top. Alternatively, hand the
 partner only the `.xlsx` + spec changes and let their own convert regenerate
 the XML — their normal authoring workflow does this anyway.
 
+**Full-suite regression check (once, end of sweep — ~1–2 h per run,
+unattended).** Tier-2 is deliberately per-artifact; nothing in the loop runs
+the partner's whole harness suite. Close that once, with attribution (the
+suite has pre-existing failures — a raw failure count proves nothing):
+
+```bash
+cd $CHT_CONF_PATH
+# 1. the pre-fix failure set (detached, tree = the tag)
+git checkout -q --detach maisha-baseline
+docker exec cht-agent bash -c 'cd /workspace/cht-conf-project && npm test' 2>&1 | tee /tmp/suite-baseline.log
+# 2. all five fixes together (m4 and m3 both touch tasks.js — if the octopus
+#    merge conflicts, apply the archived patches onto the branch instead)
+git checkout -q -B regression-all maisha-baseline
+git merge --no-edit fix/maisha-m5 fix/maisha-m8 fix/maisha-m7 fix/maisha-m4 fix/maisha-m3
+docker exec cht-agent bash -c 'cd /workspace/cht-conf-project && npm test' 2>&1 | tee /tmp/suite-all.log
+# 3. compare FAILING TEST TITLES, not counts:
+grep -E '^\s+[0-9]+\) ' /tmp/suite-baseline.log | sort > /tmp/fail-base.txt
+grep -E '^\s+[0-9]+\) ' /tmp/suite-all.log      | sort > /tmp/fail-all.txt
+diff /tmp/fail-base.txt /tmp/fail-all.txt   # lines only in fail-all = regressions
+```
+
+A clean diff is the suite-wide no-regression proof for the whole PR train;
+paste it into each PR.md. Then reset the repo (Phase A A1) before anything
+else touches it.
+
 Review pass per bundle:
 
 1. `git -C $SITE_CONFIG apply --check --binary changes.patch` — clean against
@@ -1069,7 +1101,142 @@ forms).
 | Agent compose | `$WORKBENCH/docker/docker-compose.cht-agent.yml` (separate project from the CHT stack) |
 | CHT-net override | `$WORKBENCH/docker/cht-agent-net.override.yml` |
 | Drift escape hatch | `QA_ALLOW_DRIFT=1` (whole-document RED oracle → warning) |
-| Deep dives | `maisha-demo-full-procedure-review.md` (what v2 fixed, with evidence), `maisha-demo-runbook.md` (reset model, browser detail), `demo-runbook.md` §1 (local-build stack), `all-config-artifacts-pipeline-plan.md`, `cht-conf-extension-pr-ledger.md` |
+| Deep dives | `maisha-demo-runbook.md` (reset model, browser detail), `demo-runbook.md` §1 (local-build stack), `all-config-artifacts-pipeline-plan.md`, `cht-conf-extension-pr-ledger.md` |
 
 Teardown when the engagement closes: `docker compose down -v` on both
 projects, and delete `$SNAP_DIR*` and `$PR_ARCHIVE` once the PRs are up.
+
+---
+
+## 7. One-run-through verification (2026-09-01, automated end-to-end)
+
+This procedure was executed front-to-back by an agent operator against a raw
+partner copy (`demo-conf-neutral2`), unattended: neutralize → baseline →
+fresh stack → uploads → synthetic hierarchy → cohorts → freeze → five
+tickets → full-suite regression → all-fixes deployment. **All five tickets
+passed** (m5 PASSED · m8/m7 PASSED WITH the expected representative-scope
+caveats · m4 PASSED with specs proven red→green after 1 automatic fixture
+repair · m3 PASSED). Bundles: `pr/automated-full-run/<ticket>/`.
+
+Corrections the run produced are already folded in above (§1.7 upload
+verification + tty-only overwrite prompt; §1.6 scripted-compose quoting
+trap; §1.5's contamination assertions held). Two variants it validated:
+
+**Named-volume stack (no sudo anywhere).** The published couchdb compose
+parameterizes the data mount (`${COUCHDB_DATA:-./srv}`), so a two-line
+override puts data in a named volume and every freeze/restore runs through
+docker instead of sudo:
+
+```yaml
+# <stack>/couch-volume.override.yml   (docker volume create <name> first)
+services:
+  couchdb:
+    volumes: [ "maisha-auto-couchdata:/opt/couchdb/data" ]
+volumes:
+  maisha-auto-couchdata: { external: true }
+```
+
+```bash
+# freeze (stack STOPPED):
+docker run --rm -v maisha-auto-couchdata:/from -v $SNAP_DIR:/to alpine \
+  sh -c 'mkdir -p /to/couch-data && cp -a /from/. /to/couch-data/'
+# restore (stack STOPPED):
+docker run --rm -v maisha-auto-couchdata:/to -v $SNAP_DIR:/from alpine \
+  sh -c 'rm -rf /to/* /to/.[!.]* 2>/dev/null; cp -a /from/couch-data/. /to/'
+```
+
+**Unattended Phase C.** `yes | docker exec -i cht-agent npm run full -- \
+tickets/<t> --qa --qa-tier2` (note: `-i`, no `-t`): the pipe answers the
+preview prompt, HC1, HC2 and HC3; HC4 self-heals a drift abort with an
+auto-yes retry; HC5 auto-records ACCEPT on a non-TTY. Launch under `nohup`
+with a log file and watch the log for `Closed loop succeeded` /
+`ENVIRONMENT DRIFT` / `PIPELINE-EXIT=`. Trade-off, stated plainly: nobody
+reviews the HC2 diff — Phase D's check of PR.md's `**Result:**` headline is
+the backstop, and a bundle that says DID NOT PASS must be re-run, never
+shipped. Steps that stay human: the §1.9 browser login (the frozen
+`demo_chv` keeps `ChangeMe_123` + a forced-change prompt) and the per-ticket
+browser RED/GREEN story beats.
+
+---
+
+## 8. Second automated run — updated partner config on CHT 5.3.0 (2026-09-03)
+
+Re-run of §7's unattended procedure against the partner's next config release
+(`demo-conf-updated`), on a fresh stack pinned to the partner's new core
+version. Bundles: `pr/automated-full-run-updated-conf-090327/`. New lessons:
+
+- **Match the partner's core version.** `harness.defaults.json` still said
+  `coreVersion: "4.0"` and the cht-conf pin barely moved
+  (`^3.21.4` → `medic/cht-conf#v3-21-4-with-830`), so the TOOLCHAIN was
+  unchanged — only the deployed core (5.3.0) differed. The published 5.3.0
+  composes add a `nouveau` search service with its own data mount: the
+  named-volume override must cover BOTH `couchdb` and `nouveau` (two
+  external volumes), and freeze/restore copies both.
+- **ECR public rate limits bite multi-image pulls.** A first `compose up`
+  died on `toomanyrequests` for `nouveau` and silently left the stack
+  incomplete. Pre-pull with a retry/backoff loop until every image is local,
+  THEN `up`.
+- **cht-conf's tty-only overwrite prompt also fires on `upload-resources`**
+  on a fresh 5.x instance (it ships a default `resources` doc). Same pty
+  remedy as §1.7.
+- **Validate the TICKETS against the new config before running them.** A
+  read-only research pass (Explore agent, ~10 min) over the updated tree
+  found: M8 fixed upstream via the ticket's ALTERNATIVE route
+  (`choice_filter`/`<itemset>`), M7's prescription a structural NO-OP
+  (head-scoped `father_alive`/`mother_alive` are empty for adult-headed
+  households — the per-child signal is `hh_member_caregiver`), and M4's
+  "retire vs re-key" item flipped to re-key (upstream registered the task).
+  Site-greps alone would have missed all three. Also caught: an earlier
+  workbook check of mine was a sloppy substring match — dump the actual
+  survey cell, never grep sharedStrings for a field name.
+- **Pipeline certifies upstream fixes honestly**: running the now-fixed M8
+  ended in `symptom did not reproduce` before any apply — the abort IS the
+  artifact (`m8-certification/`).
+- **Run both prescriptions when a ticket is wrong**: `m7-as-written/`
+  (structurally green, clinically inert) next to `m7-corrected-caregiver/`
+  (the shippable fix) demonstrates that oracles prove what the ticket
+  ASKED, not what the CHP NEEDED — ticket prescriptions need domain review.
+- Tickets are baked into the agent image; for a mid-campaign ticket edit,
+  `docker cp` the file into `cht-agent:/app/tickets/` instead of rebuilding
+  and recreating (which would kill an in-flight run).
+
+**§8 outcome.** Baseline (updated config, CHT 5.3.0 stack) **1453 passing /
+0 failing**; merge of the four shippable fixes (m5, m7-corrected, m4, m3)
+**1467 passing / 0 failing**; +14 = the generated specs, verified in
+isolation. Zero regressions across a config release AND a core-version
+jump. m5/m4/m3 fix hunks byte-identical to both earlier campaigns.
+
+**What changed since v1** (every item was hit live during the 2026-08-25
+verification run; each is now folded into the sections above):
+
+- **§0.1 environment block**: every path is a variable, exported once and used
+  verbatim in every command. The working copy is now `demo-conf-neutralized`.
+- **Auth**: the agent authenticates via a one-time in-container `/login`
+  persisted in a named volume (or `CLAUDE_CODE_OAUTH_TOKEN`). The v1 story
+  (host credential mount, `--force-recreate` for a rotated file) is obsolete.
+- **`127.0.0.1`, never `localhost`**, for every host-side `cht` command: the
+  API's `AuthSession` cookie is set for domain `localhost`, and the
+  tough-cookie version `npm ci` installs rejects `localhost` as a special-use
+  domain — every upload verb then dies with
+  `Unable to fetch xml attachment … status code = undefined`.
+- **The baseline tag moves LAST.** v1 tagged in §1.4 and kept committing into
+  the baseline afterwards; the reset then restored a tag missing the harness
+  fix (and once, missing the M5 bug). v2 tags once, after every baseline
+  commit, behind an explicit five-bug assertion.
+- **pyxform is optional on the host.** The standard route keeps the
+  `convert-*` verbs (install medic's pyxform fork if missing), but the
+  partner repo commits the generated `.xml` next to each `.xlsx`, so §1.7 now
+  documents an upload-only variant and the in-container convert (the agent
+  image bakes pyxform).
+- **`NODE_OPTIONS=--openssl-legacy-provider`** for host `compile-app-settings`
+  (webpack-4 MD4 vs OpenSSL 3 on Node ≥17).
+- **Workbench `npm ci`** is now an explicit step (v1 never installed the
+  workbench deps; `demo:build-seed` needs ts-node).
+- **Phase A removes all of `.cht-agent/`** (not just `pr/`) and has a
+  remediation line for a non-empty `git status`.
+- **Phase C documents the preview prompt** (answer **yes** — it is what arms
+  HC2) and corrects HC5: this build offers **accept / abandon** only (the
+  widen paths are implemented but deliberately cut — `scope-gate.ts`,
+  "DEMO SAFETY CUT").
+- **Verify the container mounts after `up`** — bringing the agent up in a
+  shell without `$CHT_CONF_PATH` silently mounts the placeholder config.

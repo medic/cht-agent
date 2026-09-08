@@ -178,9 +178,54 @@ demo's remaining tickets (m3) run on the current build, with the manual
 mocha check + fixture repair as the documented workaround
 (`maisha-demo-full-procedure-v2.md` §3.4).
 
+## Follow-ups surfaced by the verified reruns (2026-08-27)
+
+- **Title-based tier-2 attribution.** `newTier2Failures` compares failing
+  COUNTS; "3 pre-fix, 3 post-fix" is also satisfied by a change that fixes
+  one failure and introduces another. Parse mocha's `N) <title>` lines from
+  both tails and diff the SETS; report swapped titles as new failures.
+  Observed live on the m4 rerun: 3 pre-existing failures appeared in specs
+  that had passed the previous day (date roll or the PNC decontamination),
+  and only a manual title comparison can prove they are the same three.
+- **Impact-selection for tier-2** (optional): union in every spec whose text
+  references the changed artifact's identifiers, so cross-spec behavioral
+  coupling (specs that DRIVE a changed form) is covered without the full
+  suite.
+- **Persist tier-2/verify output tails to disk** (`.cht-agent/qa-logs/` or
+  `outputs/`). The m4 rerun's 3 failing titles were unrecoverable — TTY-only;
+  the diagnosis needed two manual reruns. Cheap and obviously right.
+- **Retry-once before baseline attribution.** The m4 FAILED(3) proved to be
+  load-induced per-test timeouts (tier-2 fires seconds after the apply, while
+  CouchDB reindexes and Chromium boots contend): identical populations passed
+  130/130 and 138/138 at idle. A single retry of the failing invocation —
+  or a short settle delay after apply — absorbs this class entirely; the
+  baseline run doubles the cost of every flake today.
+
+## Follow-ups from the automated end-to-end run (2026-09-01)
+
+- **Lint generated specs with the partner's own eslint during verifyTests.**
+  The partner's `npm test` gates on `eslint` BEFORE mocha; the generated
+  specs failed it (quotes/indent + >270-char rationale comment lines), so
+  per-ticket tier-2 (which invokes mocha directly) passed while the full
+  suite refused to even run. Cheap fix in the verify node: run
+  `npx eslint --fix` from the config root over the generated files, and wrap
+  emitted comment lines at the config's max-len.
+- **A repair pass that returns ZERO spec files deserves a loud PR.md trail.**
+  Observed on m3: repair 1 regenerated nothing → verification self-skipped →
+  the bundle shipped spec-less with no warning rendered (the drop warning
+  only fires on the exhaustion path). Treat empty-repair as a drop: record
+  the original spec names + reason on `droppedSpecs`.
+
 ## Non-goals
 
 - No LLM-judged spec quality: the red→green matrix is the whole verdict.
 - No full-suite run inside the dev phase (tier-2/QA owns regression
   breadth); verifyTests runs ONLY the specs this ticket generated.
 - No repair of PARTNER specs — only agent-generated ones are ever touched.
+- **Settings-ticket fixture errors are the norm, not the exception**
+  (2026-09-03): across three campaigns, EVERY LLM-generated settings spec
+  (m4 ×3, m3 ×1) failed GREEN on first generation and was repaired (or, once,
+  emptied) by the loop. The repair loop is load-bearing; a first-pass
+  fixture-hint (real field paths + required lineage depth harvested from the
+  config and injected into the test-gen prompt) would cut a full
+  verify cycle per ticket.

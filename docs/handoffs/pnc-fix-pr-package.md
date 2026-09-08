@@ -1,6 +1,6 @@
 # Deliverable A — PR package: postnatal_care_service next-PNC-visit-date fix
 
-Target repo: `github.com/moh-kenya/config-echis-2.0` (per the partner README
+Target repo: `<partner-config-repo>` (per the partner README
 carried in the working copy; branches `training`/`staging`/`main` — confirm
 the partner's intake branch before opening). The local
 `~/ai_medic/config-echis-2-0-main` is a zip download (no `.git`) — start from
@@ -26,8 +26,8 @@ the successful closed-loop run:
 
 ```bash
 # 1. clone (or your fork) + branch
-git clone git@github.com:moh-kenya/config-echis-2.0.git ~/src/config-echis-2.0
-cd ~/src/config-echis-2.0
+git clone <partner-config-repo-url> ~/src/<partner-config>
+cd ~/src/<partner-config>
 git checkout <intake-branch>            # training / staging — per partner process
 git checkout -b fix/pnc-next-visit-date-relevant
 

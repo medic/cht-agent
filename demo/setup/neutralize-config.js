@@ -19,12 +19,26 @@
  *      This is also what removes the last `env.*` placeholders, so
  *      `compile-app-settings` runs with no environment file.
  *
- * What it only REPORTS (never edits, because prose needs judgement):
- *   organisation/person names, e-mail addresses, phone numbers and external URLs
- *   left in prose, translations, deploy scripts and analytics SQL.
+ * What it SCRUBS (v2 — deterministic, idempotent; the scan below verifies):
+ *   5. `README.md`      → replaced with a neutral stub. The partner ops docs,
+ *      deployment targets, GitHub org links and Google Sheets URLs all live
+ *      there; dropping the file beats word-salad token replacement.
+ *   6. `package.json`   → `name` loses the org token.
+ *   7. `resources.json` → org-named icon FILES are renamed on disk and the
+ *      references rewritten (keys stay — settings/forms bind to keys, not
+ *      filenames).
+ *   8. `scripts/**`     → org tokens replaced, non-allowlisted URLs rewritten
+ *      to https://example.invalid/removed (allowlist: CHT/medic/xlsform/ODK/
+ *      CouchDB/StackOverflow docs — see urlAllowed()).
+ *
+ * What it only REPORTS (never edits): whatever the scan still finds after the
+ *   scrub — e-mail addresses, phone numbers, and any org/URL the rules above
+ *   missed. `--strict` exits 1 while anything remains.
  *
  * It NEVER runs git, npm or docker, and never touches `forms/`, `tasks.js`,
- * `targets.js` or the contact-summary — the bugs under demo must stay intact.
+ * `targets.js`, the contact-summary, `translations/` or `app_settings/`
+ * beyond §4 — the bugs under demo must stay intact and the deployed bytes
+ * must match the baseline.
  *
  * Usage:
  *   node demo/setup/neutralize-config.js --config <path-to-config-repo> \
@@ -152,7 +166,132 @@ if (base.app_url !== APP_URL) {
 
 if (baseDirty) writeJson(basePath, base);
 
-// ---- 5. verification: no env.* placeholders left ---------------------------
+// ---- 5-8. scrub identifying prose (deterministic, idempotent) ---------------
+// The scan used to only REPORT these; for the demo the judgement is settled:
+// the partner must not be identifiable from the working copy.
+
+/** Hosts a demo config may legitimately reference. Everything else is scrubbed. */
+const urlAllowed = (url) =>
+  /^https?:\/\/(?:[\w-]+\.)*(communityhealthtoolkit\.org|medicmobile\.org|xlsform\.org|couchdb\.org|stackoverflow\.com|opendatakit\.github\.io|example\.invalid)(?=[/:?#]|$)/i.test(url) ||
+  /^https?:\/\/github\.com\/medic(?=[/:?#]|$)/i.test(url) ||
+  /^https?:\/\/(nginx|localhost|127\.0\.0\.1)(?=[/:?#]|$)/i.test(url);
+
+const URL_RE = /https?:\/\/[^\s)"'`<>\]]+/g;
+const SCRUBBED_URL = 'https://example.invalid/removed';
+
+/** Org phrases → neutral text. Longest/most specific first. --org extras append. */
+const SCRUB_PHRASES = [
+  [/\beCHIS[ -]?KE\b/gi, 'CHT-Demo'],
+  [/Ministry of Health/gi, 'the partner org'],
+  [/\bechis\b/gi, 'cht-demo'],
+  [/\bMOH\b/g, 'partner'],
+  [/\bMoH\b/g, 'partner'],
+  [/\bKenya\b/gi, 'the demo region'],
+  [/county government/gi, 'local government'],
+  ...EXTRA_ORGS.map((org) => [
+    new RegExp(`\\b${org.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'),
+    'partner',
+  ]),
+];
+
+const scrubText = (text) => {
+  let out = text.replace(URL_RE, (url) => (urlAllowed(url) ? url : SCRUBBED_URL));
+  for (const [re, sub] of SCRUB_PHRASES) out = out.replace(re, sub);
+  return out;
+};
+
+// ---- 5. README.md → neutral stub ---------------------------------------------
+const STUB = `# ${TITLE} config
+
+Neutralized copy of a partner CHT configuration, prepared for cht-agent
+pipeline demonstrations. Partner operational documentation, deployment
+targets and internal links were removed by \`demo/setup/neutralize-config.js\`.
+
+- Forms live in \`forms/app\` and \`forms/contact\` (XLSForm \`.xlsx\` + generated \`.xml\`).
+- \`tasks.js\` / \`targets.js\` / \`contact-summary.templated.js\` compile via
+  \`cht-conf compile-app-settings\`.
+- Tests: \`npm test\` (cht-conf-test-harness; options in \`harness.defaults.json\`).
+`;
+if (fs.existsSync(readmePath)) {
+  const current = fs.readFileSync(readmePath, 'utf8');
+  if (current === STUB) {
+    note(false, 'README.md already the neutral stub');
+  } else if (CHECK_ONLY) {
+    note(false, `README.md is ${current.split('\n').length} line(s) of partner docs (would replace with the stub)`);
+  } else {
+    fs.writeFileSync(readmePath, STUB, 'utf8');
+    note(true, `README.md (${current.split('\n').length} lines of partner docs) → neutral stub`);
+  }
+}
+
+// ---- 6. package.json name -----------------------------------------------------
+const pkgPath = path.join(CONFIG, 'package.json');
+if (fs.existsSync(pkgPath)) {
+  const pkg = readJson(pkgPath);
+  const scrubbedName = scrubText(pkg.name || '')
+    .toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (pkg.name === scrubbedName) {
+    note(false, `package.json name already neutral ("${pkg.name}")`);
+  } else if (CHECK_ONLY) {
+    note(false, `package.json name is "${pkg.name}" (would set "${scrubbedName}")`);
+  } else {
+    const was = pkg.name;
+    pkg.name = scrubbedName;
+    writeJson(pkgPath, pkg);
+    note(true, `package.json name "${was}" → "${scrubbedName}"`);
+  }
+}
+
+// ---- 7. resources.json: rename org-named icon files + rewrite references ------
+const resourcesPath = path.join(CONFIG, 'resources.json');
+if (fs.existsSync(resourcesPath)) {
+  const resources = readJson(resourcesPath);
+  let resDirty = false;
+  for (const [key, file] of Object.entries(resources)) {
+    if (typeof file !== 'string') continue;
+    const neutral = file.replace(/echis/gi, 'demo').replace(/MOH/gi, 'demo');
+    if (neutral === file) continue;
+    if (CHECK_ONLY) {
+      note(false, `resources.json ${key}: "${file}" (would rename file + reference to "${neutral}")`);
+      continue;
+    }
+    const from = path.join(CONFIG, 'resources', file);
+    const to = path.join(CONFIG, 'resources', neutral);
+    if (fs.existsSync(from) && !fs.existsSync(to)) fs.renameSync(from, to);
+    if (fs.existsSync(to)) {
+      resources[key] = neutral;
+      resDirty = true;
+      note(true, `resources: "${file}" → "${neutral}" (file + reference; key "${key}" unchanged)`);
+    } else {
+      note(false, `resources.json ${key}: "${file}" — file not found on disk, reference left alone`);
+    }
+  }
+  if (resDirty) writeJson(resourcesPath, resources);
+}
+
+// ---- 8. scripts/**: org tokens + partner URLs ---------------------------------
+const scriptsDir = path.join(CONFIG, 'scripts');
+if (fs.existsSync(scriptsDir)) {
+  let scrubbed = 0;
+  (function walk(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name === 'node_modules') continue;
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!/\.(json|js|ts|md|sql|txt|log)$/.test(e.name)) continue;
+      const text = fs.readFileSync(full, 'utf8');
+      const clean = scrubText(text);
+      if (clean === text) continue;
+      if (CHECK_ONLY) { note(false, `scripts: ${path.relative(CONFIG, full)} carries org/URL material (would scrub)`); continue; }
+      fs.writeFileSync(full, clean, 'utf8');
+      scrubbed++;
+      note(true, `scripts: scrubbed ${path.relative(CONFIG, full)}`);
+    }
+  })(scriptsDir);
+  if (scrubbed === 0 && !CHECK_ONLY) note(false, 'scripts/: nothing left to scrub');
+}
+
+// ---- verification: no env.* placeholders left ---------------------------
 const settingsDir = path.join(CONFIG, 'app_settings');
 const envRefs = [];
 for (const f of fs.readdirSync(settingsDir).filter((n) => n.endsWith('.json'))) {
@@ -176,8 +315,8 @@ const scanText = (rel, text) => {
   }
   for (const m of text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)) findings.emails.push(`${rel}: ${m[0]}`);
   for (const m of text.matchAll(/\+254\d{6,}|\+\d{9,}/g)) findings.phones.push(`${rel}: ${m[0]}`);
-  for (const m of text.matchAll(/https?:\/\/[A-Za-z0-9._/-]+/g)) {
-    if (!m[0].includes('nginx') && !m[0].includes('localhost') && !m[0].includes('communityhealthtoolkit.org')) {
+  for (const m of text.matchAll(URL_RE)) {
+    if (!urlAllowed(m[0])) {
       findings.urls.push(`${rel}: ${m[0]}`);
     }
   }
@@ -194,7 +333,7 @@ for (const dir of SCAN_DIRS) {
       if (e.name === 'node_modules') continue;
       const full = path.join(d, e.name);
       if (e.isDirectory()) walk(full);
-      else if (/\.(json|js|md|sql)$/.test(e.name)) scanText(path.relative(CONFIG, full), fs.readFileSync(full, 'utf8'));
+      else if (/\.(json|js|ts|md|sql|txt|log)$/.test(e.name)) scanText(path.relative(CONFIG, full), fs.readFileSync(full, 'utf8'));
     }
   })(abs);
 }

@@ -18,3 +18,13 @@ log
 # Research output files
 outputs/
 
+
+# Maisha demo artefacts — shared out-of-band (zipped to Slack), never committed
+pr/
+video/
+slides/
+tmp/
+docs/handoffs/DEMO-STEPS.md
+docs/handoffs/demo-video-plan.md
+# v1 runbook audit scaffolding — folded into v2; local only
+docs/handoffs/maisha-demo-full-procedure-review.md

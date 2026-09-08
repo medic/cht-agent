@@ -189,7 +189,7 @@ demo.
 
 ```bash
 # 1. Make the config working copy a local, remote-less git repo (HOST side)
-cd /home/h4reet/ai_medic/medic-cht-agent/demo-conf
+cd $CHT_CONF_PATH
 git init
 git add -A
 git commit -m "demo baseline: neutralized live config (buggy PNC form)"
