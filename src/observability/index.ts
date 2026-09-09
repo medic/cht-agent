@@ -65,6 +65,9 @@ export function fromLangChain<T>(res: {
   raw: { usage_metadata?: { input_tokens?: number; output_tokens?: number; total_tokens?: number }; response_metadata?: { model_name?: string; model?: string } };
   parsed: T;
 }): GenerationResult<T> {
+  if (res.parsed === null || res.parsed === undefined) {
+    throw new Error('structured output parsing failed: the model response did not match the schema');
+  }
   const u = res.raw.usage_metadata;
   const meta = res.raw.response_metadata;
   return {
