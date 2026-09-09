@@ -1,6 +1,6 @@
 # Memory pipeline: design decisions
 
-**Status:** DRAFT — awaiting sign-off (posted to PR #138 on 2026-08-27)
+**Status:** DRAFT — decider reactions are recorded in the #138 reviews: the round-3 review approves D1–D11 with amendments noted there; reactions from the other deciders are pending. An approving review on #138 also accepts the D3 and D6 implementations this PR ships.
 **Deciders:** @alexosugo, @sugat009, @Hareet
 **Context:** PR #138 review (rounds 1–3). The review surfaced questions that are
 product decisions, not code defects. This doc records one decision per question so
@@ -71,11 +71,12 @@ malfunction (gh failure, corrupt JSON, rate limit).
 **Decision:** The gate accepts the default branch plus branches matching
 `/^\d+\.\d+\.x$/`. Everything else is skipped (per D3).
 
-**Rationale:** cht-core PR 11137 merged into `5.1.x`, shipped in tags 5.1.3+,
-and never reached `master`. That is real released work; excluding it loses
-knowledge the corpus exists to hold. The backport-duplication risk is already
-handled: dedup keys on issue id and keeps the mainline fix, so a `master` fix
-plus its release-branch backports collapse to one entry.
+**Rationale:** release branches carry shipped work, and the gate widening is cheap.
+The backport-duplication risk is already handled: dedup keys on issue id, so a
+`master` fix plus its release-branch backports collapse to one entry. Today the
+tiebreak is strong `domainFit`, then lowest PR number; the mainline-first tiebreak
+is D7's interim rule and lands with D7. (PR 11137 is not an example of lost
+knowledge: its master twin #11133 fixes the same issue #11128 and merged the same day.)
 
 **Trade-off accepted:** a release-branch PR whose fix later also lands on
 `master` produces a transient duplicate until dedup collapses it.
@@ -123,10 +124,11 @@ it must not delete either.
   silently collapsed. That is the cheap epic detector Sugat proposed.
 - Full merge-per-epic semantics (one entry per PR, or LLM-merged single entry)
   is #154's scope, informed by real corpus data after D1/D2 produce some.
-- The `dedup.spec.ts` fixture titled "collapses a multi-PR epic" is renamed: the
+- The `dedup.spec.ts` fixture formerly titled "collapses a multi-PR epic" is now
+  "collapses a backport cluster to one canonical draft" (renamed in #138): the
   10792/10793/10798/10799 cluster is a backport cluster in cht-core, not an epic,
   and the real drafts live in `data-sync`, not `tasks-and-targets`. A true epic
-  fixture (6543 shape) is added for the flag-for-human path.
+  fixture (6543 shape) is added for the flag-for-human path with #154.
 
 ## D8. `run-pipeline` rejects repos outside the schema enum up front
 
@@ -167,12 +169,30 @@ with #154. Everything else here lands as follow-up PRs referencing this doc:
 D1+D2 (pipeline-to-PR), D4 (release-branch gate), D5 (no change needed — it is
 the current behaviour, kept), D8 (CLI guard). Non-blocking review findings
 (reconcile buckets, warn surfacing via `linkage_warning:` frontmatter, transient
-`defaultBranch` cache, stale runbook lines) become small issues, not #138 commits.
+`defaultBranch` cache, stale runbook lines, promote-commit staging of `_pending`
+deletions, dry-run visibility of dedup drops, and the `DRAFT_SHAPE` tightening)
+become small issues, not #138 commits. D12 (audit-trail home) is also a follow-up PR.
 
 **Validation practice (applies to all of the above):** every behavioural change
 gets a test at the pipeline boundary, not only the unit boundary — the D3 test
 shape (`failures === 0` + audit row) is the model. Unit tests prove mechanisms;
 pipeline tests prove the mechanism is wired to the right channel.
+
+## D12. `_skipped.ndjson` is tracked again so the audit trail has a durable home
+
+*(Sugat round 3; partially reverses #158)*
+
+**Decision:** Un-ignore `agent-memory/_skipped.ndjson`. D3 and D6 rest on audit
+rows, and a row that dies with the CI runner is not an audit trail. With D1, real
+rows ride the nightly PR next to the drafts they explain. A manual run also writes
+the file, and that is intended: a human-run exclusion is still an exclusion.
+
+**Precondition:** close the #146 remainder first (pass `logPath` in the four
+option-less `filterPR` spec calls, add a `NODE_ENV=test` guard) so a test run can
+never write to the tracked file again. The reversal of #158 is safe only once the
+test-pollution half is fixed.
+
+**Scope:** follow-up PR per D11, not #138.
 
 ---
 
@@ -250,7 +270,7 @@ openReviewPR(domain with two same-issue drafts)
   → canonical promoted
   → dropped draft exists at _pending/_collapsed/<domain>/<file>
   → dropped draft no longer in _pending/<domain>/
-  → audit row: { decision: 'skip', reason: /duplicate of .* "<dropped title>"/ }
+  → audit row: { decision: 'flag-for-human', reason: /duplicate of .*; ".*" moved to _collapsed/ }
   → check-pending over the tree passes (ignores _collapsed/)
 ```
 

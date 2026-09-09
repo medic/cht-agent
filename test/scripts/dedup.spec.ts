@@ -158,7 +158,7 @@ describe('dedupeByIssueId', () => {
     expect(dropped.map(d => d.path)).to.deep.equal(['auth.md']);
   });
 
-  it('collapses a multi-PR epic to one canonical draft', () => {
+  it('collapses a backport cluster to one canonical draft', () => {
     const entries = [
       entry('tasks-and-targets', 'p1.md', 'cht-core-10792', 'medic/cht-core#10799'),
       entry('tasks-and-targets', 'p2.md', 'cht-core-10792', 'medic/cht-core#10793'),

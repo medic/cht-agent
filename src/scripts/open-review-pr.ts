@@ -370,8 +370,11 @@ function finalizeDedupDrops(
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.renameSync(drop.path, target);
       writeSkipEntry(logPath, drop.path, `${drop.reason}; "${drop.title}" moved to ${path.relative(path.dirname(path.dirname(drop.path)), target)}`);
-    } catch {
-      // Already gone — don't report an action that did not occur in this run.
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`[open-review-pr] could not move ${drop.path} to _collapsed/: ${String(err)}`);
+      }
+      // ENOENT: already gone — don't report an action that did not occur in this run.
     }
   }
 }

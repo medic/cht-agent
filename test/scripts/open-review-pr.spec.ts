@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'node:fs';
 import matter from 'gray-matter';
+import * as sinon from 'sinon';
 import type { ReviewPRResult } from '../../src/types/pipeline';
 import { collapsedPath, discoverDraftsByDomain, buildPRBody, openReviewPR, sourcePrUrl } from '../../src/scripts/open-review-pr';
 import { buildValidator } from '../../src/scripts/schema-utils';
@@ -675,6 +676,41 @@ describe('openReviewPR — dedup lifecycle', () => {
     // The rewritten frontmatter still validates against the schema.
     const validate = buildValidator();
     expect(validate(promotedFm)).to.equal(true);
+  });
+
+  it('warns and leaves the duplicate in _pending when the move to _collapsed fails for a reason other than ENOENT', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+    fs.mkdirSync(path.join(pendingDir, '_collapsed'), { recursive: true });
+    fs.writeFileSync(path.join(pendingDir, '_collapsed', 'contacts'), 'not a directory');
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      'gh-pr': () => 'https://github.com/medic/cht-agent/pull/99\n',
+    });
+    const warn = sinon.stub(console, 'warn');
+
+    try {
+      openReviewPR({ apply: true, pendingDir, domainsDir: makeTmpDir(), logPath, date: '20260520', execFn: exec.fn });
+    } finally {
+      warn.restore();
+    }
+
+    expect(warn.calledOnce).to.equal(true);
+    expect(warn.firstCall.args[0]).to.include('could not move').and.include('99-backport.md');
+    expect(fs.existsSync(backportPath)).to.equal(true);
+    expect(fs.existsSync(logPath)).to.equal(false);
   });
 
   it('keeps duplicate drafts when the canonical promotion fails', () => {

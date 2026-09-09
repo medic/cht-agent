@@ -182,10 +182,13 @@ describe('scrapePR', () => {
     });
 
     it('does not look up the default branch when metadata carries no baseRefName', () => {
+      const repoViewCalls: number[] = [];
       const { scrapePR } = loadWithBase(metaWithBase(), () => {
-        throw new Error('repo view must not be called');
+        repoViewCalls.push(1);
+        return DEFAULT_MASTER();
       });
       const pr = scrapePR(7);
+      expect(repoViewCalls).to.have.length(0);
       expect(pr.baseRefName).to.be.undefined;
       expect(pr.defaultBranch).to.be.undefined;
     });
