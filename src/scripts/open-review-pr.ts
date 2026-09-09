@@ -364,18 +364,20 @@ function finalizeDedupDrops(
   logPath: string
 ): void {
   for (const drop of dropped) {
-    if (!promotedPaths.has(drop.canonicalPath)) continue;
-    const target = collapsedPath(drop.path);
-    try {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.renameSync(drop.path, target);
-      writeSkipEntry(logPath, drop.path, `${drop.reason}; "${drop.title}" moved to ${path.relative(path.dirname(path.dirname(drop.path)), target)}`);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn(`[open-review-pr] could not move ${drop.path} to _collapsed/: ${String(err)}`);
-      }
-      // ENOENT: already gone — don't report an action that did not occur in this run.
-    }
+    if (promotedPaths.has(drop.canonicalPath)) moveToCollapsed(drop, logPath);
+  }
+}
+
+function moveToCollapsed(drop: DedupDrop, logPath: string): void {
+  const target = collapsedPath(drop.path);
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.renameSync(drop.path, target);
+    writeSkipEntry(logPath, drop.path, `${drop.reason}; "${drop.title}" moved to ${path.relative(path.dirname(path.dirname(drop.path)), target)}`);
+  } catch (err) {
+    // ENOENT: already gone — don't report an action that did not occur in this run.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.warn(`[open-review-pr] could not move ${drop.path} to _collapsed/: ${String(err)}`);
   }
 }
 
