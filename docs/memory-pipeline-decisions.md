@@ -8,7 +8,7 @@ future reviews argue against a written spec instead of re-negotiating in threads
 Each decision below is a **proposal** until a decider objects or approves.
 
 A fact that frames everything: the nightly pipeline has never produced a draft in
-production. All 50 scheduled runs since 2026-06-24 either found no PRs or died on
+production. Every scheduled run since 2026-06-24 (64 by this doc's date) either found no PRs or died on
 a missing LLM key, and the commit step has never succeeded (husky hook). Decisions
 D1 and D2 exist to get one real end-to-end run, because until then every review
 argues hypotheticals.
