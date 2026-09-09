@@ -3,6 +3,8 @@
  * These types model the data flowing through scrape → filter → distill stages.
  */
 
+import type { TraceContext } from '../observability';
+
 /**
  * A GitHub issue linked from a PR description, fetched via /issues/{n}.
  * Captures the issue body and any top-level comments for context.
@@ -95,6 +97,8 @@ export interface FilterOptions {
   skipLlm?: boolean;
   /** Inject a triage function replacing the real LLM call (for testing) */
   triageFn?: (pr: ScrapedPR) => Promise<FilterResult>;
+  /** Langfuse trace for the LLM generation — omit to skip tracing */
+  langfuseTrace?: TraceContext['trace'];
 }
 
 // Single source of truth lives in ../types (derived from ../constants); re-exported
@@ -157,6 +161,8 @@ export interface DistillOptions {
   logPath?: string;
   /** Inject a distill function replacing the real LLM call (for testing) */
   distillFn?: (pr: ScrapedPR) => Promise<DistillDraft>;
+  /** Langfuse trace for the LLM generation — omit to skip tracing */
+  langfuseTrace?: TraceContext['trace'];
 }
 
 /** Options for openReviewPR — used to inject test doubles and override defaults */

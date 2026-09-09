@@ -44,7 +44,7 @@ describe('createStructuredCliChain', () => {
     const chain = createStructuredCliChain(schema, SHAPE);
     const result = await chain.invoke('Classify this PR.');
 
-    expect(result).to.deep.equal({ decision: 'distill', reason: 'looks substantive' });
+    expect(result.parsed).to.deep.equal({ decision: 'distill', reason: 'looks substantive' });
     expect(calls).to.have.length(1);
   });
 
@@ -66,6 +66,23 @@ describe('createStructuredCliChain', () => {
 
     expect(calls[0].options?.disableTools).to.equal(true);
     expect(calls[0].options?.maxTurns).to.equal(1);
+  });
+
+  it('should carry model and cost from invokeForJSONWithResponse when the provider offers it', async () => {
+    const fakeProvider = {
+      invokeForJSON: async () => { throw new Error('should not be called'); },
+      invokeForJSONWithResponse: async () => ({
+        parsed: { decision: 'skip', reason: 'trivial' },
+        response: { content: '{}', model: 'claude-sonnet-4-5', costUsd: 0.0123 },
+      }),
+    };
+    const { createStructuredCliChain } = proxyquire('../../src/llm/structured-cli', {
+      './factory': { createLLMProviderFromEnv: () => fakeProvider, isUsingCLIProvider: () => true },
+    });
+
+    const result = await createStructuredCliChain(schema, SHAPE).invoke('Classify this PR.');
+
+    expect(result).to.deep.equal({ parsed: { decision: 'skip', reason: 'trivial' }, model: 'claude-sonnet-4-5', costUsd: 0.0123 });
   });
 
   it('should throw when the response does not satisfy the schema', async () => {

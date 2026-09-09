@@ -109,6 +109,7 @@ export interface LLMResponse {
   };
   model: string;
   stopReason?: string;
+  costUsd?: number;
 }
 
 /**
@@ -152,6 +153,11 @@ export interface LLMProvider {
    * Useful for structured output
    */
   invokeForJSON<T>(prompt: string, options?: InvokeOptions): Promise<T>;
+
+  /**
+   * Like invokeForJSON, but also returns the raw response (model, usage, cost).
+   */
+  invokeForJSONWithResponse?<T>(prompt: string, options?: InvokeOptions): Promise<{ parsed: T; response: LLMResponse }>;
 }
 
 /**

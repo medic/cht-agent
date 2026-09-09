@@ -12,8 +12,9 @@
 import * as fs from 'node:fs';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { ChatOpenAI } from '@langchain/openai';
-import { createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
+import { createLangChainStructuredChain, createStructuredCliChain, isUsingCLIProvider } from '../llm/structured-cli';
 import { isBatchFatalError } from '../llm/rate-limit';
+import { observeGeneration, type GenerationResult } from '../observability';
 import { z } from 'zod';
 import type { ScrapedPR, FilterResult, FilterOptions, SkipLogEntry, FilterDecision } from '../types/pipeline';
 import { DEFAULT_PIPELINE_LOG_PATH } from '../constants';
@@ -156,8 +157,7 @@ function createApiTriageChain(): any {
       maxTokens: 200,
       configuration: { apiKey: openrouterKey, baseURL: 'https://openrouter.ai/api/v1' },
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(triageSchema);
+    return createLangChainStructuredChain(llm, triageSchema);
   }
   if (process.env.ANTHROPIC_API_KEY) {
     const llm = new ChatAnthropic({
@@ -165,8 +165,7 @@ function createApiTriageChain(): any {
       apiKey: process.env.ANTHROPIC_API_KEY,
       maxTokens: 200,
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (llm as any).withStructuredOutput(triageSchema);
+    return createLangChainStructuredChain(llm, triageSchema);
   }
   return null;
 }
@@ -181,18 +180,27 @@ function getTriageChain() {
   return _triageChain;
 }
 
+function getTriageModel(): string {
+  if (isUsingCLIProvider()) return 'claude-cli';
+  if (process.env.OPENROUTER_API_KEY) return process.env.TRIAGE_MODEL ?? DEFAULT_TRIAGE_MODEL;
+  return 'claude-haiku-4-5-20251001';
+}
+
 /**
  * Call the LLM to triage a PR that didn't match deterministic rules.
  * Returns flag-for-human if no API key is set. Errors from the LLM call are
  * NOT caught here — they propagate to runLlmTriage, the single error boundary,
  * so the failure path isn't handled twice.
  *
+ * @param pr      - The PR to triage.
+ * @param trace - Optional Langfuse trace for this LLM call.
+ *
  * @example
  * ```typescript
  * // Not called directly in tests — injected via opts.triageFn or exercised via filterPR
  * ```
  */
-async function llmTriage(pr: ScrapedPR): Promise<FilterResult> {
+async function llmTriage(pr: ScrapedPR, trace?: FilterOptions['langfuseTrace']): Promise<FilterResult> {
   const chain = getTriageChain();
 
   if (!chain) {
@@ -216,7 +224,8 @@ ${body}
 
 Respond with JSON: { "decision": "distill"|"skip"|"flag-for-human", "reason": "<one sentence>" }`;
 
-  const result = await chain.invoke(prompt) as TriageOutput;
+  const result = await observeGeneration(trace, { name: 'triage-classify', model: getTriageModel(), input: prompt },
+    () => chain.invoke(prompt) as Promise<GenerationResult<TriageOutput>>);
   return { decision: result.decision as FilterDecision, reason: result.reason };
 }
 
@@ -297,7 +306,8 @@ export async function filterPR(
     return { decision: 'flag-for-human', reason: 'LLM triage skipped' };
   }
 
-  const result = await runLlmTriage(pr, opts.triageFn ?? llmTriage);
+  const effectiveTriage = opts.triageFn ?? ((p: ScrapedPR) => llmTriage(p, opts.langfuseTrace));
+  const result = await runLlmTriage(pr, effectiveTriage);
 
   if (result.decision !== 'distill') {
     const entry: SkipLogEntry = {

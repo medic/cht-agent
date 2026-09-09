@@ -328,6 +328,7 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
       model: modelName,
       usage: undefined, // CLI doesn't provide token usage
       stopReason: parsed.subtype === 'success' ? 'end_turn' : 'error',
+      costUsd: parsed.total_cost_usd,
     };
   };
 
@@ -361,14 +362,23 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
   /**
    * Invoke and parse response as JSON
    */
-  const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> => {
+  const invokeForJSONWithResponse = async <T>(
+    prompt: string,
+    options?: InvokeOptions
+  ): Promise<{ parsed: T; response: LLMResponse }> => {
     // Add JSON instruction to prompt
     const jsonPrompt = `${prompt}
 
 IMPORTANT: Respond with valid JSON only. Do not include any text before or after the JSON object.`;
 
     const response = await invoke(jsonPrompt, options);
-    const content = response.content;
+    return { parsed: parseJsonContent<T>(response.content), response };
+  };
+
+  const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> =>
+    (await invokeForJSONWithResponse<T>(prompt, options)).parsed;
+
+  const parseJsonContent = <T>(content: string): T => {
 
     // Check if content is empty or undefined
     if (!content || content.trim() === '') {
@@ -405,6 +415,7 @@ IMPORTANT: Respond with valid JSON only. Do not include any text before or after
     invoke,
     invokeWithMessages,
     invokeForJSON,
+    invokeForJSONWithResponse,
   };
   return provider;
 };
