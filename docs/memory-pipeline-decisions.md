@@ -55,7 +55,9 @@ Owner: whoever holds repo admin (secret cannot be added from a PR).
 exclusion. It must write a `_skipped.ndjson` row and leave the run's exit code
 untouched. Implementation: carry `baseRefName` on `ScrapedPR` and decide in the
 filter (`checkSkipRules`), not by throwing from the scraper. `PR #N is not
-merged` moves to the same channel. A pipeline-level test asserts
+merged` stays a thrown error: an unmerged PR cannot become a `ScrapedPR`, and only
+an explicit `--pr` reaches it, where a loud operator error is the right signal.
+Note `--force` bypasses the base-branch gate, like every filter rule. A pipeline-level test asserts
 `failures === 0` plus one appended skip row for a batch containing an excluded PR.
 
 **Contract:** an exclusion the design intends is never allowed to fail the run
