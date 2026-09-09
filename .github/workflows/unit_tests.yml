@@ -31,5 +31,8 @@ jobs:
       - name: Validate agent-memory schema
         run: npm run validate-schema
 
+      - name: CI guard pending drafts
+        run: npm run check-pending
+
       - name: Test with coverage
         run: npm run test:coverage

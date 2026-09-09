@@ -87,6 +87,12 @@ function isTranslationOnly(pr: ScrapedPR): boolean {
   return pr.fileList.length > 0 && pr.fileList.every(f => TRANSLATION_PATTERN.test(f));
 }
 
+/** Skip reason for a PR merged into a feature branch; null when in scope or when the gate cannot decide. */
+function nonDefaultBaseReason(pr: ScrapedPR): string | null {
+  if (!pr.baseRefName || !pr.defaultBranch || pr.baseRefName === pr.defaultBranch) return null;
+  return `Merged into non-default branch '${pr.baseRefName}' (default is '${pr.defaultBranch}')`;
+}
+
 function checkSkipRules(pr: ScrapedPR): string | null {
   if (pr.author.endsWith('[bot]')) return `Bot PR: ${pr.author}`;
   if (/^revert[\s(:]/i.test(pr.prTitle)) return 'Revert PR';
@@ -95,7 +101,7 @@ function checkSkipRules(pr: ScrapedPR): string | null {
   }
   if (isLockfileOnly(pr)) return 'Lockfile-only changes';
   if (isTranslationOnly(pr)) return 'Translation-only changes';
-  return null;
+  return nonDefaultBaseReason(pr);
 }
 
 /**
