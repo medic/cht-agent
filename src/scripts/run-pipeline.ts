@@ -472,9 +472,12 @@ export async function runPipeline(prNumbers: number[], repo: string, force = fal
   const ctx: BatchCtx = { prNumbers, repo, force, parallel: concurrency > 1, state, sessionId: randomUUID() };
   const count = Math.min(concurrency, prNumbers.length);
   const workers = Array.from({ length: count }, () => runWorker(ctx));
-  await Promise.all(workers);
-  // One shutdown per run: flushes and awaits in-flight posts before reportOutcome's process.exit.
-  await getLangfuse().shutdownAsync();
+  try {
+    await Promise.all(workers);
+  } finally {
+    // One shutdown per run: flushes and awaits in-flight posts before reportOutcome's process.exit.
+    await getLangfuse().shutdownAsync();
+  }
   reportOutcome(prNumbers.length, state);
 }
 

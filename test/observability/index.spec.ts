@@ -1,5 +1,8 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 import { expect } from 'chai';
 import { startTrace, getLangfuse, observeGeneration, fromLangChain, resetLangfuseForTests } from '../../src/observability';
+
+const proxyquire = require('proxyquire').noCallThru();
 
 /**
  * Two layers: the disabled path runs the real SDK end to end, and the enabled
@@ -19,6 +22,25 @@ describe('observability', () => {
     resetLangfuseForTests();
   });
 
+  describe('getLangfuse', () => {
+    it('constructs the client with a bounded request timeout and a single retry', () => {
+      const ctorArgs: Record<string, unknown>[] = [];
+      class FakeLangfuse {
+        constructor(opts: Record<string, unknown>) {
+          ctorArgs.push(opts);
+        }
+      }
+      const mod = proxyquire('../../src/observability', {
+        langfuse: { __esModule: true, default: FakeLangfuse, '@noCallThru': true },
+      });
+      mod.resetLangfuseForTests();
+      mod.getLangfuse();
+
+      expect(ctorArgs).to.have.length(1);
+      expect(ctorArgs[0]).to.include({ requestTimeout: 3000, fetchRetryCount: 1 });
+    });
+  });
+
   describe('LANGFUSE_ENABLED=false', () => {
     it('runs the full trace lifecycle without throwing when disabled', async () => {
       process.env.LANGFUSE_ENABLED = 'false';
@@ -36,19 +58,19 @@ describe('observability', () => {
     });
   });
 
-  describe('observeGeneration', () => {
-    type Ended = Record<string, unknown> | undefined;
-    function recordingTrace() {
-      const state: { started?: Record<string, unknown>; ended: Ended } = { ended: undefined };
-      const trace = {
-        generation: (opts: Record<string, unknown>) => {
-          state.started = opts;
-          return { end: (body: Record<string, unknown>) => { state.ended = body; } };
-        },
-      } as unknown as ReturnType<typeof startTrace>['trace'];
-      return { trace, state };
-    }
+  type Ended = Record<string, unknown> | undefined;
+  function recordingTrace() {
+    const state: { started?: Record<string, unknown>; ended: Ended } = { ended: undefined };
+    const trace = {
+      generation: (opts: Record<string, unknown>) => {
+        state.started = opts;
+        return { end: (body: Record<string, unknown>) => { state.ended = body; } };
+      },
+    } as unknown as ReturnType<typeof startTrace>['trace'];
+    return { trace, state };
+  }
 
+  describe('observeGeneration', () => {
     it('sends usageDetails and the reported model for API-path results', async () => {
       const { trace, state } = recordingTrace();
       const out = await observeGeneration(trace, { name: 'triage-classify', model: 'configured', input: 'p' },
@@ -103,6 +125,10 @@ describe('observability', () => {
 
     it('leaves usage undefined when the provider reports none', () => {
       expect(fromLangChain({ raw: {}, parsed: 'x' })).to.deep.equal({ parsed: 'x', model: undefined, usage: undefined });
+    });
+
+    it('throws when parsed is null, so a schema mismatch surfaces instead of silently returning null', () => {
+      expect(() => fromLangChain({ raw: {}, parsed: null })).to.throw(/did not match the schema/);
     });
   });
 });
