@@ -254,7 +254,7 @@ describe('observability', () => {
       const node = (await exportedSpans()).find((s) => s.name === 'node')!;
       expect(attr(node, 'langfuse.observation.level')).to.equal('ERROR');
       expect(attr(node, 'langfuse.observation.status_message')).to.equal('docs search failed');
-      expect(attr(node, 'langfuse.observation.output')).to.equal(undefined);
+      expect(attr(node, 'langfuse.observation.output')).to.be.undefined;
     });
 
     it('observeNode summarizes the node update and marks ERROR when it carries errors', async () => {
@@ -366,7 +366,7 @@ describe('observability', () => {
         mod.observeStep({ name: 'bad', output: () => undefined, failure: () => 'x' }, async () => ({})));
       await mod.withTrace({ name: 'clean-run' }, () => mod.observeStep({ name: 'ok' }, async () => ({ fine: true })));
       const clean = (await exportedSpans()).find((s) => s.name === 'clean-run')!;
-      expect(attr(clean, 'langfuse.observation.level')).to.equal(undefined);
+      expect(attr(clean, 'langfuse.observation.level')).to.be.undefined;
     });
 
     it('marks an empty generation ERROR and its root too, but still returns the output unchanged', async () => {
@@ -394,7 +394,7 @@ describe('observability', () => {
     });
 
     it('leaves usage undefined when the provider reported none', () => {
-      expect(mod.fromLLMResponse({ model: 'claude-cli' }, 1).usage).to.equal(undefined);
+      expect(mod.fromLLMResponse({ model: 'claude-cli' }, 1).usage).to.be.undefined;
     });
   });
 

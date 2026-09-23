@@ -31,7 +31,7 @@ import { PlanItem, parsePlan } from '../../lib/plan';
 import { buildPlanPrompt } from '../../lib/prompts';
 import { buildFileManifest } from '../../lib/file-manifest';
 import { buildExecutePrompt, buildRelaxedExecutePrompt } from './prompts';
-import { spawnClaudeCli, parseCliResult, ClaudeCliPhase, ClaudeCliResult, DEFAULT_MAX_TURNS } from './cli-driver';
+import { spawnClaudeCli, parseCliResult, ClaudeCliPhase, ClaudeCliResult, DEFAULT_MAX_TURNS, SpawnOptions } from './cli-driver';
 import {
   snapshotChtCore,
   captureChtCoreDiff,
@@ -206,7 +206,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
   private async runPlanPhase(input: CodeGenModuleInput, cwd: string, calls: ClaudeCliResult[]): Promise<PlanItem[]> {
     const manifest = buildFileManifest(input.contextFiles);
     const prompt = buildPlanPrompt(input, manifest);
-    const parsed = await runTracedCliPhase('code-gen-plan', prompt, cwd, PLAN_PHASE_TOOLS, ClaudeCliPhase.Plan);
+    const parsed = await runTracedCliPhase('code-gen-plan', prompt, { cwd, allowedTools: PLAN_PHASE_TOOLS, phase: ClaudeCliPhase.Plan });
     calls.push(parsed);
     if (parsed.isError) {
       console.warn(
@@ -227,7 +227,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     generationName = 'code-gen-execute',
   ): Promise<{ partialCompletion: boolean; reason?: string; resultText: string }> {
     const prompt = promptBuilder(input, plan);
-    const parsed = await runTracedCliPhase(generationName, prompt, cwd, EXECUTE_PHASE_TOOLS, ClaudeCliPhase.Execute);
+    const parsed = await runTracedCliPhase(generationName, prompt, { cwd, allowedTools: EXECUTE_PHASE_TOOLS, phase: ClaudeCliPhase.Execute });
     calls.push(parsed);
     if (parsed.isError) {
       const reason = `is_error=true from CLI: ${parsed.result.substring(0, 200)}`;
@@ -246,9 +246,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
 function runTracedCliPhase(
   name: string,
   prompt: string,
-  cwd: string,
-  allowedTools: string[],
-  phase: ClaudeCliPhase,
+  spawnOpts: Pick<SpawnOptions, 'cwd' | 'allowedTools' | 'phase'>,
 ): Promise<ClaudeCliResult> {
   return observeActiveGeneration({
     name,
@@ -257,7 +255,7 @@ function runTracedCliPhase(
     output: (r) => ({ result: r.result, numTurns: r.numTurns }),
     failure: (r) => (r.isError ? r.result || 'CLI reported is_error' : undefined),
   }, async () => {
-    const parsed = parseCliResult(await spawnClaudeCli(prompt, { cwd, allowedTools, permissionMode: 'acceptEdits', phase }));
+    const parsed = parseCliResult(await spawnClaudeCli(prompt, { ...spawnOpts, permissionMode: 'acceptEdits' }));
     return fromLLMResponse({ model: parsed.model ?? 'claude-cli', usage: parsed.usage, costUsd: parsed.cost }, parsed);
   });
 }

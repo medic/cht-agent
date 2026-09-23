@@ -62,10 +62,12 @@ function* lineBlocks(text: string): Generator<string> {
   const lines = text.split('\n');
   const starts = lines.flatMap((line, i) => (line.startsWith('[') || line.startsWith('{') ? [i] : []));
   const ends = lines.flatMap((line, i) => (/[\]}]\s*$/.test(line) && !/^\s/.test(line) ? [i] : [])).reverse();
-  for (const start of starts) {
-    for (const end of ends) {
-      if (end >= start) yield lines.slice(start, end + 1).join('\n');
-    }
+  for (const start of starts) yield* blocksFrom(lines, start, ends);
+}
+
+function* blocksFrom(lines: string[], start: number, ends: number[]): Generator<string> {
+  for (const end of ends) {
+    if (end >= start) yield lines.slice(start, end + 1).join('\n');
   }
 }
 
@@ -113,7 +115,7 @@ export function summarizeModelUsage(
 ): { model?: string; usage?: { inputTokens: number; outputTokens: number } } {
   const entries = Object.entries(modelUsage ?? {});
   if (entries.length === 0) return {};
-  const [model] = entries.reduce((top, e) => ((e[1].costUSD ?? 0) > (top[1].costUSD ?? 0) ? e : top));
+  const [model] = entries.reduce((top, e) => ((e[1].costUSD ?? 0) > (top[1].costUSD ?? 0) ? e : top), entries[0]);
   const usage = entries.reduce(
     (sum, [, e]) => ({ inputTokens: sum.inputTokens + promptTokens(e), outputTokens: sum.outputTokens + (e.outputTokens ?? 0) }),
     { inputTokens: 0, outputTokens: 0 }

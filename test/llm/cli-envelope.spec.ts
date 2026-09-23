@@ -13,6 +13,6 @@ describe('findResultEnvelope', () => {
   });
 
   it('returns null when no line block holds a result message', () => {
-    expect(findResultEnvelope('warn [a]\n[{"type":"system"}]\n')).to.equal(null);
+    expect(findResultEnvelope('warn [a]\n[{"type":"system"}]\n')).to.be.null;
   });
 });

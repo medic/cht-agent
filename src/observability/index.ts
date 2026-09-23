@@ -190,31 +190,34 @@ export interface GenerationOptions<T> {
   failure?: (parsed: T) => string | undefined;
 }
 
+function completeGeneration<T>(generation: LangfuseGeneration, opts: GenerationOptions<T>, result: GenerationResult<T>): void {
+  const output = opts.output ? opts.output(result.parsed) : result.parsed;
+  generation.update({
+    output,
+    model: result.model ?? opts.model,
+    usageDetails: result.usage,
+    costDetails: result.costUsd === undefined ? undefined : { total: result.costUsd },
+  });
+  const failed = opts.failure?.(result.parsed) ?? (isEmptyOutput(output) ? 'model returned empty output' : undefined);
+  if (failed) markFailed(generation, failed);
+  generation.end();
+}
+
 async function recordGeneration<T>(
   generation: LangfuseGeneration | undefined,
   opts: GenerationOptions<T>,
   invoke: () => Promise<GenerationResult<T>>
 ): Promise<T> {
+  if (!generation) return (await invoke()).parsed;
   try {
     const result = await invoke();
-    const output = opts.output ? opts.output(result.parsed) : result.parsed;
-    generation?.update({
-      output,
-      model: result.model ?? opts.model,
-      usageDetails: result.usage,
-      costDetails: result.costUsd === undefined ? undefined : { total: result.costUsd },
-    });
-    const failed = opts.failure?.(result.parsed) ?? (isEmptyOutput(output) ? 'model returned empty output' : undefined);
-    if (generation && failed) markFailed(generation, failed);
-    generation?.end();
+    completeGeneration(generation, opts, result);
     return result.parsed;
   } catch (err) {
     const message = errorMessage(err);
-    if (generation) {
-      generation.update({ output: { error: message } });
-      markFailed(generation, message);
-      generation.end();
-    }
+    generation.update({ output: { error: message } });
+    markFailed(generation, message);
+    generation.end();
     throw err;
   }
 }
