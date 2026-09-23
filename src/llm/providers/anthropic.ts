@@ -243,7 +243,7 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     };
   };
 
-  const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> => {
+  const invokeForJSONWithResponse = async <T>(prompt: string, options?: InvokeOptions): Promise<{ parsed: T; response: LLMResponse }> => {
     // Increase maxTokens for JSON responses to avoid truncation
     const jsonOptions = {
       ...options,
@@ -271,7 +271,7 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
 
     try {
-      return JSON.parse(jsonStr) as T;
+      return { parsed: JSON.parse(jsonStr) as T, response };
     } catch (error) {
       // Log a snippet of the problematic JSON for debugging
       const snippet = jsonStr.substring(0, 500);
@@ -281,6 +281,9 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     }
   };
 
+  const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> =>
+    (await invokeForJSONWithResponse<T>(prompt, options)).parsed;
+
   return {
     providerType: 'anthropic',
     modelName: config.model,
@@ -288,5 +291,6 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     invoke,
     invokeWithMessages,
     invokeForJSON,
+    invokeForJSONWithResponse,
   };
 };

@@ -10,6 +10,7 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { readEnv } from '../../../../utils/env';
+import { findResultEnvelope, isJson, parsePlainObject, summarizeModelUsage, type CliModelUsageEntry } from '../../../../llm/cli-envelope';
 
 export enum ClaudeCliPhase {
   Plan = 'plan',
@@ -172,6 +173,8 @@ export interface ClaudeCliResult {
   numTurns: number;
   sessionId?: string;
   cost?: number;
+  model?: string;
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 type RawCliJson = Partial<{
@@ -180,6 +183,7 @@ type RawCliJson = Partial<{
   num_turns: number;
   session_id: string;
   total_cost_usd: number;
+  modelUsage: Record<string, CliModelUsageEntry>;
 }>;
 
 function toClaudeCliResult(parsed: RawCliJson): ClaudeCliResult {
@@ -189,42 +193,22 @@ function toClaudeCliResult(parsed: RawCliJson): ClaudeCliResult {
     numTurns: parsed.num_turns ?? 0,
     sessionId: parsed.session_id,
     cost: parsed.total_cost_usd,
+    ...summarizeModelUsage(parsed.modelUsage),
   };
-}
-
-function tryParseResultObject(stdout: string): ClaudeCliResult | null {
-  const jsonMatch = /\{[\s\S]*"type"\s*:\s*"result"[\s\S]*\}/.exec(stdout);
-  if (!jsonMatch) return null;
-  try {
-    return toClaudeCliResult(JSON.parse(jsonMatch[0]) as RawCliJson);
-  } catch {
-    return null;
-  }
-}
-
-function tryParseWholeStdout(stdout: string): ClaudeCliResult | null {
-  try {
-    return toClaudeCliResult(JSON.parse(stdout) as RawCliJson);
-  } catch {
-    return null;
-  }
 }
 
 /**
  * Parse the CLI's JSON output into a typed result. Empty stdout is treated as
  * an error case (isError=true) so callers can surface partial completions.
- * Unparseable stdout falls back to the raw text with isError=false.
+ * JSON with no result message is an error; non-JSON stdout falls back to the raw text with isError=false.
  */
 export function parseCliResult(stdout: string): ClaudeCliResult {
   if (!stdout || stdout.trim() === '') {
     return { result: '', isError: true, numTurns: 0 };
   }
-  // Look for the result-shaped JSON object first (matches the existing claude-cli.ts pattern).
-  const fromResultBlock = tryParseResultObject(stdout);
-  if (fromResultBlock) return fromResultBlock;
-  // Fall back to treating the whole stdout as the result.
-  const fromWhole = tryParseWholeStdout(stdout);
-  if (fromWhole) return fromWhole;
+  const envelope = findResultEnvelope<RawCliJson>(stdout) ?? parsePlainObject<RawCliJson>(stdout);
+  if (envelope) return toClaudeCliResult(envelope);
+  if (isJson(stdout)) return { result: 'CLI output contained no result message', isError: true, numTurns: 0 };
   return { result: stdout.trim(), isError: false, numTurns: 0 };
 }
 
