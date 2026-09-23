@@ -315,6 +315,47 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
   });
 });
 
+describe('createClaudeCLIProvider — array transcript output', () => {
+  const transcript = (result?: Record<string, unknown>): string =>
+    JSON.stringify([
+      { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '{"a":1}' }] } },
+      ...(result ? [result] : []),
+    ]);
+
+  it('reads the result message, the model that ran, and its token usage', async () => {
+    const { provider } = loadProvider([
+      {
+        stdout: transcript(JSON.parse(cliResultJson({
+          result: '{"a":1}',
+          total_cost_usd: 0.6,
+          modelUsage: {
+            'claude-opus-5-5': { inputTokens: 2, cacheReadInputTokens: 100, cacheCreationInputTokens: 50, outputTokens: 4, costUSD: 0.59 },
+            'claude-haiku-4-5-20251001': { inputTokens: 10, outputTokens: 1, costUSD: 0.01 },
+          },
+        }))),
+        closeCode: 0,
+      },
+    ]);
+    const { parsed, response } = await provider.invokeForJSONWithResponse!<{ a: number }>('p');
+    expect(parsed.a).to.equal(1);
+    expect(response.model).to.equal('claude-opus-5-5');
+    expect(response.usage).to.deep.equal({ inputTokens: 162, outputTokens: 5 });
+    expect(response.costUsd).to.equal(0.6);
+  });
+
+  it('throws instead of returning empty content when the transcript has no result message', async () => {
+    const { provider } = loadProvider([{ stdout: transcript(), closeCode: 1 }]);
+    let caught: Error | undefined;
+    try {
+      await provider.invoke('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught?.message).to.equal('Claude CLI error: CLI output contained no result message');
+  });
+});
+
 describe('validateClaudeCLI (v9a.7)', () => {
   /** validateClaudeCLI uses spawn directly; can't reuse the loader. */
   const loadValidate = (

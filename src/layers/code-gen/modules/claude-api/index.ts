@@ -5,9 +5,10 @@ import {
   ContextFile,
   GeneratedFile,
 } from '../../interface';
-import { LLMProvider, LLMToolDefinition, ToolHandler, createAnthropicProvider, getAPIConfigFromEnv } from '../../../../llm';
+import { InvokeOptions, LLMProvider, LLMResponse, LLMToolDefinition, ToolHandler, createAnthropicProvider, getAPIConfigFromEnv } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
+import { fromLLMResponse, observeActiveGeneration } from '../../../../observability';
 import { runApiCompileGate } from './compile-gate';
 import { CompileValidationResult } from '../../../../agents/compile-validator';
 import {
@@ -403,10 +404,9 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
     manifest: FileManifest
   ): Promise<{ plan: PlanItem[]; tokensUsed: number }> {
-    const llm = this.getProvider();
     const prompt = this.buildPlanPrompt(input, manifest);
 
-    const response = await llm.invoke(prompt, { temperature: 0.3, maxTokens: 8192 });
+    const response = await this.tracedInvoke('code-gen-plan', prompt, { temperature: 0.3, maxTokens: 8192 });
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
 
     const plan = this.parsePlan(response.content);
@@ -678,13 +678,21 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     };
   }
 
+  private tracedInvoke(name: string, prompt: string, options: InvokeOptions): Promise<LLMResponse> {
+    const llm = this.getProvider();
+    return observeActiveGeneration({ name, model: llm.modelName, input: prompt, output: (r) => r.content }, async () => {
+      const response = await llm.invoke(prompt, options);
+      return fromLLMResponse(response, response);
+    });
+  }
+
   private async invokeLLM(
     prompt: string,
     codeGenTools: { tools: LLMToolDefinition[]; toolHandler: ToolHandler } | undefined,
     filePath: string,
   ): Promise<Awaited<ReturnType<LLMProvider['invoke']>> | null> {
     try {
-      return await this.getProvider().invoke(prompt, {
+      return await this.tracedInvoke('code-gen-file', prompt, {
         temperature: 0.3,
         maxTokens: 65536,
         ...(codeGenTools ? { tools: codeGenTools.tools, toolHandler: codeGenTools.toolHandler } : {}),
@@ -839,7 +847,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     const prompt = this.buildContinuationPrompt(lastLines, planItem, input);
     let response;
     try {
-      response = await this.getProvider().invoke(prompt, { temperature: 0.3, maxTokens: 65536 });
+      response = await this.tracedInvoke('code-gen-continuation', prompt, { temperature: 0.3, maxTokens: 65536 });
     } catch (error) {
       console.error(`[Code Gen Module]   Continuation call ${iteration + 1} failed:`, error);
       return false;

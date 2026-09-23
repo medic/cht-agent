@@ -228,6 +228,17 @@ describe('createAnthropicProvider invokeForJSON', () => {
     expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Failed to parse LLM response as JSON/);
   });
+  it('invokeForJSONWithResponse returns the parsed JSON with the token usage the model reported', async () => {
+    const stub = buildChatAnthropicStub();
+    stub.invokeStub.resolves({
+      content: '{"score": 80}',
+      usage_metadata: { input_tokens: 120, output_tokens: 30 },
+    } as ChatResponseShape);
+    const provider = loadProviderTyped(stub, baseConfig);
+    const { parsed, response } = await provider.invokeForJSONWithResponse!<{ score: number }>('p');
+    expect(parsed).to.deep.equal({ score: 80 });
+    expect(response.usage).to.deep.equal({ inputTokens: 120, outputTokens: 30 });
+  });
 });
 
 describe('createAnthropicProvider tool-use loop', () => {

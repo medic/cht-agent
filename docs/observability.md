@@ -81,6 +81,37 @@ each time rather than mutating an earlier run's session. The PR identity lives i
 All traces from a single `run-pipeline` invocation share one **session ID** (a UUID generated at the
 start of `runPipeline`), visible in the Sessions view.
 
+### Research and development CLIs
+
+`npm run research`, `npm run dev:run`, and `npm run full` each produce **one trace per CLI run**
+(`cht-agent-research` / `cht-agent-dev` / `cht-agent-full`). The supervisors add their own
+observations under whatever observation is active, so a full run with human-feedback iterations shows
+every research and development pass in one tree:
+
+```
+cht-agent-full                       (root span — input: { ticket })
+├── agent: research                  (input: { title, domain, additionalContext? })
+│   ├── retriever: documentation-search
+│   ├── retriever: code-context-search
+│   ├── retriever: context-analysis
+│   └── chain: generate-plan
+│       └── generation: orchestration-plan
+└── agent: development               (input: { title, previewMode, additionalContext? })
+    ├── agent: generate-code           (input: { iteration }; output: files, confidence, cross-file issues, model, tokens, cost)
+    │   └── generation: code-gen-plan, code-gen-execute, code-gen-execute-relaxed (claude-code-cli)
+    │                   or code-gen-plan, code-gen-file, code-gen-continuation (claude-api)
+    ├── evaluator: validate-implementation   (output: { score })
+    │   └── generation: implementation-validation
+    └── … repeats per refinement iteration
+```
+
+Graph nodes report failures through the state's `errors` array rather than throwing, so a node span
+is marked `level: 'ERROR'` whenever its update carries errors. Any ERROR observation (a failed node, a failed or
+empty generation) also marks the **root** ERROR with that message, so failed runs are filterable at
+the trace level even when the workflow recovered. The root output is a run summary (phase and errors
+for research; approvals, iterations, score, and files written for dev/full). Node outputs are summaries (phase,
+the node's status message, counts); full prompts and completions live only on the generations.
+
 ---
 
 ## Naming Conventions
@@ -125,7 +156,7 @@ Follow these when adding instrumentation to new workflows:
    started before it are not retroactively updated.
 
 3. Wrap each model call in `observeGeneration`. It records the prompt, the parsed output,
-   `usageDetails` (API path) or `costDetails` (Claude CLI path), and ends the generation with
+   `usageDetails`, `costDetails` when the path reports cost (Claude CLI), and ends the generation with
    `level: 'ERROR'` on failure. Build the chain with `createLangChainStructuredChain` (API) or
    `createStructuredCliChain` (CLI) so `invoke` returns a `GenerationResult`
    (`{ parsed, model?, usage?, costUsd? }`):
@@ -134,26 +165,39 @@ Follow these when adding instrumentation to new workflows:
      () => chain.invoke(prompt));
    ```
 
-4. Use `root.startObservation()` for non-LangChain operations:
+4. Code with no step handle (the code-gen modules) uses `observeActiveGeneration(opts, invoke)`,
+   which nests under the active observation and records nothing outside a trace. Both helpers take
+   `output` to map what is recorded and `failure` for a result that did not throw but still failed
+   (for example a CLI `is_error`).
+
+5. For nested steps that don't have the root in scope, use `observeStep` (or `observeNode` for a
+   LangGraph node). Both nest under the **active** observation, so they need no parent argument, and
+   the callback receives the step to pass to `observeGeneration`:
+   ```typescript
+   .addNode('generatePlan', observeNode({ name: 'generate-plan', asType: 'chain' }, this.generatePlanNode.bind(this)))
+   ```
+   Until a `withTrace` has run in the process they are no-ops, so supervisor unit tests need no stubbing.
+
+   Use `root.startObservation()` for non-LangChain operations:
    ```typescript
    const span = root.startObservation('my-operation', { input: { key: value } });
    // ... do work ...
    span.update({ output: { result } }).end();
    ```
 
-5. Score terminal outcomes and set the root output:
+6. Score terminal outcomes and set the root output:
    ```typescript
    scoreTrace(root, { name: 'my-outcome', value: success ? 1 : 0 });
    root.update({ output: { result } });
    ```
 
-6. Shut Langfuse down **once** at the end of the whole run, not per item. It flushes buffered spans,
+7. Shut Langfuse down **once** at the end of the whole run, not per item. It flushes buffered spans,
    then queued scores, and awaits in-flight requests:
    ```typescript
    await shutdownLangfuse();
    ```
 
-7. In tests, stub the observability module with proxyquire. Record calls so the spec can assert the
+8. In tests, stub the observability module with proxyquire. Record calls so the spec can assert the
    root was actually passed to each stage (see `test/scripts/run-pipeline.spec.ts` for a full
    recording spy):
    ```typescript
@@ -187,14 +231,16 @@ Every generation records the model, prompt, completion, latency, and errors. Cos
 | Path | What is sent | How Langfuse prices it |
 |---|---|---|
 | API (OpenRouter / Anthropic) | `usageDetails` from LangChain `usage_metadata` (input/output/total tokens) and the provider's reported model name | Inferred from the model definition in Langfuse |
-| Claude CLI (`claude -p`) | `costDetails.total` from the CLI's `total_cost_usd` and the configured model name; the CLI reports no token counts | Ingested USD directly |
+| Claude CLI (`claude -p`) | `costDetails.total` from the CLI's `total_cost_usd`, `usageDetails` summed from its `modelUsage` (input includes cache reads/writes), and the model the CLI reports it ran (the highest-cost `modelUsage` entry), not the configured label | Ingested USD directly |
 
 ## Delivery Semantics
 
 Spans are exported over OTLP/HTTP by a batching span processor and scores by the client's queue. Both
 use a 3-second request timeout so an unreachable Langfuse costs at most a few seconds per run. The
 OTLP exporter applies its own retry/backoff on transient failures; the exact retry count is not
-configurable from this module. `shutdownLangfuse()` flushes both queues before `process.exit`.
+configurable from this module. `shutdownLangfuse()` flushes both queues before `process.exit`; if
+Langfuse is unreachable it logs a `[Langfuse] … flush failed` warning and resolves, so tracing never
+changes a run's exit code.
 
 ---
 
@@ -214,4 +260,4 @@ configurable from this module. `shutdownLangfuse()` flushes both queues before `
 - **Dashboards**: cost per PR, filter decision distribution, distill success rate, latency by stage.
 - **Alerting**: notify when `flag-for-human` rate or schema validation failures spike.
 - **Evaluation datasets**: curate representative PR inputs from the trace store for automated quality evaluation.
-- **Agent instrumentation**: apply the same pattern to `ResearchSupervisor` and individual agents once the memory pipeline PoC is validated.
+- **Agent internals**: MCP/Kapa and DeepWiki calls inside the research retrievers are not yet separate `tool` observations.

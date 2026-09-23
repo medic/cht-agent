@@ -293,6 +293,7 @@ export const runResearchWorkflow = async (
   const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
   displayResults(result, duration);
+  return result;
 };
 
 export const displayResults = (result: ResearchState, duration: string) => {
