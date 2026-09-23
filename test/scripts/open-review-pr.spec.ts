@@ -713,6 +713,41 @@ describe('openReviewPR — dedup lifecycle', () => {
     expect(fs.existsSync(logPath)).to.equal(false);
   });
 
+  it('stays silent and writes no audit row when the duplicate is already gone (ENOENT)', () => {
+    const pendingDir = setupPendingDir('contacts', {
+      '42-original.md': VALID_FRONTMATTER,
+      '99-backport.md': BACKPORT_FRONTMATTER,
+    });
+    const backportPath = path.join(pendingDir, 'contacts', '99-backport.md');
+    const logPath = path.join(makeTmpDir(), 'skipped.ndjson');
+    const exec = makeExecStub({
+      'git-fetch': () => '',
+      'git-rev-parse': (args) => {
+        if (args.includes('--abbrev-ref')) return 'feat/108\n';
+        throw new Error('branch does not exist');
+      },
+      'git-switch': () => '',
+      'git-add': () => '',
+      'git-commit': () => '',
+      'git-push': () => '',
+      'gh-pr': () => {
+        fs.unlinkSync(backportPath); // someone removed it after planning: the move hits ENOENT
+        return 'https://github.com/medic/cht-agent/pull/99\n';
+      },
+    });
+    const warn = sinon.stub(console, 'warn');
+
+    try {
+      openReviewPR({ apply: true, pendingDir, domainsDir: makeTmpDir(), logPath, date: '20260520', execFn: exec.fn });
+    } finally {
+      warn.restore();
+    }
+
+    expect(warn.called).to.equal(false);
+    expect(fs.existsSync(path.join(pendingDir, '_collapsed', 'contacts', '99-backport.md'))).to.equal(false);
+    expect(fs.existsSync(logPath)).to.equal(false);
+  });
+
   it('keeps duplicate drafts when the canonical promotion fails', () => {
     const pendingDir = setupPendingDir('contacts', {
       '42-original.md': VALID_FRONTMATTER,
