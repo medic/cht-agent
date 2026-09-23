@@ -539,6 +539,9 @@ export interface CodeGenerationResult {
   compileGateSkipped?: boolean;
   /** Human-readable reason associated with {@link compileGateSkipped}. */
   compileGateSkipReason?: string;
+  tokensUsed?: number;
+  modelUsed?: string;
+  costUsd?: number;
 }
 
 /**

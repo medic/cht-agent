@@ -68,12 +68,12 @@ describe('createStructuredCliChain', () => {
     expect(calls[0].options?.maxTurns).to.equal(1);
   });
 
-  it('should carry model and cost from invokeForJSONWithResponse when the provider offers it', async () => {
+  it('should carry model, usage and cost from invokeForJSONWithResponse when the provider offers it', async () => {
     const fakeProvider = {
       invokeForJSON: async () => { throw new Error('should not be called'); },
       invokeForJSONWithResponse: async () => ({
         parsed: { decision: 'skip', reason: 'trivial' },
-        response: { content: '{}', model: 'claude-sonnet-4-5', costUsd: 0.0123 },
+        response: { content: '{}', model: 'claude-sonnet-4-5', costUsd: 0.0123, usage: { inputTokens: 30, outputTokens: 7 } },
       }),
     };
     const { createStructuredCliChain } = proxyquire('../../src/llm/structured-cli', {
@@ -82,7 +82,12 @@ describe('createStructuredCliChain', () => {
 
     const result = await createStructuredCliChain(schema, SHAPE).invoke('Classify this PR.');
 
-    expect(result).to.deep.equal({ parsed: { decision: 'skip', reason: 'trivial' }, model: 'claude-sonnet-4-5', costUsd: 0.0123 });
+    expect(result).to.deep.equal({
+      parsed: { decision: 'skip', reason: 'trivial' },
+      model: 'claude-sonnet-4-5',
+      costUsd: 0.0123,
+      usage: { input: 30, output: 7, total: 37 },
+    });
   });
 
   it('should throw when the response does not satisfy the schema', async () => {

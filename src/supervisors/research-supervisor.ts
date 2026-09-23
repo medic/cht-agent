@@ -21,6 +21,7 @@ import { DocumentationSearchAgent } from '../agents/documentation-search-agent';
 import { CodeContextAgent } from '../agents/code-context-agent';
 import { ContextAnalysisAgent } from '../agents/context-analysis-agent';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
+import { observeStep, observeNode, observeGeneration, fromLLMResponse, type TraceRoot } from '../observability';
 import { TodoTracker, createSupervisorTodoTracker } from '../utils/todo-tracker';
 
 // Define the state annotation for type safety
@@ -152,6 +153,13 @@ function collectBulletText(section: string): string[] {
     .filter(line => line.length > 0);
 }
 
+type ResearchGraphState = typeof ResearchStateAnnotation.State;
+
+function retrieverInput(state: ResearchGraphState): Record<string, unknown> | undefined {
+  const issue = state.issue?.issue;
+  return issue && { title: issue.title, domain: issue.technical_context.domain, components: issue.technical_context.components };
+}
+
 /** The inputs the plan-generation methods share, bundled into one object. */
 interface PlanContext {
   issue: IssueTemplate;
@@ -198,10 +206,10 @@ export class ResearchSupervisor {
   private buildGraph() {
     const workflow = new StateGraph(ResearchStateAnnotation)
       // Define nodes
-      .addNode('documentationSearch', this.documentationSearchNode.bind(this))
-      .addNode('codeContextSearch', this.codeContextSearchNode.bind(this))
-      .addNode('analyzeContext', this.contextAnalysisNode.bind(this))
-      .addNode('generatePlan', this.generatePlanNode.bind(this))
+      .addNode('documentationSearch', observeNode({ name: 'documentation-search', asType: 'retriever', input: retrieverInput }, (state: ResearchGraphState) => this.documentationSearchNode(state)))
+      .addNode('codeContextSearch', observeNode({ name: 'code-context-search', asType: 'retriever', input: retrieverInput }, (state: ResearchGraphState) => this.codeContextSearchNode(state)))
+      .addNode('analyzeContext', observeNode({ name: 'context-analysis', asType: 'retriever', input: retrieverInput }, (state: ResearchGraphState) => this.contextAnalysisNode(state)))
+      .addNode('generatePlan', observeNode({ name: 'generate-plan', asType: 'chain' }, this.generatePlanNode.bind(this)))
 
       // Define edges
       .addEdge(START, 'documentationSearch')
@@ -342,7 +350,7 @@ export class ResearchSupervisor {
   /**
    * Node: Generate Orchestration Plan
    */
-  private async generatePlanNode(state: typeof ResearchStateAnnotation.State) {
+  private async generatePlanNode(state: typeof ResearchStateAnnotation.State, step?: TraceRoot) {
     console.log('\n=== GENERATE PLAN NODE ===');
     const todoId = 'research-4';
     this.todos.start(todoId);
@@ -365,7 +373,7 @@ export class ResearchSupervisor {
         analysis: state.contextAnalysis,
         codeContext,
         codeContextFindings: state.codeContextFindings,
-      });
+      }, step);
       this.todos.complete(todoId);
       this.todos.printSummary();
       return {
@@ -394,13 +402,15 @@ export class ResearchSupervisor {
   /**
    * Generate orchestration plan using Claude
    */
-  private async generateOrchestrationPlan(ctx: PlanContext): Promise<OrchestrationPlan> {
+  private async generateOrchestrationPlan(ctx: PlanContext, step?: TraceRoot): Promise<OrchestrationPlan> {
     console.log('[Research Supervisor] Generating orchestration plan...');
 
     const prompt = this.buildPlanPrompt(ctx);
 
-    const response = await this.llm.invoke(prompt, { temperature: 0.3 });
-    const content = response.content;
+    const content = await observeGeneration(step, { name: 'orchestration-plan', model: this.llm.modelName, input: prompt }, async () => {
+      const response = await this.llm.invoke(prompt, { temperature: 0.3 });
+      return fromLLMResponse(response, response.content);
+    });
 
     // Parse the response into structured plan
     const plan = this.parsePlanResponse(content, ctx);
@@ -783,7 +793,13 @@ Format your response with clear section headers (### IMPLEMENTATION APPROACH, ##
 
     let result: typeof ResearchStateAnnotation.State;
     try {
-      result = await this.graph.invoke(initialState);
+      result = await observeStep({
+        name: 'research',
+        asType: 'agent',
+        input: { title: issue.issue.title, domain: issue.issue.technical_context.domain, additionalContext },
+        output: (r) => ({ phase: r.currentPhase, errors: r.errors }),
+        failure: (r) => r.errors.join('; ') || undefined,
+      }, () => this.graph.invoke(initialState));
     } catch (error) {
       return handleResearchError(error, initialState);
     }

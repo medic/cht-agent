@@ -13,6 +13,7 @@
 import * as dotenv from 'dotenv';
 import * as path from 'node:path';
 import { runResearchWorkflow } from './display-helpers';
+import { withTrace, shutdownLangfuse } from '../observability';
 
 dotenv.config();
 
@@ -37,15 +38,15 @@ const HELP_HINTS = [
   'Content goes in markdown body with ## sections',
 ];
 
-runResearchWorkflow(
-  'CHT Multi-Agent System - Research CLI',
-  getTicketPath,
-  HELP_HINTS,
-).catch(error => {
+withTrace({ name: 'cht-agent-research', tags: ['cht-agent', 'research'], input: { ticket: process.argv[2] } }, async root => {
+  const result = await runResearchWorkflow('CHT Multi-Agent System - Research CLI', getTicketPath, HELP_HINTS);
+  root.update({ output: { phase: result.currentPhase, planGenerated: result.orchestrationPlan !== undefined, errors: result.errors } });
+}).then(shutdownLangfuse).catch(async error => {
   console.error('\n❌ Error running research workflow:', error);
   if (error instanceof Error) {
     console.error('Message:', error.message);
     console.error('Stack:', error.stack);
   }
+  await shutdownLangfuse();
   process.exit(1);
 });

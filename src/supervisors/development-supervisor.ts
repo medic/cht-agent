@@ -31,6 +31,7 @@ import {
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
+import { observeStep, observeNode, observeGeneration, fromLLMResponse, type GenerationResult, type TraceRoot } from '../observability';
 import {
   createStagingDirectory,
   writeToStaging,
@@ -194,6 +195,21 @@ const DevelopmentStateAnnotation = Annotation.Root({
   }),
 });
 
+type DevelopmentGraphState = typeof DevelopmentStateAnnotation.State;
+
+function summarizeCodeGeneration(codeGen: CodeGenerationResult | undefined): Record<string, unknown> {
+  if (!codeGen) return {};
+  return {
+    files: codeGen.files.map((f) => `${f.action} ${f.relativePath}`),
+    confidence: codeGen.confidence,
+    compileGateSkipped: codeGen.compileGateSkipped,
+    crossFileIssues: codeGen.crossFileIssues?.length,
+    modelUsed: codeGen.modelUsed,
+    tokensUsed: codeGen.tokensUsed,
+    costUsd: codeGen.costUsd,
+  };
+}
+
 export class DevelopmentSupervisor {
   private readonly graph: ReturnType<typeof this.buildGraph>;
   private readonly codeGenAgent: CodeGenerationAgent;
@@ -219,8 +235,18 @@ export class DevelopmentSupervisor {
   private buildGraph() {
     const workflow = new StateGraph(DevelopmentStateAnnotation)
       // Define nodes
-      .addNode('generateCode', this.codeGenerationNode.bind(this))
-      .addNode('validateImpl', this.validationNode.bind(this))
+      .addNode('generateCode', observeNode({
+        name: 'generate-code',
+        asType: 'agent',
+        input: (s) => ({ iteration: (s.iterationCount ?? 0) + 1 }),
+        output: (r) => summarizeCodeGeneration(r.codeGeneration),
+      }, (state: DevelopmentGraphState) => this.codeGenerationNode(state)))
+      .addNode('validateImpl', observeNode({
+        name: 'validate-implementation',
+        asType: 'evaluator',
+        input: (s) => ({ iteration: s.iterationCount }),
+        output: (r) => ({ score: (r.validationResult as ImplementationValidation | undefined)?.overallScore }),
+      }, (state: DevelopmentGraphState, step: TraceRoot) => this.validationNode(state, step)))
 
       // Define edges with conditional routing from validation
       .addEdge(START, 'generateCode')
@@ -321,7 +347,7 @@ export class DevelopmentSupervisor {
   /**
    * Node: Validation
    */
-  private async validationNode(state: typeof DevelopmentStateAnnotation.State) {
+  private async validationNode(state: typeof DevelopmentStateAnnotation.State, step?: TraceRoot) {
     if (isShutdownRequested()) {
       console.log('[Development Supervisor] Shutdown requested; skipping validation node');
       return { currentPhase: 'complete' as const };
@@ -338,7 +364,7 @@ export class DevelopmentSupervisor {
     if (codeGeneration.files.length === 0) {
       return this.skipValidationForEmptyFiles({ issue, codeGeneration, todoId });
     }
-    return await this.runValidationWithTodo({ issue, codeGeneration, todoId });
+    return await this.runValidationWithTodo({ issue, codeGeneration, todoId, step });
   }
 
   private skipValidationForEmptyFiles(opts: {
@@ -359,11 +385,13 @@ export class DevelopmentSupervisor {
     issue: IssueTemplate;
     codeGeneration: CodeGenerationResult;
     todoId: string;
+    step?: TraceRoot;
   }) {
     try {
       const validation = await this.validateImplementation(
         opts.issue,
-        opts.codeGeneration
+        opts.codeGeneration,
+        opts.step
       );
       this.todos.complete(opts.todoId);
       this.todos.printSummary();
@@ -494,6 +522,7 @@ export class DevelopmentSupervisor {
   private async validateImplementation(
     issue: IssueTemplate,
     codeGen: CodeGenerationResult,
+    step?: TraceRoot,
   ): Promise<ImplementationValidation> {
     console.log('[Development Supervisor] Validating implementation...');
 
@@ -557,14 +586,20 @@ Respond with a JSON object:
 }`;
 
     try {
-      const result = await this.llm.invokeForJSON<ImplementationValidation>(prompt, {
-        temperature: 0.2,
-      });
-      return result;
+      return await observeGeneration(step, { name: 'implementation-validation', model: this.llm.modelName, input: prompt },
+        () => this.invokeValidation(prompt));
     } catch {
       // Fallback validation based on heuristics
       return this.heuristicValidation(issue, codeGen);
     }
+  }
+
+  private async invokeValidation(prompt: string): Promise<GenerationResult<ImplementationValidation>> {
+    if (!this.llm.invokeForJSONWithResponse) {
+      return { parsed: await this.llm.invokeForJSON<ImplementationValidation>(prompt, { temperature: 0.2 }) };
+    }
+    const { parsed, response } = await this.llm.invokeForJSONWithResponse<ImplementationValidation>(prompt, { temperature: 0.2 });
+    return fromLLMResponse(response, parsed);
   }
 
   /**
@@ -749,7 +784,13 @@ Respond with a JSON object:
       perFileFeedback: undefined,
     };
 
-    const result = await this.graph.invoke(initialState);
+    const result = await observeStep({
+      name: 'development',
+      asType: 'agent',
+      input: { title: input.issue.issue.title, previewMode: input.options.previewMode, additionalContext: input.additionalContext },
+      output: (r) => ({ phase: r.currentPhase, iterations: r.iterationCount, score: r.validationResult?.overallScore, errors: r.errors }),
+      failure: (r) => r.errors.join('; ') || undefined,
+    }, () => this.graph.invoke(initialState));
 
     console.log('\n========================================');
     console.log('DEVELOPMENT SUPERVISOR - Development Phase Complete');

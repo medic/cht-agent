@@ -31,7 +31,7 @@ import { PlanItem, parsePlan } from '../../lib/plan';
 import { buildPlanPrompt } from '../../lib/prompts';
 import { buildFileManifest } from '../../lib/file-manifest';
 import { buildExecutePrompt, buildRelaxedExecutePrompt } from './prompts';
-import { spawnClaudeCli, parseCliResult, ClaudeCliPhase, DEFAULT_MAX_TURNS } from './cli-driver';
+import { spawnClaudeCli, parseCliResult, ClaudeCliPhase, ClaudeCliResult, DEFAULT_MAX_TURNS, SpawnOptions } from './cli-driver';
 import {
   snapshotChtCore,
   captureChtCoreDiff,
@@ -42,6 +42,7 @@ import {
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
+import { fromLLMResponse, observeActiveGeneration } from '../../../../observability';
 
 const PLAN_PHASE_TOOLS = ['Read', 'Grep', 'Glob'];
 const EXECUTE_PHASE_TOOLS = ['Read', 'Write', 'Edit', 'Grep', 'Glob'];
@@ -116,17 +117,18 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     chtCorePath: string,
   ): Promise<CodeGenModuleOutput> {
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before plan');
-    const plan = await this.runPlanPhase(input, chtCorePath);
+    const calls: ClaudeCliResult[] = [];
+    const plan = await this.runPlanPhase(input, chtCorePath, calls);
     if (plan.length === 0) {
       console.warn('[claude-code-cli] Plan phase produced no items; skipping execute');
-      return emptyResult(input, 'empty plan');
+      return emptyResult(input, 'empty plan', calls);
     }
     await this.surfacePlan(input, plan);
 
-    if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before execute');
-    const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
+    if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before execute', calls);
+    const executeResult = await this.runExecutePhase(input, plan, chtCorePath, calls);
     const captureResult = await this.captureWithRelaxedRetry({
-      input, plan, executeResult, snapshotSha: snapshot.headSha, chtCorePath,
+      input, plan, executeResult, snapshotSha: snapshot.headSha, chtCorePath, calls,
     });
     const compileResult = await runCompileGate(chtCorePath);
     const moduleIssues = collectModuleIssues({
@@ -139,7 +141,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     return {
       files: captureResult.files,
       explanation: `Generated ${captureResult.files.length} file(s) via Claude Code CLI tool use for "${input.ticket.issue.title}".`,
-      modelUsed: 'claude-cli',
+      ...summarizeSpend(calls),
       partialGeneration: executeResult.partialCompletion,
       partialGenerationReason: executeResult.reason,
       crossFileIssues: moduleIssues.length > 0 ? moduleIssues : undefined,
@@ -170,9 +172,10 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       executeResult: { partialCompletion: boolean; reason?: string; resultText: string };
       snapshotSha: string;
       chtCorePath: string;
+      calls: ClaudeCliResult[];
     },
   ): Promise<{ files: Awaited<ReturnType<typeof captureChtCoreDiff>>; executeNoOp: boolean }> {
-    const { input, plan, executeResult, snapshotSha, chtCorePath } = opts;
+    const { input, plan, executeResult, snapshotSha, chtCorePath, calls } = opts;
     let files = await captureChtCoreDiff(chtCorePath, snapshotSha);
     console.log(`[claude-code-cli] Captured ${files.length} file change(s) from CLI session`);
 
@@ -186,7 +189,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     console.warn(
       '[claude-code-cli] Zero files captured on STRICT execute; attempting relaxed retry (R17)'
     );
-    await this.runExecutePhase(input, plan, chtCorePath, buildRelaxedExecutePrompt);
+    await this.runExecutePhase(input, plan, chtCorePath, calls, buildRelaxedExecutePrompt, 'code-gen-execute-relaxed');
     files = await captureChtCoreDiff(chtCorePath, snapshotSha);
     console.log(
       `[claude-code-cli] After relaxed retry: ${files.length} file change(s) captured`
@@ -200,16 +203,11 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     return { files, executeNoOp: false };
   }
 
-  private async runPlanPhase(input: CodeGenModuleInput, cwd: string): Promise<PlanItem[]> {
+  private async runPlanPhase(input: CodeGenModuleInput, cwd: string, calls: ClaudeCliResult[]): Promise<PlanItem[]> {
     const manifest = buildFileManifest(input.contextFiles);
     const prompt = buildPlanPrompt(input, manifest);
-    const stdout = await spawnClaudeCli(prompt, {
-      cwd,
-      allowedTools: PLAN_PHASE_TOOLS,
-      permissionMode: 'acceptEdits',
-      phase: ClaudeCliPhase.Plan,
-    });
-    const parsed = parseCliResult(stdout);
+    const parsed = await runTracedCliPhase('code-gen-plan', prompt, { cwd, allowedTools: PLAN_PHASE_TOOLS, phase: ClaudeCliPhase.Plan });
+    calls.push(parsed);
     if (parsed.isError) {
       console.warn(
         `[claude-code-cli] Plan phase reported is_error=true: ` +
@@ -224,17 +222,13 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     input: CodeGenModuleInput,
     plan: PlanItem[],
     cwd: string,
+    calls: ClaudeCliResult[],
     promptBuilder: (input: CodeGenModuleInput, plan: PlanItem[]) => string = buildExecutePrompt,
+    generationName = 'code-gen-execute',
   ): Promise<{ partialCompletion: boolean; reason?: string; resultText: string }> {
     const prompt = promptBuilder(input, plan);
-    const stdout = await spawnClaudeCli(prompt, {
-      cwd,
-      allowedTools: EXECUTE_PHASE_TOOLS,
-      permissionMode: 'acceptEdits',
-      phase: ClaudeCliPhase.Execute,
-    });
-
-    const parsed = parseCliResult(stdout);
+    const parsed = await runTracedCliPhase(generationName, prompt, { cwd, allowedTools: EXECUTE_PHASE_TOOLS, phase: ClaudeCliPhase.Execute });
+    calls.push(parsed);
     if (parsed.isError) {
       const reason = `is_error=true from CLI: ${parsed.result.substring(0, 200)}`;
       console.warn(`[claude-code-cli] Execute phase: ${reason}`);
@@ -247,6 +241,23 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     }
     return { partialCompletion: false, resultText: parsed.result };
   }
+}
+
+function runTracedCliPhase(
+  name: string,
+  prompt: string,
+  spawnOpts: Pick<SpawnOptions, 'cwd' | 'allowedTools' | 'phase'>,
+): Promise<ClaudeCliResult> {
+  return observeActiveGeneration({
+    name,
+    model: 'claude-cli',
+    input: prompt,
+    output: (r) => ({ result: r.result, numTurns: r.numTurns }),
+    failure: (r) => (r.isError ? r.result || 'CLI reported is_error' : undefined),
+  }, async () => {
+    const parsed = parseCliResult(await spawnClaudeCli(prompt, { ...spawnOpts, permissionMode: 'acceptEdits' }));
+    return fromLLMResponse({ model: parsed.model ?? 'claude-cli', usage: parsed.usage, costUsd: parsed.cost }, parsed);
+  });
 }
 
 async function fireCallback<Args extends unknown[]>(
@@ -306,11 +317,31 @@ function logModuleIssues(args: {
   }
 }
 
-function emptyResult(input: CodeGenModuleInput, reason: string): CodeGenModuleOutput {
+function emptyResult(input: CodeGenModuleInput, reason: string, calls: ReadonlyArray<ClaudeCliResult> = []): CodeGenModuleOutput {
   return {
     files: [],
     explanation: `Generation aborted (${reason}) for "${input.ticket.issue.title}".`,
-    modelUsed: 'claude-cli',
+    ...summarizeSpend(calls),
+  };
+}
+
+/**
+ * Total tokens and cost across every CLI call in one generation, attributed to
+ * the model of the costliest call.
+ *
+ * @example
+ * summarizeSpend([{ result: '', isError: false, numTurns: 1, model: 'claude-opus-5-5', cost: 0.5, usage: { inputTokens: 90, outputTokens: 10 } }]);
+ * // { modelUsed: 'claude-opus-5-5', tokensUsed: 100, costUsd: 0.5 }
+ */
+export function summarizeSpend(calls: ReadonlyArray<ClaudeCliResult>): Pick<CodeGenModuleOutput, 'modelUsed' | 'tokensUsed' | 'costUsd'> {
+  const costliest = calls
+    .filter((c) => c.model)
+    .reduce<ClaudeCliResult | undefined>((top, c) => ((c.cost ?? 0) > (top?.cost ?? -1) ? c : top), undefined);
+  const costs = calls.flatMap((c) => (c.cost === undefined ? [] : [c.cost]));
+  return {
+    modelUsed: costliest?.model ?? 'claude-cli',
+    tokensUsed: calls.reduce((sum, c) => sum + (c.usage?.inputTokens ?? 0) + (c.usage?.outputTokens ?? 0), 0),
+    costUsd: costs.length > 0 ? costs.reduce((sum, c) => sum + c, 0) : undefined,
   };
 }
 
