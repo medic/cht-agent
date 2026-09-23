@@ -58,18 +58,36 @@ function span(text: string, open: string, close: string): string | null {
   return start === -1 || end <= start ? null : text.slice(start, end + 1);
 }
 
+function* lineBlocks(text: string): Generator<string> {
+  const lines = text.split('\n');
+  const starts = lines.flatMap((line, i) => (line.startsWith('[') || line.startsWith('{') ? [i] : []));
+  const ends = lines.flatMap((line, i) => (/[\]}]\s*$/.test(line) && !/^\s/.test(line) ? [i] : [])).reverse();
+  for (const start of starts) {
+    for (const end of ends) {
+      if (end >= start) yield lines.slice(start, end + 1).join('\n');
+    }
+  }
+}
+
+function* candidatesFrom(stdout: string): Generator<string | null> {
+  yield stdout.trim();
+  yield span(stdout, '[', ']');
+  yield span(stdout, '{', '}');
+  yield* lineBlocks(stdout);
+}
+
 /**
  * Find the `type: "result"` message in CLI stdout. Newer CLI versions print a JSON
  * array of every message (init, assistant, result); older ones print the result
- * object alone. Either may be preceded or followed by non-JSON noise.
+ * object alone. Either may be preceded or followed by non-JSON noise, including
+ * noise with brackets, as long as the JSON starts and ends at column 0 of a line.
  *
  * @example
  * findResultEnvelope('[{"type":"system"},{"type":"result","result":"ok"}]'); // { type: 'result', result: 'ok' }
- * findResultEnvelope('warn\n{"type":"result","result":"ok"}');                // { type: 'result', result: 'ok' }
+ * findResultEnvelope('warn [cli]\n[{"type":"result","result":"ok"}]');      // { type: 'result', result: 'ok' }
  */
 export function findResultEnvelope<T = Record<string, unknown>>(stdout: string): T | null {
-  const candidates = [stdout.trim(), span(stdout, '[', ']'), span(stdout, '{', '}')];
-  for (const candidate of candidates) {
+  for (const candidate of candidatesFrom(stdout)) {
     if (!candidate) continue;
     const found = resultFrom(tryParse(candidate));
     if (found) return found as T;
