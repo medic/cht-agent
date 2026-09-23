@@ -1,6 +1,6 @@
 # Memory pipeline: design decisions
 
-**Status:** DRAFT — decider reactions are recorded in the #138 reviews: the round-3 review approves D1–D11 with amendments noted there; reactions from the other deciders are pending. An approving review on #138 also accepts the D3 and D6 implementations this PR ships.
+**Status:** DRAFT — decider reactions are recorded in the #138 reviews: the round-3 review approves D1–D11 and the round-4 review approves D12, with amendments noted there; reactions from the other deciders are pending. An approving review on #138 also accepts the D3 and D6 implementations this PR ships.
 **Deciders:** @alexosugo, @sugat009, @Hareet
 **Context:** PR #138 review (rounds 1–3). The review surfaced questions that are
 product decisions, not code defects. This doc records one decision per question so
