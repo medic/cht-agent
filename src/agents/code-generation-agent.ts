@@ -362,7 +362,8 @@ export class CodeGenerationAgent {
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
     console.log(`[Code Generation Agent] Confidence: ${(result.confidence * 100).toFixed(0)}%`);
-    console.log(`[Code Generation Agent] Model: ${result.modelUsed ?? 'unknown'}, tokens: ${result.tokensUsed ?? 'n/a'}, cost: ${result.costUsd === undefined ? 'n/a' : `$${result.costUsd.toFixed(4)}`}`);
+    const cost = result.costUsd === undefined ? 'n/a' : '$' + result.costUsd.toFixed(4);
+    console.log(`[Code Generation Agent] Model: ${result.modelUsed ?? 'unknown'}, tokens: ${result.tokensUsed ?? 'n/a'}, cost: ${cost}`);
     this.todos.printSummary();
     return result;
   }
