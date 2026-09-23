@@ -51,7 +51,7 @@ import { isAuthError, isBatchFatalError } from '../llm/rate-limit';
 import { DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { reconcile, formatReconciliation } from './reconcile';
 import type { SkipLogEntry, DistillResult } from '../types/pipeline';
-import { startTrace, getLangfuse } from '../observability';
+import { withTrace, scoreTrace, shutdownLangfuse, type TraceRoot } from '../observability';
 
 /** Exit code used when the batch stops early on a global LLM failure (rate limit / auth). */
 export const RATE_LIMIT_EXIT_CODE = 2;
@@ -288,25 +288,13 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Runs scrape → filter → distill for a single PR number.
- * @param prNum   - The GitHub PR number to process.
- * @param repo    - Repository in `owner/repo` format.
- * @param opts.force     - Bypass the filter stage entirely.
- * @param opts.tag       - Log-line prefix (a per-PR tag under concurrency).
- * @param opts.sessionId - Pipeline session ID (groups all PR traces from one run).
- *
- * @example
- * ```typescript
- * await processSinglePR(12345, 'medic/cht-core', { force: false, tag: ' ', sessionId: 'session-abc' });
- * ```
- */
+/** Runs scrape → filter → distill for a single PR number. */
 /** Run the filter stage (or bypass it under --force), logging the decision. */
 async function runFilter(
   pr: ReturnType<typeof scrapePR>,
   force: boolean,
   tag: string,
-  trace: ReturnType<typeof startTrace>['trace']
+  trace: TraceRoot
 ): Promise<{ decision: string; reason: string }> {
   if (force) {
     console.log(`${tag} filter: BYPASSED (--force) — distilling directly`);
@@ -319,14 +307,14 @@ async function runFilter(
 }
 
 /** Scrape inside a Langfuse span; the span records the error when the scraper throws. */
-function scrapeTraced(prNum: number, repo: string, trace: ReturnType<typeof startTrace>['trace']): ReturnType<typeof scrapePR> {
-  const scrapeSpan = trace.span({ name: 'scrape', input: { prNum, repo } });
+function scrapeTraced(prNum: number, repo: string, trace: TraceRoot): ReturnType<typeof scrapePR> {
+  const scrapeSpan = trace.startObservation('scrape', { input: { prNum, repo } });
   try {
     const pr = scrapePR(prNum, repo);
-    scrapeSpan.end({ output: { fileCount: pr.fileList.length } });
+    scrapeSpan.update({ output: { fileCount: pr.fileList.length } }).end();
     return pr;
   } catch (err) {
-    scrapeSpan.end({ output: { error: errorMessage(err) }, level: 'ERROR', statusMessage: errorMessage(err) });
+    scrapeSpan.update({ output: { error: errorMessage(err) }, level: 'ERROR', statusMessage: errorMessage(err) }).end();
     throw err;
   }
 }
@@ -334,7 +322,7 @@ function scrapeTraced(prNum: number, repo: string, trace: ReturnType<typeof star
 async function runTracedPipeline(
   prNum: number,
   repo: string,
-  opts: { force: boolean; tag: string; trace: ReturnType<typeof startTrace>['trace'] }
+  opts: { force: boolean; tag: string; trace: TraceRoot }
 ): Promise<DistillResult | undefined> {
   const { force, tag, trace } = opts;
   console.log(`${tag} scraping...`);
@@ -351,7 +339,7 @@ async function runTracedPipeline(
     distillResult = await distillPR(pr, { langfuseTrace: trace });
     console.log(`${tag} distill: ${distillResult.status} — ${distillResult.reason}`);
     if (distillResult.outputPath) console.log(`${tag} output: ${distillResult.outputPath}`);
-    trace.score({ name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
+    scoreTrace(trace, { name: 'distill-outcome', value: distillResult.status === 'written' ? 1 : 0 });
     output.distillStatus = distillResult.status;
   }
   trace.update({ output });
@@ -376,23 +364,17 @@ export async function processSinglePR(
   opts: { force?: boolean; tag?: string; sessionId?: string } = {}
 ): Promise<DistillResult | undefined> {
   const { force = false, tag = ' ', sessionId } = opts;
-  // Trace id is generated per run (not derived from the PR) so reprocessing the
-  // same PR yields a distinct trace each time instead of mutating an earlier
-  // run's session. PR identity lives in input/tags/metadata so it stays filterable.
-  const { trace } = startTrace({
-    name: 'memory-pipeline-pr',
-    sessionId,
-    input: { prNum, repo, url: `https://github.com/${repo}/pull/${prNum}` },
-    tags: ['memory-pipeline', repo],
-    metadata: { prNum, repo },
-  });
-
-  try {
-    return await runTracedPipeline(prNum, repo, { force, tag, trace });
-  } catch (err) {
-    trace.update({ output: { error: errorMessage(err) } });
-    throw err;
-  }
+  // Trace id is per-run, not derived from the PR, so reprocessing a PR gets a distinct trace.
+  return withTrace(
+    {
+      name: 'memory-pipeline-pr',
+      sessionId,
+      input: { prNum, repo, url: `https://github.com/${repo}/pull/${prNum}` },
+      tags: ['memory-pipeline', repo],
+      metadata: { prNum: String(prNum), repo },
+    },
+    (trace) => runTracedPipeline(prNum, repo, { force, tag, trace })
+  );
 }
 
 /**
@@ -545,7 +527,7 @@ export async function runPipeline(prNumbers: number[], repo: string, force = fal
     await Promise.all(workers);
   } finally {
     // One shutdown per run: flushes and awaits in-flight posts before reportOutcome's process.exit.
-    await getLangfuse().shutdownAsync();
+    await shutdownLangfuse();
   }
   reportOutcome(prNumbers.length, state, prNumbers, auditOffset);
 }
