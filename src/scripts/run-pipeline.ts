@@ -286,7 +286,6 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Runs scrape → filter → distill for a single PR number. */
 /** Run the filter stage (or bypass it under --force), logging the decision. */
 async function runFilter(
   pr: ReturnType<typeof scrapePR>,
@@ -342,6 +341,7 @@ async function runTracedPipeline(
   trace.update({ output });
 }
 
+/** Runs scrape → filter → distill for a single PR number. */
 export async function processSinglePR(
   prNum: number,
   repo: string,
