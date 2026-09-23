@@ -107,7 +107,7 @@ describe('observability', () => {
       const generation = spans.find((s) => s.name === 'triage-classify')!;
       expect(spans).to.have.length(3);
 
-      expect(root.parentSpanContext).to.equal(undefined);
+      expect(root.parentSpanContext).to.be.undefined;
       expect(attr(root, 'langfuse.observation.input')).to.equal(JSON.stringify({ prNum: 42 }));
       expect(attr(root, 'langfuse.observation.output')).to.equal(JSON.stringify({ decision: 'skip' }));
       expect(attr(root, 'langfuse.trace.name')).to.equal('memory-pipeline-pr');
@@ -135,10 +135,10 @@ describe('observability', () => {
       expect(attr(api, 'langfuse.observation.type')).to.equal('generation');
       expect(attr(api, 'langfuse.observation.model.name')).to.equal('anthropic/claude-haiku-4.5');
       expect(attr(api, 'langfuse.observation.usage_details')).to.equal(JSON.stringify({ input: 10, output: 5, total: 15 }));
-      expect(attr(api, 'langfuse.observation.cost_details')).to.equal(undefined);
+      expect(attr(api, 'langfuse.observation.cost_details')).to.be.undefined;
       expect(attr(api, 'langfuse.observation.output')).to.equal(JSON.stringify({ a: 1 }));
       expect(attr(cli, 'langfuse.observation.model.name')).to.equal('claude-sonnet-4-5');
-      expect(attr(cli, 'langfuse.observation.usage_details')).to.equal(undefined);
+      expect(attr(cli, 'langfuse.observation.usage_details')).to.be.undefined;
       expect(attr(cli, 'langfuse.observation.cost_details')).to.equal(JSON.stringify({ total: 0.042 }));
     });
 
