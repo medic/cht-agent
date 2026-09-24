@@ -417,7 +417,7 @@ function logCompileGateResult(result: CompileValidationResult): void {
 }
 
 /**
- * A.15 LLM signal extraction. The execute prompt requires the CLI to emit a
+ * LLM signal extraction. The execute prompt requires the CLI to emit a
  * JSON summary block on its final line; this function parses it and surfaces
  * two flavors of `plan-discovered-missing` cross-file issues:
  *
@@ -516,7 +516,7 @@ function buildDeclaredPathIssues(
 }
 
 /**
- * V1 (A.12) post-execute reconciliation. The CLI is told via the execute prompt
+ * V1 post-execute reconciliation. The CLI is told via the execute prompt
  * to stay within the approved plan; this function flags any drift so the user
  * sees it at HC2 instead of silently accepting a diff that doesn't match HC1.
  *

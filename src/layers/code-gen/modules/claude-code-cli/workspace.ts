@@ -12,7 +12,7 @@
  *   4. Roll back via `git reset --hard preRunSha` + a clean scoped to the files
  *      this session created + restore stash.
  *
- * Steps 1/3/4 reason about a session DELTA, not absolute repo state (#140): a
+ * Steps 1/3/4 reason about a session DELTA, not absolute repo state: a
  * blanket untracked sweep both misattributes the operator's files as generated
  * and deletes them on rollback (unrecoverable when they were ignored at stash
  * time, e.g. unmasked by stashing an uncommitted .gitignore edit).
@@ -255,7 +255,7 @@ export interface ChtCoreSnapshot {
    * Untracked paths present immediately AFTER the stash, i.e. the files that were
    * already in the operator's working tree and are NOT ours. Capture and rollback
    * both work against this baseline so the cycle reasons about a session DELTA
-   * rather than absolute repo state (#140).
+   * rather than absolute repo state.
    *
    * Entries include the paths that were IGNORED at snapshot time, so a session
    * that changes an ignore rule cannot turn an operator file into session output.
@@ -277,7 +277,7 @@ async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
   if (isFlagEnabled('CHT_AGENT_IGNORE_LEAKED_STASH')) return;
   // Anchored: our stash message always ENDS with the marker plus a timestamp, so a
   // user stash that merely mentions the marker ("wip after cht-agent-claude-code-cli
-  // crash") is not a false positive. Report every match, not just the first — a real
+  // crash") is not a false positive. Report every match, not just the first: a real
   // leak can sit underneath a user stash, and naming the wrong one sends the
   // operator to the wrong place.
   const leaked = (await listStashes(chtCorePath)).filter(e => LEAKED_STASH_LINE.test(e.message));
@@ -334,9 +334,8 @@ function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: stri
  * `-z` is mandatory, not cosmetic. Git's default `core.quotePath=true` C-quotes
  * any non-ASCII path (`"caf\303\251.txt"`), which would silently drop the file
  * from capture and make the clean match nothing while still reporting success.
- * `core.quotePath=false` is not sufficient either: a newline in a filename would
- * then break line splitting into bogus paths. NUL delimiting is the only form
- * that survives every legal filename.
+ * git C-quotes control characters even with `core.quotePath=false`, so only
+ * `-z` gives verbatim paths.
  */
 async function listUntracked(chtCorePath: string): Promise<string[]> {
   const { stdout } = await runGit(['ls-files', '--others', '--exclude-standard', '-z'], chtCorePath);
@@ -743,13 +742,9 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
 }
 
 /**
- * Record the untracked baseline AFTER the stash: stashing an uncommitted
- * .gitignore edit reverts ignore rules to HEAD, which can unmask files that
- * were ignored only by that edit. Reading here means those files land in the
- * baseline (they are the operator's, not ours), which is what makes the
- * capture/clean delta correct regardless of the ignore-rule churn. The read is
- * unconditional: the stash is conditional on a dirty tree, but unmasked or
- * pre-existing untracked files can exist either way.
+ * Read AFTER the stash, so files that a stashed .gitignore edit unmasks count as
+ * the operator's. Read even without a stash: `status.showUntrackedFiles=no` can
+ * hide untracked files from the dirty check.
  *
  * If a read fails after a stash was taken, put the work back first: a snapshot
  * error must never leave the operator's work stranded in our stash.
@@ -772,15 +767,8 @@ async function readBaselineOrUndo(
 }
 
 /**
- * Enforce the required-baseline contract at RUNTIME, not just in the type, for
- * every path that consumes it. An untyped caller (or a stale test literal)
- * passing undefined would make `new Set(undefined)` an empty set, which fails
- * silently in opposite but equally wrong directions: the clean would treat every
- * untracked file as session-created and delete it, while the capture would report
- * every operator file as a session CREATE into HC2. Fail loudly instead.
- *
- * `caller` and `consequence` are parameterized because the two call sites fail
- * differently; the "missing or not an array" phrasing is shared and asserted on.
+ * The baseline is required at runtime too: without it, the clean would delete
+ * and the capture would claim every untracked file.
  */
 function assertBaseline(
   baselineUntracked: readonly string[],
@@ -802,7 +790,7 @@ function assertBaseline(
  * Untracked files are attributed to the session only when they are NOT in
  * `baselineUntracked` (the post-stash snapshot of the operator's own untracked
  * files). Without that subtraction, pre-existing files are reported as
- * session-generated and an HC2 approve would write them back into cht-core (#140).
+ * session-generated and an HC2 approve would write them back into cht-core.
  */
 export async function captureChtCoreDiff(
   chtCorePath: string,
@@ -980,9 +968,8 @@ const CLEAN_PATHSPEC_CHUNK = 1000;
  * Wrap a path so git treats it as a LITERAL filename, not an fnmatch glob.
  *
  * Without this, a session file named `pages/[id].tsx` is a bracket-expression
- * pathspec that also matches the operator's `pages/d.tsx` — `git clean` deletes
- * both, exits 0, and the verifier (which only runs on a non-zero exit) never
- * notices. Same class for `*` and `?` in a filename. Every path we hand to git
+ * pathspec that also matches the operator's `pages/d.tsx`, so `git clean` deletes
+ * both and exits 0. Same class for `*` and `?` in a filename. Every path we hand to git
  * for deletion comes from `ls-files` output, i.e. it is always a real filename.
  */
 function toLiteralPathspec(relPath: string): string {
@@ -992,8 +979,8 @@ function toLiteralPathspec(relPath: string): string {
 /**
  * Untracked paths that appeared DURING the session: everything untracked now
  * minus the operator's post-stash baseline. Only these may be deleted on
- * rollback — a blanket `git clean -fd` would also delete pre-existing untracked
- * files that the stash never captured, which is unrecoverable (#140 RC-3).
+ * rollback. A blanket `git clean -fd` would also delete pre-existing untracked
+ * files that the stash never captured, which is unrecoverable.
  */
 async function computeCleanDelta(
   chtCorePath: string,
@@ -1068,9 +1055,7 @@ export interface RollbackResult {
  *
  * Whatever git's exit code, every delta path is then checked on disk: a zero
  * exit proves nothing (a nested repo is never removed), and a non-zero exit can
- * still have removed everything. The tree is legitimately dirty after a
- * rollback (the operator's own untracked files survive by design), so "status
- * is empty" would be the wrong check.
+ * still have removed everything.
  */
 async function cleanSessionCreatedFiles(
   chtCorePath: string,
@@ -1111,27 +1096,18 @@ export function rollbackWarnings(rollback: RollbackResult): string[] {
 
 /**
  * Always restore cht-core to the snapshot state: reset to HEAD, clean the files
- * this session created, pop the stash if one was created. Each op runs through
- * the verify-then-throw helper so a non-zero exit that actually succeeded does
- * not generate a misleading warning. Returns a typed result the orchestrator
- * inspects to emit a recovery checklist when reset failed.
+ * this session created, restore the stash if one was created. The reset runs
+ * through the verify-then-throw helper so a non-zero exit that actually
+ * succeeded does not generate a misleading warning. Returns a typed result the
+ * orchestrator inspects to emit a recovery checklist when the reset or the
+ * restore failed.
  *
- * Documented residuals. All are strictly better than the pre-#140 behavior,
- * which deleted every pre-existing untracked file outright:
- *
- *  - OVERWRITE: if the session overwrites a baseline-untracked file, capture
- *    excludes it and rollback cannot restore its prior content — it was never in
- *    the stash. The file survives, but with the session's content.
- *  - DELETE: if the session deletes a baseline-untracked file, it is gone for the
- *    same reason (never stashed, so nothing to restore from).
- *  - MID-RUN CREATES: untracked files that appear during the run are in the delta
- *    and get cleaned, whoever wrote them (see cleanSessionCreatedFiles).
- *  - EMPTY DIRS: directories the session created are not listed by `ls-files`, so
- *    an empty dir may remain after rollback. Harmless residue.
- *  - SESSION-AUTHORED IGNORE RULES (pre-existing, same on main): if the session
- *    creates or edits a `.gitignore` covering its own output, that output is
- *    invisible to `ls-files --others --exclude-standard`, so it is neither
- *    captured (absent from HC2) nor cleaned (left behind).
+ * Residuals: the full list is on #140. The two that operators will hit:
+ *  - OVERWRITE: if the session overwrites a file that was untracked or ignored
+ *    at snapshot, capture excludes it and rollback cannot restore its prior
+ *    content, because it was never in the stash. The file keeps the session's
+ *    content.
+ *  - DELETE: if the session deletes such a file, it is gone for the same reason.
  */
 export async function rollbackChtCore(
   chtCorePath: string,
@@ -1269,13 +1245,11 @@ async function resetToSnapshot(
     await gitExecVerifyOrThrow(
       ['reset', '--hard', snapshot.headSha],
       chtCorePath,
-      // Verify RESTORATION, not HEAD identity. Comparing rev-parse HEAD to the
-      // snapshot sha is tautological here (nothing in a session moves HEAD, the
-      // CLI has no shell), so a genuinely failed reset — a stale index.lock, say —
-      // used to verify as success while the session's edits stayed in the
-      // operator's tree. `diff --quiet <sha> --` exits 0 only when tracked content
-      // actually matches the snapshot; untracked files are invisible to it, which
-      // is correct because the clean step owns those.
+      // Verify RESTORATION, not HEAD identity: the pre-checks already proved
+      // that HEAD is the snapshot's, so HEAD says nothing about a reset that
+      // failed (a stale index.lock, say). `diff --quiet <sha> --` exits 0 only
+      // when tracked content matches the snapshot; untracked files are the
+      // clean step's job.
       () => gitSucceeds(['diff', '--quiet', snapshot.headSha, '--'], chtCorePath),
       `working tree matches ${snapshot.headSha}`,
     );

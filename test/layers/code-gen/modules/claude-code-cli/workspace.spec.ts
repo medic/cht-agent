@@ -107,7 +107,7 @@ const rollbackFixture = (overrides: Partial<typeof SNAPSHOT> = {}, script: Scrip
   return { snapshot, script: merged };
 };
 
-describe('workspace.ts (A.2b)', () => {
+describe('workspace.ts', () => {
   describe('snapshotChtCore', () => {
     // The stash name must be predictable in tests that stash successfully.
     beforeEach(() => sinon.stub(Date, 'now').returns(NOW));
@@ -169,7 +169,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.stashSha).to.equal(OUR_SHA);
     });
 
-    it('records the post-stash untracked baseline (#140)', async () => {
+    it('records the post-stash untracked baseline', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // The post-push check: the stash left no tracked change.
@@ -213,7 +213,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.baselineUntracked).to.deep.equal(['ignored-by-committed-rules.log']);
     });
 
-    it('refuses to start when a previous run leaked a cht-agent stash (#140)', async () => {
+    it('refuses to start when a previous run leaked a cht-agent stash', async () => {
       const ws = loadWorkspace({
         'git stash list -z': { stdout: OUR_ENTRY },
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
@@ -291,7 +291,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.headSha).to.equal('abc1234deadbeef');
     });
 
-    it('does not false-positive on a user stash that merely mentions the marker (#140 F-7)', async () => {
+    it('does not false-positive on a user stash that merely mentions the marker', async () => {
       const ws = loadWorkspace({
         'git stash list -z': {
           stdout: stashListZ(['stash@{0}', OTHER_SHA, `On main: wip after ${OUR_NAME} crashed`]),
@@ -304,7 +304,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.headSha).to.equal('abc1234deadbeef');
     });
 
-    it('reports EVERY leaked stash, not just the first line (#140 F-7)', async () => {
+    it('reports EVERY leaked stash, not just the first line', async () => {
       const ws = loadWorkspace({
         'git stash list -z': {
           stdout: stashListZ(
@@ -331,7 +331,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(msg).to.not.match(/stash@\{\d+\}/);
     });
 
-    it('accepts the flag with stray casing and whitespace (#140 M6)', async () => {
+    it('accepts the flag with stray casing and whitespace', async () => {
       const prev = process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
       process.env.CHT_AGENT_IGNORE_LEAKED_STASH = ' TRUE ';
       try {
@@ -348,7 +348,7 @@ describe('workspace.ts (A.2b)', () => {
       }
     });
 
-    it('stops when a zero-exit stash push saved nothing, naming what it did not save (#140 M3)', async () => {
+    it('stops when a zero-exit stash push saved nothing, naming what it did not save', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         'git status --porcelain=v1': { stdout: ' M sub\0' }, // a dirty submodule
@@ -419,7 +419,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(markerCall).to.not.include('AUTO_MERGE');
     });
 
-    it('warns when the stashed work includes a .gitignore edit (#140)', async () => {
+    it('warns when the stashed work includes a .gitignore edit', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // The post-push check: the stash left no tracked change.
@@ -438,7 +438,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(warned).to.exist;
     });
 
-    it('warns for a renamed-away .gitignore and a C-quoted path (#140 F-6)', async () => {
+    it('warns for a renamed-away .gitignore and a C-quoted path', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // Rename AWAY from .gitignore (old side), and a quoted non-ASCII dir.
@@ -457,7 +457,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.exist;
     });
 
-    it('warns for a C-quoted nested .gitignore path (#140 F-6)', async () => {
+    it('warns for a C-quoted nested .gitignore path', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // The post-push check: the stash left no tracked change.
@@ -475,7 +475,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.exist;
     });
 
-    it('warns without promising the CLI cannot touch the unmasked files (#140 C-3)', async () => {
+    it('warns without promising the CLI cannot touch the unmasked files', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // The post-push check: the stash left no tracked change.
@@ -491,7 +491,7 @@ describe('workspace.ts (A.2b)', () => {
         warnSpy.restore();
       }
       const msg = String(warnSpy.getCalls().find(c => /ignore rules revert/.test(String(c.args[0])))?.args[0]);
-      // v1 said the files "will be left untouched", which is false of the CLI.
+      // An earlier text said the files "will be left untouched", which is false of the CLI.
       expect(msg).to.not.match(/left untouched/);
       expect(msg).to.match(/CLI can still read, overwrite, or delete them/);
     });
@@ -558,7 +558,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(files.find((f: { path: string }) => f.path === 'src/untracked.ts')).to.exist;
     });
 
-    it('excludes baseline untracked files and keeps CLI-created ones (#140)', async () => {
+    it('excludes baseline untracked files and keeps CLI-created ones', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         'git diff --name-status -z abc1234': { stdout: '' },
@@ -574,7 +574,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/cli-made.ts']);
     });
 
-    it('stays in phase on a rename entry, which carries two paths (#140 F-2)', async () => {
+    it('stays in phase on a rename entry, which carries two paths', async () => {
       // -z renames emit STATUS\0OLD\0NEW\0; consuming only one path would treat
       // the old path as the next status and desynchronize the whole stream.
       const ws = loadWorkspace({
@@ -590,10 +590,10 @@ describe('workspace.ts (A.2b)', () => {
       expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/new.ts', 'src/after.ts']);
     });
 
-    it('V3-1: a non-array baseline throws instead of misattributing operator files (#140)', async () => {
+    it('a non-array baseline throws instead of misattributing operator files', async () => {
       // Symmetry with the clean path's guard. Without it, `new Set(undefined)` is
       // empty, so every pre-existing untracked file is reported as a session
-      // CREATE and offered for approval into cht-core (silent RC-1 misattribution).
+      // CREATE and offered for approval into cht-core (silent misattribution).
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         'git diff --name-status -z abc1234': { stdout: '' },
@@ -790,7 +790,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(warned).to.not.include('stash drop');
     });
 
-    it('cleans ONLY session-created paths, sparing the baseline (#140)', async () => {
+    it('cleans ONLY session-created paths, sparing the baseline', async () => {
       const calls: string[] = [];
       const { snapshot, script } = rollbackFixture({ baselineUntracked: ['.aider.chat'] }, {
         'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0src/cli-made.ts\0' },
@@ -802,12 +802,12 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.clean).to.equal('ok');
       const cleanCall = calls.find(c => c.startsWith('git clean'));
       // :(literal) so a metachar in a session filename cannot fnmatch-delete an
-      // operator file (#140 F-1).
+      // operator file.
       expect(cleanCall).to.equal('git clean -fd -- :(literal)src/cli-made.ts');
       expect(cleanCall).to.not.include('.aider.chat'); // operator's file spared
     });
 
-    it('skips the clean entirely when the delta is empty (no blanket clean) (#140)', async () => {
+    it('skips the clean entirely when the delta is empty (no blanket clean)', async () => {
       const calls: string[] = [];
       const { snapshot, script } = rollbackFixture({ baselineUntracked: ['.aider.chat', 'operator-notes.md'] }, {
         // Everything untracked is the operator's; nothing of ours to remove.
@@ -954,7 +954,7 @@ describe('workspace.ts (A.2b)', () => {
     });
   });
 
-  describe('verify-then-throw pattern (R14/R15)', () => {
+  describe('verify-then-throw pattern', () => {
     // Stub Date.now so the stash-name is deterministic across the test run.
     beforeEach(() => {
       sinon.stub(Date, 'now').returns(NOW);
@@ -964,7 +964,7 @@ describe('workspace.ts (A.2b)', () => {
       sinon.restore();
     });
 
-    it('A.4: stash push exits non-zero but stash was created → no throw', async () => {
+    it('stash push exits non-zero but stash was created → no throw', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         // The post-push check: the stash left no tracked change.
@@ -980,7 +980,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(snap.stashName).to.equal(OUR_NAME);
     });
 
-    it('A.4: stash push exits non-zero AND no stash was created → re-throws', async () => {
+    it('stash push exits non-zero AND no stash was created → re-throws', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         // The post-push check: the stash left no tracked change.
@@ -1058,7 +1058,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
     });
 
-    it('A.5: reset --hard exits non-zero but HEAD matches → no warning', async () => {
+    it('reset --hard exits non-zero but HEAD matches → no warning', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard abc1234': { error: new Error('warning during reset') },
         // verify (tree diff vs the snapshot) says the reset landed
@@ -1077,8 +1077,8 @@ describe('workspace.ts (A.2b)', () => {
       expect(failureWarn).to.be.undefined;
     });
 
-    it('M1: reset failure is reported when the tree does NOT match the snapshot (#140)', async () => {
-      // v1 verified `rev-parse HEAD === snapshot.headSha`, which nothing in a
+    it('reset failure is reported when the tree does NOT match the snapshot', async () => {
+      // An earlier check verified `rev-parse HEAD === snapshot.headSha`, which nothing in a
       // session can falsify, so a real reset failure verified as success and the
       // session's edits silently stayed in the operator's tree.
       const { snapshot, script } = rollbackFixture({}, {
@@ -1115,7 +1115,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(calls.some(c => c.startsWith('git stash apply'))).to.equal(false);
     });
 
-    it('F-4: a baseline-less snapshot throws instead of blanket-cleaning (#140)', async () => {
+    it('a baseline-less snapshot throws instead of blanket-cleaning', async () => {
       const calls: string[] = [];
       // An untyped caller (or a stale spec literal) omitting the baseline.
       const { snapshot, script } = rollbackFixture({ baselineUntracked: undefined }, {
@@ -1130,7 +1130,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(calls.some(c => c.startsWith('git clean'))).to.equal(false); // nothing deleted
     });
 
-    it('M5: a failing chunk does not stop later chunks from being cleaned (#140)', async () => {
+    it('a failing chunk does not stop later chunks from being cleaned', async () => {
       // >1000 delta paths means >1 `git clean` invocation. Aborting on the first
       // failure would leave every later chunk's session file on disk.
       const paths = Array.from({ length: 1500 }, (_, i) => `session/f${i}.ts`);
@@ -1151,13 +1151,13 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.errors.join(' ')).to.match(/chunk 1 blew up/);
     });
 
-    it('M2: a non-ENOENT stat error counts as NOT removed → clean failed (#140)', async () => {
+    it('a non-ENOENT stat error counts as NOT removed → clean failed', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
         'git clean -fd': { error: new Error('permission denied') },
       });
       const ws = loadWorkspace(script, {
-        // v1 caught every error as "removed"; EACCES means the clean did NOT work.
+        // An earlier check caught every error as "removed"; EACCES means the clean did NOT work.
         lstat: sinon.stub().rejects(errno('EACCES')),
       });
 
@@ -1165,7 +1165,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.clean).to.equal('failed');
     });
 
-    it('A.5: clean exits non-zero but the delta paths are gone → no warning', async () => {
+    it('clean exits non-zero but the delta paths are gone → no warning', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
         'git clean -fd': { error: new Error('warning: could not remove') },
@@ -1187,7 +1187,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.clean).to.equal('ok');
     });
 
-    it('A.5: clean does NOT report failure just because the tree is legitimately dirty (#140)', async () => {
+    it('clean does NOT report failure just because the tree is legitimately dirty', async () => {
       // The operator's own untracked files survive rollback by design, so the old
       // "status --porcelain is empty" verifier would have misreported a failure.
       const { snapshot, script } = rollbackFixture({ baselineUntracked: ['.aider.chat'] }, {
@@ -1236,7 +1236,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.survivors).to.have.length(23);
     });
 
-    it('A.5: clean reports failure when a delta path still exists', async () => {
+    it('clean reports failure when a delta path still exists', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
         'git clean -fd': { error: new Error('permission denied') },
@@ -1285,7 +1285,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(warned).to.not.match(/stash@\{\d+\}/);
     });
 
-    it('A.14: returns typed RollbackResult with per-op outcomes', async () => {
+    it('returns typed RollbackResult with per-op outcomes', async () => {
       const { snapshot, script } = rollbackFixture(WITH_STASH);
       const ws = loadWorkspace(script);
 
@@ -1296,7 +1296,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.errors).to.deep.equal([]);
     });
 
-    it('A.14: stashPop is "skipped" when there is no stash', async () => {
+    it('stashPop is "skipped" when there is no stash', async () => {
       const { snapshot, script } = rollbackFixture();
       const ws = loadWorkspace(script);
 
@@ -1304,7 +1304,7 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.stashPop).to.equal('skipped');
     });
 
-    it('A.14: reset failure is captured in result.errors and result.reset', async () => {
+    it('reset failure is captured in result.errors and result.reset', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard': { error: new Error('reset blew up') },
         // Verify says the tree still differs from the snapshot, so reset is judged failed.

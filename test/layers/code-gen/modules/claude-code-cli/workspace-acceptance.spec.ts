@@ -15,7 +15,7 @@ import {
 const execFileAsync = promisify(execFile);
 
 /**
- * Integration-style coverage for the #140 dirty-checkout scenario, against a REAL
+ * Integration-style coverage for the dirty-checkout scenario, against a REAL
  * temp git repo (no proxyquire): the unit specs stub git, so only a real repo can
  * prove the git semantics that caused the data loss — stashing an uncommitted
  * .gitignore edit unmasks files that were ignored only by that edit, and a blanket
@@ -118,7 +118,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await read('tracked.txt')).to.equal('committed content\n');
   });
 
-  it('does not glob-delete an operator file when a session filename holds metachars (#140 F-1)', async () => {
+  it('does not glob-delete an operator file when a session filename holds metachars ', async () => {
     // The operator file has to be BASELINE-untracked to be at risk, i.e. ignored
     // at stash time and unmasked once the .gitignore edit is stashed (the aider
     // shape). Passed raw, the session's `pages/[id].tsx` is an fnmatch bracket
@@ -157,7 +157,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await read('report-2026.txt')).to.equal('operator report\n');
   });
 
-  it('captures and cleans a non-ASCII session filename (#140 F-2)', async () => {
+  it('captures and cleans a non-ASCII session filename', async () => {
     // git C-quotes non-ASCII paths by default ("caf\303\251.txt"), so without -z
     // the file is dropped from capture and the clean matches nothing while still
     // reporting success, leaving phantom residue that pollutes the next baseline.
@@ -174,9 +174,9 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await exists('日本語.md')).to.equal(false);
   });
 
-  it('captures and cleans a filename containing a newline (#140 C-5)', async () => {
-    // THE discriminator for -z over core.quotePath=false: with quoting disabled,
-    // the raw newline splits one path into two bogus ones.
+  it('captures and cleans a filename containing a newline', async () => {
+    // git C-quotes control characters even with core.quotePath=false, so only
+    // -z gives this path verbatim.
     const weird = 'we\nird.txt';
     const snapshot = await snapshotChtCore(repo);
     await write(weird, 'newline in the name\n');

@@ -54,7 +54,7 @@ const baseInput = (chtCorePath = '/tmp/cht-core-test'): CodeGenModuleInput => ({
 
 const planResultText = '=== PLAN ===\n1. CREATE src/a.ts - implement feature\n=== END PLAN ===\n';
 
-describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
+describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
   afterEach(() => {
     __resetShutdownForTests();
     sinon.restore();
@@ -190,7 +190,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     expect(rollbackStub.callCount).to.equal(1);
   });
 
-  describe('V3 typed RollbackResult surface (A.14)', () => {
+  describe('V3 typed RollbackResult surface', () => {
     it('throws a halt error with an outcome-based checklist when the rollback reset failed', async () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
@@ -516,7 +516,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     });
   });
 
-  describe('A.15 LLM discovery extraction', () => {
+  describe('LLM discovery extraction', () => {
     const multiPlanText = [
       '=== PLAN ===',
       '1. CREATE src/a.ts - implement A',
@@ -689,7 +689,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     });
   });
 
-  describe('V1 plan-adherence reconciliation (A.12)', () => {
+  describe('V1 plan-adherence reconciliation', () => {
     /**
      * Multi-item plan so the tests can demonstrate missing/extra independently
      * of each other.
@@ -769,7 +769,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     });
   });
 
-  describe('R16 partial-completion detection (A.9)', () => {
+  describe('R16 partial-completion detection', () => {
     it('sets partialGeneration=true when execute phase returns is_error', async () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
