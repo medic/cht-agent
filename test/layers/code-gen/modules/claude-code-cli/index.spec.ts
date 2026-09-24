@@ -64,7 +64,8 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     const spawnStub = sinon.stub()
       .onFirstCall().resolves(planResultText) // plan phase
       .onSecondCall().resolves('execute ok');  // execute phase
-    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
+    const baseline = ['.aider.chat', 'node_modules/'];
+    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashSha: null, baselineUntracked: baseline });
     const captureStub = sinon.stub().resolves([
       { path: 'src/a.ts', content: 'export const a = 1;\n', purpose: 'CLI-created file' },
     ]);
@@ -92,6 +93,8 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     expect(rollbackStub.callCount).to.equal(1); // always rolls back
     expect(result.files).to.have.length(1);
     expect(result.files[0].path).to.equal('src/a.ts');
+    // The snapshot's own baseline, or capture would claim the operator's files.
+    expect(captureStub.firstCall.args).to.deep.equal(['/tmp/cht-core-test', 'abc1234', baseline]);
   });
 
   it('returns empty result and rolls back when shutdown is requested after snapshot but before plan', async () => {
@@ -407,12 +410,14 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
   describe('R17 relaxed-retry on zero-files abstain (v7)', () => {
     const planResult = '=== PLAN ===\n1. CREATE src/a.ts - implement\n=== END PLAN ===\n';
 
+    const retryBaseline = ['operator-notes.md', 'cache/'];
+
     const wireRetryHarness = (
       captureResults: Array<Array<{ path: string; content: string }>>,
       executeParse = { result: 'execute stdout', isError: false, numTurns: 20 },
     ) => {
       const spawnStub = sinon.stub().resolves('cli stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashSha: null, baselineUntracked: retryBaseline });
       const captureStub = sinon.stub();
       captureResults.forEach((files, i) => captureStub.onCall(i).resolves(files));
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
@@ -447,6 +452,10 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       // 1 plan call + 1 STRICT execute + 1 relaxed retry = 3 spawn calls
       expect(spawnStub.callCount).to.equal(3);
       expect(captureStub.callCount).to.equal(2);
+      // Both captures, strict and relaxed, get the snapshot's baseline.
+      for (const call of captureStub.getCalls()) {
+        expect(call.args).to.deep.equal(['/tmp/cht-core-test', 'abc1234', retryBaseline]);
+      }
       expect(result.files).to.have.length(1);
       expect(result.files[0].path).to.equal('src/a.ts');
       const issues: CrossFileIssue[] = result.crossFileIssues ?? [];
