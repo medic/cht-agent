@@ -16,7 +16,7 @@ function isResultMessage(value: unknown): value is Record<string, unknown> {
 }
 
 function resultFrom(value: unknown): Record<string, unknown> | null {
-  if (Array.isArray(value)) return value.find(isResultMessage) ?? null;
+  if (Array.isArray(value)) return value.findLast(isResultMessage) ?? null;
   return isResultMessage(value) ? value : null;
 }
 
@@ -60,7 +60,7 @@ function span(text: string, open: string, close: string): string | null {
 
 function* lineBlocks(text: string): Generator<string> {
   const lines = text.split('\n');
-  const starts = lines.flatMap((line, i) => (line.startsWith('[') || line.startsWith('{') ? [i] : []));
+  const starts = lines.flatMap((line, i) => (/^(?:[[{]\s*$|\[\s*\{|\{\s*")/.test(line) ? [i] : []));
   const ends = lines.flatMap((line, i) => (/[\]}]\s*$/.test(line) && !/^\s/.test(line) ? [i] : [])).reverse();
   for (const start of starts) yield* blocksFrom(lines, start, ends);
 }
@@ -79,10 +79,12 @@ function* candidatesFrom(stdout: string): Generator<string | null> {
 }
 
 /**
- * Find the `type: "result"` message in CLI stdout. Newer CLI versions print a JSON
- * array of every message (init, assistant, result); older ones print the result
- * object alone. Either may be preceded or followed by non-JSON noise, including
- * noise with brackets, as long as the JSON starts and ends at column 0 of a line.
+ * Find the last `type: "result"` message in CLI stdout. With `--verbose` (or the
+ * `verbose` setting) the CLI prints a JSON array of every message (init,
+ * assistant, result). Otherwise it prints the result object alone. Either may be
+ * preceded or followed by non-JSON noise, including noise with brackets, as long
+ * as the JSON starts and ends at column 0 of a line. Error results carry
+ * `errors: string[]` and no `result`, so the joined errors become the `result`.
  *
  * @example
  * findResultEnvelope('[{"type":"system"},{"type":"result","result":"ok"}]'); // { type: 'result', result: 'ok' }
@@ -92,9 +94,13 @@ export function findResultEnvelope<T = Record<string, unknown>>(stdout: string):
   for (const candidate of candidatesFrom(stdout)) {
     if (!candidate) continue;
     const found = resultFrom(tryParse(candidate));
-    if (found) return found as T;
+    if (found) return withErrorText(found) as T;
   }
   return null;
+}
+
+function withErrorText(message: Record<string, unknown>): Record<string, unknown> {
+  return message.result === undefined && Array.isArray(message.errors) ? { ...message, result: message.errors.join('; ') } : message;
 }
 
 function promptTokens(entry: CliModelUsageEntry): number {
