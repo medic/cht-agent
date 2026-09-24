@@ -169,7 +169,7 @@ describe('workspace.ts', () => {
       expect(snap.stashSha).to.equal(OUR_SHA);
     });
 
-    it('records the post-stash untracked baseline', async () => {
+    it('records the untracked files the listing reports as the baseline', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // The post-push check: the stash left no tracked change.
@@ -202,15 +202,17 @@ describe('workspace.ts', () => {
       ]);
     });
 
-    it('reads the baseline even on a clean tree (no stash taken)', async () => {
+    it('reads the baseline when status hides untracked files (status.showUntrackedFiles=no)', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // With status.showUntrackedFiles=no the tree looks clean, so no stash is
+        // taken, but the operator's untracked file is there all the same.
         'git status --porcelain': { stdout: '' },
-        'git ls-files --others --exclude-standard': { stdout: 'ignored-by-committed-rules.log\0' },
+        'git ls-files --others --exclude-standard': { stdout: 'operator-notes.md\0' },
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.stashSha).to.be.null;
-      expect(snap.baselineUntracked).to.deep.equal(['ignored-by-committed-rules.log']);
+      expect(snap.baselineUntracked).to.deep.equal(['operator-notes.md']);
     });
 
     it('refuses to start when a previous run leaked a cht-agent stash', async () => {
@@ -1058,7 +1060,7 @@ describe('workspace.ts', () => {
       expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
     });
 
-    it('reset --hard exits non-zero but HEAD matches → no warning', async () => {
+    it('reset --hard exits non-zero but the tree matches the snapshot → no warning', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard abc1234': { error: new Error('warning during reset') },
         // verify (tree diff vs the snapshot) says the reset landed
@@ -1193,7 +1195,6 @@ describe('workspace.ts', () => {
       const { snapshot, script } = rollbackFixture({ baselineUntracked: ['.aider.chat'] }, {
         'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0src/cli-made.ts\0' },
         'git clean -fd': { error: new Error('warning: could not remove') },
-        'git status --porcelain': { stdout: '?? .aider.chat\n' }, // still dirty, legitimately
       });
       const ws = loadWorkspace(script, {
         lstat: sinon.stub().rejects(errno('ENOENT')),

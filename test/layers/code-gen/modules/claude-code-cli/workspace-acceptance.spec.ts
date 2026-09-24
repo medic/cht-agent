@@ -105,6 +105,36 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(stashes).to.not.include(STASH_MARKER_PREFIX);
   });
 
+  it('residual: a session overwrite of a file untracked at snapshot is neither captured nor undone', async () => {
+    await makeDirty(); // .aider.chat is unmasked by the stashed .gitignore edit: baseline-untracked
+    const snapshot = await snapshotChtCore(repo);
+    expect(snapshot.baselineUntracked).to.include('.aider.chat');
+
+    await write('.aider.chat', 'the session overwrote this\n');
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    await rollbackChtCore(repo, snapshot);
+
+    expect(captured.map(f => f.path)).to.not.include('.aider.chat');
+    // OVERWRITE: it was never stashed, so rollback cannot bring the old content back.
+    expect(await read('.aider.chat')).to.equal('the session overwrote this\n');
+    expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+  });
+
+  it('residual: a session delete of a file untracked at snapshot is neither captured nor undone', async () => {
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    expect(snapshot.baselineUntracked).to.include('.aider.tags');
+
+    await fs.rm(path.join(repo, '.aider.tags'));
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    await rollbackChtCore(repo, snapshot);
+
+    expect(captured.map(f => f.path)).to.not.include('.aider.tags');
+    // DELETE: it was never stashed, so rollback cannot bring it back.
+    expect(await exists('.aider.tags')).to.equal(false);
+    expect(await read('.aider.chat')).to.equal('aider chat history\n');
+  });
+
   it('leaves a clean checkout untouched apart from the session files', async () => {
     const snapshot = await snapshotChtCore(repo);
     expect(snapshot.stashSha).to.be.null;
