@@ -888,17 +888,25 @@ async function collectUntrackedCreates(
   baseline: ReadonlySet<string>,
 ): Promise<GeneratedFile[]> {
   const files: GeneratedFile[] = [];
-  for (const relPath of untrackedNow) {
-    if (isOperatorPath(relPath, baseline)) continue; // the operator's file, not ours
-    if (relPath.endsWith('/')) {
-      // A nested repo or gitfile dir: git lists it as one entry and never its files.
-      console.warn(`[claude-code-cli] Not captured: ${relPath} (nested repository).`);
-      continue;
-    }
-    const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
+  // The operator's files are not ours to capture.
+  for (const relPath of untrackedNow.filter(p => !isOperatorPath(p, baseline))) {
+    const file = await readUntrackedCreate(chtCorePath, relPath, preRunSha);
     if (file) files.push(file);
   }
   return files;
+}
+
+async function readUntrackedCreate(
+  chtCorePath: string,
+  relPath: string,
+  preRunSha: string,
+): Promise<GeneratedFile | null> {
+  if (relPath.endsWith('/')) {
+    // A nested repo or gitfile dir: git lists it as one entry and never its files.
+    console.warn(`[claude-code-cli] Not captured: ${relPath} (nested repository).`);
+    return null;
+  }
+  return readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
 }
 
 async function readChtCoreFile(

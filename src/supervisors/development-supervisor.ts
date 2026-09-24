@@ -115,6 +115,22 @@ function keepEarlierWarnings(
   return { ...result, warnings: [...new Set([...earlier, ...(result.warnings ?? [])])] };
 }
 
+type CodeGenerationReadyState = typeof DevelopmentStateAnnotation.State & {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  options: DevelopmentOptions;
+};
+
+function hasCodeGenerationInputs(
+  state: typeof DevelopmentStateAnnotation.State,
+): state is CodeGenerationReadyState {
+  return Boolean(
+    state.issue && state.orchestrationPlan && state.researchFindings && state.contextAnalysis && state.options,
+  );
+}
+
 function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
   return issue.issue.requirements.map(req => {
     const isImplemented = codeGen.implementedRequirements.includes(req);
@@ -260,8 +276,7 @@ export class DevelopmentSupervisor {
     const todoId = 'development-1';
     this.todos.start(todoId);
 
-    if (!state.issue || !state.orchestrationPlan || !state.researchFindings ||
-        !state.contextAnalysis || !state.options) {
+    if (!hasCodeGenerationInputs(state)) {
       this.todos.fail(todoId, 'Missing required data');
       return {
         errors: ['Missing required data for code generation'],

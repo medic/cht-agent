@@ -229,20 +229,26 @@ export async function runApiCompileGate(
     return snapshotFailure(err);
   }
 
-  let result: CompileValidationResult;
-  try {
-    const written = materializeGuarded(chtCorePath, files);
-    result =
-      written.length === 0
-        ? skipped('no in-bounds files to type-check')
-        : await runCompileDefensive(chtCorePath);
-  } catch (err) {
-    result = skipped(`materialization failed: ${msg(err)}`);
-  }
+  const result = await compileMaterialized(chtCorePath, files);
 
   // Always roll back (plain sequential call, no throw-from-finally). Only a
   // failed reset or restore throws, via handleApiRollbackOutcome.
   return withWarnings(result, await rollBackGate(chtCorePath, snapshot));
+}
+
+/** Write the in-bounds files and type-check them; any failure here degrades to a skip. */
+async function compileMaterialized(
+  chtCorePath: string,
+  files: ReadonlyArray<GeneratedFile>,
+): Promise<CompileValidationResult> {
+  try {
+    const written = materializeGuarded(chtCorePath, files);
+    return written.length === 0
+      ? skipped('no in-bounds files to type-check')
+      : await runCompileDefensive(chtCorePath);
+  } catch (err) {
+    return skipped(`materialization failed: ${msg(err)}`);
+  }
 }
 
 function withWarnings(result: CompileValidationResult, warnings: string[]): CompileValidationResult {
