@@ -191,10 +191,11 @@ Every generation records the model, prompt, completion, latency, and errors. Cos
 
 ## Delivery Semantics
 
-Spans are exported over OTLP/HTTP by a batching span processor and scores by the client's queue. Both
-use a 3-second request timeout so an unreachable Langfuse costs at most a few seconds per run. The
-OTLP exporter applies its own retry/backoff on transient failures; the exact retry count is not
-configurable from this module. `shutdownLangfuse()` flushes both queues before `process.exit`.
+Spans are exported over OTLP/HTTP by a batching span processor with a 3-second request timeout. The
+OTLP exporter applies its own retry/backoff on transient failures within that time. Scores go through
+the client's queue, which uses the SDK default timeout of 60 seconds (`@langfuse/client` 5.11.1 ignores
+its `timeout` option). `shutdownLangfuse()` flushes both queues before `process.exit` and only logs a
+warning when Langfuse is unreachable, so tracing never changes a run's exit code.
 
 ---
 
@@ -206,7 +207,9 @@ configurable from this module. `shutdownLangfuse()` flushes both queues before `
   `memory-pipeline-pr` root span carries the overall input/output, and `triage-classify` /
   `distill-draft` carry the prompts and completions. Observation evaluators cannot read sibling or
   child observations, so put every variable an evaluator needs on the observation it targets.
-- No exports (Blob Storage, PostHog, Mixpanel) or direct Public API calls are made from this codebase.
+- No exports (Blob Storage, PostHog, Mixpanel) are configured. The only Public API call is score
+  creation: `@langfuse/client` sends `score-create` events to `/api/public/ingestion`, which Langfuse
+  keeps supporting after the 2026-11-16 cutover.
 
 ## Future Work
 

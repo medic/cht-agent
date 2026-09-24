@@ -79,7 +79,24 @@ describe('observability', () => {
   });
 
   describe('enabled', () => {
-    beforeEach(() => { process.env.LANGFUSE_ENABLED = 'true'; });
+    beforeEach(() => {
+      process.env.LANGFUSE_ENABLED = 'true';
+      process.env.LANGFUSE_PUBLIC_KEY = 'pk-lf-test';
+      process.env.LANGFUSE_SECRET_KEY = 'sk-lf-test';
+    });
+
+    afterEach(() => {
+      delete process.env.LANGFUSE_PUBLIC_KEY;
+      delete process.env.LANGFUSE_SECRET_KEY;
+    });
+
+    it('exports nothing when a Langfuse key is missing', async () => {
+      delete process.env.LANGFUSE_SECRET_KEY;
+      await mod.withTrace({ name: 't' }, async (root) => mod.scoreTrace(root, { name: 'outcome', value: 1 }));
+      await mod.shutdownLangfuse();
+      expect(processorParams).to.have.length(0);
+      expect(scores).to.have.length(0);
+    });
 
     it('configures the span processor with a bounded request timeout', async () => {
       await mod.withTrace({ name: 't' }, async () => {});
@@ -179,6 +196,17 @@ describe('observability', () => {
       expect(clientShutdowns).to.equal(1);
       await mod.shutdownLangfuse();
       expect(clientShutdowns).to.equal(2);
+    });
+
+    it('resolves and still shuts the client down when the span export fails', async () => {
+      exporter.export = (_spans, done) => done({ code: 1, error: new Error('Unauthorized') });
+      await mod.withTrace({ name: 't' }, async () => {});
+      const warn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (msg: string) => { warnings.push(msg); };
+      try { await mod.shutdownLangfuse(); } finally { console.warn = warn; }
+      expect(clientShutdowns).to.equal(1);
+      expect(warnings.join('\n')).to.include('Unauthorized');
     });
 
     it('returns parsed output and skips Langfuse when no root is given', async () => {
