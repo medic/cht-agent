@@ -194,7 +194,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
         .onSecondCall().resolves('execute stdout');
       const snapshotStub = sinon.stub().resolves({
         headSha: 'abc1234',
-        stashRef: 'stash@{0}',
+        stashSha: '1111111111111111111111111111111111111111',
         stashName: 'cht-agent-claude-code-cli-1700000000000',
         baselineUntracked: [],
       });
@@ -279,30 +279,14 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       expect((thrown as Error).cause).to.equal(workError);
     });
 
-    it('warns but does NOT throw when only clean or stashPop failed', async () => {
+    /** A module whose rollback resolves `rollback`; capture returns one file, so no relaxed retry. */
+    const wireRollbackOutcome = (rollback: Record<string, unknown>) => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
-      const snapshotStub = sinon.stub().resolves({
-        headSha: 'abc1234',
-        stashRef: 'stash@{0}',
-        stashName: 'cht-agent-claude-code-cli-1700000000000',
-        baselineUntracked: [],
-      });
-      // Return at least one file so the R17 relaxed retry does NOT fire — this
-      // test is about rollback handling, not the retry path.
-      const captureStub = sinon.stub().resolves([{ path: 'src/a.ts', content: 'x' }]);
-      const rollbackStub = sinon.stub().resolves({
-        reset: 'ok',
-        clean: 'failed',
-        stashPop: 'failed',
-        errors: ['clean: boom', 'stash pop: boom'],
-      });
-
       const parseStub = sinon.stub();
       parseStub.onFirstCall().returns({ result: planResultText, isError: false, numTurns: 5 });
       parseStub.onSecondCall().returns({ result: 'execute output', isError: false, numTurns: 20 });
-
       const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
         './cli-driver': {
           spawnClaudeCli: spawnStub,
@@ -311,16 +295,99 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           DEFAULT_MAX_TURNS: 150,
         },
         './workspace': workspaceStub({
-          snapshotChtCore: snapshotStub,
-          captureChtCoreDiff: captureStub,
-          rollbackChtCore: rollbackStub,
+          snapshotChtCore: sinon.stub().resolves({
+            headSha: 'abc1234',
+            stashSha: '1111111111111111111111111111111111111111',
+            stashName: 'cht-agent-claude-code-cli-1700000000000',
+            baselineUntracked: [],
+          }),
+          captureChtCoreDiff: sinon.stub().resolves([{ path: 'src/a.ts', content: 'x' }]),
+          rollbackChtCore: sinon.stub().resolves(rollback),
         }),
       });
+      return new ClaudeCodeCLICodeGenModule();
+    };
 
-      const module = new ClaudeCodeCLICodeGenModule();
-      // Should NOT throw because reset is 'ok'.
+    it('warns but does NOT throw when only the clean failed', async () => {
+      const module = wireRollbackOutcome({
+        reset: 'ok', clean: 'failed', stashPop: 'ok', errors: ['clean: boom'],
+      });
+      sinon.stub(console, 'error');
       const result = await module.generate(baseInput());
       expect(result.files).to.have.length(1);
+    });
+
+    it('throws a stash halt error with the restore steps when the stash restore failed', async () => {
+      const module = wireRollbackOutcome({
+        reset: 'ok', clean: 'ok', stashPop: 'failed',
+        errors: ["stash apply: error: unable to unlink old 'ro/f.txt': Permission denied"],
+        popBlockers: ['ro/f.txt'], unwritableDirs: ['ro'],
+      });
+      const errorSpy = sinon.stub(console, 'error');
+      let thrown: unknown;
+      try {
+        await module.generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.be.instanceOf(WorkspaceSafetyError);
+      expect((thrown as { kind: string }).kind).to.equal('stash');
+      const output = errorSpy.getCalls().map(c => String(c.args[0])).join('\n');
+      expect(output).to.include('[claude-code-cli] Rollback could not restore your work');
+      expect(output).to.match(/Fix the permissions/);
+      expect(output).to.not.match(/stash@\{\d+\}/);
+    });
+
+    it('prints a snapshot refusal once, with its own prefix, and rethrows it', async () => {
+      const refusal = new WorkspaceSafetyError('precondition', 'in the middle of a merge', {
+        lines: ['cht-core is in the middle of a git operation (MERGE_HEAD)'],
+      });
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': { spawnClaudeCli: sinon.stub(), parseCliResult: sinon.stub(), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+        './workspace': workspaceStub({
+          snapshotChtCore: sinon.stub().rejects(refusal),
+          captureChtCoreDiff: sinon.stub(),
+          rollbackChtCore: sinon.stub(),
+        }),
+      });
+      const errorSpy = sinon.stub(console, 'error');
+      let thrown: unknown;
+      try {
+        await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.equal(refusal);
+      const printed = errorSpy.getCalls().map(c => String(c.args[0]));
+      expect(printed).to.deep.equal(['[claude-code-cli] cht-core is in the middle of a git operation (MERGE_HEAD)']);
+    });
+
+    it('prints both drift reports when capture and rollback see a moved HEAD', async () => {
+      const captureDrift = new WorkspaceSafetyError('drift', 'HEAD moved', { lines: ['capture: HEAD moved'] });
+      const rollbackDrift = new WorkspaceSafetyError('drift', 'HEAD moved', { lines: ['rollback: HEAD moved'] });
+      const spawnStub = sinon.stub()
+        .onFirstCall().resolves(planResultText)
+        .onSecondCall().resolves('execute stdout');
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+        './workspace': workspaceStub({
+          snapshotChtCore: sinon.stub().resolves({ headSha: 'abc1234', stashSha: null, stashName: null, baselineUntracked: [] }),
+          captureChtCoreDiff: sinon.stub().rejects(captureDrift),
+          rollbackChtCore: sinon.stub().rejects(rollbackDrift),
+        }),
+      });
+      const errorSpy = sinon.stub(console, 'error');
+      let thrown: unknown;
+      try {
+        await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.equal(rollbackDrift);
+      expect((thrown as Error).cause).to.equal(captureDrift);
+      const printed = errorSpy.getCalls().map(c => String(c.args[0]));
+      expect(printed).to.include('[claude-code-cli] capture: HEAD moved');
+      expect(printed).to.include('[claude-code-cli] rollback: HEAD moved');
     });
   });
 

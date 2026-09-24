@@ -36,11 +36,10 @@ import {
   snapshotChtCore,
   captureChtCoreDiff,
   rollbackChtCore,
-  buildRecoveryChecklist,
+  rollbackHaltError,
   reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
-  WorkspaceSafetyError,
 } from './workspace';
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
@@ -77,13 +76,17 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before snapshot');
 
     // Snapshot pre-run state so we can roll back after capture.
-    const snapshot = await snapshotChtCore(chtCorePath);
-    console.log(`[claude-code-cli] Snapshot: HEAD=${snapshot.headSha.substring(0, 7)} stash=${snapshot.stashRef ?? 'none'}`);
+    const snapshot = await snapshotChtCore(chtCorePath).catch((err: unknown) => {
+      reportSafetyError(err, LOG);
+      throw err;
+    });
+    console.log(`[claude-code-cli] Snapshot: HEAD=${snapshot.headSha.substring(0, 7)} stash=${snapshot.stashName ?? 'none'}`);
 
     // Explicit try/catch instead of try/finally with throw: rollback may fail
     // and need to surface its own error, but throwing from `finally` is unsafe
     // (it would mask any error from the work block). Manage both errors here.
     const work = await this.runWorkBlock(input, snapshot, chtCorePath);
+    reportSafetyError(work.error, LOG);
     await rollBackAfterWork(chtCorePath, snapshot, work.error);
 
     if (work.error) throw work.error;
@@ -345,9 +348,9 @@ function withCause(err: unknown, cause: unknown): unknown {
 
 /**
  * Inspect the rollback result and surface failures.
- *  - reset failed → throw a halt error carrying the recovery checklist; the
- *    stash is still in place and cht-core may hold session edits.
- *  - clean / stashPop failed → log warnings; do not throw.
+ *  - reset or stash restore failed → throw a halt error carrying the recovery
+ *    checklist; the operator's work is still in the stash.
+ *  - clean failed → log warnings; do not throw.
  *  - all ok → silent.
  */
 function handleRollbackOutcome(
@@ -364,14 +367,8 @@ function handleRollbackOutcome(
   console.error(`${LOG} ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:`);
   for (const e of rollback.errors) console.error(`${LOG}   - ${e}`);
 
-  if (rollback.reset === 'failed') {
-    throw new WorkspaceSafetyError(
-      'reset',
-      `claude-code-cli rollback failed: ${rollback.errors.join('; ')}. ` +
-      `Inspect cht-core working tree before retrying.`,
-      { lines: buildRecoveryChecklist(chtCorePath, snapshot, rollback) },
-    );
-  }
+  const halt = rollbackHaltError('claude-code-cli', chtCorePath, snapshot, rollback);
+  if (halt) throw halt;
 }
 
 /**

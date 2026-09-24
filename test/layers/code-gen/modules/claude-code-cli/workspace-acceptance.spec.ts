@@ -104,7 +104,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
 
   it('leaves a clean checkout untouched apart from the session files', async () => {
     const snapshot = await snapshotChtCore(repo);
-    expect(snapshot.stashRef).to.be.null;
+    expect(snapshot.stashSha).to.be.null;
 
     await write('generated.ts', 'export const x = 1;\n');
     const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
@@ -312,7 +312,8 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     await makeDirty();
     // Snapshot, then "die" before rollback.
     const snapshot = await snapshotChtCore(repo);
-    expect(snapshot.stashRef).to.equal('stash@{0}');
+    const { stdout: ourSha } = await git('rev-parse', 'refs/stash');
+    expect(snapshot.stashSha).to.equal(ourSha.trim());
 
     let message = '';
     try {
@@ -321,19 +322,225 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       message = (err as Error).message;
     }
     expect(message).to.match(/leftover cht-agent stash/i);
-    // Lookup form (#140 F-8/C-1): `stash pop <name>` is not valid git, and a
-    // stash@{N} baked in at snapshot time goes stale once anything else is
-    // stashed. The message tells the operator how to resolve the ref instead.
-    expect(message).to.include('stash list | grep');
-    expect(message).to.include('stash pop <the stash@{N} shown>');
+    expect(message).to.not.match(/stash@\{\d+\}/);
+    expect(message).to.not.match(/interrupted run/);
 
-    // Follow that guidance for real: resolve the ref from the marker, then pop it.
-    const { stdout: list } = await git('stash', 'list', '--format=%gd %gs');
-    const line = list.split('\n').find(l => /cht-agent-claude-code-cli-\d+\s*$/.test(l));
-    expect(line, 'a cht-agent stash should be listed').to.exist;
-    await git('stash', 'pop', line!.split(' ')[0]);
+    // The operator then stashes other work, with a decoy message that mentions our name.
+    await write('tracked.txt', 'other operator work\n');
+    await git('stash', 'push', '-m', `note about ${snapshot.stashName} crash`);
+
+    // Follow the printed two-step guidance for real, in a shell.
+    const found = /Find the stash: (.+?) Then restore it: (.+? stash pop --index) </.exec(message);
+    expect(found, 'the message holds both steps').to.exist;
+    const [, findCommand, restoreCommand] = found as RegExpExecArray;
+    const { stdout: hit } = await execFileAsync('sh', ['-c', findCommand]);
+    const lines = hit.split('\n').filter(Boolean);
+    expect(lines, 'exactly our entry, not the decoy').to.have.length(1);
+    await execFileAsync('sh', ['-c', `${restoreCommand} ${lines[0].split(' ')[0]}`]);
+
     expect(await read('.gitignore')).to.equal('node_modules/\n.aider*\n');
     expect(await read('tracked.txt')).to.equal('operator work in progress\n');
     expect(await read('operator-notes.md')).to.equal('my notes\n');
+    const { stdout: left } = await git('stash', 'list', '--format=%gs');
+    expect(left.trim()).to.match(/note about cht-agent-claude-code-cli-\d+ crash$/);
+  });
+
+  /** status (all untracked) and the index, byte for byte. */
+  const treeState = async () => ({
+    status: (await git('status', '--porcelain=v1', '-z', '--untracked-files=all')).stdout,
+    index: (await git('ls-files', '-s', '-z')).stdout,
+  });
+
+  const commitFile = async (rel: string, content: string) => {
+    await fs.mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await write(rel, content);
+    await git('add', rel);
+    await git('commit', '-m', `add ${rel}`);
+  };
+
+  /** The error a call rejects with, or undefined. */
+  const rejection = async (run: () => Promise<unknown>): Promise<{ kind?: string; lines?: string[]; message?: string } | undefined> => {
+    try {
+      await run();
+    } catch (err) {
+      return err as { kind?: string; lines?: string[]; message?: string };
+    }
+    return undefined;
+  };
+
+  it('restores and drops only our stash when the operator stashes during the session', async () => {
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    // The operator stashes new work on top of ours mid-session.
+    await write('tracked.txt', 'operator mid-session edit\n');
+    await git('stash', 'push', '-m', 'operator mid-session wip');
+    await write('src-new.ts', 'export const s = 1;\n');
+
+    const rollback = await rollbackChtCore(repo, snapshot);
+
+    expect(rollback.stashPop).to.equal('ok');
+    expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+    const { stdout } = await git('stash', 'list', '--format=%gs');
+    expect(stdout.trim().split('\n')).to.have.length(1);
+    expect(stdout).to.include('operator mid-session wip');
+  });
+
+  it('changes nothing when the operator restored our stash during the session', async () => {
+    await commitFile('older.txt', 'older\n');
+    await write('older.txt', 'older operator stash\n');
+    await git('stash', 'push', '-m', 'older operator stash');
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    await write('src-new.ts', 'export const s = 1;\n');
+    await git('stash', 'pop', 'stash@{0}'); // the operator takes our stash back
+
+    const err = await rejection(() => rollbackChtCore(repo, snapshot));
+
+    expect(err?.kind).to.equal('drift');
+    expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+    expect(await read('operator-notes.md')).to.equal('my notes\n');
+    expect(await read('.aider.chat')).to.equal('aider chat history\n');
+    const { stdout } = await git('stash', 'list', '--format=%gs');
+    expect(stdout).to.include('older operator stash');
+    const lines = (err?.lines ?? []).join('\n');
+    expect(lines).to.include(`Stash ${snapshot.stashName} is no longer in the stash list`);
+    expect(lines).to.include('"src-new.ts"');
+    expect(lines).to.not.include('reset --hard');
+    expect(lines).to.not.match(/stash@\{\d+\}/);
+  });
+
+  it('refuses capture and rollback when the operator commits during the session', async () => {
+    const snapshot = await snapshotChtCore(repo);
+    await write('session.ts', 'export const s = 1;\n');
+    await commitFile('op.txt', 'operator commit\n');
+    const { stdout: opCommit } = await git('rev-parse', 'HEAD');
+
+    const captureErr = await rejection(() => captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked));
+    const rollbackErr = await rejection(() => rollbackChtCore(repo, snapshot));
+
+    expect(captureErr?.kind).to.equal('drift');
+    expect(rollbackErr?.kind).to.equal('drift');
+    expect((await git('rev-parse', 'HEAD')).stdout).to.equal(opCommit);
+    expect(await read('op.txt')).to.equal('operator commit\n');
+    expect((rollbackErr?.lines ?? []).join('\n')).to.not.include('reset --hard');
+  });
+
+  it('refuses capture and rollback when the operator switches branch during the session', async () => {
+    const { stdout: home } = await git('symbolic-ref', '--short', 'HEAD');
+    await git('checkout', '-b', 'other');
+    await commitFile('o.txt', 'other branch file\n');
+    await git('checkout', home.trim());
+    const { stdout: homeTip } = await git('rev-parse', 'HEAD');
+    const { stdout: otherTip } = await git('rev-parse', 'other');
+
+    const snapshot = await snapshotChtCore(repo);
+    await write('session.ts', 'export const s = 1;\n');
+    await git('checkout', 'other');
+
+    expect((await rejection(() => captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked)))?.kind).to.equal('drift');
+    expect((await rejection(() => rollbackChtCore(repo, snapshot)))?.kind).to.equal('drift');
+    expect((await git('rev-parse', 'other')).stdout).to.equal(otherTip);
+    expect((await git('rev-parse', home.trim())).stdout).to.equal(homeTip);
+    expect(await read('o.txt')).to.equal('other branch file\n');
+  });
+
+  it("keeps the operator's staged and unstaged split through a full cycle", async () => {
+    await commitFile('a.txt', 'a1\n');
+    await commitFile('b.txt', 'b1\n');
+    await write('a.txt', 'a2\n');
+    await git('add', 'a.txt');
+    await write('a.txt', 'a3\n'); // MM a.txt
+    await write('b.txt', 'b2\n');
+    await git('add', 'b.txt'); // M  b.txt
+    const before = await treeState();
+
+    const snapshot = await snapshotChtCore(repo);
+    await write('session.ts', 'export const s = 1;\n');
+    await rollbackChtCore(repo, snapshot);
+
+    expect(await treeState()).to.deep.equal(before);
+  });
+
+  it('refuses to snapshot during an uncommitted merge, and keeps MERGE_HEAD', async () => {
+    const { stdout: home } = await git('symbolic-ref', '--short', 'HEAD');
+    await git('checkout', '-b', 'side');
+    await commitFile('side.txt', 'side\n');
+    await git('checkout', home.trim());
+    await git('merge', '--no-commit', '--no-ff', 'side');
+
+    const err = await rejection(() => snapshotChtCore(repo));
+
+    expect(err?.kind).to.equal('precondition');
+    expect(err?.message).to.include('MERGE_HEAD');
+    expect((await git('rev-parse', '-q', '--verify', 'MERGE_HEAD')).stdout.trim()).to.not.equal('');
+  });
+
+  it('refuses a second rollback and a rollback against another repo, changing nothing', async () => {
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-other-'));
+    try {
+      await execFileAsync('git', ['init'], { cwd: other });
+      await fs.writeFile(path.join(other, 'other-untracked.txt'), 'another repo\n');
+
+      const crossErr = await rejection(() => rollbackChtCore(other, snapshot));
+      expect(crossErr?.kind).to.equal('drift');
+      expect((crossErr?.lines ?? []).join('\n')).to.include(`This snapshot belongs to ${snapshot.repoRoot}`);
+      expect(await fs.readFile(path.join(other, 'other-untracked.txt'), 'utf-8')).to.equal('another repo\n');
+
+      // The refused call did not use up the snapshot.
+      expect((await rollbackChtCore(repo, snapshot)).stashPop).to.equal('ok');
+      await write('after.txt', 'written after the rollback\n');
+      const againErr = await rejection(() => rollbackChtCore(repo, snapshot));
+      expect(againErr?.kind).to.equal('drift');
+      expect((againErr?.lines ?? []).join('\n')).to.include('already rolled back; nothing was changed');
+      expect(await read('after.txt')).to.equal('written after the rollback\n');
+      expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+    } finally {
+      await fs.rm(other, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a subdirectory path but accepts a symlink to the toplevel', async () => {
+    await commitFile('sub/keep.txt', 'keep\n');
+    const subErr = await rejection(() => snapshotChtCore(path.join(repo, 'sub')));
+    expect(subErr?.kind).to.equal('precondition');
+
+    const linkDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-link-'));
+    const link = path.join(linkDir, 'cht-core');
+    try {
+      await fs.symlink(repo, link);
+      const snapshot = await snapshotChtCore(link);
+      await write('generated.ts', 'export const x = 1;\n');
+      const rollback = await rollbackChtCore(link, snapshot);
+      expect(rollback.clean).to.equal('ok');
+      expect(await exists('generated.ts')).to.equal(false);
+    } finally {
+      await fs.rm(linkDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps our stash and names the read-only dir when the restore fails', async function () {
+    if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
+    await commitFile('ro/f.txt', 'committed\n');
+    await write('ro/f.txt', 'operator work in ro\n');
+    const snapshot = await snapshotChtCore(repo);
+    await write('session.ts', 'export const s = 1;\n');
+    await fs.chmod(path.join(repo, 'ro'), 0o555);
+    let rollback;
+    try {
+      rollback = await rollbackChtCore(repo, snapshot);
+    } finally {
+      await fs.chmod(path.join(repo, 'ro'), 0o755);
+    }
+
+    expect(rollback.stashPop).to.equal('failed');
+    expect((await git('stash', 'list', '--format=%gs')).stdout).to.include(String(snapshot.stashName));
+    const lines = buildRecoveryChecklist(repo, snapshot, rollback).join('\n');
+    expect(lines).to.include('"ro/f.txt"');
+    expect(lines).to.include('inside "ro" (Permission denied)');
+    expect(lines).to.match(/Fix the permissions/);
+    expect(lines).to.not.match(/stash@\{\d+\}/);
+    expect(lines).to.not.include('stash drop');
   });
 });

@@ -33,7 +33,8 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   // defaults to identity (no symlinks); tests override it to simulate an escape.
   const load = () => {
     snapshotStub = sinon.stub().resolves({
-      headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+      headSha: 'abc1234', headRef: 'refs/heads/master', repoRoot: '/tmp/fake-cht-core',
+      stashSha: null, stashName: null, baselineUntracked: [],
     });
     rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
     compileStub = sinon.stub().resolves({ passed: true, issues: [] });
@@ -206,7 +207,8 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   it('prints the outcome-based checklist, with the stash kept, when the reset fails', async () => {
     const run = load();
     const snapshot: ChtCoreSnapshot = {
-      headSha: 'abc1234', stashRef: 'stash@{0}', stashName: 'cht-agent-claude-code-cli-1700000000000',
+      headSha: 'abc1234', headRef: 'refs/heads/master', repoRoot: '/tmp/fake-cht-core',
+      stashSha: '1111111111111111111111111111111111111111', stashName: 'cht-agent-claude-code-cli-1700000000000',
       baselineUntracked: [],
     };
     const rollback: RollbackResult = {
@@ -233,6 +235,22 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(text).to.include('only if no git process runs');
     expect(text).to.not.match(/stash@\{\d+\}/);
     expect(text).to.not.include('stash drop');
+  });
+
+  it('throws a stash halt error when the rollback could not restore the stash', async () => {
+    const run = load();
+    rollbackStub.resolves({
+      reset: 'ok', clean: 'ok', stashPop: 'failed', errors: ['stash apply: error: conflicts in index'],
+    });
+    sinon.stub(console, 'error');
+    let thrown: unknown;
+    try {
+      await run(CHT, [file()]);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).to.be.instanceOf(WorkspaceSafetyError);
+    expect((thrown as { kind: string }).kind).to.equal('stash');
   });
 
   it('skips compilation (no compileCheck) when every file is out of bounds', async () => {
