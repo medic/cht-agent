@@ -5,9 +5,18 @@ import { __resetShutdownForTests } from '../../../../../src/utils/shutdown';
 import { CodeGenModuleInput } from '../../../../../src/layers/code-gen/interface';
 import { CrossFileIssue } from '../../../../../src/types';
 import { extractLlmDiscoveryIssues } from '../../../../../src/layers/code-gen/modules/claude-code-cli/index';
+import * as realWorkspace from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
+import { WorkspaceSafetyError } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 // Helper: proxyquire the orchestrator with cli-driver + workspace stubbed.
 const proxyquire = require('proxyquire').noCallThru();
+
+
+/**
+ * The real workspace module with its git-touching entry points replaced, so the
+ * pure exports (the safety error, the checklist builder) stay real.
+ */
+const workspaceStub = (stubs: Record<string, unknown>) => ({ ...realWorkspace, ...stubs });
 
 const baseInput = (chtCorePath = '/tmp/cht-core-test'): CodeGenModuleInput => ({
   ticket: {
@@ -67,11 +76,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
         parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }),
         ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
       },
-      './workspace': {
+      './workspace': workspaceStub({
         snapshotChtCore: snapshotStub,
         captureChtCoreDiff: captureStub,
         rollbackChtCore: rollbackStub,
-      },
+      }),
     });
 
     const module = new ClaudeCodeCLICodeGenModule();
@@ -98,7 +107,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
 
     const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
       './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
-      './workspace': { snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub },
+      './workspace': workspaceStub({ snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub }),
       '../../../../utils/shutdown': {
         isShutdownRequested: shutdownStub,
       },
@@ -122,7 +131,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
 
     const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
       './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
-      './workspace': { snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub },
+      './workspace': workspaceStub({ snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub }),
     });
 
     const module = new ClaudeCodeCLICodeGenModule();
@@ -140,7 +149,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
   it('rejects when targetDirectory is missing', async () => {
     const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
       './cli-driver': { spawnClaudeCli: sinon.stub(), parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
-      './workspace': { snapshotChtCore: sinon.stub(), captureChtCoreDiff: sinon.stub(), rollbackChtCore: sinon.stub() },
+      './workspace': workspaceStub({ snapshotChtCore: sinon.stub(), captureChtCoreDiff: sinon.stub(), rollbackChtCore: sinon.stub() }),
     });
 
     const module = new ClaudeCodeCLICodeGenModule();
@@ -166,7 +175,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
 
     const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
       './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
-      './workspace': { snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub },
+      './workspace': workspaceStub({ snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub }),
     });
 
     const module = new ClaudeCodeCLICodeGenModule();
@@ -179,7 +188,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
   });
 
   describe('V3 typed RollbackResult surface (A.14)', () => {
-    it('throws with a recovery checklist when rollback reset failed', async () => {
+    it('throws a halt error with an outcome-based checklist when the rollback reset failed', async () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
@@ -192,9 +201,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const captureStub = sinon.stub().resolves([]);
       const rollbackStub = sinon.stub().resolves({
         reset: 'failed',
-        clean: 'ok',
+        clean: 'skipped',
         stashPop: 'skipped',
-        errors: ['reset: boom'],
+        errors: ['reset: error: unable to unlink old \'rt/t.txt\': Permission denied'],
+        sessionEdits: ['rt/t.txt'],
+        survivors: ['src/a.ts'],
       });
 
       const parseStub = sinon.stub();
@@ -208,30 +219,64 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
 
       const errorSpy = sinon.spy(console, 'error');
       const module = new ClaudeCodeCLICodeGenModule();
-      let threw = false;
+      let thrown: unknown;
       try {
         await module.generate(baseInput());
       } catch (err) {
-        threw = true;
-        expect((err as Error).message).to.match(/rollback failed/);
+        thrown = err;
       } finally {
         errorSpy.restore();
       }
-      expect(threw).to.equal(true);
+      expect(thrown).to.be.instanceOf(WorkspaceSafetyError);
+      expect((thrown as { kind: string }).kind).to.equal('reset');
+      expect((thrown as Error).message).to.match(/rollback failed/);
 
       const errorOutput = errorSpy.getCalls().map(c => String(c.args[0])).join('\n');
-      expect(errorOutput).to.include('To recover manually');
-      expect(errorOutput).to.include('git reset --hard abc1234');
-      expect(errorOutput).to.include('stash@{0}'); // includes stash recovery line
+      expect(errorOutput).to.include('still in stash cht-agent-claude-code-cli-1700000000000');
+      expect(errorOutput).to.include('Permission denied');
+      expect(errorOutput).to.include("reset --hard abc1234");
+      expect(errorOutput).to.include("clean -fd -- ':(literal)src/a.ts'");
+      expect(errorOutput.indexOf('reset --hard abc1234')).to.be.lessThan(errorOutput.indexOf('stash list'));
+      expect(errorOutput).to.not.match(/stash@\{\d+\}/);
+      expect(errorOutput).to.not.include('stash drop');
+    });
+
+    it('keeps the work error as the cause when the rollback after it fails', async () => {
+      const workError = new Error('CLI crashed mid-execute');
+      const spawnStub = sinon.stub()
+        .onFirstCall().resolves(planResultText)
+        .onSecondCall().rejects(workError);
+      const rollbackStub = sinon.stub().resolves({
+        reset: 'failed', clean: 'skipped', stashPop: 'skipped', errors: ['reset: fatal: index.lock exists'],
+      });
+
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+        './workspace': workspaceStub({
+          snapshotChtCore: sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [] }),
+          captureChtCoreDiff: sinon.stub(),
+          rollbackChtCore: rollbackStub,
+        }),
+      });
+      sinon.stub(console, 'error');
+
+      let thrown: unknown;
+      try {
+        await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.be.instanceOf(WorkspaceSafetyError);
+      expect((thrown as Error).cause).to.equal(workError);
     });
 
     it('warns but does NOT throw when only clean or stashPop failed', async () => {
@@ -265,11 +310,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
 
       const module = new ClaudeCodeCLICodeGenModule();
@@ -303,11 +348,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
       return { module: new ClaudeCodeCLICodeGenModule(), spawnStub, captureStub, parseStub };
     };
@@ -357,7 +402,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': { snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub },
+        './workspace': workspaceStub({ snapshotChtCore: snapshotStub, captureChtCoreDiff: captureStub, rollbackChtCore: rollbackStub }),
       });
 
       const module = new ClaudeCodeCLICodeGenModule();
@@ -416,11 +461,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
       return new ClaudeCodeCLICodeGenModule();
     };
@@ -586,11 +631,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
       return new ClaudeCodeCLICodeGenModule();
     };
@@ -656,11 +701,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
 
       const module = new ClaudeCodeCLICodeGenModule();
@@ -691,11 +736,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
 
       const module = new ClaudeCodeCLICodeGenModule();
@@ -727,11 +772,11 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
           DEFAULT_MAX_TURNS: 150,
         },
-        './workspace': {
+        './workspace': workspaceStub({
           snapshotChtCore: snapshotStub,
           captureChtCoreDiff: captureStub,
           rollbackChtCore: rollbackStub,
-        },
+        }),
       });
 
       const module = new ClaudeCodeCLICodeGenModule();

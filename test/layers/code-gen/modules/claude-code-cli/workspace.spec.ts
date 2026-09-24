@@ -2,6 +2,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import * as util from 'node:util';
+import { execFileSync } from 'node:child_process';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -538,6 +539,26 @@ describe('workspace.ts (A.2b)', () => {
       await ws.rollbackChtCore('/tmp/cht-core', { headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
 
       expect(calls.some(c => c.startsWith('git stash pop'))).to.equal(false);
+    });
+  });
+
+  describe('buildRecoveryChecklist', () => {
+    it('prints each session path inside a command as one safely quoted shell word', () => {
+      const ws = loadWorkspace({});
+      const weird = "it's a\nname; touch pwned.ts";
+      const lines: string[] = ws.buildRecoveryChecklist(
+        "/tmp/cht core's",
+        { headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [] },
+        { reset: 'failed', clean: 'skipped', stashPop: 'skipped', errors: ['reset: boom'], survivors: [weird, 'plain.ts'] },
+      );
+      const clean = lines.find(l => l.includes('clean -fd --'));
+      expect(clean).to.exist;
+      // Let a real shell split the printed words; each path must come back whole.
+      const words = clean!.slice(clean!.indexOf('git -C ') + 'git '.length);
+      const argv = execFileSync('sh', ['-c', `printf '%s\\0' ${words}`], { encoding: 'utf8' }).split('\0');
+      expect(argv).to.deep.equal([
+        '-C', "/tmp/cht core's", 'clean', '-fd', '--', `:(literal)${weird}`, ':(literal)plain.ts', '',
+      ]);
     });
   });
 

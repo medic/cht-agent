@@ -17,6 +17,7 @@ import {
   GeneratedFile,
 } from '../../src/types';
 import { LLMProvider } from '../../src/llm';
+import { CodeGenHaltError } from '../../src/layers/code-gen/interface';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -230,6 +231,23 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
     expect(out.errors).to.be.an('array');
     expect((out.errors as string[])[0]).to.match(/Code generation failed: LLM down/);
     expect(out.currentPhase).to.equal('code-generation');
+  });
+
+  it('stops the whole run on a halt error instead of retrying code generation', async () => {
+    const halt = new CodeGenHaltError('cht-core rollback failed; the stash is kept');
+    const generate = sinon.stub().rejects(halt);
+    const supervisor = buildSupervisorWithStubAgents(generate) as unknown as {
+      develop: (input: DevelopmentInput) => Promise<DevelopmentState>;
+    };
+
+    let thrown: unknown;
+    try {
+      await supervisor.develop(baseValidInputFragment as DevelopmentInput);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).to.equal(halt);
+    expect(generate.callCount).to.equal(1);
   });
 
   it('passes validationFeedback as additionalContext on a retry iteration', async () => {

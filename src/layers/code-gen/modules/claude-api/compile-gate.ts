@@ -7,7 +7,8 @@
  * snapshot of cht-core, runs the shared compile validator, and always rolls
  * back. It degrades to a skip (never a hard error) when cht-core is not a usable
  * git workspace, so the module keeps its run-anywhere property. Only a failed
- * hard reset during rollback throws (cht-core left dirty; the run must halt).
+ * hard reset during rollback throws: a halt error, because cht-core is left
+ * dirty with the operator's work still in the stash, so the run must stop.
  */
 
 import * as fs from 'node:fs';
@@ -17,8 +18,11 @@ import { compileCheck, CompileValidationResult } from '../../../../agents/compil
 import {
   snapshotChtCore,
   rollbackChtCore,
+  buildRecoveryChecklist,
+  reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
+  WorkspaceSafetyError,
 } from '../claude-code-cli/workspace';
 
 const LOG = '[claude-api compile-gate]';
@@ -145,8 +149,9 @@ async function runCompileDefensive(chtCorePath: string): Promise<CompileValidati
 
 /**
  * Act on the rollback result. Throws ONLY when the hard reset failed (cht-core
- * is left dirty and the run must halt); clean / stash-pop failures are logged
- * but not fatal. Mirrors the claude-code-cli rollback policy.
+ * is left dirty and the run must halt; the throw is a halt error, so the
+ * supervisor does not retry it); clean / stash-pop failures are logged but not
+ * fatal. Mirrors the claude-code-cli rollback policy.
  */
 function handleApiRollbackOutcome(
   rollback: RollbackResult,
@@ -161,30 +166,23 @@ function handleApiRollbackOutcome(
   for (const e of rollback.errors) console.error(`${LOG}   - ${e}`);
 
   if (rollback.reset === 'failed') {
-    emitRecoveryChecklist(snapshot, chtCorePath);
-    throw new Error(
+    throw new WorkspaceSafetyError(
+      'reset',
       `claude-api compile gate rollback failed: ${rollback.errors.join('; ')}. ` +
         'Inspect the cht-core working tree before retrying.',
+      { lines: buildRecoveryChecklist(chtCorePath, snapshot, rollback) },
     );
   }
 }
 
-/** Log a manual-recovery checklist when rollback left cht-core dirty. */
-function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): void {
-  const lines: string[] = [
-    '',
-    `${LOG} To recover manually:`,
-    `${LOG}   1. cd ${chtCorePath}`,
-    `${LOG}   2. git status`,
-    `${LOG}   3. git diff`,
-    `${LOG}   4. git reset --hard ${snapshot.headSha}   # DESTRUCTIVE; discards working-tree changes`,
-    `${LOG}   5. git stash list`,
-  ];
-  if (snapshot.stashRef) {
-    lines.push(`${LOG}   6. git stash pop ${snapshot.stashRef}   # restore stashed pre-run state`);
+/** Roll back after the compile check; a failure prints its checklist once, then throws. */
+async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<void> {
+  try {
+    handleApiRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+  } catch (err) {
+    reportSafetyError(err, LOG);
+    throw err;
   }
-  lines.push(`${LOG}   7. Re-run only after the working tree is clean.`);
-  for (const line of lines) console.error(line);
 }
 
 /**
@@ -229,7 +227,6 @@ export async function runApiCompileGate(
 
   // Always roll back (plain sequential call, no throw-from-finally). Only a
   // failed hard reset throws, via handleApiRollbackOutcome.
-  const rollback = await rollbackChtCore(chtCorePath, snapshot);
-  handleApiRollbackOutcome(rollback, snapshot, chtCorePath);
+  await rollBackGate(chtCorePath, snapshot);
   return result;
 }

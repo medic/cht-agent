@@ -36,13 +36,17 @@ import {
   snapshotChtCore,
   captureChtCoreDiff,
   rollbackChtCore,
+  buildRecoveryChecklist,
+  reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
+  WorkspaceSafetyError,
 } from './workspace';
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
 
+const LOG = '[claude-code-cli]';
 const PLAN_PHASE_TOOLS = ['Read', 'Grep', 'Glob'];
 const EXECUTE_PHASE_TOOLS = ['Read', 'Write', 'Edit', 'Grep', 'Glob'];
 
@@ -80,7 +84,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     // and need to surface its own error, but throwing from `finally` is unsafe
     // (it would mask any error from the work block). Manage both errors here.
     const work = await this.runWorkBlock(input, snapshot, chtCorePath);
-    handleRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+    await rollBackAfterWork(chtCorePath, snapshot, work.error);
 
     if (work.error) throw work.error;
     return work.result!;
@@ -317,8 +321,32 @@ function emptyResult(input: CodeGenModuleInput, reason: string): CodeGenModuleOu
 }
 
 /**
+ * Roll back after the work block. A rollback failure is thrown as its own
+ * error, with the work error (if any) kept as its cause.
+ */
+async function rollBackAfterWork(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  workError: unknown,
+): Promise<void> {
+  try {
+    handleRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+  } catch (err) {
+    reportSafetyError(err, LOG);
+    throw withCause(err, workError);
+  }
+}
+
+/** Keep the thrown error's identity; add `cause` only when it has none. */
+function withCause(err: unknown, cause: unknown): unknown {
+  if (err instanceof Error && err.cause === undefined && cause !== undefined) err.cause = cause;
+  return err;
+}
+
+/**
  * Inspect the rollback result and surface failures.
- *  - reset failed → emit recovery checklist + throw (cht-core may have leftover edits).
+ *  - reset failed → throw a halt error carrying the recovery checklist; the
+ *    stash is still in place and cht-core may hold session edits.
  *  - clean / stashPop failed → log warnings; do not throw.
  *  - all ok → silent.
  */
@@ -333,35 +361,17 @@ function handleRollbackOutcome(
     rollback.stashPop === 'failed';
   if (!anyFailed) return;
 
-  console.error('[claude-code-cli] ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:');
-  for (const e of rollback.errors) console.error(`[claude-code-cli]   - ${e}`);
+  console.error(`${LOG} ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:`);
+  for (const e of rollback.errors) console.error(`${LOG}   - ${e}`);
 
   if (rollback.reset === 'failed') {
-    emitRecoveryChecklist(snapshot, chtCorePath);
-    throw new Error(
+    throw new WorkspaceSafetyError(
+      'reset',
       `claude-code-cli rollback failed: ${rollback.errors.join('; ')}. ` +
-      `Inspect cht-core working tree before retrying.`
+      `Inspect cht-core working tree before retrying.`,
+      { lines: buildRecoveryChecklist(chtCorePath, snapshot, rollback) },
     );
   }
-}
-
-function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): void {
-  const recoveryLines: string[] = [
-    '',
-    '[claude-code-cli] To recover manually:',
-    `[claude-code-cli]   1. cd ${chtCorePath}`,
-    '[claude-code-cli]   2. git status                            # see what is modified',
-    '[claude-code-cli]   3. git diff                              # inspect changes',
-    `[claude-code-cli]   4. git reset --hard ${snapshot.headSha}   # DESTRUCTIVE; discards working-tree changes`,
-    '[claude-code-cli]   5. git stash list                        # check for orphan stashes',
-  ];
-  if (snapshot.stashRef) {
-    recoveryLines.push(
-      `[claude-code-cli]   6. git stash pop ${snapshot.stashRef}          # restore stashed pre-run state`
-    );
-  }
-  recoveryLines.push('[claude-code-cli]   7. Re-run the agent only after the working tree is clean.');
-  for (const line of recoveryLines) console.error(line);
 }
 
 /**

@@ -26,10 +26,57 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { GeneratedFile } from '../../interface';
+import { CodeGenHaltError, GeneratedFile } from '../../interface';
 import { readEnv } from '../../../../utils/env';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * What a workspace safety stop means for the operator's tree:
+ *  - precondition: the snapshot refused before it changed anything;
+ *  - stash: a stash step failed or was incomplete;
+ *  - drift: the repo changed under the session, so rollback did nothing;
+ *  - reset: rollback could not reset the tree, so it left the stash in place.
+ */
+export type WorkspaceSafetyKind = 'precondition' | 'stash' | 'drift' | 'reset';
+
+/**
+ * A stop that must end the run. `lines` are the operator instructions; the
+ * caller prints them once with its own log prefix (see reportSafetyError).
+ */
+export class WorkspaceSafetyError extends CodeGenHaltError {
+  readonly kind: WorkspaceSafetyKind;
+
+  readonly lines: string[];
+
+  constructor(
+    kind: WorkspaceSafetyKind,
+    message: string,
+    options: { cause?: unknown; lines?: string[] } = {},
+  ) {
+    super(message, { cause: options.cause });
+    this.name = 'WorkspaceSafetyError';
+    this.kind = kind;
+    this.lines = options.lines ?? [];
+  }
+}
+
+const reportedSafetyErrors = new WeakSet<WorkspaceSafetyError>();
+
+/** Print a safety error's instructions once, however many layers see it. */
+export function reportSafetyError(err: unknown, logPrefix: string): void {
+  if (!(err instanceof WorkspaceSafetyError) || reportedSafetyErrors.has(err)) return;
+  reportedSafetyErrors.add(err);
+  for (const line of err.lines) console.error(`${logPrefix} ${line}`);
+}
+
+/**
+ * One POSIX shell word. Paths printed inside copy-paste commands come from the
+ * session (so from the LLM), and a bare `'` or `;` in one must not break out.
+ */
+export function shellQuote(word: string): string {
+  return `'${word.replaceAll("'", String.raw`'\''`)}'`;
+}
 
 /**
  * Output cap for every git call. Node's 1 MiB default truncates a large listing
@@ -604,12 +651,18 @@ async function pathIsRemoved(fullPath: string): Promise<boolean> {
 /**
  * Per-op outcome of a rollback attempt. `reset` is fatal when failed; the
  * other two are warnings the orchestrator surfaces but does not abort on.
+ * After a failed reset, the clean and the pop are `skipped` on purpose: the
+ * stash stays in place, and the operator recovers with the checklist.
  */
 export interface RollbackResult {
   reset: 'ok' | 'failed';
-  clean: 'ok' | 'failed';
+  clean: 'ok' | 'failed' | 'skipped';
   stashPop: 'ok' | 'failed' | 'skipped';
   errors: string[];
+  /** Tracked paths that still differ from the snapshot HEAD after a failed reset. */
+  sessionEdits?: string[];
+  /** Untracked session paths still on disk (the whole delta when the clean was skipped). */
+  survivors?: string[];
 }
 
 /**
@@ -685,6 +738,23 @@ export async function rollbackChtCore(
 ): Promise<RollbackResult> {
   const result: RollbackResult = { reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] };
 
+  await resetToSnapshot(chtCorePath, snapshot, result);
+  if (result.reset === 'failed') {
+    // A pop now would merge the operator's work into a half-reset tree, and a
+    // later `reset --hard` would then destroy it. Leave the stash and the files.
+    await recordResetFailureState(chtCorePath, snapshot, result);
+    return result;
+  }
+  await cleanStep(chtCorePath, snapshot, result);
+  if (snapshot.stashRef) await popStep(chtCorePath, snapshot, result);
+  return result;
+}
+
+async function resetToSnapshot(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  result: RollbackResult,
+): Promise<void> {
   try {
     await gitExecVerifyOrThrow(
       ['reset', '--hard', snapshot.headSha],
@@ -704,7 +774,46 @@ export async function rollbackChtCore(
     result.errors.push(`reset: ${gitErrorText(err)}`);
     console.warn(`[claude-code-cli] git reset --hard during rollback failed: ${gitErrorText(err)}`);
   }
+}
 
+/** Read-only: what the failed reset left, so the checklist can name it. */
+async function recordResetFailureState(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  result: RollbackResult,
+): Promise<void> {
+  result.clean = 'skipped';
+  result.sessionEdits = await readPathsForReport(
+    () => trackedPathsDifferingFrom(chtCorePath, snapshot.headSha), 'tracked session edits', result,
+  );
+  result.survivors = await readPathsForReport(
+    () => computeCleanDelta(chtCorePath, snapshot.baselineUntracked), 'session files', result,
+  );
+}
+
+async function readPathsForReport(
+  read: () => Promise<string[]>,
+  what: string,
+  result: RollbackResult,
+): Promise<string[] | undefined> {
+  try {
+    return await read();
+  } catch (err) {
+    result.errors.push(`could not list ${what}: ${gitErrorText(err)}`);
+    return undefined;
+  }
+}
+
+async function trackedPathsDifferingFrom(chtCorePath: string, sha: string): Promise<string[]> {
+  const { stdout } = await runGit(['diff', '--name-only', '-z', sha, '--'], chtCorePath);
+  return stdout.split('\0').filter(Boolean);
+}
+
+async function cleanStep(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  result: RollbackResult,
+): Promise<void> {
   try {
     await cleanSessionCreatedFiles(chtCorePath, snapshot.baselineUntracked);
   } catch (err) {
@@ -712,34 +821,107 @@ export async function rollbackChtCore(
     result.errors.push(`clean: ${gitErrorText(err)}`);
     console.warn(`[claude-code-cli] git clean -fd during rollback failed: ${gitErrorText(err)}`);
   }
+}
 
-  if (snapshot.stashRef) {
-    const stashName = snapshot.stashName;
-    try {
-      await gitExecVerifyOrThrow(
-        ['stash', 'pop', snapshot.stashRef],
-        chtCorePath,
-        async () => {
-          // Prefer the name-based check when we have one (robust against other
-          // stashes shifting indices); otherwise fall back to the ref-based check.
-          const { stdout } = await runGit(['stash', 'list', '--format=%gs'], chtCorePath);
-          if (stashName) return !stdout.includes(stashName);
-          const { stdout: refList } = await runGit(['stash', 'list', '--format=%gd'], chtCorePath);
-          return !refList.split('\n').includes(snapshot.stashRef!);
-        },
-        `stash ${snapshot.stashRef} was popped`,
-      );
-      result.stashPop = 'ok';
-    } catch (err) {
-      result.stashPop = 'failed';
-      result.errors.push(`stash pop ${snapshot.stashRef}: ${gitErrorText(err)}`);
-      console.warn(
-        `[claude-code-cli] git stash pop ${snapshot.stashRef} failed: ${gitErrorText(err)}. ` +
-        `Your work is still in the stash; recover with: git -C ${chtCorePath} stash pop ${snapshot.stashRef}`
-      );
-    }
+async function popStep(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  result: RollbackResult,
+): Promise<void> {
+  const stashRef = snapshot.stashRef as string;
+  const stashName = snapshot.stashName;
+  try {
+    await gitExecVerifyOrThrow(
+      ['stash', 'pop', stashRef],
+      chtCorePath,
+      async () => {
+        // Prefer the name-based check when we have one (robust against other
+        // stashes shifting indices); otherwise fall back to the ref-based check.
+        const { stdout } = await runGit(['stash', 'list', '--format=%gs'], chtCorePath);
+        if (stashName) return !stdout.includes(stashName);
+        const { stdout: refList } = await runGit(['stash', 'list', '--format=%gd'], chtCorePath);
+        return !refList.split('\n').includes(stashRef);
+      },
+      `stash ${stashRef} was popped`,
+    );
+    result.stashPop = 'ok';
+  } catch (err) {
+    result.stashPop = 'failed';
+    result.errors.push(`stash pop ${stashRef}: ${gitErrorText(err)}`);
+    console.warn(
+      `[claude-code-cli] git stash pop ${stashRef} failed: ${gitErrorText(err)}. ` +
+      `Your work is still in the stash; recover with: git -C ${chtCorePath} stash pop ${stashRef}`
+    );
   }
+}
 
-  return result;
+/**
+ * Operator instructions for a rollback that did not finish, built only from
+ * its outcome. Empty when nothing needs a manual step. Callers print them with
+ * their own log prefix.
+ */
+export function buildRecoveryChecklist(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  rollback: RollbackResult,
+): string[] {
+  if (rollback.reset === 'failed') return resetFailureChecklist(chtCorePath, snapshot, rollback);
+  return [];
+}
+
+/**
+ * The safe order after a failed reset. `reset --hard` is safe here only because
+ * the stash still holds the operator's work and nothing was popped into the tree.
+ */
+function resetFailureChecklist(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  rollback: RollbackResult,
+): string[] {
+  const survivors = rollback.survivors ?? [];
+  const steps = [
+    resetCauseStep(rollback.errors),
+    `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`,
+  ];
+  if (survivors.length > 0) steps.push(literalCleanCommand(chtCorePath, survivors));
+  if (snapshot.stashName) steps.push(recoveryHint(chtCorePath, snapshot.stashName));
+  return [
+    'Rollback stopped: git reset --hard failed, so cht-agent did not clean or restore anything.',
+    ...stashStillHeldLines(snapshot),
+    ...pathListLines('Tracked files that still hold session edits:', rollback.sessionEdits),
+    ...pathListLines('Session files still on disk:', survivors),
+    'To recover, run these steps in this order:',
+    ...steps.map((step, i) => `  ${i + 1}. ${step}`),
+    'Run cht-agent again only after your working tree is back to your own state.',
+  ];
+}
+
+function stashStillHeldLines(snapshot: ChtCoreSnapshot): string[] {
+  if (!snapshot.stashName) return [];
+  return [`Your uncommitted work is still in stash ${snapshot.stashName}. It was NOT restored.`];
+}
+
+/** The first recovery step: fix what made the reset fail, named when git said so. */
+function resetCauseStep(errors: readonly string[]): string {
+  const resetError = errors.find(e => e.startsWith('reset: ')) ?? '';
+  if (resetError.includes('index.lock')) {
+    return 'Another git process may hold the index.lock file named above. ' +
+      'Remove that file only if no git process runs.';
+  }
+  if (resetError.includes('Permission denied')) {
+    return 'git could not write some files (Permission denied). Fix the permissions of the files named above.';
+  }
+  return 'Find out why the reset failed (see the error above) and fix the cause.';
+}
+
+function pathListLines(heading: string, paths: readonly string[] | undefined): string[] {
+  if (!paths || paths.length === 0) return [];
+  return [heading, ...paths.map(p => `  - ${JSON.stringify(p)}`)];
+}
+
+/** A clean of exactly these paths: each one a quoted `:(literal)` word, never a blanket clean. */
+function literalCleanCommand(chtCorePath: string, paths: readonly string[]): string {
+  const words = paths.map(p => shellQuote(toLiteralPathspec(p)));
+  return `git -C ${shellQuote(chtCorePath)} clean -fd -- ${words.join(' ')}`;
 }
 

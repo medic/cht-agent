@@ -8,6 +8,7 @@ import {
   snapshotChtCore,
   captureChtCoreDiff,
   rollbackChtCore,
+  buildRecoveryChecklist,
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const execFileAsync = promisify(execFile);
@@ -249,6 +250,62 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     });
     expect(await read('Sess3.TXT')).to.equal('operator file\n');
     expect(await exists('sess3.txt')).to.equal(false);
+  });
+
+  it('keeps the stash and the session files when the reset fails, and prints the safe order', async function () {
+    if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
+    await fs.mkdir(path.join(repo, 'rt'));
+    await write('rt/t.txt', 'committed\n');
+    await git('add', 'rt');
+    await git('commit', '-m', 'rt');
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    const stashName = String(snapshot.stashName);
+
+    // Session: edit a tracked file inside a dir the reset cannot write, and add a file.
+    await write('rt/t.txt', 'session edit\n');
+    await write('session-new.ts', 'export const n = 1;\n');
+    await fs.chmod(path.join(repo, 'rt'), 0o555);
+    let rollback;
+    try {
+      rollback = await rollbackChtCore(repo, snapshot);
+    } finally {
+      await fs.chmod(path.join(repo, 'rt'), 0o755);
+    }
+
+    const { stdout: stashes } = await git('stash', 'list');
+    expect(stashes, 'no pop over a failed reset').to.include(stashName);
+    expect(await exists('session-new.ts'), 'clean skipped').to.equal(true);
+    expect(rollback.reset).to.equal('failed');
+    expect(rollback.sessionEdits).to.include('rt/t.txt');
+    expect(rollback.survivors).to.include('session-new.ts');
+
+    const lines = buildRecoveryChecklist(repo, snapshot, rollback).join('\n');
+    expect(lines).to.include('Permission denied');
+    const resetAt = lines.indexOf(`reset --hard ${snapshot.headSha}`);
+    expect(resetAt).to.be.greaterThan(-1);
+    expect(resetAt).to.be.lessThan(lines.indexOf('stash list'));
+    expect(lines).to.not.match(/stash@\{\d+\}/);
+    expect(lines).to.not.include('stash drop');
+  });
+
+  it('never deletes an ignored operator file that a session rule unmasked when the reset fails', async () => {
+    await write('.gitignore', 'node_modules/\n.env\n');
+    await git('commit', '-am', 'ignore .env');
+    await write('.env', 'SECRET=operator\n');
+    const snapshot = await snapshotChtCore(repo);
+
+    await write('.gitignore', 'node_modules/\n.env\n!.env\n'); // the session un-ignores .env
+    await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    await write('.git/index.lock', '');                         // the reset now fails
+    const rollback = await rollbackChtCore(repo, snapshot);
+    await fs.rm(path.join(repo, '.git', 'index.lock'));
+
+    expect(rollback.reset).to.equal('failed');
+    expect(await read('.env')).to.equal('SECRET=operator\n');
+    const lines = buildRecoveryChecklist(repo, snapshot, rollback).join('\n');
+    expect(lines).to.include('index.lock');
+    expect(lines).to.include('only if no git process runs');
   });
 
   it('detects a stash leaked by a killed run and recovers with the printed command', async () => {

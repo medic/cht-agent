@@ -2,8 +2,19 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import * as path from 'node:path';
+import * as realWorkspace from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
+import {
+  WorkspaceSafetyError,
+  buildRecoveryChecklist,
+  ChtCoreSnapshot,
+  RollbackResult,
+} from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const proxyquire = require('proxyquire').noCallThru();
+
+
+/** The real workspace module with snapshot and rollback replaced. */
+const workspaceStub = (stubs: Record<string, unknown>) => ({ ...realWorkspace, ...stubs });
 
 describe('runApiCompileGate (claude-api compile gate)', () => {
   const CHT = '/tmp/fake-cht-core';
@@ -40,7 +51,7 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
         realpathSync: realpathSyncStub,
         lstatSync: lstatSyncStub,
       },
-      '../claude-code-cli/workspace': { snapshotChtCore: snapshotStub, rollbackChtCore: rollbackStub },
+      '../claude-code-cli/workspace': workspaceStub({ snapshotChtCore: snapshotStub, rollbackChtCore: rollbackStub }),
       '../../../../agents/compile-validator': { compileCheck: compileStub },
     });
     return mod.runApiCompileGate as (
@@ -108,18 +119,18 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(rollbackStub.calledOnce).to.equal(true);
   });
 
-  it('throws and logs a recovery checklist when the rollback hard reset fails', async () => {
+  it('throws a halt error and logs a recovery checklist when the rollback hard reset fails', async () => {
     const run = load();
-    rollbackStub.resolves({ reset: 'failed', clean: 'ok', stashPop: 'skipped', errors: ['reset blew up'] });
+    rollbackStub.resolves({ reset: 'failed', clean: 'skipped', stashPop: 'skipped', errors: ['reset: reset blew up'] });
     const errSpy = sinon.stub(console, 'error');
-    let threw = false;
+    let thrown: unknown;
     try {
       await run(CHT, [file()]);
     } catch (err) {
-      threw = true;
-      expect((err as Error).message).to.match(/rollback failed/);
+      thrown = err;
     }
-    expect(threw).to.equal(true);
+    expect(thrown).to.be.instanceOf(WorkspaceSafetyError);
+    expect((thrown as Error).message).to.match(/rollback failed/);
     expect(errSpy.called).to.equal(true);
   });
 
@@ -192,22 +203,36 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(rollbackStub.calledOnce).to.equal(true);
   });
 
-  it('includes the stash-pop line in the recovery checklist when a stash was taken', async () => {
+  it('prints the outcome-based checklist, with the stash kept, when the reset fails', async () => {
     const run = load();
-    snapshotStub.resolves({
-      headSha: 'abc1234', stashRef: 'stash@{0}', stashName: 'api-gate', baselineUntracked: [],
-    });
-    rollbackStub.resolves({ reset: 'failed', clean: 'ok', stashPop: 'failed', errors: ['reset failed'] });
+    const snapshot: ChtCoreSnapshot = {
+      headSha: 'abc1234', stashRef: 'stash@{0}', stashName: 'cht-agent-claude-code-cli-1700000000000',
+      baselineUntracked: [],
+    };
+    const rollback: RollbackResult = {
+      reset: 'failed', clean: 'skipped', stashPop: 'skipped',
+      errors: ["reset: fatal: Unable to create '/tmp/fake-cht-core/.git/index.lock': File exists."],
+      sessionEdits: ['webapp/x.ts'], survivors: [],
+    };
+    snapshotStub.resolves(snapshot);
+    rollbackStub.resolves(rollback);
     const errSpy = sinon.stub(console, 'error');
-    let threw = false;
+    let thrown: unknown;
     try {
       await run(CHT, [file()]);
-    } catch {
-      threw = true;
+    } catch (err) {
+      thrown = err;
     }
-    expect(threw).to.equal(true);
-    const logged = errSpy.getCalls().map(c => String(c.args[0])).join('\n');
-    expect(logged).to.match(/git stash pop stash@\{0\}/);
+    expect(thrown).to.be.instanceOf(WorkspaceSafetyError);
+    const logged = errSpy.getCalls().map(c => String(c.args[0]));
+    const expected = buildRecoveryChecklist(CHT, snapshot, rollback).map(l => `[claude-api compile-gate] ${l}`);
+    expect(expected.length).to.be.greaterThan(0);
+    expect(logged).to.include.members(expected);
+    const text = logged.join('\n');
+    expect(text).to.include('still in stash cht-agent-claude-code-cli-1700000000000');
+    expect(text).to.include('only if no git process runs');
+    expect(text).to.not.match(/stash@\{\d+\}/);
+    expect(text).to.not.include('stash drop');
   });
 
   it('skips compilation (no compileCheck) when every file is out of bounds', async () => {

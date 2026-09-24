@@ -30,6 +30,7 @@ import {
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
+import { CodeGenHaltError } from '../layers/code-gen/interface';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
   createStagingDirectory,
@@ -282,14 +283,24 @@ export class DevelopmentSupervisor {
         ],
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.todos.fail(todoId, errorMessage);
-      return {
-        errors: [`Code generation failed: ${errorMessage}`],
-        currentPhase: 'code-generation' as const,
-        iterationCount: iteration,
-      };
+      return this.handleCodeGenerationFailure(todoId, iteration, error);
     }
+  }
+
+  /**
+   * Fail the todo and record the error, so the refinement loop can retry. A
+   * halt error is rethrown instead: cht-core is in a state where another
+   * attempt could destroy the operator's work, so the whole run must stop.
+   */
+  private handleCodeGenerationFailure(todoId: string, iteration: number, error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.todos.fail(todoId, errorMessage);
+    if (error instanceof CodeGenHaltError) throw error;
+    return {
+      errors: [`Code generation failed: ${errorMessage}`],
+      currentPhase: 'code-generation' as const,
+      iterationCount: iteration,
+    };
   }
 
   /**

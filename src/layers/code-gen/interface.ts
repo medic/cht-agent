@@ -83,3 +83,15 @@ export interface CodeGenModule {
   generate(input: CodeGenModuleInput): Promise<CodeGenModuleOutput>;
   validate?(): Promise<boolean>;
 }
+
+/**
+ * A module throws this when the run must stop instead of being retried, for
+ * example when cht-core is left in a state where another attempt could destroy
+ * the operator's work. The supervisor rethrows it; other errors are retried.
+ */
+export class CodeGenHaltError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'CodeGenHaltError';
+  }
+}
