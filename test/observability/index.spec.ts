@@ -5,6 +5,7 @@ import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trac
 import type * as Observability from '../../src/observability';
 import { ResearchSupervisor } from '../../src/supervisors/research-supervisor';
 import type { LLMProvider } from '../../src/llm';
+import { LLMCallError } from '../../src/llm/types';
 import type { IssueTemplate } from '../../src/types';
 
 const proxyquire = require('proxyquire');
@@ -190,6 +191,20 @@ describe('observability', () => {
       expect(attr(generation, 'langfuse.observation.level')).to.equal('ERROR');
       expect(attr(generation, 'langfuse.observation.status_message')).to.equal('model down');
       expect(attr(generation, 'langfuse.observation.output')).to.equal(JSON.stringify({ error: 'model down' }));
+    });
+
+    it('keeps the reported model, usage and cost when the call throws an LLMCallError', async () => {
+      const failure = new LLMCallError('Claude CLI error: max turns', {
+        content: '', model: 'claude-opus-5-5', usage: { inputTokens: 900, outputTokens: 40 }, costUsd: 0.6,
+      });
+      await mod.withTrace({ name: 't' }, async (root) => {
+        await mod.observeGeneration(root, { name: 'g', model: 'claude-cli', input: 'p' }, async () => { throw failure; }).catch(() => undefined);
+      });
+      const generation = (await exportedSpans()).find((s) => s.name === 'g')!;
+      expect(attr(generation, 'langfuse.observation.level')).to.equal('ERROR');
+      expect(attr(generation, 'langfuse.observation.model.name')).to.equal('claude-opus-5-5');
+      expect(attr(generation, 'langfuse.observation.usage_details')).to.equal(JSON.stringify({ input: 900, output: 40, total: 940 }));
+      expect(attr(generation, 'langfuse.observation.cost_details')).to.equal(JSON.stringify({ total: 0.6 }));
     });
 
     it('records a thrown error on the root observation, still ends it, and rethrows', async () => {

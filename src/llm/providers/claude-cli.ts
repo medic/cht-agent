@@ -19,6 +19,7 @@ import {
   LLMMessage,
   LLMResponse,
   InvokeOptions,
+  LLMCallError,
 } from '../types';
 
 /**
@@ -305,24 +306,25 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
     const stdout = await executeCLI(prompt, options);
     const parsed = parseResponse(stdout);
 
-    if (parsed.is_error) {
-      throw new Error(`Claude CLI error: ${parsed.result}`);
-    }
-
-    // Ensure result is always a string
     const result = parsed.result ?? '';
-    if (!result && !parsed.is_error) {
-      console.warn('[Claude CLI] Warning: CLI returned empty result');
-    }
-
     const reported = summarizeModelUsage(parsed.modelUsage);
-    return {
+    const response: LLMResponse = {
       content: result,
       model: reported.model ?? modelName,
       usage: reported.usage,
       stopReason: parsed.subtype === 'success' ? 'end_turn' : 'error',
       costUsd: parsed.total_cost_usd,
     };
+
+    if (parsed.is_error) {
+      throw new LLMCallError(`Claude CLI error: ${parsed.result}`, response);
+    }
+
+    if (!result) {
+      console.warn('[Claude CLI] Warning: CLI returned empty result');
+    }
+
+    return response;
   };
 
   /**

@@ -7,6 +7,7 @@ import {
   ContextFile,
 } from '../../../src/layers/code-gen/interface';
 import { LLMProvider, LLMResponse, LLMMessage, InvokeOptions } from '../../../src/llm';
+import { generationRecorder } from '../../helpers/generation-recorder';
 
 // Load the module with the compile gate stubbed to a benign pass, so these
 // generate() calls never invoke the real snapshot/tsc/rollback gate (which would
@@ -1552,6 +1553,31 @@ describe('ClaudeApiCodeGenModule', () => {
 
       expect(module.name).to.equal('claude-api');
       expect(module.version).to.equal('0.6.0');
+    });
+  });
+
+  describe('generation tracing', () => {
+    it('opens one generation per LLM call with the reported model and cost, and records a failed call', async () => {
+      const { records, observability } = generationRecorder();
+      const { ClaudeApiCodeGenModule: TracedModule } = proxyquire(MODULE_PATH, {
+        './compile-gate': { runApiCompileGate: async () => ({ passed: true, issues: [] }) },
+        '../../../../utils/shutdown': { isShutdownRequested: () => false },
+        '../../../../observability': observability,
+      }) as typeof import('../../../src/layers/code-gen/modules/claude-api/index');
+      invokeStub.onCall(0).resolves({ ...makePlanResponse([
+        { action: 'CREATE', path: 'src/a.ts', rationale: 'File A with feature implementation' },
+        { action: 'CREATE', path: 'src/b.ts', rationale: 'File B with feature implementation' },
+      ]), model: 'claude-opus-5-5', costUsd: 0.2 });
+      invokeStub.onCall(1).resolves({ ...makeSingleFileResponse('export const a = 1;\nexport function run() { return a; }'), costUsd: 0.3 });
+      invokeStub.rejects(new Error('overloaded'));
+
+      await new TracedModule(mockProvider).generate(baseInput);
+
+      expect(records.slice(0, 3)).to.deep.equal([
+        { name: 'code-gen-plan', model: 'claude-opus-5-5', costUsd: 0.2, failure: undefined },
+        { name: 'code-gen-file', model: 'test-model', costUsd: 0.3, failure: undefined },
+        { name: 'code-gen-file', error: 'overloaded' },
+      ]);
     });
   });
 });

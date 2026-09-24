@@ -113,6 +113,19 @@ export interface LLMResponse {
 }
 
 /**
+ * A failed call that still reported what it spent, so tracing can record the
+ * model, usage and cost of the failure.
+ *
+ * @example
+ * throw new LLMCallError('Claude CLI error: max turns', { content: '', model: 'claude-opus-5-5', costUsd: 0.4 });
+ */
+export class LLMCallError extends Error {
+  constructor(message: string, readonly response: LLMResponse) {
+    super(message);
+  }
+}
+
+/**
  * LLM Provider Interface
  *
  * All LLM providers must implement this interface.

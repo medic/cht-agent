@@ -181,6 +181,28 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
     expect(caught!.message).to.match(/Claude CLI error: auth failed/);
   });
 
+  it('attaches the reported model, usage, cost and errors text to an is_error failure', async () => {
+    const { provider } = loadProvider([
+      {
+        stdout: cliResultJson({
+          result: undefined,
+          subtype: 'error_max_turns',
+          is_error: true,
+          errors: ['Reached maximum number of turns (1)'],
+          total_cost_usd: 0.3,
+          modelUsage: { 'claude-opus-5-5': { inputTokens: 5, outputTokens: 2, costUSD: 0.3 } },
+        }),
+        closeCode: 0,
+      },
+    ]);
+    const caught = await provider.invoke('p').then(
+      () => expect.fail('expected invoke to throw'),
+      (e: { message: string; response?: unknown }) => e,
+    );
+    expect(caught.message).to.equal('Claude CLI error: Reached maximum number of turns (1)');
+    expect(caught.response).to.deep.include({ model: 'claude-opus-5-5', usage: { inputTokens: 5, outputTokens: 2 }, costUsd: 0.3 });
+  });
+
   it('falls back to treating non-JSON stdout as the result content', async () => {
     const { provider } = loadProvider([{ stdout: 'plain text completion', closeCode: 0 }]);
     const result = await provider.invoke('p');

@@ -6,6 +6,7 @@ import { LangfuseSpanProcessor } from '@langfuse/otel';
 import { propagateAttributes, startActiveObservation, startObservation, type LangfuseGeneration, type LangfuseSpan } from '@langfuse/tracing';
 import { context, propagation, trace } from '@opentelemetry/api';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { LLMCallError } from '../llm/types';
 
 // Bounds how long an unreachable Langfuse can stall a run; the OTLP exporter retries internally.
 const REQUEST_TIMEOUT_SECONDS = 3;
@@ -203,6 +204,12 @@ function completeGeneration<T>(generation: LangfuseGeneration, opts: GenerationO
   generation.end();
 }
 
+function spendOf(err: unknown): { model?: string; usageDetails?: Record<string, number>; costDetails?: { total: number } } {
+  if (!(err instanceof LLMCallError)) return {};
+  const spent = fromLLMResponse(err.response, undefined);
+  return { model: spent.model, usageDetails: spent.usage, costDetails: spent.costUsd === undefined ? undefined : { total: spent.costUsd } };
+}
+
 async function recordGeneration<T>(
   generation: LangfuseGeneration | undefined,
   opts: GenerationOptions<T>,
@@ -215,7 +222,7 @@ async function recordGeneration<T>(
     return result.parsed;
   } catch (err) {
     const message = errorMessage(err);
-    generation.update({ output: { error: message } });
+    generation.update({ output: { error: message }, ...spendOf(err) });
     markFailed(generation, message);
     generation.end();
     throw err;
