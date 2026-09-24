@@ -186,6 +186,71 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await read('tracked.txt')).to.equal('committed content\n');
   });
 
+  /** Set an env var for the duration of `body` only. */
+  const withEnv = async (name: string, value: string, body: () => Promise<void>) => {
+    const prev = process.env[name];
+    process.env[name] = value;
+    try {
+      await body();
+    } finally {
+      if (prev === undefined) delete process.env[name];
+      else process.env[name] = prev;
+    }
+  };
+
+  it('never runs a core.fsmonitor or hook program planted in the repo config', async () => {
+    const hookDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-hooks-'));
+    const marker = path.join(hookDir, 'ran.log');
+    try {
+      const record = (exitCode: number) => `#!/bin/sh\necho "$0" >> '${marker}'\nexit ${exitCode}\n`;
+      await fs.writeFile(path.join(hookDir, 'fsmonitor.sh'), record(1), { mode: 0o755 });
+      for (const hook of ['reference-transaction', 'post-checkout', 'post-merge']) {
+        await fs.writeFile(path.join(hookDir, hook), record(0), { mode: 0o755 });
+      }
+      await git('config', 'core.fsmonitor', path.join(hookDir, 'fsmonitor.sh'));
+      await git('config', 'core.hooksPath', hookDir);
+
+      await makeDirty();
+      const snapshot = await snapshotChtCore(repo);
+      await write('session.ts', 'export const s = 1;\n');
+      await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+      await rollbackChtCore(repo, snapshot);
+
+      const ran = await fs.readFile(marker, 'utf-8').catch(() => '');
+      expect(ran, 'programs that ran').to.equal('');
+      expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+    } finally {
+      await fs.rm(hookDir, { recursive: true, force: true });
+    }
+  });
+
+  it('cleans the session file even when GIT_LITERAL_PATHSPECS is inherited', async () => {
+    const snapshot = await snapshotChtCore(repo);
+    await write('session.txt', 'session scratch\n');
+
+    await withEnv('GIT_LITERAL_PATHSPECS', '1', async () => {
+      const rollback = await rollbackChtCore(repo, snapshot);
+      expect(rollback.clean).to.equal('ok');
+    });
+    expect(await exists('session.txt')).to.equal(false);
+  });
+
+  it('spares a case-variant operator file when GIT_ICASE_PATHSPECS is inherited', async () => {
+    // The operator file is baseline-untracked (ignored only by an uncommitted
+    // .gitignore edit), so it is on disk while the clean runs.
+    await write('.gitignore', 'node_modules/\nSess3.TXT\n');
+    await write('Sess3.TXT', 'operator file\n');
+    const snapshot = await snapshotChtCore(repo);
+    expect(snapshot.baselineUntracked).to.include('Sess3.TXT');
+    await write('sess3.txt', 'session file\n');
+
+    await withEnv('GIT_ICASE_PATHSPECS', '1', async () => {
+      await rollbackChtCore(repo, snapshot);
+    });
+    expect(await read('Sess3.TXT')).to.equal('operator file\n');
+    expect(await exists('sess3.txt')).to.equal(false);
+  });
+
   it('detects a stash leaked by a killed run and recovers with the printed command', async () => {
     await makeDirty();
     // Snapshot, then "die" before rollback.

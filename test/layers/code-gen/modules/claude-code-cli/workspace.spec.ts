@@ -395,6 +395,39 @@ describe('workspace.ts (A.2b)', () => {
       }
     });
 
+    it('reports a file too large for git show instead of parsing truncated output', async () => {
+      const fn = (_c: string, _a: string[], _o: object, cb: (e: Error | null, s: string, t: string) => void) => cb(null, '', '');
+      (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+        const key = `${cmd} ${args.join(' ')}`;
+        if (key.startsWith('git diff --name-status -z abc1234')) {
+          return Promise.resolve({ stdout: 'M\0src/huge.json\0', stderr: '' });
+        }
+        if (key.startsWith('git show')) {
+          return Promise.reject(Object.assign(new RangeError('stdout maxBuffer length exceeded'), {
+            code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+            stdout: 'truncated',
+          }));
+        }
+        return Promise.resolve({ stdout: '', stderr: '' });
+      };
+      const ws = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/workspace', {
+        'node:child_process': { execFile: fn },
+        'node:fs/promises': { readFile: sinon.stub().resolves('new content') },
+      });
+
+      const warnSpy = sinon.spy(console, 'warn');
+      let files;
+      try {
+        files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
+      } finally {
+        warnSpy.restore();
+      }
+      expect(files).to.have.length(1);
+      expect(files[0].originalContent).to.be.undefined;
+      const warned = warnSpy.getCalls().map(c => String(c.args[0])).join('\n');
+      expect(warned).to.include('src/huge.json is too large to read; original content omitted');
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
         'git diff --name-status -z abc1234': { stdout: 'D\0src/deleted.ts\0A\0src/new.ts\0' },

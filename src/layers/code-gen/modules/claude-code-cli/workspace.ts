@@ -31,6 +31,87 @@ import { readEnv } from '../../../../utils/env';
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Output cap for every git call. Node's 1 MiB default truncates a large listing
+ * or `git show` of a big file (precedent: TSC_MAX_BUFFER in compile-validator).
+ */
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * Inherited env vars that point git at another repo, index, object store or
+ * config (`git rev-parse --local-env-vars` on 2.55, plus GIT_INTERNAL_SUPER_PREFIX
+ * from 2.39), or that change pathspec matching. GIT_LITERAL_PATHSPECS turns our
+ * `:(literal)` clean into a silent no-op; GIT_ICASE_PATHSPECS makes it delete a
+ * case variant of the session file.
+ */
+const STRIPPED_GIT_ENV = [
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_CONFIG',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_CONFIG_COUNT',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_IMPLICIT_WORK_TREE',
+  'GIT_GRAFT_FILE',
+  'GIT_INDEX_FILE',
+  'GIT_NO_REPLACE_OBJECTS',
+  'GIT_REPLACE_REF_BASE',
+  'GIT_PREFIX',
+  'GIT_SHALLOW_FILE',
+  'GIT_COMMON_DIR',
+  'GIT_INTERNAL_SUPER_PREFIX',
+  'GIT_LITERAL_PATHSPECS',
+  'GIT_GLOB_PATHSPECS',
+  'GIT_NOGLOB_PATHSPECS',
+  'GIT_ICASE_PATHSPECS',
+];
+
+/**
+ * Config that stops a repo-local `core.fsmonitor` or hook from running a program
+ * inside our git calls. Passed through the env, not `-c`, so the argv (and every
+ * spec stub keyed on it) stays unchanged; git treats both forms the same.
+ */
+const HARDENED_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
+  ['core.fsmonitor', 'false'],
+  ['core.hooksPath', '/dev/null'],
+];
+
+/** Built per call, so a variable set after module load is still stripped. */
+function gitChildEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, LC_ALL: 'C' };
+  for (const name of STRIPPED_GIT_ENV) delete env[name];
+  env.GIT_CONFIG_COUNT = String(HARDENED_GIT_CONFIG.length);
+  HARDENED_GIT_CONFIG.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${i}`] = key;
+    env[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
+  return env;
+}
+
+/** Every git call in this file goes through here. */
+function runGit(args: readonly string[], cwd: string): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync('git', [...args], { cwd, env: gitChildEnv(), maxBuffer: GIT_MAX_BUFFER });
+}
+
+/**
+ * git's own words for a failed call: stderr when there is any, otherwise the
+ * error message without node's first "Command failed: <argv>" line. Never
+ * `${err}`, which embeds the whole argv.
+ */
+function gitErrorText(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const stderr = String((err as { stderr?: unknown }).stderr ?? '').trim();
+  if (stderr) return stderr;
+  const lines = err.message.split('\n');
+  if (lines[0].startsWith('Command failed:')) lines.shift();
+  return lines.join('\n').trim() || err.message;
+}
+
+function isMaxBufferError(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+}
+
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
 const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
 
@@ -92,9 +173,7 @@ export interface ChtCoreSnapshot {
  */
 async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
   if (isFlagEnabled('CHT_AGENT_IGNORE_LEAKED_STASH')) return;
-  const { stdout } = await execFileAsync(
-    'git', ['stash', 'list', '--format=%gd %gs'], { cwd: chtCorePath }
-  );
+  const { stdout } = await runGit(['stash', 'list', '--format=%gd %gs'], chtCorePath);
   // Anchored: our stash message always ENDS with the marker plus a timestamp, so a
   // user stash that merely mentions the marker ("wip after cht-agent-claude-code-cli
   // crash") is not a false positive. Report every match, not just the first — a real
@@ -153,9 +232,7 @@ function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: stri
  * that survives every legal filename.
  */
 async function listUntracked(chtCorePath: string): Promise<string[]> {
-  const { stdout } = await execFileAsync(
-    'git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: chtCorePath }
-  );
+  const { stdout } = await runGit(['ls-files', '--others', '--exclude-standard', '-z'], chtCorePath);
   return stdout.split('\0').filter(Boolean);
 }
 
@@ -171,7 +248,7 @@ async function listUntracked(chtCorePath: string): Promise<string[]> {
 /** True when the git command exits zero. For predicate-style git calls. */
 async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   try {
-    await execFileAsync('git', args, { cwd });
+    await runGit(args, cwd);
     return true;
   } catch {
     return false;
@@ -185,7 +262,7 @@ async function gitExecVerifyOrThrow(
   successLabel: string,
 ): Promise<void> {
   try {
-    await execFileAsync('git', args, { cwd });
+    await runGit(args, cwd);
   } catch (err) {
     const succeeded = await verifyDidSucceed().catch(() => false);
     if (!succeeded) throw err;
@@ -217,9 +294,7 @@ async function stashOperatorWork(
   warnOnIgnoreRuleEdits(statusLines, chtCorePath);
   const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
   const topMessageIsOurs = async () => {
-    const { stdout } = await execFileAsync(
-      'git', ['stash', 'list', '-1', '--format=%gs'], { cwd: chtCorePath }
-    );
+    const { stdout } = await runGit(['stash', 'list', '-1', '--format=%gs'], chtCorePath);
     return stdout.includes(name);
   };
 
@@ -246,9 +321,7 @@ async function stashOperatorWork(
   }
 
   // `git stash list -1 --format=%gd` returns just the ref name.
-  const { stdout: stashList } = await execFileAsync(
-    'git', ['stash', 'list', '-1', '--format=%gd'], { cwd: chtCorePath }
-  );
+  const { stdout: stashList } = await runGit(['stash', 'list', '-1', '--format=%gd'], chtCorePath);
   const stashRef = stashList.trim();
   // Print recovery up front: if the process is hard-killed before rollback, this
   // line is the operator's only pointer to their stashed work. The name is
@@ -272,11 +345,11 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   await assertNoLeakedStash(chtCorePath);
 
   // Capture HEAD
-  const { stdout: head } = await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: chtCorePath });
+  const { stdout: head } = await runGit(['rev-parse', 'HEAD'], chtCorePath);
   const headSha = head.trim();
 
   // Refuse if there are unmerged paths (git stash would fail later).
-  const { stdout: status } = await execFileAsync('git', ['status', '--porcelain'], { cwd: chtCorePath });
+  const { stdout: status } = await runGit(['status', '--porcelain'], chtCorePath);
   const lines = status.split('\n').filter(Boolean);
   assertNoUnmergedPaths(lines, chtCorePath);
 
@@ -344,9 +417,7 @@ export async function captureChtCoreDiff(
   // git diff --name-status against the pre-run SHA picks up tracked changes (M, A, D, R, ...)
   // but NOT untracked files. For untracked CREATEs the CLI made, we also need ls-files --others.
   // `-z` for the same reason as listUntracked: unquoted, NUL-delimited paths.
-  const { stdout: nameList } = await execFileAsync(
-    'git', ['diff', '--name-status', '-z', preRunSha], { cwd: chtCorePath }
-  );
+  const { stdout: nameList } = await runGit(['diff', '--name-status', '-z', preRunSha], chtCorePath);
   const untrackedNow = await listUntracked(chtCorePath);
 
   return [
@@ -440,15 +511,9 @@ async function readChtCoreFile(
     return null;
   }
 
-  let originalContent: string | undefined;
-  if (action === 'modify') {
-    try {
-      const { stdout } = await execFileAsync('git', ['show', `${preRunSha}:${relPath}`], { cwd: chtCorePath });
-      originalContent = stdout;
-    } catch {
-      // Binary or other read failure; skip originalContent.
-    }
-  }
+  const originalContent = action === 'modify'
+    ? await readOriginalContent(chtCorePath, relPath, preRunSha)
+    : undefined;
 
   return {
     path: relPath,
@@ -456,6 +521,24 @@ async function readChtCoreFile(
     purpose: action === 'create' ? 'CLI-created file' : 'CLI-modified file',
     originalContent,
   };
+}
+
+/** The pre-run content of a tracked file, or undefined when git cannot give it. */
+async function readOriginalContent(
+  chtCorePath: string,
+  relPath: string,
+  preRunSha: string,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await runGit(['show', `${preRunSha}:${relPath}`], chtCorePath);
+    return stdout;
+  } catch (err) {
+    // A truncated stdout must never stand in for the original content.
+    if (isMaxBufferError(err)) {
+      console.warn(`[claude-code-cli] ${relPath} is too large to read; original content omitted.`);
+    }
+    return undefined;
+  }
 }
 
 /** Max pathspec entries per `git clean` invocation, to stay clear of OS arg limits. */
@@ -566,7 +649,7 @@ async function cleanSessionCreatedFiles(
         'session-created files were removed',
       );
     } catch (err) {
-      failures.push(`paths ${i}-${i + chunk.length - 1}: ${err}`);
+      failures.push(`paths ${i}-${i + chunk.length - 1}: ${gitErrorText(err)}`);
     }
   }
   if (failures.length > 0) throw new Error(failures.join('; '));
@@ -618,16 +701,16 @@ export async function rollbackChtCore(
     );
   } catch (err) {
     result.reset = 'failed';
-    result.errors.push(`reset: ${err}`);
-    console.warn(`[claude-code-cli] git reset --hard during rollback failed: ${err}`);
+    result.errors.push(`reset: ${gitErrorText(err)}`);
+    console.warn(`[claude-code-cli] git reset --hard during rollback failed: ${gitErrorText(err)}`);
   }
 
   try {
     await cleanSessionCreatedFiles(chtCorePath, snapshot.baselineUntracked);
   } catch (err) {
     result.clean = 'failed';
-    result.errors.push(`clean: ${err}`);
-    console.warn(`[claude-code-cli] git clean -fd during rollback failed: ${err}`);
+    result.errors.push(`clean: ${gitErrorText(err)}`);
+    console.warn(`[claude-code-cli] git clean -fd during rollback failed: ${gitErrorText(err)}`);
   }
 
   if (snapshot.stashRef) {
@@ -639,13 +722,9 @@ export async function rollbackChtCore(
         async () => {
           // Prefer the name-based check when we have one (robust against other
           // stashes shifting indices); otherwise fall back to the ref-based check.
-          const { stdout } = await execFileAsync(
-            'git', ['stash', 'list', '--format=%gs'], { cwd: chtCorePath }
-          );
+          const { stdout } = await runGit(['stash', 'list', '--format=%gs'], chtCorePath);
           if (stashName) return !stdout.includes(stashName);
-          const { stdout: refList } = await execFileAsync(
-            'git', ['stash', 'list', '--format=%gd'], { cwd: chtCorePath }
-          );
+          const { stdout: refList } = await runGit(['stash', 'list', '--format=%gd'], chtCorePath);
           return !refList.split('\n').includes(snapshot.stashRef!);
         },
         `stash ${snapshot.stashRef} was popped`,
@@ -653,9 +732,9 @@ export async function rollbackChtCore(
       result.stashPop = 'ok';
     } catch (err) {
       result.stashPop = 'failed';
-      result.errors.push(`stash pop ${snapshot.stashRef}: ${err}`);
+      result.errors.push(`stash pop ${snapshot.stashRef}: ${gitErrorText(err)}`);
       console.warn(
-        `[claude-code-cli] git stash pop ${snapshot.stashRef} failed: ${err}. ` +
+        `[claude-code-cli] git stash pop ${snapshot.stashRef} failed: ${gitErrorText(err)}. ` +
         `Your work is still in the stash; recover with: git -C ${chtCorePath} stash pop ${snapshot.stashRef}`
       );
     }
