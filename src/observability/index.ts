@@ -6,7 +6,7 @@ import { propagateAttributes, startObservation, type LangfuseSpan } from '@langf
 import { context, propagation, trace } from '@opentelemetry/api';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 
-// Bounds how long an unreachable Langfuse can stall a run; the OTLP exporter retries internally.
+// Bounds span export only; the OTLP exporter retries internally.
 const REQUEST_TIMEOUT_SECONDS = 3;
 
 interface LangfuseRuntime {
