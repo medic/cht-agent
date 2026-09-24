@@ -67,6 +67,9 @@ const STASH_CREATED: Answer[] = [{ stdout: '' }, { stdout: OUR_ENTRY }];
 
 const errno = (code: string) => Object.assign(new Error(code), { code });
 
+/** fs stubs under which every path capture looks at is a regular file. */
+const regularFiles = () => ({ lstat: sinon.stub().resolves({ isFile: () => true }) });
+
 const SNAPSHOT = {
   headSha: 'abc1234',
   headRef: 'refs/heads/main',
@@ -172,6 +175,23 @@ describe('workspace.ts (A.2b)', () => {
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.baselineUntracked).to.deep.equal(['.aider.chat', '.aider.tags']);
+    });
+
+    it('adds what was ignored at snapshot to the baseline, minus dirs that only hold ignored content', async () => {
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: 'notes.md\0' },
+        // sub/ is not ignored itself: git lists it because it holds only ignored content.
+        'git ls-files --others --ignored --exclude-standard --directory': {
+          stdout: 'node_modules/\0sub/\0sub/node_modules/\0.env\0cache/\0cache/.gitignore\0cache/data.bin\0',
+        },
+      }, {}, calls);
+      const snap = await ws.snapshotChtCore('/tmp/cht-core');
+      expect(snap.baselineUntracked).to.deep.equal([
+        'notes.md', 'node_modules/', 'sub/node_modules/', '.env', 'cache/.gitignore', 'cache/data.bin',
+      ]);
     });
 
     it('reads the baseline even on a clean tree (no stash taken)', async () => {
@@ -465,7 +485,7 @@ describe('workspace.ts (A.2b)', () => {
         'git diff --name-status -z abc1234': { stdout: 'A\0src/new.ts\0M\0src/changed.ts\0' },
         'git ls-files --others --exclude-standard': { stdout: '' },
         'git show': { stdout: 'old content' },
-      });
+      }, regularFiles());
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       const create = files.find((f: { path: string }) => f.path === 'src/new.ts');
       const modify = files.find((f: { path: string }) => f.path === 'src/changed.ts');
@@ -480,7 +500,7 @@ describe('workspace.ts (A.2b)', () => {
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         'git diff --name-status -z abc1234': { stdout: '' },
         'git ls-files --others --exclude-standard': { stdout: 'src/untracked.ts\0' },
-      });
+      }, regularFiles());
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/untracked.ts')).to.exist;
     });
@@ -492,7 +512,7 @@ describe('workspace.ts (A.2b)', () => {
         'git ls-files --others --exclude-standard': {
           stdout: '.aider.chat\0.aider.tags\0operator-notes.md\0src/cli-made.ts\0',
         },
-      });
+      }, regularFiles());
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', [
         '.aider.chat',
         '.aider.tags',
@@ -511,7 +531,7 @@ describe('workspace.ts (A.2b)', () => {
         },
         'git ls-files --others --exclude-standard': { stdout: '' },
         'git show': { stdout: 'old content' },
-      });
+      }, regularFiles());
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       // NEW path kept for the rename, and the following entry still parses.
       expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/new.ts', 'src/after.ts']);
@@ -525,7 +545,7 @@ describe('workspace.ts (A.2b)', () => {
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         'git diff --name-status -z abc1234': { stdout: '' },
         'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0operator-notes.md\0' },
-      });
+      }, regularFiles());
 
       for (const bad of [undefined, null, 'operator-notes.md']) {
         let threw = false;
@@ -545,7 +565,7 @@ describe('workspace.ts (A.2b)', () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'fedcba9\n' },
         'git diff --name-status -z abc1234': { stdout: 'A\0op-commit.ts\0' },
-      }, {}, calls);
+      }, regularFiles(), calls);
       let thrown: unknown;
       try {
         await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
@@ -567,7 +587,7 @@ describe('workspace.ts (A.2b)', () => {
             stdout: 'truncated',
           }),
         },
-      });
+      }, regularFiles());
 
       const warnSpy = sinon.spy(console, 'warn');
       let files;
@@ -582,12 +602,46 @@ describe('workspace.ts (A.2b)', () => {
       expect(warned).to.include('src/huge.json is too large to read; original content omitted');
     });
 
+    it('treats a path under an ignored-at-snapshot dir as the operator\'s', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': {
+          stdout: 'webapp/node_modules/x/index.js\0webapp/.gitignore\0node_modules2/y.js\0',
+        },
+      }, regularFiles());
+      const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', ['webapp/node_modules/', 'node_modules/']);
+      // Only an entry that ends in / is a prefix, and only for its own subtree.
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['webapp/.gitignore', 'node_modules2/y.js']);
+    });
+
+    it('never reads through a symlink or a non-file path', async () => {
+      const readFile = sinon.stub().resolves('TARGET CONTENT');
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git diff --name-status -z abc1234': { stdout: 'T\0tracked.txt\0' },
+        'git ls-files --others --exclude-standard': { stdout: 'link.txt\0' },
+      }, { readFile, lstat: sinon.stub().resolves({ isFile: () => false }) });
+      const warnSpy = sinon.spy(console, 'warn');
+      let files;
+      try {
+        files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
+      } finally {
+        warnSpy.restore();
+      }
+      expect(files).to.deep.equal([]);
+      expect(readFile.called).to.equal(false);
+      const warned = warnSpy.getCalls().map(c => String(c.args[0])).join('\n');
+      expect(warned).to.include('Not captured: link.txt is not a regular file');
+      expect(warned).to.include('Not captured: tracked.txt is not a regular file');
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
         'git diff --name-status -z abc1234': { stdout: 'D\0src/deleted.ts\0A\0src/new.ts\0' },
         'git ls-files --others --exclude-standard': { stdout: '' },
-      });
+      }, regularFiles());
       const files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
       expect(files.find((f: { path: string }) => f.path === 'src/deleted.ts')).to.not.exist;
       expect(files.find((f: { path: string }) => f.path === 'src/new.ts')).to.exist;

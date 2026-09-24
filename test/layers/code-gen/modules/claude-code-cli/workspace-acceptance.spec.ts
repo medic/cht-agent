@@ -543,4 +543,182 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(lines).to.not.match(/stash@\{\d+\}/);
     expect(lines).to.not.include('stash drop');
   });
+
+  describe('ignore rules that change during the session', () => {
+    const capturedPaths = async (snapshot: { headSha: string; baselineUntracked: string[] }) =>
+      (await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked)).map(f => f.path).sort();
+
+    /** A repo-local core.excludesFile (never the real global config) that ignores `.env`. */
+    const ignoreEnvThroughExcludesFile = async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-excludes-'));
+      await fs.writeFile(path.join(dir, 'excludes'), '.env\n');
+      await git('config', 'core.excludesFile', path.join(dir, 'excludes'));
+      return dir;
+    };
+
+    it('never captures or deletes an operator file that a session sub/.gitignore un-ignores', async () => {
+      await commitFile('.gitignore', 'node_modules/\nsecret*\n');
+      await fs.mkdir(path.join(repo, 'sub'));
+      await write('sub/secret.txt', 'operator secret\n');
+      const snapshot = await snapshotChtCore(repo);
+
+      await write('sub/.gitignore', '!secret*\n');
+      expect(await capturedPaths(snapshot)).to.deep.equal(['sub/.gitignore']);
+      const rollback = await rollbackChtCore(repo, snapshot);
+
+      expect(rollback.clean).to.equal('ok');
+      expect(await read('sub/secret.txt')).to.equal('operator secret\n');
+      expect(await exists('sub/.gitignore')).to.equal(false);
+    });
+
+    it('never captures an ignored operator .env that a session edit of the tracked .gitignore un-ignores', async () => {
+      await commitFile('.gitignore', 'node_modules/\n.env\n');
+      await write('.env', 'SECRET=operator\n');
+      const snapshot = await snapshotChtCore(repo);
+
+      await write('.gitignore', 'node_modules/\n.env\n!.env\n');
+      const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+      await rollbackChtCore(repo, snapshot);
+
+      expect(captured.map(f => f.path)).to.deep.equal(['.gitignore']);
+      expect(captured.some(f => f.content.includes('SECRET'))).to.equal(false);
+      expect(await read('.env')).to.equal('SECRET=operator\n');
+    });
+
+    it('never reads the target of a session symlink, untracked or in place of a tracked file', async () => {
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-outside-'));
+      try {
+        await fs.writeFile(path.join(outside, 'secret.txt'), 'OUTSIDE SECRET\n');
+        const snapshot = await snapshotChtCore(repo);
+        await fs.symlink(path.join(outside, 'secret.txt'), path.join(repo, 'link.txt'));
+        await fs.rm(path.join(repo, 'tracked.txt'));
+        await fs.symlink(path.join(outside, 'secret.txt'), path.join(repo, 'tracked.txt'));
+
+        const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+        await rollbackChtCore(repo, snapshot);
+
+        expect(captured.some(f => f.content.includes('OUTSIDE SECRET'))).to.equal(false);
+        expect(captured.map(f => f.path)).to.deep.equal([]);
+        expect(await read('tracked.txt')).to.equal('committed content\n');
+        expect(await fs.lstat(path.join(repo, 'link.txt')).then(() => true, () => false)).to.equal(false);
+        expect(await fs.readFile(path.join(outside, 'secret.txt'), 'utf-8')).to.equal('OUTSIDE SECRET\n');
+      } finally {
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps an operator file ignored by core.excludesFile when the session un-ignores it in info/exclude', async () => {
+      const excludesDir = await ignoreEnvThroughExcludesFile();
+      try {
+        await write('.env', 'SECRET=operator\n');
+        const snapshot = await snapshotChtCore(repo);
+
+        await fs.mkdir(path.join(repo, '.git', 'info'), { recursive: true });
+        await fs.writeFile(path.join(repo, '.git', 'info', 'exclude'), '!.env\n');
+        expect(await capturedPaths(snapshot)).to.deep.equal([]);
+        await rollbackChtCore(repo, snapshot);
+
+        expect(await read('.env')).to.equal('SECRET=operator\n');
+      } finally {
+        await fs.rm(excludesDir, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps an ignored root file when the session creates a root .gitignore that un-ignores it', async () => {
+      await git('rm', '-q', '.gitignore');
+      await git('commit', '-m', 'no root ignore file');
+      const excludesDir = await ignoreEnvThroughExcludesFile();
+      try {
+        await write('.env', 'SECRET=operator\n');
+        const snapshot = await snapshotChtCore(repo);
+
+        await write('.gitignore', '!.env\n');
+        expect(await capturedPaths(snapshot)).to.deep.equal(['.gitignore']);
+        await rollbackChtCore(repo, snapshot);
+
+        expect(await read('.env')).to.equal('SECRET=operator\n');
+        expect(await exists('.gitignore')).to.equal(false);
+      } finally {
+        await fs.rm(excludesDir, { recursive: true, force: true });
+      }
+    });
+
+    for (const negation of ['!*', '!node_modules/']) {
+      it(`keeps an ignored node_modules when a nested .gitignore holds ${negation}`, async () => {
+        await fs.mkdir(path.join(repo, 'webapp', 'node_modules', 'pkg'), { recursive: true });
+        await write('webapp/node_modules/pkg/index.js', 'module.exports = 1;\n');
+        await write('webapp/node_modules/pkg/package.json', '{}\n');
+        const snapshot = await snapshotChtCore(repo);
+
+        await write('webapp/.gitignore', `${negation}\n`);
+        expect(await capturedPaths(snapshot)).to.deep.equal(['webapp/.gitignore']);
+        await rollbackChtCore(repo, snapshot);
+
+        expect(await read('webapp/node_modules/pkg/index.js')).to.equal('module.exports = 1;\n');
+        expect(await read('webapp/node_modules/pkg/package.json')).to.equal('{}\n');
+        expect(await exists('webapp/.gitignore')).to.equal(false);
+      });
+    }
+
+    it('keeps the files of a self-ignoring dir when the session deletes its .gitignore', async () => {
+      await fs.mkdir(path.join(repo, 'cache'));
+      await write('cache/.gitignore', '*\n');
+      await write('cache/data.bin', 'operator cache\n');
+      const snapshot = await snapshotChtCore(repo);
+
+      await fs.rm(path.join(repo, 'cache', '.gitignore'));
+      await write('cache/new.txt', 'session file\n');
+      expect(await capturedPaths(snapshot)).to.deep.equal(['cache/new.txt']);
+      await rollbackChtCore(repo, snapshot);
+
+      expect(await read('cache/data.bin')).to.equal('operator cache\n');
+      expect(await exists('cache/new.txt')).to.equal(false);
+      // DELETE residual: the deleted .gitignore was never stashed, so it stays deleted.
+      expect(await exists('cache/.gitignore')).to.equal(false);
+    });
+
+    it('keeps the files of an operator nested repo when the session deletes its .git', async () => {
+      await fs.mkdir(path.join(repo, 'onr'));
+      await execFileAsync('git', ['init', '-q'], { cwd: path.join(repo, 'onr') });
+      await write('onr/work.txt', 'operator nested work\n');
+      const snapshot = await snapshotChtCore(repo);
+
+      await fs.rm(path.join(repo, 'onr', '.git'), { recursive: true, force: true });
+      expect(await capturedPaths(snapshot)).to.deep.equal([]);
+      await rollbackChtCore(repo, snapshot);
+
+      expect(await read('onr/work.txt')).to.equal('operator nested work\n');
+    });
+
+    it('captures and cleans a new session file in a dir that holds only ignored files', async () => {
+      await commitFile('.gitignore', 'node_modules/\n*.log\n');
+      await fs.mkdir(path.join(repo, 'tools'));
+      await write('tools/run.log', 'operator log\n');
+      const snapshot = await snapshotChtCore(repo);
+      // git lists tools/ as an ignored dir entry here; as a prefix it would hide the session file.
+      expect(snapshot.baselineUntracked).to.not.include('tools/');
+
+      await write('tools/new-tool.ts', 'export const t = 1;\n');
+      expect(await capturedPaths(snapshot)).to.deep.equal(['tools/new-tool.ts']);
+      await rollbackChtCore(repo, snapshot);
+
+      expect(await exists('tools/new-tool.ts')).to.equal(false);
+      expect(await read('tools/run.log')).to.equal('operator log\n');
+    });
+
+    it('residual: a session file in an ignored dir that the session un-ignores is neither captured nor cleaned', async () => {
+      await commitFile('.gitignore', 'node_modules/\nbuild/\n');
+      await fs.mkdir(path.join(repo, 'build'));
+      await write('build/old.js', 'operator build\n');
+      const snapshot = await snapshotChtCore(repo);
+
+      await write('.gitignore', 'node_modules/\n'); // the session un-ignores build/
+      await write('build/new.js', 'session build\n');
+      expect(await capturedPaths(snapshot)).to.deep.equal(['.gitignore']);
+      await rollbackChtCore(repo, snapshot);
+
+      expect(await read('build/old.js')).to.equal('operator build\n');
+      expect(await exists('build/new.js')).to.equal(true); // left behind: the documented T1 residual
+    });
+  });
 });

@@ -252,6 +252,10 @@ export interface ChtCoreSnapshot {
    * both work against this baseline so the cycle reasons about a session DELTA
    * rather than absolute repo state (#140).
    *
+   * Entries include the paths that were IGNORED at snapshot time, so a session
+   * that changes an ignore rule cannot turn an operator file into session output.
+   * An entry that ends in `/` covers its whole subtree (see isOperatorPath).
+   *
    * Required, deliberately not optional: an absent baseline degrading to "clean
    * everything" would silently reintroduce the data loss this field exists to fix.
    */
@@ -330,6 +334,38 @@ function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: stri
 async function listUntracked(chtCorePath: string): Promise<string[]> {
   const { stdout } = await runGit(['ls-files', '--others', '--exclude-standard', '-z'], chtCorePath);
   return stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * Ignored paths right now. `--directory` makes a wholly ignored dir one entry
+ * (node_modules/ stays cheap). git also lists a dir that is NOT ignored itself
+ * but holds only ignored content, next to that content; such a dir entry is
+ * dropped, or as a prefix it would hide every new session file below it.
+ */
+async function listIgnored(chtCorePath: string): Promise<string[]> {
+  const { stdout } = await runGit(
+    ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], chtCorePath,
+  );
+  const entries = stdout.split('\0').filter(Boolean);
+  const ancestors = new Set(entries.flatMap(properAncestors));
+  return entries.filter(e => !(e.endsWith('/') && ancestors.has(e)));
+}
+
+/** The dir prefixes above a path: `a/`, `a/b/` for `a/b/c` and for `a/b/c/`. */
+function properAncestors(relPath: string): string[] {
+  const prefixes: string[] = [];
+  for (let i = relPath.indexOf('/'); i !== -1 && i < relPath.length - 1; i = relPath.indexOf('/', i + 1)) {
+    prefixes.push(relPath.slice(0, i + 1));
+  }
+  return prefixes;
+}
+
+/**
+ * True when the path, or a dir entry above it, is in the snapshot baseline.
+ * Exact string compare, no case folding: git reports the names as they are.
+ */
+function isOperatorPath(relPath: string, baseline: ReadonlySet<string>): boolean {
+  return baseline.has(relPath) || properAncestors(relPath).some(prefix => baseline.has(prefix));
 }
 
 /**
@@ -512,7 +548,7 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   // capture/clean delta correct regardless of the ignore-rule churn. The read is
   // unconditional: the stash is conditional on a dirty tree, but unmasked or
   // pre-existing untracked files can exist either way.
-  const baselineUntracked = await listUntracked(chtCorePath);
+  const baselineUntracked = [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
 
   return { headSha, headRef, repoRoot, stashSha, stashName, baselineUntracked };
 }
@@ -647,7 +683,7 @@ async function collectUntrackedCreates(
 ): Promise<GeneratedFile[]> {
   const files: GeneratedFile[] = [];
   for (const relPath of untrackedNow) {
-    if (baseline.has(relPath)) continue; // the operator's file, not ours
+    if (isOperatorPath(relPath, baseline)) continue; // the operator's file, not ours
     const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
     if (file) files.push(file);
   }
@@ -661,6 +697,7 @@ async function readChtCoreFile(
   action: 'create' | 'modify',
 ): Promise<GeneratedFile | null> {
   const fullPath = path.join(chtCorePath, relPath);
+  if (!(await isRegularFile(fullPath, relPath))) return null;
   let content: string;
   try {
     content = await fs.readFile(fullPath, 'utf-8');
@@ -679,6 +716,20 @@ async function readChtCoreFile(
     purpose: action === 'create' ? 'CLI-created file' : 'CLI-modified file',
     originalContent,
   };
+}
+
+/**
+ * Capture reads only regular files: a symlink would leak its target's content
+ * (from outside cht-core, too) into HC2, and a dir or special file has no text.
+ */
+async function isRegularFile(fullPath: string, relPath: string): Promise<boolean> {
+  try {
+    if ((await fs.lstat(fullPath)).isFile()) return true;
+    console.warn(`[claude-code-cli] Not captured: ${relPath} is not a regular file (a symlink, a directory or a special file).`);
+  } catch {
+    // It vanished mid-capture.
+  }
+  return false;
 }
 
 /** The pre-run content of a tracked file, or undefined when git cannot give it. */
@@ -732,7 +783,7 @@ async function computeCleanDelta(
   );
   const baseline = new Set(baselineUntracked);
   const untrackedNow = await listUntracked(chtCorePath);
-  return untrackedNow.filter(p => !baseline.has(p));
+  return untrackedNow.filter(p => !isOperatorPath(p, baseline));
 }
 
 /**
