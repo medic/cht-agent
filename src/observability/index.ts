@@ -1,4 +1,4 @@
-/** Langfuse v5 (OpenTelemetry) tracing; everything no-ops when LANGFUSE_ENABLED=false. */
+/** Langfuse v5 (OpenTelemetry) tracing; everything no-ops when LANGFUSE_ENABLED=false or a Langfuse key is unset. */
 
 import { LangfuseClient } from '@langfuse/client';
 import { LangfuseSpanProcessor } from '@langfuse/otel';
@@ -21,21 +21,23 @@ function errorMessage(err: unknown): string {
 }
 
 function getRuntime(): LangfuseRuntime | undefined {
-  if (process.env.LANGFUSE_ENABLED === 'false') return undefined;
+  if (process.env.LANGFUSE_ENABLED === 'false' || !process.env.LANGFUSE_PUBLIC_KEY || !process.env.LANGFUSE_SECRET_KEY) return undefined;
   if (runtime === undefined) {
     const provider = new NodeTracerProvider({
       spanProcessors: [new LangfuseSpanProcessor({ timeout: REQUEST_TIMEOUT_SECONDS })],
     });
     provider.register();
-    runtime = { provider, client: new LangfuseClient({ timeout: REQUEST_TIMEOUT_SECONDS }) };
+    // @langfuse/client 5.11.1 ignores `timeout`: score requests use the SDK default of 60 s.
+    runtime = { provider, client: new LangfuseClient() };
   }
   return runtime;
 }
 
+/** Best-effort flush: an unreachable Langfuse logs a warning instead of failing the run. */
 export async function shutdownLangfuse(): Promise<void> {
   if (runtime === undefined) return;
-  await runtime.provider.shutdown();
-  await runtime.client.shutdown();
+  await runtime.provider.shutdown().catch((err) => console.warn(`[Langfuse] span flush failed: ${errorMessage(err)}`));
+  await runtime.client.shutdown().catch((err) => console.warn(`[Langfuse] score flush failed: ${errorMessage(err)}`));
 }
 
 /** Shut down and unregister the OTel globals so the next call re-reads process.env (tests only). */
