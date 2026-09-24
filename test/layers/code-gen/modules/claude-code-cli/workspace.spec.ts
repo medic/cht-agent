@@ -664,6 +664,23 @@ describe('workspace.ts (A.2b)', () => {
       expect(warned).to.include('Not captured: tracked.txt is not a regular file');
     });
 
+    it('names a nested repository entry instead of skipping it silently', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git diff --name-status -z abc1234': { stdout: '' },
+        'git ls-files --others --exclude-standard': { stdout: 'nr/\0src/a.ts\0' },
+      }, regularFiles());
+      const warnSpy = sinon.spy(console, 'warn');
+      let files;
+      try {
+        files = await ws.captureChtCoreDiff('/tmp/cht-core', 'abc1234', []);
+      } finally {
+        warnSpy.restore();
+      }
+      expect(files.map((f: { path: string }) => f.path)).to.deep.equal(['src/a.ts']);
+      expect(warnSpy.getCalls().map(c => String(c.args[0]))).to.include('[claude-code-cli] Not captured: nr/ (nested repository).');
+    });
+
     it('skips deletes', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
@@ -753,10 +770,11 @@ describe('workspace.ts (A.2b)', () => {
       const { snapshot, script } = rollbackFixture({ baselineUntracked: ['.aider.chat'] }, {
         'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0src/cli-made.ts\0' },
       });
-      const ws = loadWorkspace(script, {}, calls);
+      const ws = loadWorkspace(script, { lstat: sinon.stub().rejects(errno('ENOENT')) }, calls);
 
-      await ws.rollbackChtCore('/tmp/cht-core', snapshot);
+      const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
 
+      expect(result.clean).to.equal('ok');
       const cleanCall = calls.find(c => c.startsWith('git clean'));
       // :(literal) so a metachar in a session filename cannot fnmatch-delete an
       // operator file (#140 F-1).
@@ -1161,6 +1179,38 @@ describe('workspace.ts (A.2b)', () => {
       expect(result.errors).to.deep.equal([]);
     });
 
+    it('reports a clean as failed when git exits 0 but the path is still on disk, and names it', async () => {
+      const { snapshot, script } = rollbackFixture({}, {
+        'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0nr/\0' },
+        'git clean -fd': { stdout: '' }, // exit 0, removed nothing
+      });
+      const ws = loadWorkspace(script, {
+        lstat: sinon.stub().resolves({}), // still there
+      });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
+      expect(result.clean).to.equal('failed');
+      expect(result.survivors).to.deep.equal(['src/cli-made.ts', 'nr/']);
+      expect(result.errors[0]).to.equal('clean: these session files are still on disk: "src/cli-made.ts", "nr/"');
+      expect(ws.rollbackWarnings(result)).to.deep.equal([
+        'Rollback could not remove these session files. Remove them before the next run, or the next run ' +
+          'treats them as your files: "src/cli-made.ts", "nr/"',
+      ]);
+    });
+
+    it('lists at most 20 surviving paths in the error line', async () => {
+      const paths = Array.from({ length: 23 }, (_, i) => `s/f${i}.ts`);
+      const { snapshot, script } = rollbackFixture({}, {
+        'git ls-files --others --exclude-standard': { stdout: paths.join('\0') + '\0' },
+      });
+      const ws = loadWorkspace(script, { lstat: sinon.stub().resolves({}) });
+
+      const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
+      expect(result.errors[0]).to.include('"s/f19.ts" and 3 more');
+      expect(result.errors[0]).to.not.include('"s/f20.ts"');
+      expect(result.survivors).to.have.length(23);
+    });
+
     it('A.5: clean reports failure when a delta path still exists', async () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git ls-files --others --exclude-standard': { stdout: 'src/cli-made.ts\0' },
@@ -1181,7 +1231,8 @@ describe('workspace.ts (A.2b)', () => {
         'git stash apply': { error: Object.assign(new Error('Command failed'), {
           stderr: "error: unable to unlink old 'ro/f.txt': Permission denied\nIndex was not unstashed.\n",
         }) },
-        'git ls-files --others --exclude-standard': { stdout: 'ro/new.txt\0' },
+        // Nothing to clean before the restore; the failed restore then wrote ro/new.txt.
+        'git ls-files --others --exclude-standard': [{ stdout: '' }, { stdout: 'ro/new.txt\0' }],
         'git diff --name-only --no-renames -z': { stdout: 'ro/f.txt\0' },
         'git rev-parse -q --verify': { error: new Error('no third parent') },
       });

@@ -317,6 +317,19 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       expect(result.files).to.have.length(1);
     });
 
+    it('adds the session files the rollback could not remove to the module warnings', async () => {
+      const module = wireRollbackOutcome({
+        reset: 'ok', clean: 'failed', stashPop: 'ok', errors: ['clean: these session files are still on disk: "nr/"'],
+        survivors: ['nr/'],
+      });
+      sinon.stub(console, 'error');
+      const result = await module.generate(baseInput());
+      expect(result.files).to.have.length(1);
+      expect(result.warnings).to.have.length(1);
+      expect(result.warnings![0]).to.include('Rollback could not remove these session files');
+      expect(result.warnings![0]).to.include('"nr/"');
+    });
+
     it('throws a stash halt error with the restore steps when the stash restore failed', async () => {
       const module = wireRollbackOutcome({
         reset: 'ok', clean: 'ok', stashPop: 'failed',

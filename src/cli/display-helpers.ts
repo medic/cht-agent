@@ -79,6 +79,15 @@ export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: str
   ].join('\n');
 };
 
+/**
+ * Render the non-fatal warnings of a run (for example, session files that a
+ * rollback could not remove). Returns an empty string when there are none.
+ */
+export const renderWarningsBanner = (warnings: ReadonlyArray<string> | undefined): string => {
+  if (!warnings || warnings.length === 0) return '';
+  return ['', 'WARNINGS', '─'.repeat(70), ...warnings.map(w => `- ${w}`), '─'.repeat(70)].join('\n');
+};
+
 export const validateEnvironment = () => {
   if (!process.env.ANTHROPIC_API_KEY) {
     console.error('❌ Error: ANTHROPIC_API_KEY not found in environment variables');

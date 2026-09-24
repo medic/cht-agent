@@ -864,4 +864,35 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       });
     }
   });
+
+  it('names a nested repo that the session created and the clean cannot remove, and runs again after it', async () => {
+    const snapshot = await snapshotChtCore(repo);
+    await fs.mkdir(path.join(repo, 'nr'));
+    await execFileAsync('git', ['init', '-q'], { cwd: path.join(repo, 'nr') });
+    await write('nr/f.txt', 'session nested repo\n');
+
+    const warned: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warned.push(String(args[0])); };
+    let captured;
+    let rollback;
+    try {
+      captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+      rollback = await rollbackChtCore(repo, snapshot);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(captured.map(f => f.path)).to.deep.equal([]);
+    expect(warned).to.include('[claude-code-cli] Not captured: nr/ (nested repository).');
+    expect(rollback.clean).to.equal('failed');
+    expect(rollback.survivors).to.include('nr/');
+    expect(await read('nr/f.txt')).to.equal('session nested repo\n');
+
+    // The next snapshot accepts the tree: a nested repo is never stashed, so the
+    // post-push check does not count it as a leftover.
+    const next = await snapshotChtCore(repo);
+    expect(next.baselineUntracked).to.include('nr/');
+    expect((await rollbackChtCore(repo, next)).reset).to.equal('ok');
+  });
 });

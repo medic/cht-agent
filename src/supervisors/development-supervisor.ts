@@ -101,6 +101,20 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
   return '__end__';
 }
 
+/**
+ * Each iteration replaces codeGeneration, and a session file that iteration 1
+ * could not remove is "operator" data by iteration 2. Carry the earlier
+ * warnings forward, so HC2 still names those files.
+ */
+function keepEarlierWarnings(
+  result: CodeGenerationResult,
+  previous: CodeGenerationResult | undefined,
+): CodeGenerationResult {
+  const earlier = previous?.warnings ?? [];
+  if (earlier.length === 0) return result;
+  return { ...result, warnings: [...new Set([...earlier, ...(result.warnings ?? [])])] };
+}
+
 function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
   return issue.issue.requirements.map(req => {
     const isImplemented = codeGen.implementedRequirements.includes(req);
@@ -271,7 +285,7 @@ export class DevelopmentSupervisor {
       this.todos.complete(todoId);
 
       return {
-        codeGeneration: result,
+        codeGeneration: keepEarlierWarnings(result, state.codeGeneration),
         currentPhase: 'validation' as const,
         iterationCount: iteration,
         messages: [

@@ -13,6 +13,7 @@ import {
   displayResults,
   renderCrossFileIssueBanner,
   renderCompileGateSkipBanner,
+  renderWarningsBanner,
   validateEnvironment,
 } from '../../src/cli/display-helpers';
 import {
@@ -120,6 +121,23 @@ describe('renderCompileGateSkipBanner (H.4)', () => {
     expect(banner).to.include('tsc not available in cht-core workspace');
     expect(banner).to.include('cd /home/me/cht-core && npm install');
     expect(banner).to.include('You may still accept the diff');
+  });
+});
+
+describe('renderWarningsBanner', () => {
+  it('renders each warning under one banner', () => {
+    const banner = renderWarningsBanner([
+      'Rollback could not remove these session files. Remove them before the next run, or the next run ' +
+        'treats them as your files: "nr/"',
+    ]);
+    expect(banner).to.include('WARNINGS');
+    expect(banner).to.include('- Rollback could not remove these session files. Remove them before the next run');
+    expect(banner).to.include('"nr/"');
+  });
+
+  it('renders nothing when there are no warnings', () => {
+    expect(renderWarningsBanner(undefined)).to.equal('');
+    expect(renderWarningsBanner([])).to.equal('');
   });
 });
 

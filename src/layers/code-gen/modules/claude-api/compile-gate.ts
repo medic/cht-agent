@@ -19,6 +19,7 @@ import {
   snapshotChtCore,
   rollbackChtCore,
   rollbackHaltError,
+  rollbackWarnings,
   reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
@@ -185,10 +186,15 @@ function snapshotFailure(err: unknown): CompileValidationResult {
   return skipped(`snapshot failed: ${msg(err)}`);
 }
 
-/** Roll back after the compile check; a failure prints its checklist once, then throws. */
-async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<void> {
+/**
+ * Roll back after the compile check; a failure prints its checklist once, then
+ * throws. Returns the non-fatal rollback warnings.
+ */
+async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
   try {
-    handleApiRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+    const rollback = await rollbackChtCore(chtCorePath, snapshot);
+    handleApiRollbackOutcome(rollback, snapshot, chtCorePath);
+    return rollbackWarnings(rollback);
   } catch (err) {
     reportSafetyError(err, LOG);
     throw err;
@@ -236,6 +242,9 @@ export async function runApiCompileGate(
 
   // Always roll back (plain sequential call, no throw-from-finally). Only a
   // failed reset or restore throws, via handleApiRollbackOutcome.
-  await rollBackGate(chtCorePath, snapshot);
-  return result;
+  return withWarnings(result, await rollBackGate(chtCorePath, snapshot));
+}
+
+function withWarnings(result: CompileValidationResult, warnings: string[]): CompileValidationResult {
+  return warnings.length > 0 ? { ...result, warnings } : result;
 }

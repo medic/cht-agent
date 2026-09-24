@@ -267,6 +267,17 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(text).to.not.include('stash drop');
   });
 
+  it('returns the session files the rollback could not remove as warnings', async () => {
+    const run = load();
+    rollbackStub.resolves({
+      reset: 'ok', clean: 'failed', stashPop: 'skipped', errors: ['clean: still on disk'], survivors: ['webapp/.gitignore'],
+    });
+    sinon.stub(console, 'error');
+    const result = await run(CHT, [file()]) as { warnings?: string[] };
+    expect(result.warnings).to.have.length(1);
+    expect(result.warnings![0]).to.include('"webapp/.gitignore"');
+  });
+
   it('throws a stash halt error when the rollback could not restore the stash', async () => {
     const run = load();
     rollbackStub.resolves({

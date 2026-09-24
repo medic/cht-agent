@@ -37,6 +37,7 @@ import {
   captureChtCoreDiff,
   rollbackChtCore,
   rollbackHaltError,
+  rollbackWarnings,
   reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
@@ -87,10 +88,10 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     // (it would mask any error from the work block). Manage both errors here.
     const work = await this.runWorkBlock(input, snapshot, chtCorePath);
     reportSafetyError(work.error, LOG);
-    await rollBackAfterWork(chtCorePath, snapshot, work.error);
+    const warnings = await rollBackAfterWork(chtCorePath, snapshot, work.error);
 
     if (work.error) throw work.error;
-    return work.result!;
+    return withWarnings(work.result!, warnings);
   }
 
   private requireChtCorePath(input: CodeGenModuleInput): string {
@@ -325,19 +326,27 @@ function emptyResult(input: CodeGenModuleInput, reason: string): CodeGenModuleOu
 
 /**
  * Roll back after the work block. A rollback failure is thrown as its own
- * error, with the work error (if any) kept as its cause.
+ * error, with the work error (if any) kept as its cause. Returns the non-fatal
+ * rollback warnings: the output was built before the rollback ran.
  */
 async function rollBackAfterWork(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   workError: unknown,
-): Promise<void> {
+): Promise<string[]> {
   try {
-    handleRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+    const rollback = await rollbackChtCore(chtCorePath, snapshot);
+    handleRollbackOutcome(rollback, snapshot, chtCorePath);
+    return rollbackWarnings(rollback);
   } catch (err) {
     reportSafetyError(err, LOG);
     throw withCause(err, workError);
   }
+}
+
+function withWarnings(output: CodeGenModuleOutput, warnings: string[]): CodeGenModuleOutput {
+  if (warnings.length === 0) return output;
+  return { ...output, warnings: [...(output.warnings ?? []), ...warnings] };
 }
 
 /** Keep the thrown error's identity; add `cause` only when it has none. */

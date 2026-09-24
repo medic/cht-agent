@@ -75,6 +75,12 @@ export interface CodeGenModuleOutput {
   compileGateSkipped?: boolean;
   /** Human-readable reason associated with {@link compileGateSkipped}. */
   compileGateSkipReason?: string;
+  /**
+   * Non-fatal notes the operator must see at HC2, for example session files a
+   * rollback could not remove. Unlike crossFileIssues, they never start a
+   * refinement iteration and never go to the LLM.
+   */
+  warnings?: string[];
 }
 
 export interface CodeGenModule {

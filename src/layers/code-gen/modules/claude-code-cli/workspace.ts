@@ -895,6 +895,11 @@ async function collectUntrackedCreates(
   const files: GeneratedFile[] = [];
   for (const relPath of untrackedNow) {
     if (isOperatorPath(relPath, baseline)) continue; // the operator's file, not ours
+    if (relPath.endsWith('/')) {
+      // A nested repo or gitfile dir: git lists it as one entry and never its files.
+      console.warn(`[claude-code-cli] Not captured: ${relPath} (nested repository).`);
+      continue;
+    }
     const file = await readChtCoreFile(chtCorePath, relPath, preRunSha, 'create');
     if (file) files.push(file);
   }
@@ -998,17 +1003,18 @@ async function computeCleanDelta(
 }
 
 /**
- * True when every delta path is gone from disk (what "removed" actually means).
- *
- * Only ENOENT counts as removed: an EACCES/ENOTDIR/ELOOP failure means the clean
- * did NOT do its job and must be reported. `lstat`, not `access`, so a surviving
- * broken symlink is seen as still-present rather than followed to nowhere.
+ * The delta paths still on disk (what "not removed" actually means). Only
+ * ENOENT counts as removed: an EACCES/ENOTDIR/ELOOP failure means the clean did
+ * NOT do its job. `lstat`, not `access`, so a surviving broken symlink is seen
+ * as still-present rather than followed to nowhere. A dir entry (a nested repo
+ * or gitfile dir, which `git clean -fd` never removes) always survives.
  */
-async function allPathsRemoved(chtCorePath: string, deltaPaths: readonly string[]): Promise<boolean> {
+async function pathsStillOnDisk(chtCorePath: string, deltaPaths: readonly string[]): Promise<string[]> {
+  const survivors: string[] = [];
   for (const relPath of deltaPaths) {
-    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) return false;
+    if (relPath.endsWith('/') || !(await pathIsRemoved(path.join(chtCorePath, relPath)))) survivors.push(relPath);
   }
-  return true;
+  return survivors;
 }
 
 /** ENOENT means removed; anything still stat-able, or any other errno, does not. */
@@ -1053,38 +1059,47 @@ export interface RollbackResult {
  * watcher is inside it and will be deleted. Narrowing that further would need
  * per-write attribution the CLI does not provide.
  *
- * An EMPTY pathspec is deliberately handled by skipping the clean entirely:
- * `git clean -fd --` with no paths degenerates to a blanket clean, which is the
- * exact data loss this function exists to prevent.
+ * Whatever git's exit code, every delta path is then checked on disk: a zero
+ * exit proves nothing (a nested repo is never removed), and a non-zero exit can
+ * still have removed everything. The tree is legitimately dirty after a
+ * rollback (the operator's own untracked files survive by design), so "status
+ * is empty" would be the wrong check.
  */
 async function cleanSessionCreatedFiles(
   chtCorePath: string,
-  baselineUntracked: readonly string[],
-): Promise<void> {
-  const delta = await computeCleanDelta(chtCorePath, baselineUntracked);
-  if (delta.length === 0) return; // nothing of ours to remove; never blanket-clean
-
+  delta: readonly string[],
+): Promise<{ survivors: string[]; gitErrors: string[] }> {
   // Keep going after a failing chunk: aborting would leave later chunks' session
   // files behind on top of whatever the failing chunk left. Report them together.
-  const failures: string[] = [];
+  const gitErrors: string[] = [];
   for (let i = 0; i < delta.length; i += CLEAN_PATHSPEC_CHUNK) {
     const chunk = delta.slice(i, i + CLEAN_PATHSPEC_CHUNK);
-    try {
-      await gitExecVerifyOrThrow(
-        ['clean', '-fd', '--', ...chunk.map(toLiteralPathspec)],
-        chtCorePath,
-        // The tree is legitimately dirty after a rollback (the operator's own
-        // untracked files survive by design), so "status is empty" is the wrong
-        // check — it would misreport clean: 'failed' and print a spurious
-        // ROLLBACK INCOMPLETE banner. Assert what removal actually means instead.
-        () => allPathsRemoved(chtCorePath, chunk),
-        'session-created files were removed',
-      );
-    } catch (err) {
-      failures.push(`paths ${i}-${i + chunk.length - 1}: ${gitErrorText(err)}`);
-    }
+    await runGit(['clean', '-fd', '--', ...chunk.map(toLiteralPathspec)], chtCorePath)
+      .catch((err: unknown) => { gitErrors.push(gitErrorText(err)); });
   }
-  if (failures.length > 0) throw new Error(failures.join('; '));
+  return { survivors: await pathsStillOnDisk(chtCorePath, delta), gitErrors };
+}
+
+/** At most this many paths go into one error line. */
+const MAX_LISTED_PATHS = 20;
+
+function summarizePaths(paths: readonly string[]): string {
+  const listed = paths.slice(0, MAX_LISTED_PATHS).map(p => JSON.stringify(p)).join(', ');
+  const more = paths.length - MAX_LISTED_PATHS;
+  return more > 0 ? `${listed} and ${more} more` : listed;
+}
+
+/**
+ * Non-fatal notes for the module output and HC2: session files the rollback
+ * could not remove. Left in place, the next run's baseline would count them as
+ * the operator's files, so the operator must see them.
+ */
+export function rollbackWarnings(rollback: RollbackResult): string[] {
+  if (rollback.clean !== 'failed' || !rollback.survivors?.length) return [];
+  return [
+    'Rollback could not remove these session files. Remove them before the next run, or the next run ' +
+      `treats them as your files: ${rollback.survivors.map(p => JSON.stringify(p)).join(', ')}`,
+  ];
 }
 
 /**
@@ -1302,13 +1317,37 @@ async function cleanStep(
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
 ): Promise<void> {
+  let outcome: { survivors: string[]; gitErrors: string[] };
   try {
-    await cleanSessionCreatedFiles(chtCorePath, snapshot.baselineUntracked);
+    const delta = await computeCleanDelta(chtCorePath, snapshot.baselineUntracked);
+    // Nothing of ours to remove: never run `git clean -fd --` with no paths, which
+    // degenerates to a blanket clean.
+    if (delta.length === 0) return;
+    outcome = await cleanSessionCreatedFiles(chtCorePath, delta);
   } catch (err) {
-    result.clean = 'failed';
-    result.errors.push(`clean: ${gitErrorText(err)}`);
-    console.warn(`[claude-code-cli] git clean -fd during rollback failed: ${gitErrorText(err)}`);
+    recordCleanFailure(result, gitErrorText(err));
+    return;
   }
+  recordCleanOutcome(result, outcome);
+}
+
+/** A clean failed only if a session path survived; the real paths go in the error, not chunk numbers. */
+function recordCleanOutcome(result: RollbackResult, outcome: { survivors: string[]; gitErrors: string[] }): void {
+  if (outcome.survivors.length > 0) {
+    result.survivors = outcome.survivors;
+    const gitSaid = outcome.gitErrors.length > 0 ? `; git said: ${outcome.gitErrors.join('; ')}` : '';
+    recordCleanFailure(result, `these session files are still on disk: ${summarizePaths(outcome.survivors)}${gitSaid}`);
+    return;
+  }
+  if (outcome.gitErrors.length > 0) {
+    console.warn('[claude-code-cli] git clean -fd exited non-zero but session-created files were removed; continuing.');
+  }
+}
+
+function recordCleanFailure(result: RollbackResult, text: string): void {
+  result.clean = 'failed';
+  result.errors.push(`clean: ${text}`);
+  console.warn(`[claude-code-cli] git clean -fd during rollback failed: ${text}`);
 }
 
 /**

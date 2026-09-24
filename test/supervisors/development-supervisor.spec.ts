@@ -250,6 +250,21 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
     expect(generate.callCount).to.equal(1);
   });
 
+  it('keeps a rollback warning from an earlier iteration when a later one has none', async () => {
+    const warning = 'Rollback could not remove these session files: "nr/"';
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile('src/a.ts')]));
+    const supervisor = buildSupervisorWithStubAgents(generate);
+    const earlier = { ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: [warning] };
+
+    const out = await supervisor.codeGenerationNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: earlier,
+      iterationCount: 1,
+    }));
+
+    expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal([warning]);
+  });
+
   it('passes validationFeedback as additionalContext on a retry iteration', async () => {
     const generate = sinon.stub().resolves(mkCodeGenResult());
     const supervisor = buildSupervisorWithStubAgents(generate);
