@@ -3,6 +3,7 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import * as util from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { STASH_MARKER_PREFIX, buildLeakedStashLine } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -52,7 +53,7 @@ const loadWorkspace = (script: Script, fsStubs: Record<string, unknown> = {}, ca
 };
 
 const NOW = 1700000000000;
-const OUR_NAME = `cht-agent-claude-code-cli-${NOW}`;
+const OUR_NAME = `${STASH_MARKER_PREFIX}${NOW}`;
 const OUR_SHA = '1111111111111111111111111111111111111111';
 const OTHER_SHA = '2222222222222222222222222222222222222222';
 
@@ -256,6 +257,30 @@ describe('workspace.ts (A.2b)', () => {
       }
     });
 
+    it('builds the leftover-stash pattern from the marker, matching it literally', () => {
+      const pattern = buildLeakedStashLine('x.y+');
+      expect(pattern.test('On main: x.y+123')).to.equal(true);
+      expect(pattern.test('On main: xzy+123')).to.equal(false);
+      expect(pattern.test('On main: x.y+123 crash note')).to.equal(false);
+    });
+
+    it('does not warn about ignore rules for an untracked name that merely holds " -> "', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain=v1': { stdout: '' },
+        'git status --porcelain': { stdout: '?? "a -> .gitignore -> b"\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -z': STASH_CREATED,
+      });
+      const warnSpy = sinon.spy(console, 'warn');
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } finally {
+        warnSpy.restore();
+      }
+      expect(warnSpy.getCalls().find(c => /ignore rules revert to HEAD/.test(String(c.args[0])))).to.be.undefined;
+    });
+
     it('ignores an unrelated third-party stash', async () => {
       const ws = loadWorkspace({
         'git stash list -z': { stdout: stashListZ(['stash@{0}', OTHER_SHA, 'On main: my own wip']) },
@@ -284,8 +309,8 @@ describe('workspace.ts (A.2b)', () => {
         'git stash list -z': {
           stdout: stashListZ(
             ['stash@{0}', OTHER_SHA, 'On main: my own wip'],
-            ['stash@{1}', OUR_SHA, 'On main: cht-agent-claude-code-cli-1700000000001'],
-            ['stash@{2}', '3333333333333333333333333333333333333333', 'On main: cht-agent-claude-code-cli-1700000000000'],
+            ['stash@{1}', OUR_SHA, `On main: ${STASH_MARKER_PREFIX}1700000000001`],
+            ['stash@{2}', '3333333333333333333333333333333333333333', `On main: ${STASH_MARKER_PREFIX}1700000000000`],
           ),
         },
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
@@ -299,8 +324,8 @@ describe('workspace.ts (A.2b)', () => {
       }
       // A real leak can sit under a user stash; naming only the first sends the
       // operator to the wrong entry. Each one gets its own lookup.
-      expect(msg).to.include("grep -E ': cht-agent-claude-code-cli-1700000000001$'");
-      expect(msg).to.include("grep -E ': cht-agent-claude-code-cli-1700000000000$'");
+      expect(msg).to.include(`grep -E ': ${STASH_MARKER_PREFIX}1700000000001$'`);
+      expect(msg).to.include(`grep -E ': ${STASH_MARKER_PREFIX}1700000000000$'`);
       expect(msg).to.include('created 2023-11-14T22:13:20.000Z');
       expect(msg).to.not.include('my own wip');
       expect(msg).to.not.match(/stash@\{\d+\}/);

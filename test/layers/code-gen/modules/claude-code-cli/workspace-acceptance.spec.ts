@@ -9,6 +9,7 @@ import {
   captureChtCoreDiff,
   rollbackChtCore,
   buildRecoveryChecklist,
+  STASH_MARKER_PREFIX,
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const execFileAsync = promisify(execFile);
@@ -101,7 +102,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
 
     // No stash of ours left behind.
     const { stdout: stashes } = await git('stash', 'list');
-    expect(stashes).to.not.include('cht-agent-claude-code-cli-');
+    expect(stashes).to.not.include(STASH_MARKER_PREFIX);
   });
 
   it('leaves a clean checkout untouched apart from the session files', async () => {
@@ -344,7 +345,8 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(await read('tracked.txt')).to.equal('operator work in progress\n');
     expect(await read('operator-notes.md')).to.equal('my notes\n');
     const { stdout: left } = await git('stash', 'list', '--format=%gs');
-    expect(left.trim()).to.match(/note about cht-agent-claude-code-cli-\d+ crash$/);
+    expect(left.trim().split('\n')).to.have.length(1);
+    expect(left.trim().endsWith(`: note about ${snapshot.stashName} crash`)).to.equal(true);
   });
 
   /** status (all untracked) and the index, byte for byte. */
@@ -740,7 +742,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     };
 
     const ourStashes = async () =>
-      (await git('stash', 'list', '--format=%gs')).stdout.split('\n').filter(l => l.includes('cht-agent-claude-code-cli-'));
+      (await git('stash', 'list', '--format=%gs')).stdout.split('\n').filter(l => l.includes(STASH_MARKER_PREFIX));
 
     it('puts staged, unstaged and untracked work back byte for byte when an untracked file cannot be removed', async function () {
       skipAsRoot(this);

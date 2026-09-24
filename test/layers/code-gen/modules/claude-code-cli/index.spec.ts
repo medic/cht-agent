@@ -6,7 +6,7 @@ import { CodeGenModuleInput } from '../../../../../src/layers/code-gen/interface
 import { CrossFileIssue } from '../../../../../src/types';
 import { extractLlmDiscoveryIssues } from '../../../../../src/layers/code-gen/modules/claude-code-cli/index';
 import * as realWorkspace from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
-import { WorkspaceSafetyError } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
+import { WorkspaceSafetyError, STASH_MARKER_PREFIX } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 // Helper: proxyquire the orchestrator with cli-driver + workspace stubbed.
 const proxyquire = require('proxyquire').noCallThru();
@@ -198,7 +198,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const snapshotStub = sinon.stub().resolves({
         headSha: 'abc1234',
         stashSha: '1111111111111111111111111111111111111111',
-        stashName: 'cht-agent-claude-code-cli-1700000000000',
+        stashName: `${STASH_MARKER_PREFIX}1700000000000`,
         baselineUntracked: [],
       });
       const captureStub = sinon.stub().resolves([]);
@@ -244,7 +244,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       expect((thrown as Error).message).to.match(/rollback failed/);
 
       const errorOutput = errorSpy.getCalls().map(c => String(c.args[0])).join('\n');
-      expect(errorOutput).to.include('still in stash cht-agent-claude-code-cli-1700000000000');
+      expect(errorOutput).to.include(`still in stash ${STASH_MARKER_PREFIX}1700000000000`);
       expect(errorOutput).to.include('Permission denied');
       expect(errorOutput).to.include("reset --hard abc1234");
       expect(errorOutput).to.include("clean -fd -- ':(literal)src/a.ts'");
@@ -301,7 +301,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
           snapshotChtCore: sinon.stub().resolves({
             headSha: 'abc1234',
             stashSha: '1111111111111111111111111111111111111111',
-            stashName: 'cht-agent-claude-code-cli-1700000000000',
+            stashName: `${STASH_MARKER_PREFIX}1700000000000`,
             baselineUntracked: [],
           }),
           captureChtCoreDiff: sinon.stub().resolves([{ path: 'src/a.ts', content: 'x' }]),

@@ -8,6 +8,7 @@ import {
   buildRecoveryChecklist,
   ChtCoreSnapshot,
   RollbackResult,
+  STASH_MARKER_PREFIX,
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const proxyquire = require('proxyquire').noCallThru();
@@ -238,7 +239,7 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     const run = load();
     const snapshot: ChtCoreSnapshot = {
       headSha: 'abc1234', headRef: 'refs/heads/master', repoRoot: '/tmp/fake-cht-core',
-      stashSha: '1111111111111111111111111111111111111111', stashName: 'cht-agent-claude-code-cli-1700000000000',
+      stashSha: '1111111111111111111111111111111111111111', stashName: `${STASH_MARKER_PREFIX}1700000000000`,
       baselineUntracked: [],
     };
     const rollback: RollbackResult = {
@@ -261,7 +262,7 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(expected.length).to.be.greaterThan(0);
     expect(logged).to.include.members(expected);
     const text = logged.join('\n');
-    expect(text).to.include('still in stash cht-agent-claude-code-cli-1700000000000');
+    expect(text).to.include(`still in stash ${STASH_MARKER_PREFIX}1700000000000`);
     expect(text).to.include('only if no git process runs');
     expect(text).to.not.match(/stash@\{\d+\}/);
     expect(text).to.not.include('stash drop');

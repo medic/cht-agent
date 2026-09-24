@@ -161,14 +161,19 @@ function isMaxBufferError(err: unknown): boolean {
 }
 
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
-const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
+export const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
 
 /**
- * A `%gd %gs` stash-list line whose MESSAGE ends with our marker plus the
- * timestamp we generate. Anchored so a user stash that merely mentions the
- * marker in prose does not read as one of ours. Linear, no backtracking.
+ * A stash message that ENDS with the marker plus the timestamp we generate.
+ * Anchored so a user stash that merely mentions the marker in prose does not
+ * read as one of ours. The prefix is escaped, so it always matches literally.
  */
-const LEAKED_STASH_LINE = /:\s*cht-agent-claude-code-cli-\d+\s*$/;
+export function buildLeakedStashLine(prefix: string): RegExp {
+  const literal = prefix.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  return new RegExp(String.raw`:\s*${literal}\d+\s*$`);
+}
+
+const LEAKED_STASH_LINE = buildLeakedStashLine(STASH_MARKER_PREFIX);
 
 /** Env flag read, tolerant of casing and stray whitespace. */
 function isFlagEnabled(name: string): boolean {
@@ -292,12 +297,14 @@ async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
 /**
  * Paths named by a `status --porcelain` line. Handles both the rename form
  * (`R  old -> new`, either side may be the ignore file) and C-quoted paths,
- * which git emits for anything non-ASCII (`"caf\303\251/.gitignore"`).
+ * which git emits for anything non-ASCII (`"caf\303\251/.gitignore"`). Only a
+ * rename or copy has two paths; any other name may hold " -> " itself.
  */
 function pathsFromStatusLine(line: string): string[] {
   const unquote = (p: string) => (p.startsWith('"') && p.endsWith('"') ? p.slice(1, -1) : p);
   const body = line.substring(3).trim();
-  return body.split(' -> ').map(part => unquote(part.trim()));
+  const parts = 'RC'.includes(line[0]) ? body.split(' -> ') : [body];
+  return parts.map(part => unquote(part.trim()));
 }
 
 /**
@@ -368,15 +375,6 @@ function isOperatorPath(relPath: string, baseline: ReadonlySet<string>): boolean
   return baseline.has(relPath) || properAncestors(relPath).some(prefix => baseline.has(prefix));
 }
 
-/**
- * Run a git operation; on a non-zero exit, ask the supplied inspector whether
- * the operation actually succeeded (some git commands warn-and-exit-nonzero
- * even when the side effect landed). If the inspector says "yes," log and
- * continue. If "no," re-throw the original error.
- *
- * Use only for ops whose effect is independently inspectable (stash push,
- * reset, clean, stash pop). Pure-read git calls do not need this.
- */
 /** True when the git command exits zero. For predicate-style git calls. */
 async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   try {
@@ -387,6 +385,15 @@ async function gitSucceeds(args: string[], cwd: string): Promise<boolean> {
   }
 }
 
+/**
+ * Run a git operation; on a non-zero exit, ask the supplied inspector whether
+ * the operation actually succeeded (some git commands warn-and-exit-nonzero
+ * even when the side effect landed). If the inspector says "yes," log and
+ * continue. If "no," re-throw the original error.
+ *
+ * Use only for an op whose effect is independently inspectable (the rollback
+ * reset). Pure-read git calls do not need this.
+ */
 async function gitExecVerifyOrThrow(
   args: string[],
   cwd: string,
@@ -844,13 +851,6 @@ async function collectTrackedChanges(
   return files;
 }
 
-/**
- * Parse `git diff --name-status -z` output. Unlike the line/tab form, `-z` emits
- * a flat NUL-delimited token stream: `STATUS\0PATH\0` per entry, except renames
- * and copies (`R100`, `C75`) which emit `STATUS\0OLD\0NEW\0`. Consuming the extra
- * token is what keeps the parser in phase; a line-based split would treat the old
- * path as the next status and desynchronize the rest of the stream.
- */
 interface DiffEntry { relPath: string; action: 'create' | 'modify' }
 
 /**
@@ -867,6 +867,13 @@ function diffEntryFor(code: string, relPath: string | undefined): DiffEntry | nu
   return { relPath, action: code === 'A' ? 'create' : 'modify' };
 }
 
+/**
+ * Parse `git diff --name-status -z` output. Unlike the line/tab form, `-z` emits
+ * a flat NUL-delimited token stream: `STATUS\0PATH\0` per entry, except renames
+ * and copies (`R100`, `C75`) which emit `STATUS\0OLD\0NEW\0`. Consuming the extra
+ * token is what keeps the parser in phase; a line-based split would treat the old
+ * path as the next status and desynchronize the rest of the stream.
+ */
 function parseDiffNameStatusZ(nameList: string): DiffEntry[] {
   // Empty tokens only ever come from the trailing NUL: git emits neither an
   // empty status nor an empty path, so dropping them cannot desynchronize the
