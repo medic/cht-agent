@@ -12,6 +12,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # verify-drafts --changed-only diffs against the PR base; the default
+          # depth-1 checkout cannot reach it and would verify nothing.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -30,6 +34,18 @@ jobs:
 
       - name: Validate agent-memory schema
         run: npm run validate-schema
+
+      # Semantic gate: schema validation proves a draft is well-shaped, not that
+      # its identity and symbols are real. --changed-only scopes findings to this
+      # PR's drafts so pre-existing corpus debt does not fail unrelated PRs.
+      # --online is deliberately absent until a run-scoped GITHUB_TOKEN is proven
+      # able to read medic/cht-core; it runs host-side before pushing.
+      - name: Verify agent-memory drafts
+        run: >
+          npm run verify-drafts --
+          --changed-only
+          --base "${{ github.event.pull_request.base.sha }}"
+          --summary-md "$GITHUB_STEP_SUMMARY"
 
       - name: Test with coverage
         run: npm run test:coverage

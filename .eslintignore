@@ -2,3 +2,7 @@ dist/
 node_modules/
 coverage/
 commitlint.config.js
+# Gitignored run artifacts. Verification reports land here, and an ad-hoc .ts
+# left behind by one investigation would otherwise fail `eslint .` for everyone
+# — the file is outside tsconfig, so the parser rejects it before any rule runs.
+outputs/
