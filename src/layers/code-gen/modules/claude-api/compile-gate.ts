@@ -22,6 +22,7 @@ import {
   reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
+  WorkspaceSafetyError,
 } from '../claude-code-cli/workspace';
 
 const LOG = '[claude-api compile-gate]';
@@ -168,6 +169,22 @@ function handleApiRollbackOutcome(
   if (halt) throw halt;
 }
 
+/**
+ * A failed snapshot has nothing to roll back: it refused before it changed the
+ * tree, or it put the operator's work back before it threw. A stash, drift or
+ * reset stop still halts the run, because the operator's tree needs attention;
+ * a precondition refusal (nothing was changed) or a plain error only skips the
+ * compile gate.
+ */
+function snapshotFailure(err: unknown): CompileValidationResult {
+  if (err instanceof WorkspaceSafetyError && err.kind !== 'precondition') {
+    reportSafetyError(err, LOG);
+    throw err;
+  }
+  console.warn(`${LOG} Compile gate skipped: snapshot failed: ${msg(err)}`);
+  return skipped(`snapshot failed: ${msg(err)}`);
+}
+
 /** Roll back after the compile check; a failure prints its checklist once, then throws. */
 async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<void> {
   try {
@@ -203,8 +220,7 @@ export async function runApiCompileGate(
   try {
     snapshot = await snapshotChtCore(chtCorePath);
   } catch (err) {
-    // snapshotChtCore throws on unmerged paths / git failures; nothing staged, so no rollback.
-    return skipped(`snapshot failed: ${msg(err)}`);
+    return snapshotFailure(err);
   }
 
   let result: CompileValidationResult;

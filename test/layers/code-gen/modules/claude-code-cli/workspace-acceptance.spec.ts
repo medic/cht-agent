@@ -49,6 +49,8 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
   });
 
   afterEach(async () => {
+    // A chmod test that failed midway must not block the removal.
+    await execFileAsync('chmod', ['-R', 'u+w', repo]).catch(() => undefined);
     await fs.rm(repo, { recursive: true, force: true });
   });
 
@@ -720,5 +722,146 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(await read('build/old.js')).to.equal('operator build\n');
       expect(await exists('build/new.js')).to.equal(true); // left behind: the documented T1 residual
     });
+  });
+
+  describe('a stash push that does not clean the tree', () => {
+    const skipAsRoot = (ctx: Mocha.Context) => {
+      if (process.getuid?.() === 0) ctx.skip(); // root ignores the read-only dir
+    };
+
+    /** Make `dir` read-only for the body only. */
+    const withReadOnlyDir = async (dir: string, body: () => Promise<void>) => {
+      await fs.chmod(path.join(repo, dir), 0o555);
+      try {
+        await body();
+      } finally {
+        await fs.chmod(path.join(repo, dir), 0o755);
+      }
+    };
+
+    const ourStashes = async () =>
+      (await git('stash', 'list', '--format=%gs')).stdout.split('\n').filter(l => l.includes('cht-agent-claude-code-cli-'));
+
+    it('puts staged, unstaged and untracked work back byte for byte when an untracked file cannot be removed', async function () {
+      skipAsRoot(this);
+      await commitFile('a.txt', 'a1\n');
+      await commitFile('b.txt', 'b1\n');
+      await write('a.txt', 'a2\n');
+      await git('add', 'a.txt');
+      await write('b.txt', 'b2\n');
+      await fs.mkdir(path.join(repo, 'ro'));
+      await write('ro/u.txt', 'untracked in a read-only dir\n');
+      await write('top.txt', 'untracked at the top\n');
+      const before = await treeState();
+
+      let err: { kind?: string; lines?: string[] } | undefined;
+      await withReadOnlyDir('ro', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      const lines = (err?.lines ?? []).join('\n');
+      expect(lines).to.include('inside "ro" (Permission denied)');
+      expect(lines).to.include('Fix the permissions, then run again.');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await ourStashes()).to.deep.equal([]);
+    });
+
+    it('catches an untracked file the push could not remove even with no tracked work', async function () {
+      skipAsRoot(this);
+      await fs.mkdir(path.join(repo, 'ro'));
+      await write('ro/u.txt', 'untracked in a read-only dir\n');
+      const before = await treeState();
+
+      let err: { kind?: string } | undefined;
+      await withReadOnlyDir('ro', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await ourStashes()).to.deep.equal([]);
+    });
+
+    it('never drops the stash when a staged delete comes back as an extra untracked file', async function () {
+      skipAsRoot(this);
+      await commitFile('rt/t.txt', 't1\n');
+      await commitFile('d.txt', 'd1\n');
+      await write('rt/t.txt', 't2\n');
+      await git('rm', '-q', 'd.txt');
+      const before = await treeState();
+
+      let err: { kind?: string; lines?: string[] } | undefined;
+      await withReadOnlyDir('rt', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      if ((await ourStashes()).length > 0) {
+        expect((err?.lines ?? []).join('\n')).to.include('"d.txt"');
+      } else {
+        expect(await treeState()).to.deep.equal(before);
+      }
+    });
+
+    it('restores an untracked symlink as a symlink when it undoes a partial stash', async function () {
+      skipAsRoot(this);
+      await fs.symlink('tracked.txt', path.join(repo, 'lnk'));
+      await fs.mkdir(path.join(repo, 'ro'));
+      await write('ro/u.txt', 'untracked in a read-only dir\n');
+      const before = await treeState();
+
+      let err: { kind?: string } | undefined;
+      await withReadOnlyDir('ro', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await fs.readlink(path.join(repo, 'lnk'))).to.equal('tracked.txt');
+      expect(await ourStashes(), 'the verify accepted the restored link').to.deep.equal([]);
+    });
+
+    it('stops on a dirty submodule, which a stash push does not save', async () => {
+      const source = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-sub-'));
+      try {
+        const inSource = (...args: string[]) => execFileAsync('git', args, { cwd: source });
+        await inSource('init', '-q');
+        await fs.writeFile(path.join(source, 'inner.txt'), 'inner\n');
+        await inSource('add', 'inner.txt');
+        await inSource('-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'inner');
+        await git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'sub');
+        await git('commit', '-m', 'add submodule');
+        await write('sub/inner.txt', 'edited inside the submodule\n');
+
+        const err = await rejection(() => snapshotChtCore(repo));
+
+        expect(err?.kind).to.equal('stash');
+        expect((err?.lines ?? []).join('\n')).to.include('"sub"');
+        expect(await read('sub/inner.txt')).to.equal('edited inside the submodule\n');
+        expect(await ourStashes()).to.deep.equal([]);
+      } finally {
+        await fs.rm(source, { recursive: true, force: true });
+      }
+    });
+
+    for (const withWork of [false, true]) {
+      it(`runs a full cycle around an operator nested repo${withWork ? ' next to tracked work' : ''}`, async () => {
+        await fs.mkdir(path.join(repo, 'tools'));
+        await execFileAsync('git', ['init', '-q'], { cwd: path.join(repo, 'tools') });
+        await write('tools/tool.sh', 'echo tool\n');
+        if (withWork) await write('tracked.txt', 'operator work in progress\n');
+
+        const snapshot = await snapshotChtCore(repo);
+        await write('session.ts', 'export const s = 1;\n');
+        const rollback = await rollbackChtCore(repo, snapshot);
+
+        expect(rollback.reset).to.equal('ok');
+        expect(await read('tools/tool.sh')).to.equal('echo tool\n');
+        expect(await exists('tools/.git')).to.equal(true);
+        expect(await read('tracked.txt')).to.equal(withWork ? 'operator work in progress\n' : 'committed content\n');
+        expect(await exists('session.ts')).to.equal(false);
+      });
+    }
   });
 });

@@ -85,10 +85,40 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   it('skips (no rollback) when the snapshot fails', async () => {
     const run = load();
     snapshotStub.rejects(new Error('cht-core has unmerged paths'));
+    const warnSpy = sinon.stub(console, 'warn');
     const result = await run(CHT, [file()]);
     expect(result.skipped).to.equal(true);
     expect(result.skipReason).to.match(/snapshot failed/);
     expect(rollbackStub.called).to.equal(false);
+    expect(warnSpy.getCalls().map(c => String(c.args[0])).join('\n')).to.include('Compile gate skipped: snapshot failed');
+  });
+
+  it('skips when the snapshot refused before it changed anything', async () => {
+    const run = load();
+    snapshotStub.rejects(new WorkspaceSafetyError('precondition', 'in the middle of a merge (MERGE_HEAD)'));
+    sinon.stub(console, 'warn');
+    const result = await run(CHT, [file()]);
+    expect(result.skipped).to.equal(true);
+    expect(result.skipReason).to.include('MERGE_HEAD');
+    expect(rollbackStub.called).to.equal(false);
+  });
+
+  it('halts, without a rollback, when the snapshot stash step failed', async () => {
+    const run = load();
+    const stashFailure = new WorkspaceSafetyError('stash', 'git stash could not save your work', {
+      lines: ['git stash could not save your work'],
+    });
+    snapshotStub.rejects(stashFailure);
+    const errSpy = sinon.stub(console, 'error');
+    let thrown: unknown;
+    try {
+      await run(CHT, [file()]);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).to.equal(stashFailure);
+    expect(rollbackStub.called).to.equal(false);
+    expect(errSpy.getCalls().map(c => String(c.args[0]))).to.include('[claude-api compile-gate] git stash could not save your work');
   });
 
   it('materializes files, compiles, and rolls back on a clean pass', async () => {

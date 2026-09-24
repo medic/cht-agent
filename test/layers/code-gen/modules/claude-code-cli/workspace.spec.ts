@@ -139,6 +139,8 @@ describe('workspace.ts (A.2b)', () => {
     it('stashes uncommitted work and records our stash commit SHA', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M file.ts\n' },
         'git stash push': { stdout: 'Saved working directory and index state\n' },
         'git stash list -z': STASH_CREATED,
@@ -151,6 +153,8 @@ describe('workspace.ts (A.2b)', () => {
     it('finds our entry below a newer stash and ignores a decoy that only mentions the name', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M file.ts\n' },
         'git stash push': { stdout: 'Saved\n' },
         'git stash list -z': [{ stdout: '' }, {
@@ -167,11 +171,14 @@ describe('workspace.ts (A.2b)', () => {
     it('records the post-stash untracked baseline (#140)', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M .gitignore\n' },
         'git stash push': { stdout: 'Saved working directory\n' },
         'git stash list -z': STASH_CREATED,
-        // Stashing the .gitignore edit unmasked these pre-existing files.
-        'git ls-files --others --exclude-standard': { stdout: '.aider.chat\0.aider.tags\0' },
+        // Stashing the .gitignore edit unmasked these pre-existing files: absent
+        // from the pre-push listing, present in the post-stash baseline.
+        'git ls-files --others --exclude-standard': [{ stdout: '' }, { stdout: '.aider.chat\0.aider.tags\0' }],
       });
       const snap = await ws.snapshotChtCore('/tmp/cht-core');
       expect(snap.baselineUntracked).to.deep.equal(['.aider.chat', '.aider.tags']);
@@ -316,24 +323,35 @@ describe('workspace.ts (A.2b)', () => {
       }
     });
 
-    it('leaves the stash null when a zero-exit stash push saved nothing (#140 M3)', async () => {
+    it('stops when a zero-exit stash push saved nothing, naming what it did not save (#140 M3)', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
-        'git status --porcelain': { stdout: ' M file.ts\n' },
+        'git status --porcelain=v1': { stdout: ' M sub\0' }, // a dirty submodule
+        'git status --porcelain': { stdout: ' M sub\n' },
         'git stash push': { stdout: 'No local changes to save\n' }, // exits 0, saved nothing
         // The only entry is somebody else's stash, NOT ours.
         'git stash list -z': { stdout: stashListZ(['stash@{0}', OTHER_SHA, 'On main: someone elses wip']) },
       });
-      const snap = await ws.snapshotChtCore('/tmp/cht-core');
-      // Must not adopt a third-party stash that rollback would then restore.
-      expect(snap.stashSha).to.be.null;
-      expect(snap.stashName).to.be.null;
+      let thrown: unknown;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        thrown = err;
+      }
+      // Must not adopt a third-party stash that rollback would then restore,
+      // and must not run on unstashed operator work either.
+      expect((thrown as { kind: string }).kind).to.equal('stash');
+      const lines = (thrown as { lines: string[] }).lines.join('\n');
+      expect(lines).to.include('nothing was stashed and your tree is unchanged');
+      expect(lines).to.include('"sub"');
     });
 
     it('refuses a path below the repo toplevel before it changes anything', async () => {
       const calls: string[] = [];
       const ws = loadWorkspace({
         'git rev-parse --show-prefix': { stdout: 'webapp/\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M file.ts\n' },
       }, {}, calls);
       let thrown: unknown;
@@ -379,6 +397,8 @@ describe('workspace.ts (A.2b)', () => {
     it('warns when the stashed work includes a .gitignore edit (#140)', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M .gitignore\n M src/a.ts\n' },
         'git stash push': { stdout: 'Saved\n' },
         'git stash list -z': STASH_CREATED,
@@ -397,6 +417,8 @@ describe('workspace.ts (A.2b)', () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // Rename AWAY from .gitignore (old side), and a quoted non-ASCII dir.
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: 'R  .gitignore -> .gitignore.bak\n' },
         'git stash push': { stdout: 'Saved\n' },
         'git stash list -z': STASH_CREATED,
@@ -413,6 +435,8 @@ describe('workspace.ts (A.2b)', () => {
     it('warns for a C-quoted nested .gitignore path (#140 F-6)', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M "caf\\303\\251/.gitignore"\n' },
         'git stash push': { stdout: 'Saved\n' },
         'git stash list -z': STASH_CREATED,
@@ -429,6 +453,8 @@ describe('workspace.ts (A.2b)', () => {
     it('warns without promising the CLI cannot touch the unmasked files (#140 C-3)', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M .gitignore\n' },
         'git stash push': { stdout: 'Saved\n' },
         'git stash list -z': STASH_CREATED,
@@ -448,6 +474,8 @@ describe('workspace.ts (A.2b)', () => {
     it('does not warn about ignore rules for ordinary edits', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M src/a.ts\n' },
         'git stash push': { stdout: 'Saved\n' },
         'git stash list -z': STASH_CREATED,
@@ -896,6 +924,8 @@ describe('workspace.ts (A.2b)', () => {
     it('A.4: stash push exits non-zero but stash was created → no throw', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M file.ts\n' },
         'git stash push': { error: new Error('warning: could not remove file') },
         'git stash list -z': STASH_CREATED,
@@ -910,6 +940,8 @@ describe('workspace.ts (A.2b)', () => {
     it('A.4: stash push exits non-zero AND no stash was created → re-throws', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
         'git status --porcelain': { stdout: ' M file.ts\n' },
         'git stash push': { error: new Error('fatal: stash failed') },
         // Verify returns a stash list that does NOT contain our marker.
@@ -921,9 +953,66 @@ describe('workspace.ts (A.2b)', () => {
         await ws.snapshotChtCore('/tmp/cht-core');
       } catch (err) {
         threw = true;
+        expect((err as { kind: string }).kind).to.equal('stash');
         expect((err as Error).message).to.match(/stash failed/);
+        expect((err as Error).message).to.include('nothing was stashed and your tree is unchanged');
       }
       expect(threw).to.equal(true);
+    });
+
+    it('puts the work back and stops when a read after the stash fails', async () => {
+      const listingError = new Error('fatal: ls-files blew up');
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git status --porcelain=v1': { stdout: '' },
+        'git status --porcelain': { stdout: ' M file.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -z': STASH_CREATED,
+        'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+        'git ls-files --others --ignored': { error: listingError },
+      }, {}, calls);
+
+      let thrown: unknown;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { kind: string }).kind).to.equal('precondition');
+      expect((thrown as Error).cause).to.equal(listingError);
+      expect((thrown as Error).message).to.include('put your work back');
+      expect(calls).to.include('git stash drop stash@{0}');
+    });
+
+    it('keeps the stash and names the paths when the undo cannot restore them', async () => {
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        // The push left a tracked change: the stash did not clean the tree.
+        'git status --porcelain=v1': { stdout: ' M rt/t.txt\0' },
+        'git status --porcelain': { stdout: ' M rt/t.txt\n' },
+        'git stash push': { error: Object.assign(new Error('Command failed'), {
+          stderr: "error: unable to unlink old 'rt/t.txt': Permission denied\n",
+        }) },
+        'git stash list -z': STASH_CREATED,
+        [`git diff --name-only --no-renames -z ${OUR_SHA}`]: { stdout: 'rt/t.txt\0' },
+        'git restore': { error: new Error('error: unable to unlink old rt/t.txt') },
+      }, {}, calls);
+
+      let thrown: unknown;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { kind: string }).kind).to.equal('stash');
+      const lines = (thrown as { lines: string[] }).lines.join('\n');
+      expect(lines).to.include(`Your work is still in stash ${OUR_NAME}`);
+      expect(lines).to.include('the restore failed: error: unable to unlink old rt/t.txt');
+      expect(lines).to.include('The rest of your work is already back');
+      expect(lines.indexOf('reset --hard abc1234')).to.be.lessThan(lines.indexOf('stash pop --index'));
+      expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
     });
 
     it('A.5: reset --hard exits non-zero but HEAD matches → no warning', async () => {

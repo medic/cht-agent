@@ -415,37 +415,38 @@ function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: stri
   );
 }
 
+/** Our stash, as the snapshot took it, plus the untracked listing from just before the push. */
+interface TakenStash {
+  sha: string;
+  name: string;
+  prePush: readonly string[];
+}
+
 /**
- * Stash the operator's uncommitted work under a marked name, returning the
- * stash commit SHA only once OUR entry is confirmed in the list.
+ * Stash the operator's uncommitted work under a marked name. Success means two
+ * things, checked whatever the exit code: our entry is in the list, and the
+ * push cleaned the tree. A push that saved nothing throws `stash` (the tree is
+ * unchanged); a push that saved but did not clean is undone first, then throws.
  */
 async function stashOperatorWork(
   chtCorePath: string,
   statusLines: readonly string[],
-): Promise<{ stashSha: string | null; stashName: string | null }> {
+  headSha: string,
+): Promise<TakenStash> {
   warnOnIgnoreRuleEdits(statusLines, chtCorePath);
   const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
-  const findOurs = async () => findStashByName(await listStashes(chtCorePath), name);
-
-  // `git stash push -u` can exit non-zero on file-removal warnings even when
-  // the stash was successfully created (R14/R15). Verify by looking our unique
-  // marker up in the stash list before re-throwing.
-  await gitExecVerifyOrThrow(
-    ['stash', 'push', '-u', '-m', name],
-    chtCorePath,
-    async () => (await findOurs()) !== undefined,
-    `stash "${name}" was created`,
-  );
-
-  // The verify-or-throw helper only inspects on a non-zero exit, but `stash
-  // push -u` can exit ZERO having saved nothing.
-  const ours = await findOurs();
-  if (!ours) {
-    console.warn(
-      `[claude-code-cli] git stash push reported success but "${name}" is not in the stash ` +
-      `list; treating the run as unstashed so rollback never restores someone else's stash.`
-    );
-    return { stashSha: null, stashName: null };
+  const prePush = await listUntracked(chtCorePath);
+  // Exit codes lie both ways: non-zero on a removal warning after a complete
+  // stash, zero with nothing saved (a dirty submodule) or a partial clean.
+  const pushError = await runGit(['stash', 'push', '-u', '-m', name], chtCorePath)
+    .then(() => undefined, (err: unknown) => err);
+  const ours = findStashByName(await listStashes(chtCorePath), name);
+  const leftovers = await stashLeftovers(chtCorePath, prePush);
+  if (!ours) throw await stashNotCreatedError(chtCorePath, pushError, leftovers);
+  const stash: TakenStash = { sha: ours.sha, name, prePush };
+  if (leftovers.length > 0) {
+    await undoStash(chtCorePath, stash, headSha);
+    throw await partialStashError(chtCorePath, pushError, leftovers);
   }
 
   // Print recovery up front: if the process is hard-killed before rollback, this
@@ -454,7 +455,196 @@ async function stashOperatorWork(
     `[claude-code-cli] Stashed your uncommitted work as "${name}". ` +
     `If this run is interrupted: ${recoveryHint(chtCorePath, name)}`
   );
-  return { stashSha: ours.sha, stashName: name };
+  return stash;
+}
+
+/**
+ * What the push left behind: tracked changes (staged, unstaged, intent-to-add,
+ * submodule dirt) and pre-push untracked files still on disk. Not "no untracked
+ * files": stashing a .gitignore edit legitimately unmasks files. A nested repo
+ * (an entry ending in `/`) is never stashed; it stays and joins the baseline.
+ */
+async function stashLeftovers(chtCorePath: string, prePush: readonly string[]): Promise<string[]> {
+  const { stdout } = await runGit(
+    ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none'], chtCorePath,
+  );
+  const survivors: string[] = [];
+  for (const relPath of prePush.filter(p => !p.endsWith('/'))) {
+    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) survivors.push(relPath);
+  }
+  return [...statusZPaths(stdout), ...survivors];
+}
+
+/** Paths in `status --porcelain=v1 -z` output; a rename or copy carries its old path as an extra token. */
+function statusZPaths(stdout: string): string[] {
+  const tokens = stdout.split('\0').filter(Boolean);
+  const paths: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    paths.push(tokens[i].slice(3));
+    i += 'RC'.includes(tokens[i][0]) ? 2 : 1;
+  }
+  return paths;
+}
+
+async function stashNotCreatedError(
+  chtCorePath: string,
+  pushError: unknown,
+  leftovers: readonly string[],
+): Promise<WorkspaceSafetyError> {
+  const text = pushError === undefined
+    ? 'git stash push exited 0 but saved nothing (for example, changes inside a submodule, which git stash does not save)'
+    : gitErrorText(pushError);
+  const lines = [
+    `git stash could not save your uncommitted work, so nothing was stashed and your tree is unchanged: ${text}`,
+    ...pathListLines('Changes that were not stashed:', leftovers),
+    ...(await permissionLines(chtCorePath, text, leftovers)),
+  ];
+  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError });
+}
+
+async function partialStashError(
+  chtCorePath: string,
+  pushError: unknown,
+  leftovers: readonly string[],
+): Promise<WorkspaceSafetyError> {
+  const text = pushError === undefined ? 'git stash push exited 0' : gitErrorText(pushError);
+  const lines = [
+    `git stash did not clear these paths, so cht-agent put your work back and stopped (${text}):`,
+    ...pathListLines('Paths the stash left:', leftovers).slice(1),
+    ...(await permissionLines(chtCorePath, text, leftovers)),
+  ];
+  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError });
+}
+
+/** Names the dirs to fix when git reported a permission error, else the generic step. */
+async function permissionLines(chtCorePath: string, gitText: string, paths: readonly string[]): Promise<string[]> {
+  if (!gitText.includes('Permission denied')) return ['Fix the cause, then run again.'];
+  const dirs = await unwritableDirsFor(chtCorePath, paths);
+  const where = dirs.length > 0 ? `inside ${dirs.map(d => JSON.stringify(d)).join(', ')} ` : '';
+  return [`git could not write ${where}(Permission denied). Fix the permissions, then run again.`];
+}
+
+/**
+ * Put the tree back exactly as it was before the push, from our stash commit W
+ * (worktree from W, index from W^2, untracked files from W^3), then drop W.
+ * Not `stash pop`, which fails on these half-cleaned states, and not
+ * `checkout W^3 --`, which stages. Only the differing paths are restored, so a
+ * read-only dir whose files did not change is never written. W is dropped only
+ * once the tree is proven back; otherwise it stays and this throws `stash`.
+ */
+async function undoStash(chtCorePath: string, stash: TakenStash, headSha: string): Promise<void> {
+  let differing: string[];
+  try {
+    await restoreFromStash(chtCorePath, stash.sha);
+    differing = await pathsNotRestored(chtCorePath, stash);
+  } catch (err) {
+    throw await undoFailedError(chtCorePath, stash, headSha, [`(the restore failed: ${gitErrorText(err)})`], err);
+  }
+  if (differing.length > 0) throw await undoFailedError(chtCorePath, stash, headSha, differing);
+  if (await dropStashBySha(chtCorePath, stash.sha)) return;
+  console.warn(`[claude-code-cli] Your work is restored; the stash entry ${stash.name} is a spare copy.`);
+}
+
+async function restoreFromStash(chtCorePath: string, sha: string): Promise<void> {
+  const worktree = await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '-z', sha, '--']);
+  await restorePaths(chtCorePath, sha, '--worktree', worktree);
+  const index = await zPaths(chtCorePath, ['diff', '--cached', '--name-only', '--no-renames', '-z', `${sha}^2`, '--']);
+  await restorePaths(chtCorePath, `${sha}^2`, '--staged', index);
+  const missing: string[] = [];
+  for (const relPath of await stashUntrackedPaths(chtCorePath, sha)) {
+    if (await pathIsRemoved(path.join(chtCorePath, relPath))) missing.push(relPath);
+  }
+  await restorePaths(chtCorePath, `${sha}^3`, '--worktree', missing);
+}
+
+async function restorePaths(chtCorePath: string, source: string, where: string, relPaths: readonly string[]): Promise<void> {
+  for (let i = 0; i < relPaths.length; i += CLEAN_PATHSPEC_CHUNK) {
+    const chunk = relPaths.slice(i, i + CLEAN_PATHSPEC_CHUNK).map(toLiteralPathspec);
+    await runGit(['restore', `--source=${source}`, where, '--', ...chunk], chtCorePath);
+  }
+}
+
+async function zPaths(chtCorePath: string, args: readonly string[]): Promise<string[]> {
+  return (await runGit(args, chtCorePath)).stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * The paths where the tree does not match what the stash holds. Submodule
+ * content is ignored (a stash never records it), and every untracked file must
+ * match its W^3 entry by mode: a symlink by its target text, a file by its blob.
+ */
+async function pathsNotRestored(chtCorePath: string, stash: TakenStash): Promise<string[]> {
+  const tracked = await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', stash.sha, '--']);
+  const staged = await zPaths(
+    chtCorePath, ['diff', '--cached', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', `${stash.sha}^2`, '--'],
+  );
+  const untracked = await untrackedEntriesNotRestored(chtCorePath, stash.sha);
+  const now = new Set(await listUntracked(chtCorePath));
+  const before = new Set(stash.prePush);
+  const extra = [...now].filter(p => !before.has(p));
+  const gone = [...before].filter(p => !now.has(p));
+  return [...new Set([...tracked, ...staged, ...untracked, ...extra, ...gone])];
+}
+
+async function untrackedEntriesNotRestored(chtCorePath: string, sha: string): Promise<string[]> {
+  if (!(await gitSucceeds(['rev-parse', '-q', '--verify', `${sha}^3`], chtCorePath))) return [];
+  const { stdout } = await runGit(['ls-tree', '-r', '-z', `${sha}^3`], chtCorePath);
+  const notRestored: string[] = [];
+  for (const entry of stdout.split('\0').filter(Boolean)) {
+    // `<mode> <type> <oid>\t<path>`; split at the FIRST tab, a path may hold one.
+    const tab = entry.indexOf('\t');
+    const [mode, , oid] = entry.slice(0, tab).split(' ');
+    const relPath = entry.slice(tab + 1);
+    if (!(await stashEntryOnDisk(chtCorePath, relPath, mode, oid))) notRestored.push(relPath);
+  }
+  return notRestored;
+}
+
+const REGULAR_FILE_MODES = new Set(['100644', '100755']);
+
+async function stashEntryOnDisk(chtCorePath: string, relPath: string, mode: string, oid: string): Promise<boolean> {
+  const fullPath = path.join(chtCorePath, relPath);
+  const stat = await fs.lstat(fullPath).catch(() => null);
+  if (mode === '120000') return Boolean(stat?.isSymbolicLink()) && (await symlinkTargetIs(chtCorePath, fullPath, oid));
+  if (REGULAR_FILE_MODES.has(mode)) return Boolean(stat?.isFile()) && (await fileBlobIs(chtCorePath, relPath, oid));
+  return false;
+}
+
+/** hash-object would follow the link, so compare the link text with the stored blob. */
+async function symlinkTargetIs(chtCorePath: string, fullPath: string, oid: string): Promise<boolean> {
+  const { stdout } = await runGit(['cat-file', 'blob', oid], chtCorePath);
+  return (await fs.readlink(fullPath)) === stdout;
+}
+
+async function fileBlobIs(chtCorePath: string, relPath: string, oid: string): Promise<boolean> {
+  const { stdout } = await runGit(['hash-object', '--no-filters', '--', relPath], chtCorePath);
+  return stdout.trim() === oid;
+}
+
+/** The undo could not prove the tree is back: keep the stash, and say how to finish by hand. */
+async function undoFailedError(
+  chtCorePath: string,
+  stash: TakenStash,
+  headSha: string,
+  differing: readonly string[],
+  cause?: unknown,
+): Promise<WorkspaceSafetyError> {
+  const onDisk: string[] = [];
+  for (const relPath of await stashUntrackedPaths(chtCorePath, stash.sha).catch(() => [])) {
+    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
+  }
+  const steps = [`git -C ${shellQuote(chtCorePath)} reset --hard ${headSha}`];
+  if (onDisk.length > 0) steps.push(literalCleanCommand(chtCorePath, onDisk));
+  steps.push(recoveryHint(chtCorePath, stash.name));
+  const lines = [
+    `git stash did not complete, and cht-agent could not fully put your work back. Your work is still in stash ${stash.name}.`,
+    ...pathListLines('These paths do not match what the stash holds (cht-agent did not delete any of them):', differing),
+    'The rest of your work is already back in the working tree.',
+    'To recover, run these steps in this order:',
+    ...steps.map((step, i) => `  ${i + 1}. ${step}`),
+  ];
+  return new WorkspaceSafetyError('stash', lines[0], { lines, cause });
 }
 
 /**
@@ -537,20 +727,41 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   assertNoUnmergedPaths(lines, chtCorePath);
 
   // Stash uncommitted work (if any) so the CLI sees a clean workspace.
-  const { stashSha, stashName } = lines.length > 0
-    ? await stashOperatorWork(chtCorePath, lines)
-    : { stashSha: null, stashName: null };
+  const stash = lines.length > 0 ? await stashOperatorWork(chtCorePath, lines, headSha) : null;
+  const baselineUntracked = await readBaselineOrUndo(chtCorePath, stash, headSha);
 
-  // Record the untracked baseline AFTER the stash: stashing an uncommitted
-  // .gitignore edit reverts ignore rules to HEAD, which can unmask files that
-  // were ignored only by that edit. Reading here means those files land in the
-  // baseline (they are the operator's, not ours), which is what makes the
-  // capture/clean delta correct regardless of the ignore-rule churn. The read is
-  // unconditional: the stash is conditional on a dirty tree, but unmasked or
-  // pre-existing untracked files can exist either way.
-  const baselineUntracked = [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
+  return {
+    headSha, headRef, repoRoot, stashSha: stash?.sha ?? null, stashName: stash?.name ?? null, baselineUntracked,
+  };
+}
 
-  return { headSha, headRef, repoRoot, stashSha, stashName, baselineUntracked };
+/**
+ * Record the untracked baseline AFTER the stash: stashing an uncommitted
+ * .gitignore edit reverts ignore rules to HEAD, which can unmask files that
+ * were ignored only by that edit. Reading here means those files land in the
+ * baseline (they are the operator's, not ours), which is what makes the
+ * capture/clean delta correct regardless of the ignore-rule churn. The read is
+ * unconditional: the stash is conditional on a dirty tree, but unmasked or
+ * pre-existing untracked files can exist either way.
+ *
+ * If a read fails after a stash was taken, put the work back first: a snapshot
+ * error must never leave the operator's work stranded in our stash.
+ */
+async function readBaselineOrUndo(
+  chtCorePath: string,
+  stash: TakenStash | null,
+  headSha: string,
+): Promise<string[]> {
+  try {
+    return [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
+  } catch (err) {
+    if (!stash) throw err;
+    await undoStash(chtCorePath, stash, headSha);
+    const message =
+      `The snapshot failed after the stash (${gitErrorText(err)}); cht-agent put your work back, ` +
+      'so nothing was changed.';
+    throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+  }
 }
 
 /**
