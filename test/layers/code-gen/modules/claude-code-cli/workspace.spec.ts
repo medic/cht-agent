@@ -1335,9 +1335,9 @@ describe('workspace.ts', () => {
     });
 
     it('reset failure is reported when the tree does NOT match the snapshot', async () => {
-      // An earlier check verified `rev-parse HEAD === snapshot.headSha`, which nothing in a
-      // session can falsify, so a real reset failure verified as success and the
-      // session's edits silently stayed in the operator's tree.
+      // Verify restoration, not HEAD identity: the pre-checks already proved that
+      // HEAD is the snapshot's, so HEAD says nothing about a reset that failed.
+      // Only a tree diff against the snapshot shows the edits that stayed.
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard': { error: new Error('fatal: Unable to create index.lock') },
         'git diff --quiet abc1234': { error: new Error('tree still differs') },

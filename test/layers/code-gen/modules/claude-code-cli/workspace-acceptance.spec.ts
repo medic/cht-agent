@@ -823,7 +823,8 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       await rollbackChtCore(repo, snapshot);
 
       expect(await read('build/old.js')).to.equal('operator build\n');
-      expect(await exists('build/new.js')).to.equal(true); // left behind: the documented T1 residual
+      // Left behind, as documented: the dir was ignored at snapshot, so its new file counts as the operator's.
+      expect(await exists('build/new.js')).to.equal(true);
     });
   });
 

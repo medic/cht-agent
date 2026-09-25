@@ -6,9 +6,10 @@
  * gives it the same type-check: it materializes the generated files into a git
  * snapshot of cht-core, runs the shared compile validator, and always rolls
  * back. It degrades to a skip (never a hard error) when cht-core is not a usable
- * git workspace, so the module keeps its run-anywhere property. Only a rollback
- * that leaves the operator's work in the stash (a failed hard reset or a failed
- * restore) throws: a halt error, because the run must stop there.
+ * git workspace, so the module keeps its run-anywhere property. It halts the
+ * run (a halt error) when the operator's tree needs attention: a snapshot
+ * `stash`, `drift` or `reset` error, a rollback drift, or a failed reset or
+ * restore. It skips only on a snapshot `precondition` refusal or a plain error.
  */
 
 import * as fs from 'node:fs';
@@ -171,11 +172,11 @@ function handleApiRollbackOutcome(
 }
 
 /**
- * A failed snapshot has nothing to roll back: it refused before it changed the
- * tree, or it put the operator's work back before it threw. A stash, drift or
- * reset stop still halts the run, because the operator's tree needs attention;
- * a precondition refusal (nothing was changed) or a plain error only skips the
- * compile gate.
+ * A failed snapshot leaves nothing for the gate to roll back. A `precondition`
+ * refusal (nothing was changed) or a plain error only skips the compile gate.
+ * A `stash`, `drift` or `reset` stop halts the run, because the operator's tree
+ * needs attention: the undo may have kept the stash, and its lines say how to
+ * recover.
  */
 function snapshotFailure(err: unknown): CompileValidationResult {
   if (err instanceof WorkspaceSafetyError && err.kind !== 'precondition') {
@@ -206,8 +207,9 @@ async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Pro
  * git snapshot of cht-core behind a path-traversal guard, runs the shared
  * compile validator, and always rolls back. Returns a CompileValidationResult:
  * the compile issues fold into the module output's crossFileIssues, and a skip
- * sets compileGateSkipped / compileGateSkipReason. Throws only when the
- * rollback leaves the operator's work in the stash.
+ * sets compileGateSkipped / compileGateSkipReason. Throws a halt error on a
+ * snapshot `stash`/`drift`/`reset` error, on a rollback drift, and on a failed
+ * reset or restore.
  */
 export async function runApiCompileGate(
   chtCorePath: string,
@@ -231,8 +233,8 @@ export async function runApiCompileGate(
 
   const result = await compileMaterialized(chtCorePath, files);
 
-  // Always roll back (plain sequential call, no throw-from-finally). Only a
-  // failed reset or restore throws, via handleApiRollbackOutcome.
+  // Always roll back (plain sequential call, no throw-from-finally). A rollback
+  // drift, or a failed reset or restore, throws from here.
   return withWarnings(result, await rollBackGate(chtCorePath, snapshot));
 }
 

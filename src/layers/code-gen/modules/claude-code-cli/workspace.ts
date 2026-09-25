@@ -1384,10 +1384,11 @@ async function pathIsRemoved(fullPath: string): Promise<boolean> {
 }
 
 /**
- * Per-op outcome of a rollback attempt. `reset` is fatal when failed; the
- * other two are warnings the orchestrator surfaces but does not abort on.
- * After a failed reset, the clean and the pop are `skipped` on purpose: the
- * stash stays in place, and the operator recovers with the checklist.
+ * Per-op outcome of a rollback that passed its pre-checks (a pre-check drift
+ * throws instead, and changes nothing). A failed reset or a failed restore
+ * halts the run; only a failed clean is non-fatal. After a failed reset, the
+ * clean and the pop are `skipped` on purpose: the stash stays in place, and the
+ * operator recovers with the checklist.
  */
 export interface RollbackResult {
   reset: 'ok' | 'failed';
@@ -1463,12 +1464,13 @@ export function rollbackWarnings(rollback: RollbackResult): string[] {
 }
 
 /**
- * Always restore cht-core to the snapshot state: reset to HEAD, clean the files
- * this session created, restore the stash if one was created. The reset runs
- * through the verify-then-throw helper so a non-zero exit that actually
+ * Restore cht-core to the snapshot state: reset to HEAD, clean the files this
+ * session created, restore the stash if one was created. First the pre-checks
+ * run; when one fails, this throws `drift` and changes nothing. After a failed
+ * reset, the clean and the restore are skipped and the stash stays. The reset
+ * runs through the verify-then-throw helper so a non-zero exit that actually
  * succeeded does not generate a misleading warning. Returns a typed result the
- * orchestrator inspects to emit a recovery checklist when the reset or the
- * restore failed.
+ * caller turns into a halt (failed reset or restore) or warnings (failed clean).
  *
  * Residuals: the full list is on #140. The two that operators will hit:
  *  - OVERWRITE: if the session overwrites a file that was untracked or ignored
