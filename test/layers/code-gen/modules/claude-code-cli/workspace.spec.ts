@@ -544,7 +544,7 @@ describe('workspace.ts', () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
         // An index-only delete, a rename whose source is back, and a plain modify.
-        'git status -z --porcelain=v1': { stdout: 'D  d.txt\0R  b.txt\0a.txt\0 M c.txt\0' },
+        'git status -z --porcelain': { stdout: 'D  d.txt\0R  b.txt\0a.txt\0 M c.txt\0' },
         'git status --porcelain': { stdout: 'D  d.txt\n' },
       }, {
         lstat: sinon.stub().callsFake(async (p: string) => {

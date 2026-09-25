@@ -624,8 +624,9 @@ interface RoundTripCandidate {
  * differs, so refusing up front is the only way to change nothing.
  */
 async function assertStashCanRoundTrip(chtCorePath: string): Promise<void> {
+  // `--porcelain` is the v1 format; this argv stays apart from the post-push read.
   const { stdout } = await runGit(
-    ['status', '-z', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=all'], chtCorePath,
+    ['status', '-z', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'], chtCorePath,
   );
   const problems: string[] = [];
   for (const candidate of parseStatusZ(stdout).flatMap(roundTripCandidates)) {
