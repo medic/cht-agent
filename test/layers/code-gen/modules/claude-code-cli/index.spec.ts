@@ -55,7 +55,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     const spawnStub = sinon.stub()
       .onFirstCall().resolves(planResultText) // plan phase
       .onSecondCall().resolves('execute ok');  // execute phase
-    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
     const captureStub = sinon.stub().resolves([
       { path: 'src/a.ts', content: 'export const a = 1;\n', purpose: 'CLI-created file' },
     ]);
@@ -87,7 +87,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
 
   it('returns empty result and rolls back when shutdown is requested after snapshot but before plan', async () => {
     const spawnStub = sinon.stub();
-    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
     const captureStub = sinon.stub();
     const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
     // First check (before snapshot) returns false so we proceed; second check
@@ -116,7 +116,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     const spawnStub = sinon.stub()
       .onFirstCall().resolves(planResultText)
       .onSecondCall().rejects(new Error('CLI crashed'));
-    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
     const captureStub = sinon.stub();
     const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -160,7 +160,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
   it('returns empty result when plan phase parses to no items', async () => {
     const emptyPlan = '=== PLAN ===\n=== END PLAN ===\n';
     const spawnStub = sinon.stub().resolves(emptyPlan);
-    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+    const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
     const captureStub = sinon.stub();
     const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -187,6 +187,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
         headSha: 'abc1234',
         stashRef: 'stash@{0}',
         stashName: 'cht-agent-claude-code-cli-1700000000000',
+        baselineUntracked: [],
       });
       const captureStub = sinon.stub().resolves([]);
       const rollbackStub = sinon.stub().resolves({
@@ -241,6 +242,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
         headSha: 'abc1234',
         stashRef: 'stash@{0}',
         stashName: 'cht-agent-claude-code-cli-1700000000000',
+        baselineUntracked: [],
       });
       // Return at least one file so the R17 relaxed retry does NOT fire — this
       // test is about rollback handling, not the retry path.
@@ -285,7 +287,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       executeParse = { result: 'execute stdout', isError: false, numTurns: 20 },
     ) => {
       const spawnStub = sinon.stub().resolves('cli stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       const captureStub = sinon.stub();
       captureResults.forEach((files, i) => captureStub.onCall(i).resolves(files));
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
@@ -342,7 +344,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
     it('does NOT retry when the plan is empty (existing short-circuit fires first)', async () => {
       const emptyPlan = '=== PLAN ===\n=== END PLAN ===\n';
       const spawnStub = sinon.stub().resolves('cli stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       const captureStub = sinon.stub();
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -399,7 +401,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       const captureStub = sinon.stub().resolves(capturedFiles);
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -569,7 +571,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       const captureStub = sinon.stub().resolves(capturedFiles);
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -638,7 +640,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       const captureStub = sinon.stub().resolves([]);
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -673,7 +675,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       const captureStub = sinon.stub().resolves([]);
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
 
@@ -708,7 +710,7 @@ describe('ClaudeCodeCLICodeGenModule (A.2d orchestrator)', () => {
       const spawnStub = sinon.stub()
         .onFirstCall().resolves('plan stdout')
         .onSecondCall().resolves('execute stdout');
-      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null });
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, baselineUntracked: [] });
       // Return at least one file so the R17 relaxed retry does NOT fire — this
       // test is about partialGeneration, not the retry path.
       const captureStub = sinon.stub().resolves([{ path: 'src/a.ts', content: 'x' }]);

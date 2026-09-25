@@ -21,7 +21,9 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   // and node:fs are all stubbed so no real git/tsc/disk is touched. realpathSync
   // defaults to identity (no symlinks); tests override it to simulate an escape.
   const load = () => {
-    snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashRef: null, stashName: null });
+    snapshotStub = sinon.stub().resolves({
+      headSha: 'abc1234', stashRef: null, stashName: null, baselineUntracked: [],
+    });
     rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
     compileStub = sinon.stub().resolves({ passed: true, issues: [] });
     existsSyncStub = sinon.stub().returns(true); // .git present + ancestors exist by default
@@ -192,7 +194,9 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
 
   it('includes the stash-pop line in the recovery checklist when a stash was taken', async () => {
     const run = load();
-    snapshotStub.resolves({ headSha: 'abc1234', stashRef: 'stash@{0}', stashName: 'api-gate' });
+    snapshotStub.resolves({
+      headSha: 'abc1234', stashRef: 'stash@{0}', stashName: 'api-gate', baselineUntracked: [],
+    });
     rollbackStub.resolves({ reset: 'failed', clean: 'ok', stashPop: 'failed', errors: ['reset failed'] });
     const errSpy = sinon.stub(console, 'error');
     let threw = false;
