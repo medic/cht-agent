@@ -681,7 +681,7 @@ describe('workspace.ts', () => {
         thrown = err;
       }
       expect((thrown as { kind: string }).kind).to.equal('drift');
-      expect((thrown as Error).message).to.include('HEAD moved from abc1234 to fedcba9');
+      expect((thrown as Error).message).to.include('HEAD moved from abc1234 to fedcba9 during the session (a commit or a checkout)');
       expect(calls.some(c => c.startsWith('git diff'))).to.equal(false);
     });
 
@@ -983,7 +983,50 @@ describe('workspace.ts', () => {
           'git symbolic-ref -q HEAD': { stdout: 'refs/heads/twin\n' },
         });
         const ws = loadWorkspace(script, {}, calls);
-        await expectDrift(ws, snapshot, calls, 'The branch changed from refs/heads/main to refs/heads/twin');
+        await expectDrift(ws, snapshot, calls, 'The checkout changed from refs/heads/main to refs/heads/twin (at the same commit)');
+      });
+
+      describe('the reason each drift gives', () => {
+        const driftLines = async (overrides: Partial<typeof SNAPSHOT>, script: Script) => {
+          const fixture = rollbackFixture(overrides, script);
+          const ws = loadWorkspace(fixture.script);
+          try {
+            await ws.rollbackChtCore('/tmp/cht-core', fixture.snapshot);
+          } catch (err) {
+            return (err as { lines: string[] }).lines.join('\n');
+          }
+          throw new Error('expected a drift');
+        };
+
+        it('a commit on the branch: HEAD moved, and a reset could orphan commits', async () => {
+          const lines = await driftLines({}, { 'git rev-parse HEAD': { stdout: 'fedcba9\n' } });
+          expect(lines).to.include('HEAD moved from abc1234 to fedcba9 on refs/heads/main');
+          expect(lines).to.include('can orphan commits made since');
+        });
+
+        it('a branch switch at the same commit: no claim about orphaned commits', async () => {
+          const lines = await driftLines({}, { 'git symbolic-ref -q HEAD': { stdout: 'refs/heads/twin\n' } });
+          expect(lines).to.include('(at the same commit)');
+          expect(lines).to.include('which is not the checkout that it snapshotted');
+          expect(lines).to.not.include('orphan');
+        });
+
+        it('a detach: names the detached HEAD', async () => {
+          const lines = await driftLines({}, {
+            'git symbolic-ref -q HEAD': { error: Object.assign(new Error('not a symbolic ref'), { code: 1 }) },
+          });
+          expect(lines).to.include('The checkout changed from refs/heads/main to a detached HEAD (at the same commit)');
+        });
+
+        it('prints the review line only when a list is not empty', async () => {
+          const empty = await driftLines({}, { 'git rev-parse HEAD': { stdout: 'fedcba9\n' } });
+          expect(empty).to.not.include('Review these files');
+          const listed = await driftLines({}, {
+            'git rev-parse HEAD': { stdout: 'fedcba9\n' },
+            'git diff --name-only -z HEAD': { stdout: 'op-commit.ts\0' },
+          });
+          expect(listed).to.include('Review these files yourself');
+        });
       });
 
       it('refuses when our stash is no longer listed', async () => {
@@ -1047,6 +1090,23 @@ describe('workspace.ts', () => {
 
       const other = failedReset(['reset: fatal: something else']);
       expect(other).to.include('Find out why git failed (see its message above) and fix the cause');
+    });
+
+    it('lists the clean survivors under their own heading, apart from what the restore wrote', () => {
+      const ws = loadWorkspace({});
+      const text = ws.buildRecoveryChecklist('/tmp/cht-core', { ...SNAPSHOT, ...WITH_STASH }, {
+        reset: 'ok', clean: 'failed', stashPop: 'failed',
+        errors: ['clean: these session files are still on disk: "nr/", "s.ts"', 'stash apply: error: conflicts in index'],
+        survivors: ['nr/', 's.ts'], popResidue: ['op-untracked.txt'],
+      }).join('\n');
+      const residueAt = text.indexOf('Untracked files the failed restore wrote (the stash also holds them):');
+      const survivorsAt = text.indexOf('Session files the clean could not remove:');
+      expect(residueAt).to.be.greaterThan(-1);
+      expect(survivorsAt).to.be.greaterThan(residueAt);
+      expect(text.slice(residueAt, survivorsAt)).to.not.include('"nr/"');
+      expect(text.slice(survivorsAt)).to.include('"nr/"');
+      expect(text).to.include(`clean -fd -- ':(literal)op-untracked.txt' ':(literal)s.ts'`);
+      expect(text).to.include('Remove these directories by hand (git clean cannot remove a nested repository): "nr/"');
     });
 
     it('gives the restore-failure order and names the dirs that block it', () => {
@@ -1444,6 +1504,24 @@ describe('workspace.ts', () => {
       const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
       expect(result.clean).to.equal('failed');
       expect(result.errors[0]).to.match(/^clean: /);
+    });
+
+    it('keeps a clean survivor out of the files that a failed restore wrote', async () => {
+      const { snapshot, script } = rollbackFixture(WITH_STASH, {
+        // The clean sees the session's nested repo; after the failed restore, a restored file too.
+        'git ls-files --others --exclude-standard': [{ stdout: 'nr/\0' }, { stdout: 'nr/\0op-untracked.txt\0' }],
+        'git stash apply': { error: new Error('error: conflicts in index') },
+      });
+      const ws = loadWorkspace(script, { lstat: sinon.stub().resolves({}) });
+      sinon.stub(console, 'warn');
+      let result;
+      try {
+        result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
+      } finally {
+        sinon.restore();
+      }
+      expect(result.survivors).to.deep.equal(['nr/']);
+      expect(result.popResidue).to.deep.equal(['op-untracked.txt']);
     });
 
     it('a failed restore keeps our entry and records what blocks a manual one', async () => {

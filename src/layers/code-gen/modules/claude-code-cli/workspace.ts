@@ -894,11 +894,29 @@ async function pathsNotRestored(chtCorePath: string, stash: TakenStash): Promise
     chtCorePath, ['diff', '--cached', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', `${stash.sha}^2`, '--'],
   );
   const untracked = await untrackedEntriesNotRestored(chtCorePath, stash.sha);
+  const deleted = await deletedPathsOnDisk(chtCorePath, stash.sha);
   const now = new Set(await listUntracked(chtCorePath));
   const before = new Set(stash.prePush);
   const extra = [...now].filter(p => !before.has(p));
   const gone = [...before].filter(p => !now.has(p));
-  return [...new Set([...tracked, ...staged, ...untracked, ...extra, ...gone])];
+  return [...new Set([...tracked, ...staged, ...untracked, ...deleted, ...extra, ...gone])];
+}
+
+/**
+ * The paths that the stash's worktree (W) or index (W^2) deletes relative to
+ * its base, which are on disk anyway. The extra-path check cannot see them when
+ * they are ignored (a written-back `d.log` under `*.log`).
+ */
+async function deletedPathsOnDisk(chtCorePath: string, sha: string): Promise<string[]> {
+  const deleted = new Set([
+    ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${sha}^1`, sha]),
+    ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${sha}^1`, `${sha}^2`]),
+  ]);
+  const onDisk: string[] = [];
+  for (const relPath of deleted) {
+    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
+  }
+  return onDisk;
 }
 
 async function untrackedEntriesNotRestored(chtCorePath: string, sha: string): Promise<string[]> {
@@ -1157,8 +1175,8 @@ async function assertHeadUnmoved(chtCorePath: string, preRunSha: string): Promis
   const head = await readHeadSha(chtCorePath);
   if (head === preRunSha) return;
   const message =
-    `HEAD moved from ${preRunSha} to ${head} during the session, so cht-agent captured nothing: ` +
-    'a commit made during the session is not session output.';
+    `HEAD moved from ${preRunSha} to ${head} during the session (a commit or a checkout), so cht-agent ` +
+    'captured nothing: changes that come with a commit or a checkout are not session output.';
   throw new WorkspaceSafetyError('drift', message, { lines: [message] });
 }
 
@@ -1380,7 +1398,11 @@ export interface RollbackResult {
   sessionEdits?: string[];
   /** Untracked session paths still on disk (the whole delta when the clean was skipped). */
   survivors?: string[];
-  /** After a failed restore: untracked paths it wrote (they are also in the stash). */
+  /**
+   * After a failed restore: the untracked paths that appeared since the clean,
+   * that is, the ones the failed restore wrote (the stash also holds them). The
+   * clean survivors are not in it; they stay in `survivors`.
+   */
   popResidue?: string[];
   /** After a failed restore: paths where the tree differs from the stash, which block a retry. */
   popBlockers?: string[];
@@ -1550,18 +1572,38 @@ async function headDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promis
   const moved = await describeHeadMove(chtCorePath, snapshot);
   if (!moved) return null;
   return [
-    `${moved} cht-agent did not reset, clean or restore anything: a hard reset now would move or orphan commits.`,
+    moved,
     ...stashKeptLines(chtCorePath, snapshot),
     ...(await sessionStateLines(chtCorePath, snapshot)),
   ];
 }
 
+/** The reason line for each kind of move, true for that kind. */
 async function describeHeadMove(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string | null> {
   const head = await readHeadSha(chtCorePath);
-  if (head !== snapshot.headSha) return `HEAD moved from ${snapshot.headSha} to ${head} during the session.`;
   const headRef = await readHeadRef(chtCorePath);
-  if (headRef === snapshot.headRef) return null;
-  return `The branch changed from ${snapshot.headRef ?? 'a detached HEAD'} to ${headRef ?? 'a detached HEAD'} during the session.`;
+  if (headRef !== snapshot.headRef) return checkoutChangeLine(snapshot, headRef, head);
+  if (head !== snapshot.headSha) return headMoveLine(snapshot, head);
+  return null;
+}
+
+function refLabel(ref: string | null): string {
+  return ref ?? 'a detached HEAD';
+}
+
+/** A checkout of another branch (or a detach): a reset here would act on a checkout that is not ours. */
+function checkoutChangeLine(snapshot: ChtCoreSnapshot, headRef: string | null, head: string): string {
+  const commit = head === snapshot.headSha ? 'at the same commit' : `and HEAD moved from ${snapshot.headSha} to ${head}`;
+  return `The checkout changed from ${refLabel(snapshot.headRef)} to ${refLabel(headRef)} (${commit}) during the ` +
+    `session. cht-agent did not reset, clean or restore anything: a hard reset here would act on ` +
+    `${refLabel(headRef)}, which is not the checkout that it snapshotted.`;
+}
+
+/** A commit, an amend, a reset or a checkout of another commit on the same ref. */
+function headMoveLine(snapshot: ChtCoreSnapshot, head: string): string {
+  return `HEAD moved from ${snapshot.headSha} to ${head} on ${refLabel(snapshot.headRef)} during the session ` +
+    '(a commit, an amend, a reset or a checkout). cht-agent did not reset, clean or restore anything: a hard ' +
+    `reset now would move HEAD back to ${snapshot.headSha}, and that can orphan commits made since.`;
 }
 
 async function stashDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[] | null> {
@@ -1586,14 +1628,15 @@ function stashKeptLines(chtCorePath: string, snapshot: ChtCoreSnapshot): string[
 
 /** What the session left in the tree, for the operator to sort out by hand. */
 async function sessionStateLines(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
-  return [
+  const listed = [
     ...(await listingLines('Tracked files that differ from HEAD:', () => trackedPathsDifferingFrom(chtCorePath, 'HEAD'))),
     ...(await listingLines(
       'Untracked files that appeared during the session:',
       () => computeCleanDelta(chtCorePath, snapshot.baselineUntracked),
     )),
-    'Review these files yourself, and keep or remove each one.',
   ];
+  if (listed.length === 0) return [];
+  return [...listed, 'Review these files yourself, and keep or remove each one.'];
 }
 
 async function listingLines(heading: string, read: () => Promise<string[]>): Promise<string[]> {
@@ -1815,8 +1858,11 @@ async function recordPopFailure(
   const text = gitErrorText(err);
   result.stashPop = 'failed';
   result.errors.push(`stash apply: ${text}`);
+  const survivors = new Set(result.survivors ?? []);
   result.popResidue = await readPathsForReport(
-    () => computeCleanDelta(chtCorePath, snapshot.baselineUntracked), 'untracked files the failed restore wrote', result,
+    async () => (await computeCleanDelta(chtCorePath, snapshot.baselineUntracked)).filter(p => !survivors.has(p)),
+    'untracked files the failed restore wrote',
+    result,
   );
   result.popBlockers = await readPathsForReport(
     () => stashBlockingPaths(chtCorePath, stashSha), 'paths that block the restore', result,
@@ -1910,13 +1956,18 @@ function popFailureChecklist(
   rollback: RollbackResult,
 ): string[] {
   const residue = rollback.popResidue ?? [];
-  const steps = [popCauseStep(rollback), `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`];
-  if (residue.length > 0) steps.push(literalCleanCommand(chtCorePath, residue));
-  steps.push(...recoveryHintSteps(chtCorePath, String(snapshot.stashName)));
+  const survivors = rollback.survivors ?? [];
+  const steps = [
+    popCauseStep(rollback),
+    `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`,
+    ...removalSteps(chtCorePath, [...residue, ...survivors]),
+    ...recoveryHintSteps(chtCorePath, String(snapshot.stashName)),
+  ];
   return [
     `Rollback could not restore your work: git stash apply --index failed. Your work is still in stash ${snapshot.stashName}.`,
     ...pathListLines('Paths that block the restore:', rollback.popBlockers),
     ...pathListLines('Untracked files the failed restore wrote (the stash also holds them):', residue),
+    ...pathListLines('Session files the clean could not remove:', survivors),
     'To recover, run these steps in this order:',
     ...steps.map((step, i) => `  ${i + 1}. ${step}`),
     RESTORE_WITHOUT_INDEX_NOTE,
@@ -1940,8 +1991,8 @@ function resetFailureChecklist(
   const steps = [
     resetCauseStep(rollback),
     `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`,
+    ...removalSteps(chtCorePath, survivors),
   ];
-  if (survivors.length > 0) steps.push(literalCleanCommand(chtCorePath, survivors));
   if (snapshot.stashName) steps.push(...recoveryHintSteps(chtCorePath, snapshot.stashName));
   return [
     'Rollback stopped: git reset --hard failed, so cht-agent did not clean or restore anything.',
@@ -1967,6 +2018,24 @@ function resetCauseStep(rollback: RollbackResult): string {
 function pathListLines(heading: string, paths: readonly string[] | undefined): string[] {
   if (!paths || paths.length === 0) return [];
   return [heading, ...paths.map(p => `  - ${JSON.stringify(p)}`)];
+}
+
+/**
+ * The steps that remove these untracked paths: one scoped clean for the files,
+ * and a by-hand step for dir entries (a nested repo, which git clean never removes).
+ */
+function removalSteps(chtCorePath: string, paths: readonly string[]): string[] {
+  const files = paths.filter(p => !p.endsWith('/'));
+  const dirs = paths.filter(p => p.endsWith('/'));
+  const steps: string[] = [];
+  if (files.length > 0) steps.push(literalCleanCommand(chtCorePath, files));
+  if (dirs.length > 0) {
+    steps.push(
+      'Remove these directories by hand (git clean cannot remove a nested repository): ' +
+        dirs.map(d => JSON.stringify(d)).join(', '),
+    );
+  }
+  return steps;
 }
 
 /** A clean of exactly these paths: each one a quoted `:(literal)` word, never a blanket clean. */

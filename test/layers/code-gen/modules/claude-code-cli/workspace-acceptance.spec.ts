@@ -913,6 +913,31 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       }
     });
 
+    it('never drops the stash while an ignored file that the stash deletes is back on disk', async function () {
+      skipAsRoot(this);
+      await commitFile('.gitignore', 'node_modules/\n*.log\n');
+      await commitFile('rt/t.txt', 't1\n');
+      await write('d.log', 'd\n');
+      await git('add', '-f', 'd.log');
+      await git('commit', '-m', 'track an ignored log');
+      await git('rm', '-q', 'd.log');       // staged delete of an ignored, tracked file
+      await write('rt/t.txt', 't2\n');     // a tracked edit the push cannot reset
+      const ignoredState = async () => (await git('status', '--porcelain=v1', '-z', '--ignored', '--untracked-files=all')).stdout;
+      const before = { ...(await treeState()), ignored: await ignoredState() };
+
+      let err: { kind?: string; lines?: string[] } | undefined;
+      await withReadOnlyDir('rt', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      if ((await ourStashes()).length > 0) {
+        expect((err?.lines ?? []).join('\n')).to.include('"d.log"');
+      } else {
+        expect({ ...(await treeState()), ignored: await ignoredState() }).to.deep.equal(before);
+      }
+    });
+
     it('restores an untracked symlink as a symlink when it undoes a partial stash', async function () {
       skipAsRoot(this);
       await fs.symlink('tracked.txt', path.join(repo, 'lnk'));
