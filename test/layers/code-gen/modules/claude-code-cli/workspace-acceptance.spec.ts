@@ -330,7 +330,9 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     const snapshot = await snapshotChtCore(repo);
 
     await write('.gitignore', 'node_modules/\n.env\n!.env\n'); // the session un-ignores .env
-    await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    expect(captured.map(f => f.path)).to.not.include('.env');
+    expect(captured.some(f => f.content.includes('SECRET'))).to.equal(false);
     await write('.git/index.lock', '');                         // the reset now fails
     const rollback = await rollbackChtCore(repo, snapshot);
     await fs.rm(path.join(repo, '.git', 'index.lock'));
@@ -1134,5 +1136,165 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
         expect(await treeState()).to.deep.equal(before);
       });
     }
+  });
+
+  describe('guards that a mutation must not remove', () => {
+    it('captures the full original content of a tracked file above 1 MiB', async () => {
+      const big = 'x'.repeat(2 * 1024 * 1024);
+      await commitFile('big.txt', big);
+      const snapshot = await snapshotChtCore(repo);
+      await write('big.txt', `${big}session edit\n`);
+
+      const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+      await rollbackChtCore(repo, snapshot);
+
+      const entry = captured.find(f => f.path === 'big.txt');
+      expect(entry?.originalContent?.length).to.equal(big.length);
+    });
+
+    it('works on the target, not on the repo that inherited GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE point at', async () => {
+      const other = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-env-'));
+      const inOther = (...args: string[]) => execFileAsync('git', args, { cwd: other });
+      try {
+        await inOther('init', '-q');
+        await fs.writeFile(path.join(other, 'o.txt'), 'other repo\n');
+        await inOther('add', 'o.txt');
+        await inOther('-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'o');
+        await fs.writeFile(path.join(other, 'o.txt'), 'other repo wip\n');
+        const otherBefore = [
+          (await inOther('status', '--porcelain=v1', '-z', '--untracked-files=all')).stdout,
+          (await inOther('ls-files', '-s')).stdout,
+          (await inOther('stash', 'list')).stdout,
+        ];
+        await makeDirty();
+        const before = await treeState();
+
+        const vars = { GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other, GIT_INDEX_FILE: path.join(other, '.git', 'index') };
+        const saved = Object.fromEntries(Object.keys(vars).map(k => [k, process.env[k]]));
+        Object.assign(process.env, vars);
+        let captured;
+        try {
+          const snapshot = await snapshotChtCore(repo);
+          await write('session.ts', 'export const s = 1;\n');
+          captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+          await rollbackChtCore(repo, snapshot);
+        } finally {
+          for (const [k, v] of Object.entries(saved)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+          }
+        }
+
+        expect(captured.map(f => f.path)).to.deep.equal(['session.ts']);
+        expect(await treeState()).to.deep.equal(before);
+        expect([
+          (await inOther('status', '--porcelain=v1', '-z', '--untracked-files=all')).stdout,
+          (await inOther('ls-files', '-s')).stdout,
+          (await inOther('stash', 'list')).stdout,
+        ]).to.deep.equal(otherBefore);
+      } finally {
+        await fs.rm(other, { recursive: true, force: true });
+      }
+    });
+
+    it('stops on submodule dirt even when the repo config hides it (submodule.<name>.ignore=all)', async () => {
+      const source = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-sub-'));
+      try {
+        const inSource = (...args: string[]) => execFileAsync('git', args, { cwd: source });
+        await inSource('init', '-q');
+        await fs.writeFile(path.join(source, 'inner.txt'), 'inner\n');
+        await inSource('add', 'inner.txt');
+        await inSource('-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'inner');
+        await git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', source, 'sub');
+        await git('commit', '-m', 'add submodule');
+        await git('config', 'submodule.sub.ignore', 'all');
+        await write('sub/inner.txt', 'edited inside the submodule\n');
+        await write('tracked.txt', 'operator work in progress\n');
+        const before = await treeState();
+
+        const err = await rejection(() => snapshotChtCore(repo));
+
+        expect(err?.kind).to.equal('stash');
+        expect(await treeState()).to.deep.equal(before);
+        expect(await read('sub/inner.txt')).to.equal('edited inside the submodule\n');
+      } finally {
+        await fs.rm(source, { recursive: true, force: true });
+      }
+    });
+
+    it('tells the operator, on a HEAD move with a stash taken, where the work is and what the session left', async () => {
+      await makeDirty();
+      const snapshot = await snapshotChtCore(repo);
+      await write('tracked.txt', 'session edit\n');
+      await write('session.ts', 'export const s = 1;\n');
+      await write('op.txt', 'operator commit\n');
+      await git('add', 'op.txt');
+      await git('commit', '-m', 'operator commit');
+
+      const err = await rejection(() => rollbackChtCore(repo, snapshot));
+
+      const lines = (err?.lines ?? []).join('\n');
+      expect(err?.kind).to.equal('drift');
+      expect(lines).to.include(`Your uncommitted work is still in stash ${snapshot.stashName}. It was NOT restored.`);
+      expect(lines).to.include('Find the stash: ');
+      expect(lines).to.include('Tracked files that differ from HEAD:\n  - "tracked.txt"');
+      expect(lines).to.include('Untracked files that appeared during the session:\n  - "session.ts"');
+    });
+
+    it('leaves baseline files out of the survivors and the clean step after a failed reset', async () => {
+      await makeDirty(); // .aider.chat is baseline-untracked
+      const snapshot = await snapshotChtCore(repo);
+      await write('tracked.txt', 'session edit\n'); // so the locked reset really fails
+      await write('session.ts', 'export const s = 1;\n');
+      await write('.git/index.lock', '');
+      const rollback = await rollbackChtCore(repo, snapshot);
+      await fs.rm(path.join(repo, '.git', 'index.lock'));
+
+      expect(rollback.reset).to.equal('failed');
+      expect(rollback.survivors).to.deep.equal(['session.ts']);
+      const lines = buildRecoveryChecklist(repo, snapshot, rollback).join('\n');
+      expect(lines).to.include(":(literal)session.ts'");
+      expect(lines).to.not.include('.aider');
+    });
+
+    it('leaves baseline files out of the residue and its clean step after a failed restore', async function () {
+      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
+      // The unmask shape inside ro/: stashing the ro/.gitignore edit makes ro/secret.cfg a
+      // baseline file, and the failed restore cannot put the edit back (ro/ is read-only).
+      await commitFile('ro/.gitignore', 'build/\n');
+      await write('ro/.gitignore', 'build/\nsecret.cfg\n');
+      await write('ro/secret.cfg', 'operator secret\n');
+      const snapshot = await snapshotChtCore(repo);
+      expect(snapshot.baselineUntracked).to.include('ro/secret.cfg');
+      await fs.chmod(path.join(repo, 'ro'), 0o555);
+      let rollback;
+      try {
+        rollback = await rollbackChtCore(repo, snapshot);
+      } finally {
+        await fs.chmod(path.join(repo, 'ro'), 0o755);
+      }
+
+      expect(rollback.stashPop).to.equal('failed');
+      expect(rollback.popResidue ?? []).to.not.include('ro/secret.cfg');
+      expect(buildRecoveryChecklist(repo, snapshot, rollback).join('\n')).to.not.include('secret.cfg');
+      expect(await read('ro/secret.cfg')).to.equal('operator secret\n');
+    });
+
+    it('captures and cleans a new session file two levels into dirs that hold only ignored files', async () => {
+      await commitFile('.gitignore', 'node_modules/\n*.log\n');
+      await fs.mkdir(path.join(repo, 'tools', 'deep'), { recursive: true });
+      await write('tools/deep/run.log', 'operator log\n');
+      const snapshot = await snapshotChtCore(repo);
+      expect(snapshot.baselineUntracked).to.not.include('tools/');
+      expect(snapshot.baselineUntracked).to.not.include('tools/deep/');
+
+      await write('tools/deep/new.ts', 'export const t = 1;\n');
+      const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+      await rollbackChtCore(repo, snapshot);
+
+      expect(captured.map(f => f.path)).to.deep.equal(['tools/deep/new.ts']);
+      expect(await exists('tools/deep/new.ts')).to.equal(false);
+      expect(await read('tools/deep/run.log')).to.equal('operator log\n');
+    });
   });
 });

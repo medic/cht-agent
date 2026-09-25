@@ -22,14 +22,15 @@ type Script = Record<string, Answer | Answer[]>;
 // first key in insertion order wins, so a more specific key must come first. A
 // key may map to a list: one entry per call, and the last entry repeats.
 // Unknown calls resolve with '' and exit 0. Every call is recorded in `calls`.
-const scriptedExecFile = (script: Script, calls: string[] = []) => {
+const scriptedExecFile = (script: Script, calls: string[] = [], options: Array<{ env?: NodeJS.ProcessEnv }> = []) => {
   const used = new Map<string, number>();
   const fn = (_cmd: string, _args: string[], _opts: object, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
     cb(null, '', ''); // callback path (workspace.ts never uses it)
   };
-  (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[]) => {
+  (fn as unknown as Record<symbol, unknown>)[util.promisify.custom] = (cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
     const key = `${cmd} ${args.join(' ')}`;
     calls.push(key);
+    options.push(opts);
     const match = Object.keys(script).find(k => key.startsWith(k));
     if (match === undefined) return Promise.resolve({ stdout: '', stderr: '' });
     const answers = ([] as Answer[]).concat(script[match]);
@@ -42,9 +43,14 @@ const scriptedExecFile = (script: Script, calls: string[] = []) => {
   return fn;
 };
 
-const loadWorkspace = (script: Script, fsStubs: Record<string, unknown> = {}, calls: string[] = []) => {
+const loadWorkspace = (
+  script: Script,
+  fsStubs: Record<string, unknown> = {},
+  calls: string[] = [],
+  options: Array<{ env?: NodeJS.ProcessEnv }> = [],
+) => {
   return proxyquire(WORKSPACE, {
-    'node:child_process': { execFile: scriptedExecFile(script, calls) },
+    'node:child_process': { execFile: scriptedExecFile(script, calls, options) },
     'node:fs/promises': {
       readFile: sinon.stub().resolves('file contents'),
       ...fsStubs,
@@ -67,6 +73,18 @@ const OUR_ENTRY = stashListZ(['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`]);
 const STASH_CREATED: Answer[] = [{ stdout: '' }, { stdout: OUR_ENTRY }];
 
 const errno = (code: string) => Object.assign(new Error(code), { code });
+
+/**
+ * The test's own keys, first and unchanged, then each default the test does not
+ * set. (An object spread would keep the order but let a default override.)
+ */
+const withDefaults = (script: Script, defaults: Script): Script => {
+  const merged: Script = { ...script };
+  for (const [key, answer] of Object.entries(defaults)) {
+    if (!(key in merged)) merged[key] = answer;
+  }
+  return merged;
+};
 
 /** fs stubs under which every path capture looks at is a regular file. */
 const regularFiles = () => ({ lstat: sinon.stub().resolves({ isFile: () => true }) });
@@ -93,18 +111,16 @@ const rollbackFixture = (overrides: Partial<typeof SNAPSHOT> = {}, script: Scrip
   const ourList = snapshot.stashSha
     ? stashListZ(['stash@{0}', snapshot.stashSha, `On main: ${snapshot.stashName}`])
     : '';
-  const defaults: Script = {
-    'git rev-parse --show-toplevel': { stdout: `${snapshot.repoRoot}\n` },
-    'git rev-parse HEAD': { stdout: `${snapshot.headSha}\n` },
-    'git symbolic-ref -q HEAD': { stdout: `${snapshot.headRef}\n` },
-    'git stash list -z': { stdout: ourList },
-    'git stash drop': { stdout: `Dropped stash@{0} (${snapshot.stashSha})\n` },
+  return {
+    snapshot,
+    script: withDefaults(script, {
+      'git rev-parse --show-toplevel': { stdout: `${snapshot.repoRoot}\n` },
+      'git rev-parse HEAD': { stdout: `${snapshot.headSha}\n` },
+      'git symbolic-ref -q HEAD': { stdout: `${snapshot.headRef}\n` },
+      'git stash list -z': { stdout: ourList },
+      'git stash drop': { stdout: `Dropped stash@{0} (${snapshot.stashSha})\n` },
+    }),
   };
-  const merged: Script = { ...script };
-  for (const [key, answer] of Object.entries(defaults)) {
-    if (!(key in merged)) merged[key] = answer;
-  }
-  return { snapshot, script: merged };
 };
 
 describe('workspace.ts', () => {
@@ -1247,13 +1263,12 @@ describe('workspace.ts', () => {
 
       const snapshotRejection = async (script: Script, calls: string[]) => {
         // The test's keys come first, so a more specific key wins over these.
-        const ws = loadWorkspace({
-          ...script,
+        const ws = loadWorkspace(withDefaults(script, {
           'git rev-parse HEAD': { stdout: 'abc1234\n' },
           'git status --porcelain': { stdout: ' M file.ts\n' },
           'git stash push': { stdout: 'Saved\n' },
           'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
-        }, {}, calls);
+        }), {}, calls);
         try {
           await ws.snapshotChtCore('/tmp/cht-core');
         } catch (err) {
@@ -1592,6 +1607,120 @@ describe('workspace.ts', () => {
       expect(result.reset).to.equal('failed');
       expect(result.errors).to.have.length(1);
       expect(result.errors[0]).to.match(/^reset: /);
+    });
+  });
+
+  describe('guards that a mutation must not remove', () => {
+    afterEach(() => sinon.restore());
+
+    it('prints a safety error once, however many layers report it', () => {
+      const ws = loadWorkspace({});
+      const errorSpy = sinon.stub(console, 'error');
+      const err = new ws.WorkspaceSafetyError('drift', 'moved', { lines: ['line one', 'line two'] });
+      ws.reportSafetyError(err, '[a]');
+      ws.reportSafetyError(err, '[b]');
+      expect(errorSpy.getCalls().map(c => String(c.args[0]))).to.deep.equal(['[a] line one', '[a] line two']);
+    });
+
+    it('runs every git call with LC_ALL=C and the hardened config', async () => {
+      const options: Array<{ env?: NodeJS.ProcessEnv }> = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git status --porcelain': { stdout: '' },
+      }, {}, [], options);
+      await ws.snapshotChtCore('/tmp/cht-core');
+      expect(options.length).to.be.greaterThan(3);
+      for (const opts of options) {
+        expect(opts.env?.LC_ALL).to.equal('C');
+        expect(opts.env?.GIT_CONFIG_KEY_0).to.equal('core.fsmonitor');
+        expect(opts.env?.GIT_CONFIG_KEY_1).to.equal('core.hooksPath');
+      }
+    });
+
+    describe('the undo of a partial push', () => {
+      beforeEach(() => sinon.stub(Date, 'now').returns(NOW));
+
+      /** A push that leaves `x.ts` changed, so the snapshot undoes it; the test's keys come first. */
+      const partialPush = async (script: Script, fsStubs: Record<string, unknown> = {}) => {
+        const calls: string[] = [];
+        const ws = loadWorkspace(withDefaults(script, {
+          'git rev-parse HEAD': { stdout: 'abc1234\n' },
+          'git status --porcelain=v1 -z --untracked-files=no': { stdout: ' M x.ts\0' },
+          'git status --porcelain': { stdout: ' M x.ts\n' },
+          'git stash push': { stdout: 'Saved\n' },
+          'git stash list -z': STASH_CREATED,
+          'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+        }), fsStubs, calls);
+        const warnSpy = sinon.stub(console, 'warn');
+        let err: { kind?: string; lines?: string[] } | undefined;
+        try {
+          await ws.snapshotChtCore('/tmp/cht-core');
+        } catch (e) {
+          err = e as { kind?: string; lines?: string[] };
+        }
+        const warned = warnSpy.getCalls().map(c => String(c.args[0]));
+        warnSpy.restore();
+        return { calls, err, text: (err?.lines ?? []).join('\n'), warned };
+      };
+
+      it('restores the index from the stash index commit', async () => {
+        const { calls } = await partialPush({
+          [`git diff --cached --name-only --no-renames -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+        });
+        expect(calls).to.include(`git restore --source=${OUR_SHA}^2 --staged -- :(literal)a.txt`);
+      });
+
+      it('keeps the stash when the index does not match after the undo', async () => {
+        const { calls, err, text } = await partialPush({
+          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('  - "a.txt"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('keeps the stash when an untracked file differs from its stored blob', async () => {
+        const { calls, err, text } = await partialPush({
+          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '100644 blob 1234567890abcdef\tu.txt\0' },
+          'git hash-object --no-filters -- u.txt': { stdout: 'fedcba0987654321\n' },
+        }, { lstat: sinon.stub().resolves({ isFile: () => true, isSymbolicLink: () => false }) });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('  - "u.txt"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('keeps the stash when an untracked symlink points elsewhere than its stored target', async () => {
+        const { calls, err, text } = await partialPush({
+          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '120000 blob 1234567890abcdef\tlnk\0' },
+          'git cat-file blob 1234567890abcdef': { stdout: 'tracked.txt' },
+        }, {
+          lstat: sinon.stub().resolves({ isFile: () => false, isSymbolicLink: () => true }),
+          readlink: sinon.stub().resolves('somewhere-else.txt'),
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('  - "lnk"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('puts the removal of the stashed untracked files between the reset and the lookup', async () => {
+        const { text } = await partialPush({
+          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+          [`git ls-tree -r -z --name-only ${OUR_SHA}^3`]: { stdout: 'u.txt\0' },
+        }, { lstat: sinon.stub().resolves({}) });
+        const resetAt = text.indexOf('reset --hard abc1234');
+        const cleanAt = text.indexOf("clean -fd -- ':(literal)u.txt'");
+        expect(resetAt).to.be.greaterThan(-1);
+        expect(cleanAt).to.be.greaterThan(resetAt);
+        expect(cleanAt).to.be.lessThan(text.indexOf('Find the stash: '));
+      });
+
+      it('notes a spare copy when the undo worked but our entry cannot be dropped', async () => {
+        const { err, warned } = await partialPush({
+          'git stash drop': { error: new Error('fatal: cannot lock ref') },
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(warned).to.include(`[claude-code-cli] Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
+      });
     });
   });
 });

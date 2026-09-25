@@ -18,6 +18,7 @@ import {
 } from '../../src/types';
 import { LLMProvider } from '../../src/llm';
 import { CodeGenHaltError } from '../../src/layers/code-gen/interface';
+import { WorkspaceSafetyError } from '../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -288,6 +289,53 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
     expect(generate.callCount).to.equal(2);
     const printed = warnSpy.getCalls().map(c => String(c.args[0]));
     expect(printed.filter(l => l.includes(warning))).to.deep.equal([`[Development Supervisor] ${warning}`]);
+  });
+
+  it('stops the run on a workspace safety error, which is a halt error', async () => {
+    const stop = new WorkspaceSafetyError('reset', 'rollback failed; the stash is kept');
+    const generate = sinon.stub().rejects(stop);
+    const supervisor = buildSupervisorWithStubAgents(generate) as unknown as {
+      develop: (input: DevelopmentInput) => Promise<DevelopmentState>;
+      todos: { getAll: () => Array<{ id: string; status: string }> };
+    };
+
+    let thrown: unknown;
+    try {
+      await supervisor.develop(baseValidInputFragment as DevelopmentInput);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).to.equal(stop);
+    expect(generate.callCount).to.equal(1);
+    // The todo is failed before the halt leaves the node.
+    expect(supervisor.todos.getAll().find(t => t.id === 'development-1')?.status).to.equal('failed');
+  });
+
+  it('keeps one copy of a warning that two iterations both report', async () => {
+    const warning = 'Rollback could not remove these session files: "nr/"';
+    const generate = sinon.stub().resolves({ ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: [warning] });
+    const supervisor = buildSupervisorWithStubAgents(generate);
+
+    const out = await supervisor.codeGenerationNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: { ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: [warning] },
+      iterationCount: 1,
+    }));
+
+    expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal([warning]);
+  });
+
+  it("keeps both iterations' warnings when they differ", async () => {
+    const generate = sinon.stub().resolves({ ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: ['second'] });
+    const supervisor = buildSupervisorWithStubAgents(generate);
+
+    const out = await supervisor.codeGenerationNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: { ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: ['first'] },
+      iterationCount: 1,
+    }));
+
+    expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal(['first', 'second']);
   });
 
   it('passes validationFeedback as additionalContext on a retry iteration', async () => {
