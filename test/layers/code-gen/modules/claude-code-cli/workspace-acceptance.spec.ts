@@ -585,6 +585,27 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     }
   });
 
+  it('refuses a rollback at a subdirectory, changing nothing, and rolls back at the top level after', async () => {
+    // The unmask shape inside sub/: stashing the .gitignore edit makes op.cfg a baseline file.
+    await commitFile('sub/.gitignore', 'build/\n');
+    await write('sub/.gitignore', 'build/\nop.cfg\n');
+    await write('sub/op.cfg', 'operator config\n');
+    const snapshot = await snapshotChtCore(repo);
+    expect(snapshot.baselineUntracked).to.include('sub/op.cfg');
+    await write('session.ts', 'export const s = 1;\n');
+
+    const err = await rejection(() => rollbackChtCore(path.join(repo, 'sub'), snapshot));
+
+    expect(err?.kind).to.equal('drift');
+    expect(await read('sub/op.cfg')).to.equal('operator config\n');
+    expect((await git('stash', 'list', '--format=%gs')).stdout).to.include(String(snapshot.stashName));
+    const rollback = await rollbackChtCore(repo, snapshot);
+    expect(rollback.stashPop).to.equal('ok');
+    expect(await read('sub/.gitignore')).to.equal('build/\nop.cfg\n');
+    expect(await read('sub/op.cfg')).to.equal('operator config\n');
+    expect(await exists('session.ts')).to.equal(false);
+  });
+
   it('refuses a subdirectory path but accepts a symlink to the toplevel', async () => {
     await commitFile('sub/keep.txt', 'keep\n');
     const subErr = await rejection(() => snapshotChtCore(path.join(repo, 'sub')));

@@ -946,6 +946,27 @@ describe('workspace.ts', () => {
         await expectDrift(ws, snapshot, calls, 'This snapshot belongs to /tmp/cht-core, not /tmp/other-repo');
       });
 
+      it('refuses a subdirectory of the snapshot repo', async () => {
+        const calls: string[] = [];
+        const { snapshot, script } = rollbackFixture({}, {
+          'git rev-parse --show-prefix': { stdout: 'sub/\n' },
+        });
+        const ws = loadWorkspace(script, {}, calls);
+        let thrown: unknown;
+        try {
+          await ws.rollbackChtCore('/tmp/cht-core/sub', snapshot);
+        } catch (err) {
+          thrown = err;
+        }
+        expect((thrown as { kind: string }).kind).to.equal('drift');
+        expect((thrown as { lines: string[] }).lines[0]).to.equal(
+          'Rollback must run at the top level of /tmp/cht-core, not at /tmp/cht-core/sub (the subdirectory sub/); nothing was changed.',
+        );
+        for (const destructive of ['git reset', 'git clean', 'git stash apply']) {
+          expect(calls.some(c => c.startsWith(destructive)), destructive).to.equal(false);
+        }
+      });
+
       it('refuses when HEAD moved, and does not offer a reset', async () => {
         const calls: string[] = [];
         const { snapshot, script } = rollbackFixture(WITH_STASH, {

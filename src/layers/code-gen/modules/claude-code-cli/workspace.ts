@@ -1505,8 +1505,8 @@ function driftError(lines: string[], cause?: unknown): WorkspaceSafetyError {
 
 type DriftCheck = (chtCorePath: string, snapshot: ChtCoreSnapshot) => Promise<string[] | null>;
 
-/** In order: the right repo, then HEAD and branch, then our stash. */
-const DRIFT_CHECKS: readonly DriftCheck[] = [repoRootDrift, headDrift, stashDrift];
+/** In order: the right repo at its top level, then HEAD and branch, then our stash. */
+const DRIFT_CHECKS: readonly DriftCheck[] = [repoRootDrift, topLevelDrift, headDrift, stashDrift];
 
 async function firstDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[] | null> {
   for (const check of DRIFT_CHECKS) {
@@ -1521,6 +1521,20 @@ async function repoRootDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Pr
   if (repoRoot === snapshot.repoRoot) return null;
   // No further reads: this is some other repo.
   return [`This snapshot belongs to ${snapshot.repoRoot}, not ${repoRoot}; nothing was changed.`];
+}
+
+/**
+ * A subdirectory of the right repo passes the root check, but its listings are
+ * relative to that subdirectory while the baseline is relative to the top
+ * level, so the clean would take an operator file for a session file.
+ */
+async function topLevelDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[] | null> {
+  const prefix = (await runGit(['rev-parse', '--show-prefix'], chtCorePath)).stdout.trim();
+  if (!prefix) return null;
+  return [
+    `Rollback must run at the top level of ${snapshot.repoRoot}, not at ${chtCorePath} ` +
+      `(the subdirectory ${prefix}); nothing was changed.`,
+  ];
 }
 
 async function headDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[] | null> {
