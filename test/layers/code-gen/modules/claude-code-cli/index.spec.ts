@@ -354,6 +354,63 @@ describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
       expect(output).to.not.match(/stash@\{\d+\}/);
     });
 
+    /** A module whose execute phase throws `workError`, with the rollback stubbed. */
+    const wireFailingWork = (workError: Error, rollbackStub: sinon.SinonStub) => {
+      const spawnStub = sinon.stub()
+        .onFirstCall().resolves(planResultText)
+        .onSecondCall().rejects(workError);
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+        './workspace': workspaceStub({
+          snapshotChtCore: sinon.stub().resolves({ headSha: 'abc1234', stashSha: null, stashName: null, baselineUntracked: [] }),
+          captureChtCoreDiff: sinon.stub(),
+          rollbackChtCore: rollbackStub,
+        }),
+      });
+      return new ClaudeCodeCLICodeGenModule();
+    };
+
+    it('prints the rollback survivors once when the work block threw, and rethrows the work error', async () => {
+      const workError = new Error('CLI crashed after it wrote files');
+      const module = wireFailingWork(workError, sinon.stub().resolves({
+        reset: 'ok', clean: 'failed', stashPop: 'skipped',
+        errors: ['clean: these session files are still on disk: "nr/"'], survivors: ['nr/'],
+      }));
+      const warnSpy = sinon.stub(console, 'warn');
+      sinon.stub(console, 'error');
+      let thrown: unknown;
+      try {
+        await module.generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.equal(workError);
+      const removeLines = warnSpy.getCalls().map(c => String(c.args[0])).filter(l => l.includes('Remove them before the next run'));
+      expect(removeLines).to.have.length(1);
+      expect(removeLines[0]).to.match(/^\[claude-code-cli\] Rollback could not remove these session files/);
+      expect(removeLines[0]).to.include('"nr/"');
+    });
+
+    it('prints a plain work error that a rollback drift with its own cause cannot chain', async () => {
+      const workError = new Error('CLI crashed mid-execute');
+      const readError = new Error('fatal: index read failed');
+      const drift = new WorkspaceSafetyError('drift', 'could not read the repo state', {
+        lines: ['cht-agent could not read the repo state before rollback'], cause: readError,
+      });
+      const module = wireFailingWork(workError, sinon.stub().rejects(drift));
+      const errorSpy = sinon.stub(console, 'error');
+      let thrown: unknown;
+      try {
+        await module.generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.equal(drift);
+      expect((thrown as Error).cause).to.equal(readError);
+      const printed = errorSpy.getCalls().map(c => String(c.args[0]));
+      expect(printed).to.include('[claude-code-cli] The session failed before the rollback: CLI crashed mid-execute');
+    });
+
     it('prints a snapshot refusal once, with its own prefix, and rethrows it', async () => {
       const refusal = new WorkspaceSafetyError('precondition', 'in the middle of a merge', {
         lines: ['cht-core is in the middle of a git operation (MERGE_HEAD)'],

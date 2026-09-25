@@ -312,7 +312,7 @@ export class DevelopmentSupervisor {
         ],
       };
     } catch (error) {
-      return this.handleCodeGenerationFailure(todoId, iteration, error);
+      return this.handleCodeGenerationFailure(todoId, iteration, error, state.codeGeneration?.warnings);
     }
   }
 
@@ -321,10 +321,20 @@ export class DevelopmentSupervisor {
    * halt error is rethrown instead: cht-core is in a state where another
    * attempt could destroy the operator's work, so the whole run must stop.
    */
-  private handleCodeGenerationFailure(todoId: string, iteration: number, error: unknown) {
+  private handleCodeGenerationFailure(
+    todoId: string,
+    iteration: number,
+    error: unknown,
+    earlierWarnings: readonly string[] = [],
+  ) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     this.todos.fail(todoId, errorMessage);
-    if (error instanceof CodeGenHaltError) throw error;
+    if (error instanceof CodeGenHaltError) {
+      // The halt ends the graph, and its state (and HC2) with it: print the
+      // survivors that earlier iterations reported, or no one sees them.
+      for (const warning of earlierWarnings) console.warn(`[Development Supervisor] ${warning}`);
+      throw error;
+    }
     return {
       errors: [`Code generation failed: ${errorMessage}`],
       currentPhase: 'code-generation' as const,

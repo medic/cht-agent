@@ -41,6 +41,7 @@ import {
   reportSafetyError,
   ChtCoreSnapshot,
   RollbackResult,
+  WorkspaceSafetyError,
 } from './workspace';
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
@@ -90,7 +91,11 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     reportSafetyError(work.error, LOG);
     const warnings = await rollBackAfterWork(chtCorePath, snapshot, work.error);
 
-    if (work.error) throw work.error;
+    if (work.error) {
+      // The output that would carry the warnings is lost with the error.
+      for (const warning of warnings) console.warn(`${LOG} ${warning}`);
+      throw work.error;
+    }
     return withWarnings(work.result!, warnings);
   }
 
@@ -349,10 +354,25 @@ function withWarnings(output: CodeGenModuleOutput, warnings: string[]): CodeGenM
   return { ...output, warnings: [...(output.warnings ?? []), ...warnings] };
 }
 
-/** Keep the thrown error's identity; add `cause` only when it has none. */
+/**
+ * Keep the thrown error's identity; add `cause` only when it has none. When it
+ * already has one, the work error cannot join the chain, so print it once.
+ */
 function withCause(err: unknown, cause: unknown): unknown {
-  if (err instanceof Error && err.cause === undefined && cause !== undefined) err.cause = cause;
+  if (cause === undefined) return err;
+  if (err instanceof Error && err.cause === undefined) {
+    err.cause = cause;
+    return err;
+  }
+  reportUnchainedWorkError(cause);
   return err;
+}
+
+/** A safety error has printed its own lines already. */
+function reportUnchainedWorkError(workError: unknown): void {
+  if (workError instanceof WorkspaceSafetyError) return;
+  const text = workError instanceof Error ? workError.message : String(workError);
+  console.error(`${LOG} The session failed before the rollback: ${text}`);
 }
 
 /**

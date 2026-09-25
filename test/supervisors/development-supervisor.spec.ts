@@ -265,6 +265,31 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
     expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal([warning]);
   });
 
+  it('prints the warnings of an earlier iteration when a later iteration halts', async () => {
+    const warning = 'Rollback could not remove these session files. Remove them before the next run: "nr/"';
+    const halt = new CodeGenHaltError('rollback failed; the stash is kept');
+    const generate = sinon.stub();
+    generate.onFirstCall().resolves({ ...mkCodeGenResult([]), warnings: [warning] });
+    generate.onSecondCall().rejects(halt);
+    const supervisor = buildSupervisorWithStubAgents(generate) as unknown as {
+      develop: (input: DevelopmentInput) => Promise<DevelopmentState>;
+    };
+    const warnSpy = sinon.stub(console, 'warn');
+
+    let thrown: unknown;
+    try {
+      await supervisor.develop(baseValidInputFragment as DevelopmentInput);
+    } catch (err) {
+      thrown = err;
+    } finally {
+      warnSpy.restore();
+    }
+    expect(thrown).to.equal(halt);
+    expect(generate.callCount).to.equal(2);
+    const printed = warnSpy.getCalls().map(c => String(c.args[0]));
+    expect(printed.filter(l => l.includes(warning))).to.deep.equal([`[Development Supervisor] ${warning}`]);
+  });
+
   it('passes validationFeedback as additionalContext on a retry iteration', async () => {
     const generate = sinon.stub().resolves(mkCodeGenResult());
     const supervisor = buildSupervisorWithStubAgents(generate);
