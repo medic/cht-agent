@@ -314,7 +314,8 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(rollback.survivors).to.include('session-new.ts');
 
     const lines = buildRecoveryChecklist(repo, snapshot, rollback).join('\n');
-    expect(lines).to.include('Permission denied');
+    // Step 1 names the read-only dir that holds the session edit.
+    expect(lines).to.include('1. git cannot write inside "rt" (Permission denied). Fix the permissions');
     const resetAt = lines.indexOf(`reset --hard ${snapshot.headSha}`);
     expect(resetAt).to.be.greaterThan(-1);
     expect(resetAt).to.be.lessThan(lines.indexOf('stash list'));
@@ -362,14 +363,15 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     await write('tracked.txt', 'other operator work\n');
     await git('stash', 'push', '-m', `note about ${snapshot.stashName} crash`);
 
-    // Follow the printed two-step guidance for real, in a shell.
-    const found = /Find the stash: (.+?) Then restore it: (.+? stash pop --index) </.exec(message);
-    expect(found, 'the message holds both steps').to.exist;
-    const [, findCommand, restoreCommand] = found as RegExpExecArray;
-    const { stdout: hit } = await execFileAsync('sh', ['-c', findCommand]);
-    const lines = hit.split('\n').filter(Boolean);
-    expect(lines, 'exactly our entry, not the decoy').to.have.length(1);
-    await execFileAsync('sh', ['-c', `${restoreCommand} ${lines[0].split(' ')[0]}`]);
+    // Follow the printed guidance for real: each command runs alone, as copied.
+    const commandAfter = (label: string) => {
+      const line = message.split('\n').find(l => l.startsWith(label));
+      expect(line, `the message has a "${label}" line`).to.exist;
+      return String(line).slice(label.length);
+    };
+    const { stdout: hit } = await execFileAsync('sh', ['-c', commandAfter('Find the stash: ')]);
+    expect(hit.split('\n').filter(Boolean), 'exactly our entry, not the decoy').to.have.length(1);
+    await execFileAsync('sh', ['-c', commandAfter('Restore it: ')]);
 
     expect(await read('.gitignore')).to.equal('node_modules/\n.aider*\n');
     expect(await read('tracked.txt')).to.equal('operator work in progress\n');
@@ -852,6 +854,47 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(await treeState()).to.deep.equal(before);
       expect(await fs.readlink(path.join(repo, 'lnk'))).to.equal('tracked.txt');
       expect(await ourStashes(), 'the verify accepted the restored link').to.deep.equal([]);
+    });
+
+    it('names an unreadable untracked file when the push cannot read it', async function () {
+      skipAsRoot(this);
+      await write('tracked.txt', 'operator work in progress\n');
+      await write('secret.txt', 'operator secret\n');
+      await fs.chmod(path.join(repo, 'secret.txt'), 0o000);
+      const before = await treeState();
+
+      let err: { kind?: string; lines?: string[] } | undefined;
+      try {
+        err = await rejection(() => snapshotChtCore(repo));
+      } finally {
+        await fs.chmod(path.join(repo, 'secret.txt'), 0o644);
+      }
+
+      expect(err?.kind).to.equal('stash');
+      expect((err?.lines ?? []).join('\n')).to.include('git cannot read "secret.txt" (Permission denied)');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await ourStashes()).to.deep.equal([]);
+    });
+
+    it('names the read-only parent when the push cannot remove a dir below it', async function () {
+      skipAsRoot(this);
+      await commitFile('p/t.txt', 'tracked in p\n');
+      await write('tracked.txt', 'operator work in progress\n');
+      await fs.mkdir(path.join(repo, 'p', 'd'));
+      await write('p/d/x.txt', 'untracked below p\n');
+      const before = await treeState();
+
+      let err: { kind?: string; lines?: string[] } | undefined;
+      await withReadOnlyDir('p', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      const lines = (err?.lines ?? []).join('\n');
+      expect(lines).to.include('git cannot write inside "p" (Permission denied)');
+      expect(lines).to.not.include('inside "p/d"');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await ourStashes()).to.deep.equal([]);
     });
 
     it('stops on a dirty submodule, which a stash push does not save', async () => {

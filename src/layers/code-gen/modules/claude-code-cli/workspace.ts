@@ -181,21 +181,27 @@ function isFlagEnabled(name: string): boolean {
 }
 
 /**
- * Recovery guidance for stashed work. Deliberately a LOOKUP, not `stash pop
- * <name>`: a stash name is not a valid git reference, and a `stash@{N}` ref goes
- * stale the moment anything else is stashed. The durable identifier is the
- * marker in the message, so tell the operator how to resolve the ref at recovery
- * time rather than baking in one that may have shifted. `--index` keeps the
- * operator's staged/unstaged split.
+ * Recovery guidance for stashed work, as two commands that each run as copied.
+ * Deliberately a LOOKUP by name, not `stash pop <name>`: a stash name is not a
+ * valid git reference, and a `stash@{N}` ref goes stale the moment anything
+ * else is stashed, so the restore resolves the ref when it runs. `--index`
+ * keeps the operator's staged/unstaged split.
  */
-function recoveryHint(chtCorePath: string, stashName: string): string {
+function recoveryHintSteps(chtCorePath: string, stashName: string): string[] {
   const repo = shellQuote(chtCorePath);
-  return (
-    `Find the stash: git -C ${repo} stash list --format='%gd  %cr  %gs' | ` +
-    `grep -E ${shellQuote(`: ${stashName}$`)} ` +
-    `Then restore it: git -C ${repo} stash pop --index <the stash ref at the start of that line> ` +
-    '(if git says "conflicts in index", run the same command without --index).'
-  );
+  const pattern = shellQuote(`: ${stashName}$`);
+  const notFound = shellQuote(`stash ${stashName} not found`);
+  return [
+    `Find the stash: git -C ${repo} stash list --format='%gd  %cr  %gs' | grep -E ${pattern}`,
+    `Restore it: ref=$(git -C ${repo} stash list --format='%gd %gs' | grep -E ${pattern} | cut -d' ' -f1); ` +
+      `if [ -n "$ref" ]; then git -C ${repo} stash pop --index "$ref"; else echo ${notFound}; fi`,
+  ];
+}
+
+const RESTORE_WITHOUT_INDEX_NOTE = 'If git says "conflicts in index", run the restore again without --index.';
+
+function recoveryHintLines(chtCorePath: string, stashName: string): string[] {
+  return [...recoveryHintSteps(chtCorePath, stashName), RESTORE_WITHOUT_INDEX_NOTE];
 }
 
 /** One `git stash list` entry. `sha` is the stash commit, the only stable identity. */
@@ -286,12 +292,14 @@ async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
   const listed = leaked.map((e, i) => `${names[i]} (created ${new Date(e.createdAt * 1000).toISOString()})`);
   // Not "from an interrupted run": the stash can belong to a run that is still
   // active on this checkout.
-  throw new Error(
+  throw new Error([
     `cht-core at ${chtCorePath} has ${leaked.length} leftover cht-agent stash(es) that no run ` +
-    `restored: ${listed.join('; ')}. It may hold your uncommitted work, or belong to another ` +
-    `cht-agent run that is still active here. ${names.map(n => recoveryHint(chtCorePath, n)).join(' ')} ` +
-    `(or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place).`
-  );
+      `restored: ${listed.join('; ')}. It may hold your uncommitted work, or belong to another ` +
+      'cht-agent run that is still active here.',
+    ...names.flatMap(n => recoveryHintSteps(chtCorePath, n)),
+    RESTORE_WITHOUT_INDEX_NOTE,
+    'Or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place.',
+  ].join('\n'));
 }
 
 /**
@@ -448,19 +456,17 @@ async function stashOperatorWork(
     .then(() => undefined, (err: unknown) => err);
   const ours = findStashByName(await listStashes(chtCorePath), name);
   const leftovers = await stashLeftovers(chtCorePath, prePush);
-  if (!ours) throw await stashNotCreatedError(chtCorePath, pushError, leftovers);
+  if (!ours) throw await stashNotCreatedError(chtCorePath, pushError, leftovers, prePush);
   const stash: TakenStash = { sha: ours.sha, name, prePush };
   if (leftovers.length > 0) {
     await undoStash(chtCorePath, stash, headSha);
-    throw await partialStashError(chtCorePath, pushError, leftovers);
+    throw await partialStashError(chtCorePath, pushError, leftovers, prePush);
   }
 
-  // Print recovery up front: if the process is hard-killed before rollback, this
-  // line is the operator's only pointer to their stashed work.
-  console.log(
-    `[claude-code-cli] Stashed your uncommitted work as "${name}". ` +
-    `If this run is interrupted: ${recoveryHint(chtCorePath, name)}`
-  );
+  // Print recovery up front: if the process is hard-killed before rollback, these
+  // lines are the operator's only pointer to their stashed work.
+  console.log(`[claude-code-cli] Stashed your uncommitted work as "${name}". If this run is interrupted:`);
+  for (const line of recoveryHintLines(chtCorePath, name)) console.log(`[claude-code-cli]   ${line}`);
   return stash;
 }
 
@@ -497,6 +503,7 @@ async function stashNotCreatedError(
   chtCorePath: string,
   pushError: unknown,
   leftovers: readonly string[],
+  prePush: readonly string[],
 ): Promise<WorkspaceSafetyError> {
   const text = pushError === undefined
     ? 'git stash push exited 0 but saved nothing (for example, changes inside a submodule, which git stash does not save)'
@@ -504,7 +511,7 @@ async function stashNotCreatedError(
   const lines = [
     `git stash could not save your uncommitted work, so nothing was stashed and your tree is unchanged: ${text}`,
     ...pathListLines('Changes that were not stashed:', leftovers),
-    ...(await permissionLines(chtCorePath, text, leftovers)),
+    ...(await permissionLines(chtCorePath, text, [...leftovers, ...prePush])),
   ];
   return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError });
 }
@@ -513,22 +520,116 @@ async function partialStashError(
   chtCorePath: string,
   pushError: unknown,
   leftovers: readonly string[],
+  prePush: readonly string[],
 ): Promise<WorkspaceSafetyError> {
   const text = pushError === undefined ? 'git stash push exited 0' : gitErrorText(pushError);
   const lines = [
     `git stash did not clear these paths, so cht-agent put your work back and stopped (${text}):`,
     ...pathListLines('Paths the stash left:', leftovers).slice(1),
-    ...(await permissionLines(chtCorePath, text, leftovers)),
+    ...(await permissionLines(chtCorePath, text, [...leftovers, ...prePush])),
   ];
   return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError });
 }
 
-/** Names the dirs to fix when git reported a permission error, else the generic step. */
+/** The step that fixes what git reported, for an error the operator runs again after. */
 async function permissionLines(chtCorePath: string, gitText: string, paths: readonly string[]): Promise<string[]> {
-  if (!gitText.includes('Permission denied')) return ['Fix the cause, then run again.'];
-  const dirs = await unwritableDirsFor(chtCorePath, paths);
-  const where = dirs.length > 0 ? `inside ${dirs.map(d => JSON.stringify(d)).join(', ')} ` : '';
-  return [`git could not write ${where}(Permission denied). Fix the permissions, then run again.`];
+  return [await permissionCauseStep(chtCorePath, gitText, paths, 'run again')];
+}
+
+/** Where the filesystem blocks git: dirs it cannot write in and files it cannot read. */
+interface PermissionBlockers {
+  dirs: readonly string[];
+  files: readonly string[];
+}
+
+async function permissionCauseStep(
+  chtCorePath: string,
+  gitText: string,
+  relPaths: readonly string[],
+  then: string,
+): Promise<string> {
+  const blockers = gitText.includes('Permission denied')
+    ? await findPermissionBlockers(chtCorePath, relPaths)
+    : { dirs: [], files: [] };
+  return permissionCauseText(gitText, blockers, then);
+}
+
+/**
+ * The first recovery step: fix what made git fail. It names only what the
+ * checks found on disk, never "cannot write" without a named dir.
+ */
+function permissionCauseText(gitText: string, blockers: PermissionBlockers, then: string): string {
+  if (gitText.includes('index.lock')) {
+    return 'Another git process may hold the index.lock file named above. ' +
+      `Remove that file only if no git process runs, then ${then}.`;
+  }
+  if (!gitText.includes('Permission denied')) {
+    return `Find out why git failed (see its message above) and fix the cause, then ${then}.`;
+  }
+  const named = [
+    ...blockers.dirs.map(d => `git cannot write inside ${JSON.stringify(d)}`),
+    ...blockers.files.map(f => `git cannot read ${JSON.stringify(f)}`),
+  ];
+  if (named.length === 0) {
+    return `git hit a permission error (Permission denied, see git's message above). Fix the permissions, then ${then}.`;
+  }
+  return `${named.join('; ')} (Permission denied). Fix the permissions, then ${then}.`;
+}
+
+/**
+ * For each path: every dir on the way up to the top level that the current
+ * user cannot write in (an rmdir needs write access on the parent), and the
+ * path itself when it is a file that the user cannot read. Taken from the tree,
+ * not from git's stderr, whose path quoting varies between messages.
+ */
+async function findPermissionBlockers(chtCorePath: string, relPaths: readonly string[]): Promise<PermissionBlockers> {
+  const dirs = new Set<string>();
+  const files = new Set<string>();
+  for (const relPath of new Set(relPaths)) {
+    for (const dir of await unwritableDirsUpToTop(chtCorePath, relPath)) dirs.add(dir);
+    if (await isUnreadableFile(path.join(chtCorePath, relPath))) files.add(relPath);
+  }
+  return { dirs: [...dirs], files: [...files] };
+}
+
+async function unwritableDirsUpToTop(chtCorePath: string, relPath: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const dir of dirsUpToTop(relPath)) {
+    if (await isUnwritableDir(path.join(chtCorePath, dir))) found.push(topLevelAsPath(chtCorePath, dir));
+  }
+  return found;
+}
+
+async function isUnwritableDir(fullPath: string): Promise<boolean> {
+  return !(await pathIsRemoved(fullPath)) && !(await isWritableDir(fullPath));
+}
+
+/** The top level reads better as the repo path than as `.`. */
+function topLevelAsPath(chtCorePath: string, dir: string): string {
+  return dir === '.' ? chtCorePath : dir;
+}
+
+/** `a/b`, `a` and `.` for `a/b/c` (and for the dir entry `a/b/c/`). */
+function dirsUpToTop(relPath: string): string[] {
+  const dirs: string[] = [];
+  let dir = path.dirname(relPath.endsWith('/') ? relPath.slice(0, -1) : relPath);
+  while (dir !== '.' && dir !== path.dirname(dir)) {
+    dirs.push(dir);
+    dir = path.dirname(dir);
+  }
+  dirs.push('.');
+  return dirs;
+}
+
+/** True only when the path is a file and the OS positively refuses read access. */
+async function isUnreadableFile(fullPath: string): Promise<boolean> {
+  try {
+    if (!(await fs.lstat(fullPath)).isFile()) return false;
+    await fs.access(fullPath, fsConstants.R_OK);
+    return false;
+  } catch (err) {
+    return ['EACCES', 'EPERM'].includes(String((err as NodeJS.ErrnoException)?.code));
+  }
 }
 
 /**
@@ -642,13 +743,14 @@ async function undoFailedError(
   }
   const steps = [`git -C ${shellQuote(chtCorePath)} reset --hard ${headSha}`];
   if (onDisk.length > 0) steps.push(literalCleanCommand(chtCorePath, onDisk));
-  steps.push(recoveryHint(chtCorePath, stash.name));
+  steps.push(...recoveryHintSteps(chtCorePath, stash.name));
   const lines = [
     `git stash did not complete, and cht-agent could not fully put your work back. Your work is still in stash ${stash.name}.`,
     ...pathListLines('These paths do not match what the stash holds (cht-agent did not delete any of them):', differing),
     'The rest of your work is already back in the working tree.',
     'To recover, run these steps in this order:',
     ...steps.map((step, i) => `  ${i + 1}. ${step}`),
+    RESTORE_WITHOUT_INDEX_NOTE,
   ];
   return new WorkspaceSafetyError('stash', lines[0], { lines, cause });
 }
@@ -1048,8 +1150,10 @@ export interface RollbackResult {
   popResidue?: string[];
   /** After a failed restore: paths where the tree differs from the stash, which block a retry. */
   popBlockers?: string[];
-  /** After a restore failed on permissions: the nearest dirs git could not write. */
+  /** After a reset or restore failed on permissions: the dirs git cannot write in (up to the top level). */
   unwritableDirs?: string[];
+  /** After a reset or restore failed on permissions: the listed files git cannot read. */
+  unreadableFiles?: string[];
 }
 
 /**
@@ -1220,7 +1324,7 @@ function stashKeptLines(chtCorePath: string, snapshot: ChtCoreSnapshot): string[
   if (!snapshot.stashName) return [];
   return [
     `Your uncommitted work is still in stash ${snapshot.stashName}. It was NOT restored.`,
-    recoveryHint(chtCorePath, snapshot.stashName),
+    ...recoveryHintLines(chtCorePath, snapshot.stashName),
   ];
 }
 
@@ -1281,6 +1385,30 @@ async function recordResetFailureState(
   result.survivors = await readPathsForReport(
     () => computeCleanDelta(chtCorePath, snapshot.baselineUntracked), 'session files', result,
   );
+  await recordPermissionBlockers(
+    chtCorePath, result, 'reset: ', [...(result.sessionEdits ?? []), ...(result.survivors ?? [])],
+  );
+}
+
+/** When git's error for `step` is a permission error, record where the tree blocks it. */
+async function recordPermissionBlockers(
+  chtCorePath: string,
+  result: RollbackResult,
+  step: string,
+  relPaths: readonly string[],
+): Promise<void> {
+  if (!errorTextOf(result, step).includes('Permission denied')) return;
+  const blockers = await findPermissionBlockers(chtCorePath, relPaths);
+  result.unwritableDirs = [...blockers.dirs];
+  result.unreadableFiles = [...blockers.files];
+}
+
+function errorTextOf(result: RollbackResult, step: string): string {
+  return result.errors.find(e => e.startsWith(step)) ?? '';
+}
+
+function recordedBlockers(rollback: RollbackResult): PermissionBlockers {
+  return { dirs: rollback.unwritableDirs ?? [], files: rollback.unreadableFiles ?? [] };
 }
 
 async function readPathsForReport(
@@ -1407,9 +1535,9 @@ async function recordPopFailure(
   result.popBlockers = await readPathsForReport(
     () => stashBlockingPaths(chtCorePath, stashSha), 'paths that block the restore', result,
   );
-  if (text.includes('Permission denied')) {
-    result.unwritableDirs = await unwritableDirsFor(chtCorePath, result.popBlockers ?? []);
-  }
+  await recordPermissionBlockers(
+    chtCorePath, result, 'stash apply: ', [...(result.popBlockers ?? []), ...(result.popResidue ?? [])],
+  );
   console.warn(
     `[claude-code-cli] git stash apply --index during rollback failed: ${text}. ` +
     `Your work is still in stash ${snapshot.stashName}.`
@@ -1431,30 +1559,6 @@ async function stashUntrackedPaths(chtCorePath: string, stashSha: string): Promi
   if (!(await gitSucceeds(['rev-parse', '-q', '--verify', `${stashSha}^3`], chtCorePath))) return [];
   const { stdout } = await runGit(['ls-tree', '-r', '-z', '--name-only', `${stashSha}^3`], chtCorePath);
   return stdout.split('\0').filter(Boolean);
-}
-
-/**
- * For each path, the nearest existing parent dir that the current user cannot
- * write. Taken from the tree, not from git's stderr, whose path quoting varies
- * between messages.
- */
-async function unwritableDirsFor(chtCorePath: string, relPaths: readonly string[]): Promise<string[]> {
-  const dirs = new Set<string>();
-  for (const relPath of relPaths) {
-    const dir = await nearestExistingDir(path.join(chtCorePath, relPath));
-    if (!(await isWritableDir(dir))) dirs.add(path.relative(chtCorePath, dir) || '.');
-  }
-  return [...dirs];
-}
-
-async function nearestExistingDir(fullPath: string): Promise<string> {
-  let dir = path.dirname(fullPath);
-  while (await pathIsRemoved(dir)) {
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return dir;
 }
 
 /** False only when the OS positively refuses write access. */
@@ -1522,27 +1626,19 @@ function popFailureChecklist(
   const residue = rollback.popResidue ?? [];
   const steps = [popCauseStep(rollback), `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`];
   if (residue.length > 0) steps.push(literalCleanCommand(chtCorePath, residue));
-  steps.push(recoveryHint(chtCorePath, String(snapshot.stashName)));
+  steps.push(...recoveryHintSteps(chtCorePath, String(snapshot.stashName)));
   return [
     `Rollback could not restore your work: git stash apply --index failed. Your work is still in stash ${snapshot.stashName}.`,
     ...pathListLines('Paths that block the restore:', rollback.popBlockers),
     ...pathListLines('Untracked files the failed restore wrote (the stash also holds them):', residue),
     'To recover, run these steps in this order:',
     ...steps.map((step, i) => `  ${i + 1}. ${step}`),
+    RESTORE_WITHOUT_INDEX_NOTE,
   ];
 }
 
 function popCauseStep(rollback: RollbackResult): string {
-  const dirs = rollback.unwritableDirs ?? [];
-  if (dirs.length > 0) {
-    return `git could not write inside ${dirs.map(d => JSON.stringify(d)).join(', ')} (Permission denied). ` +
-      'Fix the permissions, then run the steps below.';
-  }
-  const applyError = rollback.errors.find(e => e.startsWith('stash apply: ')) ?? '';
-  if (applyError.includes('Permission denied')) {
-    return 'git could not write some files (Permission denied). Fix the permissions, then run the steps below.';
-  }
-  return 'Fix the cause git named in the error above.';
+  return permissionCauseText(errorTextOf(rollback, 'stash apply: '), recordedBlockers(rollback), 'run the steps below');
 }
 
 /**
@@ -1556,11 +1652,11 @@ function resetFailureChecklist(
 ): string[] {
   const survivors = rollback.survivors ?? [];
   const steps = [
-    resetCauseStep(rollback.errors),
+    resetCauseStep(rollback),
     `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`,
   ];
   if (survivors.length > 0) steps.push(literalCleanCommand(chtCorePath, survivors));
-  if (snapshot.stashName) steps.push(recoveryHint(chtCorePath, snapshot.stashName));
+  if (snapshot.stashName) steps.push(...recoveryHintSteps(chtCorePath, snapshot.stashName));
   return [
     'Rollback stopped: git reset --hard failed, so cht-agent did not clean or restore anything.',
     ...stashStillHeldLines(snapshot),
@@ -1568,6 +1664,7 @@ function resetFailureChecklist(
     ...pathListLines('Session files still on disk:', survivors),
     'To recover, run these steps in this order:',
     ...steps.map((step, i) => `  ${i + 1}. ${step}`),
+    ...(snapshot.stashName ? [RESTORE_WITHOUT_INDEX_NOTE] : []),
     'Run cht-agent again only after your working tree is back to your own state.',
   ];
 }
@@ -1577,17 +1674,8 @@ function stashStillHeldLines(snapshot: ChtCoreSnapshot): string[] {
   return [`Your uncommitted work is still in stash ${snapshot.stashName}. It was NOT restored.`];
 }
 
-/** The first recovery step: fix what made the reset fail, named when git said so. */
-function resetCauseStep(errors: readonly string[]): string {
-  const resetError = errors.find(e => e.startsWith('reset: ')) ?? '';
-  if (resetError.includes('index.lock')) {
-    return 'Another git process may hold the index.lock file named above. ' +
-      'Remove that file only if no git process runs.';
-  }
-  if (resetError.includes('Permission denied')) {
-    return 'git could not write some files (Permission denied). Fix the permissions of the files named above.';
-  }
-  return 'Find out why the reset failed (see the error above) and fix the cause.';
+function resetCauseStep(rollback: RollbackResult): string {
+  return permissionCauseText(errorTextOf(rollback, 'reset: '), recordedBlockers(rollback), 'run the steps below');
 }
 
 function pathListLines(heading: string, paths: readonly string[] | undefined): string[] {

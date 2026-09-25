@@ -234,7 +234,13 @@ describe('workspace.ts', () => {
         expect(msg).to.include(
           `git -C '/tmp/cht-core' stash list --format='%gd  %cr  %gs' | grep -E ': ${OUR_NAME}$'`,
         );
-        expect(msg).to.include("git -C '/tmp/cht-core' stash pop --index <the stash ref at the start of that line>");
+        // The lookup and the restore are separate lines, and each runs as copied.
+        const lines = msg.split('\n');
+        const find = lines.find(l => l.startsWith('Find the stash: '));
+        const restore = lines.find(l => l.startsWith('Restore it: '));
+        expect(find).to.equal(`Find the stash: git -C '/tmp/cht-core' stash list --format='%gd  %cr  %gs' | grep -E ': ${OUR_NAME}$'`);
+        expect(restore).to.include("git -C '/tmp/cht-core' stash pop --index \"$ref\"");
+        expect(restore).to.not.include('<');
         expect(msg).to.not.match(/stash@\{\d+\}/);
         // The stash may belong to a live run on this checkout.
         expect(msg).to.not.match(/interrupted run/);
@@ -933,6 +939,27 @@ describe('workspace.ts', () => {
       ]);
     });
 
+    it('says only what the permission checks found', () => {
+      const ws = loadWorkspace({});
+      const failedReset = (errors: string[], found: { unwritableDirs?: string[]; unreadableFiles?: string[] } = {}) =>
+        ws.buildRecoveryChecklist('/tmp/cht-core', SNAPSHOT, {
+          reset: 'failed', clean: 'skipped', stashPop: 'skipped', errors, ...found,
+        }).join('\n');
+
+      const neutral = failedReset(["reset: error: unable to unlink old 'x': Permission denied"]);
+      expect(neutral).to.include("git hit a permission error (Permission denied, see git's message above)");
+      expect(neutral).to.not.match(/cannot write|could not write/);
+
+      const named = failedReset(['reset: Permission denied'], { unwritableDirs: ['rt'], unreadableFiles: ['k.pem'] });
+      expect(named).to.include('git cannot write inside "rt"; git cannot read "k.pem" (Permission denied)');
+
+      const lock = failedReset(["reset: fatal: Unable to create '/tmp/cht-core/.git/index.lock': File exists."]);
+      expect(lock).to.include('Remove that file only if no git process runs, then run the steps below.');
+
+      const other = failedReset(['reset: fatal: something else']);
+      expect(other).to.include('Find out why git failed (see its message above) and fix the cause');
+    });
+
     it('gives the restore-failure order and names the dirs that block it', () => {
       const ws = loadWorkspace({});
       const lines: string[] = ws.buildRecoveryChecklist('/tmp/cht-core', { ...SNAPSHOT, ...WITH_STASH }, {
@@ -1264,7 +1291,9 @@ describe('workspace.ts', () => {
       });
       const ws = loadWorkspace(script, {
         lstat: sinon.stub().resolves({}),
-        access: sinon.stub().rejects(errno('EACCES')),
+        access: sinon.stub().callsFake(async (p: string) => {
+          if (p.endsWith('/ro')) throw errno('EACCES');
+        }),
       }, calls);
 
       const warnSpy = sinon.spy(console, 'warn');
