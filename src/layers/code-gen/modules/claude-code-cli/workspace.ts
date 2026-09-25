@@ -1664,10 +1664,40 @@ async function dropStashOnce(chtCorePath: string, sha: string): Promise<'dropped
   const { stdout } = await runGit(['stash', 'drop', ours.ref], chtCorePath);
   const dropped = /^Dropped \S+ \(([0-9a-f]+)\)$/m.exec(stdout)?.[1];
   if (dropped === sha) return 'dropped';
-  // The list moved between our read and the drop: put the other entry back.
-  const other = entries.find(e => e.sha === dropped);
-  if (other) await runGit(['stash', 'store', '-m', other.message, other.sha], chtCorePath);
+  // The list moved between our read and the drop (most often an operator push
+  // on top): the drop took another entry, so put it back.
+  if (dropped) await putBackDroppedEntry(chtCorePath, dropped, entries);
   return 'retry';
+}
+
+/**
+ * Store an entry that our drop took by mistake back into the list, whether or
+ * not our earlier read saw it. If that fails, name it, so the operator can.
+ */
+async function putBackDroppedEntry(
+  chtCorePath: string,
+  droppedSha: string,
+  entries: readonly StashEntry[],
+): Promise<void> {
+  const message = entries.find(e => e.sha === droppedSha)?.message ?? await stashCommitSubject(chtCorePath, droppedSha);
+  try {
+    await runGit(['stash', 'store', '-m', message, droppedSha], chtCorePath);
+  } catch (err) {
+    console.error(
+      `[claude-code-cli] cht-agent dropped another stash entry (${droppedSha}, "${message}") by mistake and ` +
+        `could not store it back (${gitErrorText(err)}). Store it back with: ` +
+        `git -C ${shellQuote(chtCorePath)} stash store -m ${shellQuote(message)} ${droppedSha}`,
+    );
+  }
+}
+
+/** For a pushed stash, the commit subject is the message that the list shows (`%gs`). */
+async function stashCommitSubject(chtCorePath: string, sha: string): Promise<string> {
+  try {
+    return (await runGit(['log', '-1', '--format=%s', sha], chtCorePath)).stdout.trim();
+  } catch {
+    return `stash entry restored by cht-agent (${sha})`;
+  }
 }
 
 /** Read-only: record why the restore failed and what now blocks a manual one. */

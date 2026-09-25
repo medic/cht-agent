@@ -421,6 +421,54 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(stdout).to.include('operator mid-session wip');
   });
 
+  /**
+   * Put a `git` shim first on PATH that runs `before` once, right before the
+   * first `git stash drop`, then hands every call to the real git.
+   */
+  const withGitShim = async (before: string, body: () => Promise<void>) => {
+    const shimDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-shim-'));
+    const realGit = (await execFileAsync('sh', ['-c', 'command -v git'])).stdout.trim();
+    const armed = path.join(shimDir, 'armed');
+    await fs.writeFile(armed, '');
+    await fs.writeFile(path.join(shimDir, 'git'), [
+      '#!/bin/sh',
+      `if [ "$1" = stash ] && [ "$2" = drop ] && [ -f ${shellWord(armed)} ]; then`,
+      `  rm -f ${shellWord(armed)}`,
+      `  ${before.replaceAll('GIT', shellWord(realGit))}`,
+      'fi',
+      `exec ${shellWord(realGit)} "$@"`,
+      '',
+    ].join('\n'), { mode: 0o755 });
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${shimDir}:${prevPath}`;
+    try {
+      await body();
+    } finally {
+      process.env.PATH = prevPath;
+      await fs.rm(shimDir, { recursive: true, force: true });
+    }
+  };
+  const shellWord = (w: string) => `'${w.replaceAll("'", "'\\''")}'`;
+
+  it('keeps an operator stash that is pushed right before our drop', async () => {
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    await write('session.ts', 'export const s = 1;\n');
+
+    let stashPop = '';
+    await withGitShim(
+      "echo 'operator note written during the session' > op-new.txt && GIT stash push -q -u -m 'operator new stash'",
+      async () => { stashPop = (await rollbackChtCore(repo, snapshot)).stashPop; },
+    );
+
+    expect(stashPop).to.equal('ok');
+    const { stdout: list } = await git('stash', 'list', '--format=%gs');
+    expect(list).to.include('operator new stash');
+    expect(list).to.not.include(String(snapshot.stashName));
+    const { stdout: held } = await git('stash', 'show', '--include-untracked', '--name-only', 'stash@{0}');
+    expect(held).to.include('op-new.txt');
+  });
+
   it('changes nothing when the operator restored our stash during the session', async () => {
     await commitFile('older.txt', 'older\n');
     await write('older.txt', 'older operator stash\n');

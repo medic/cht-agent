@@ -757,27 +757,48 @@ describe('workspace.ts', () => {
       expect(calls.some(c => c.startsWith('git stash drop stash@{0}'))).to.equal(false);
     });
 
-    it('puts back an entry that a moved list made the drop take, then drops ours', async () => {
+    it('puts back an entry that an operator pushed right before our drop, then drops ours', async () => {
       const calls: string[] = [];
       const { snapshot, script } = rollbackFixture(WITH_STASH, {
         'git stash list -z': [
           { stdout: OUR_ENTRY }, // pre-check
-          // First drop lookup: ours is stash@{0}, but an operator push lands
-          // before the drop, so `drop stash@{0}` takes the operator's entry.
-          { stdout: stashListZ(['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`], ['stash@{1}', OTHER_SHA, 'On main: operator wip']) },
-          // Second lookup, after the put-back.
-          { stdout: stashListZ(['stash@{0}', OTHER_SHA, 'On main: operator wip'], ['stash@{1}', OUR_SHA, `On main: ${OUR_NAME}`]) },
+          { stdout: OUR_ENTRY }, // first drop lookup: ours is stash@{0}
+          // An operator push lands before the drop, so `drop stash@{0}` takes the
+          // operator's NEW entry, which the lookup never saw. After the put-back:
+          { stdout: stashListZ(['stash@{0}', OTHER_SHA, 'On main: operator new stash'], ['stash@{1}', OUR_SHA, `On main: ${OUR_NAME}`]) },
         ],
         'git stash drop stash@{0}': { stdout: `Dropped stash@{0} (${OTHER_SHA})\n` },
         'git stash drop stash@{1}': { stdout: `Dropped stash@{1} (${OUR_SHA})\n` },
+        [`git log -1 --format=%s ${OTHER_SHA}`]: { stdout: 'On main: operator new stash\n' },
       });
       const ws = loadWorkspace(script, {}, calls);
 
       const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
 
-      expect(calls).to.include(`git stash store -m On main: operator wip ${OTHER_SHA}`);
+      expect(calls).to.include(`git stash store -m On main: operator new stash ${OTHER_SHA}`);
       expect(calls).to.include('git stash drop stash@{1}');
       expect(result.stashPop).to.equal('ok');
+    });
+
+    it('names the entry, with a store command and no drop command, when the put-back fails', async () => {
+      const { snapshot, script } = rollbackFixture(WITH_STASH, {
+        'git stash list -z': [{ stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }],
+        'git stash drop stash@{0}': { stdout: `Dropped stash@{0} (${OTHER_SHA})\n` },
+        [`git log -1 --format=%s ${OTHER_SHA}`]: { stdout: 'On main: operator new stash\n' },
+        'git stash store': { error: new Error('fatal: cannot lock ref') },
+      });
+      const ws = loadWorkspace(script);
+      const errorSpy = sinon.stub(console, 'error');
+      sinon.stub(console, 'warn');
+      try {
+        await ws.rollbackChtCore('/tmp/cht-core', snapshot);
+      } finally {
+        sinon.restore();
+      }
+      const printed = errorSpy.getCalls().map(c => String(c.args[0])).join('\n');
+      expect(printed).to.include(`${OTHER_SHA}, "On main: operator new stash"`);
+      expect(printed).to.include(`stash store -m 'On main: operator new stash' ${OTHER_SHA}`);
+      expect(printed).to.not.include('stash drop');
     });
 
     it('reports a spare copy, and no drop command, when our entry cannot be dropped', async () => {
