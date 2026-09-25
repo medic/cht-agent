@@ -17,6 +17,7 @@ import {
   GeneratedFile,
 } from '../../src/types';
 import { LLMProvider } from '../../src/llm';
+import { TodoTracker } from '../../src/utils/todo-tracker';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -56,7 +57,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
   const baseState: ValidateImplEdgeState = {
     validationResult: { overallScore: 90 },
     iterationCount: 0,
-    codeGeneration: { crossFileIssues: [] },
+    codeGeneration: { crossFileIssues: [], files: [{}] },
   };
 
   it('returns __end__ when execute-no-op is present, even with iterations available', () => {
@@ -79,7 +80,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
       ...baseState,
       validationResult: { overallScore: 50 },
       iterationCount: 0,
-      codeGeneration: { crossFileIssues: [] },
+      codeGeneration: { crossFileIssues: [], files: [{}] },
     };
     expect(resolveValidateImplEdge(state)).to.equal('generateCode');
   });
@@ -91,6 +92,46 @@ describe('resolveValidateImplEdge (R17.4)', () => {
       iterationCount: 0,
       codeGeneration: {
         crossFileIssues: [{ issueType: 'compile-error' }],
+        files: [{}],
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('generateCode');
+  });
+
+  it('does NOT loop on a plan-adherence-extra note alone (warn-only) when score is high (F-C)', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 95 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-extra' }],
+        files: [{}],
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('__end__');
+  });
+
+  it('ends the loop on a 0-file regeneration even below threshold (F-C 0-file guard)', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 10 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-missing' }],
+        files: [], // 0 files: looping cannot help
+      },
+    };
+    expect(resolveValidateImplEdge(state)).to.equal('__end__');
+  });
+
+  it('still loops on a real compile-error even alongside a warn-only note (F-C)', () => {
+    const state: ValidateImplEdgeState = {
+      ...baseState,
+      validationResult: { overallScore: 95 },
+      iterationCount: 0,
+      codeGeneration: {
+        crossFileIssues: [{ issueType: 'plan-adherence-extra' }, { issueType: 'compile-error' }],
+        files: [{}],
       },
     };
     expect(resolveValidateImplEdge(state)).to.equal('generateCode');
@@ -105,7 +146,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
       ...baseState,
       validationResult: { overallScore: 50 },
       iterationCount: 3, // MAX_ITERATIONS
-      codeGeneration: { crossFileIssues: [] },
+      codeGeneration: { crossFileIssues: [], files: [{}] },
     };
     expect(resolveValidateImplEdge(state)).to.equal('__end__');
   });
@@ -120,6 +161,7 @@ describe('resolveValidateImplEdge (R17.4)', () => {
 type SupervisorPrivateAccess = {
   codeGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
   validationNode: (state: unknown) => Promise<Record<string, unknown>>;
+  testGenerationNode: (state: unknown) => Promise<Record<string, unknown>>;
 };
 
 /**
@@ -129,17 +171,32 @@ type SupervisorPrivateAccess = {
  */
 const buildSupervisorWithStubAgents = (
   generateImpl: sinon.SinonStub,
+  opts: { testGenImpl?: sinon.SinonStub; shutdownRequested?: boolean } = {},
 ) => {
   class FakeCodeGenAgent {
     generate = generateImpl;
   }
-  const mod = proxyquire('../../src/supervisors/development-supervisor', {
-    '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
+  const testGenerate = opts.testGenImpl ?? sinon.stub().resolves({
+    files: [],
+    explanation: '',
+    requirementsChecklist: [],
   });
+  class FakeTestGenAgent {
+    generate = testGenerate;
+  }
+  const stubs: Record<string, unknown> = {
+    '../agents/code-generation-agent': { CodeGenerationAgent: FakeCodeGenAgent },
+    '../agents/test-generation-agent': { TestGenerationAgent: FakeTestGenAgent },
+  };
+  if (opts.shutdownRequested) {
+    stubs['../utils/shutdown'] = { isShutdownRequested: () => true };
+  }
+  const mod = proxyquire('../../src/supervisors/development-supervisor', stubs);
   const supervisor = new mod.DevelopmentSupervisor({
     llmProvider: mkMockLLM(),
   });
   return supervisor as unknown as SupervisorPrivateAccess & {
+    develop: (input: unknown) => Promise<DevelopmentState>;
     writeToStaging: (state: DevelopmentState) => Promise<{ stagingPath: string; writtenFiles: string[] }>;
     writeToChtCore: (state: DevelopmentState, chtCorePath: string) => Promise<string[]>;
     clearStaging: (stagingPath: string) => Promise<void>;
@@ -338,6 +395,25 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     expect(await fs.readFile(path.join(scratch, 'src/a.ts'), 'utf-8')).to.equal('A\n');
   });
 
+  it('dedupes files by relativePath, keeping the last (test-gen) writer (F-D)', async () => {
+    const generate = sinon.stub();
+    const supervisor = buildSupervisorWithStubAgents(generate);
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile('src/shared.ts', 'CODE-GEN\n')]),
+      testGeneration: {
+        files: [mkFile('src/shared.ts', 'TEST-GEN\n')],
+        explanation: '',
+        requirementsChecklist: [],
+      },
+    });
+
+    const written = await supervisor.writeToChtCore(state, scratch);
+
+    expect(written).to.deep.equal(['src/shared.ts']); // one entry, not double-listed
+    expect(await fs.readFile(path.join(scratch, 'src/shared.ts'), 'utf-8')).to.equal('TEST-GEN\n');
+  });
+
   it('clearStaging removes the staging directory and tolerates missing dirs', async () => {
     const generate = sinon.stub();
     const supervisor = buildSupervisorWithStubAgents(generate);
@@ -355,5 +431,145 @@ describe('DevelopmentSupervisor public file helpers (v9b.1)', () => {
     let threw = false;
     try { await supervisor.clearStaging(stagePath); } catch { threw = true; }
     expect(threw).to.equal(false);
+  });
+});
+
+describe('DevelopmentSupervisor testGeneration node (iter6, live)', () => {
+  afterEach(() => sinon.restore());
+
+  const emptyResult = { files: [], explanation: '', requirementsChecklist: [] };
+  const cannedTestGen = {
+    files: [mkFile('tests/unit/a.spec.ts', '// spec\n', 'test')],
+    explanation: 'generated tests',
+    requirementsChecklist: [],
+  };
+  const stateWithCode = () => mkDevState({
+    ...baseValidInputFragment,
+    codeGeneration: mkCodeGenResult([mkFile('src/a.ts')]),
+  });
+
+  it('runs the agent and returns its result on the happy path', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.calledOnce).to.equal(true);
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(cannedTestGen);
+  });
+
+  it('no-ops on shutdown without calling the agent', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), {
+      testGenImpl: testGen,
+      shutdownRequested: true,
+    });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.notCalled).to.equal(true);
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+  });
+
+  it('no-ops on empty code-gen without calling the agent', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([]),
+    });
+    const out = await supervisor.testGenerationNode(state);
+
+    expect(testGen.notCalled).to.equal(true);
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+  });
+
+  it('is non-fatal when the agent throws, but marks the todo failed with a warning (M2)', async () => {
+    const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
+    const testGen = sinon.stub().rejects(new Error('boom'));
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(testGen.calledOnce).to.equal(true);
+    // Non-fatal contract preserved: terminal phase + no error/feedback channels.
+    const tg = out.testGeneration as { files: unknown[]; warnings?: string[] };
+    expect(out.currentPhase).to.equal('complete');
+    expect(tg.files).to.deep.equal([]);
+    expect(out.errors).to.be.undefined;
+    expect(out.validationFeedback).to.be.undefined;
+    expect(out.perFileFeedback).to.be.undefined;
+    // But the failure is now reported honestly (warning + failed todo), not green.
+    expect(tg.warnings ?? []).to.satisfy(
+      (w: string[]) => w.some(s => /boom/.test(s)),
+    );
+    expect(failSpy.called, 'the test-gen todo must be marked failed').to.equal(true);
+  });
+
+  it('marks the todo failed when the agent returns no files WITH warnings (all dropped) (M2)', async () => {
+    const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
+    const droppedResult = {
+      files: [],
+      explanation: '',
+      requirementsChecklist: [],
+      warnings: ['Dropped invalid test-plan item "b.ts": ...'],
+    };
+    const testGen = sinon.stub().resolves(droppedResult);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(droppedResult);
+    expect(failSpy.called, 'a no-file result carrying warnings must fail the todo').to.equal(true);
+  });
+
+  it('forwards state.validationFeedback to the agent as additionalContext (M6)', async () => {
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+    const state = mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: mkCodeGenResult([mkFile('src/a.ts')]),
+      validationFeedback: 'address the failing assertion',
+    });
+
+    await supervisor.testGenerationNode(state);
+
+    expect(testGen.calledOnce).to.equal(true);
+    const agentInput = testGen.firstCall.args[0] as { additionalContext?: string };
+    expect(agentInput.additionalContext).to.equal('address the failing assertion');
+  });
+
+  it('stays complete (no fail) when the agent returns no files with NO warnings (intentional no-op) (M2)', async () => {
+    const failSpy = sinon.spy(TodoTracker.prototype, 'fail');
+    const testGen = sinon.stub().resolves(emptyResult);
+    const supervisor = buildSupervisorWithStubAgents(sinon.stub(), { testGenImpl: testGen });
+
+    const out = await supervisor.testGenerationNode(stateWithCode());
+
+    expect(out.currentPhase).to.equal('complete');
+    expect(out.testGeneration).to.deep.equal(emptyResult);
+    expect(failSpy.called, 'a warning-free empty result is an intentional no-op, not a failure')
+      .to.equal(false);
+  });
+
+  it('is reached once after the refinement loop exhausts and populates testGeneration', async () => {
+    // mkMockLLM.invokeForJSON returns {}, so every validation scores 0 and the
+    // resolver loops back to generateCode until iterations exhaust, then routes
+    // the terminal branch through generateTests to END.
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile('src/a.ts')]));
+    const testGen = sinon.stub().resolves(cannedTestGen);
+    const supervisor = buildSupervisorWithStubAgents(generate, { testGenImpl: testGen });
+
+    const finalState = await supervisor.develop(baseValidInputFragment);
+
+    expect(generate.callCount).to.equal(3); // refinement loop re-entered generateCode each iteration
+    expect(finalState.iterationCount).to.equal(3); // MAX_ITERATIONS — loop ran and exhausted
+    expect(finalState.currentPhase).to.equal('complete'); // generateTests owns the terminal phase
+    expect(testGen.calledOnce).to.equal(true);
+    expect(finalState.testGeneration).to.deep.equal(cannedTestGen);
   });
 });
