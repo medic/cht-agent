@@ -76,7 +76,8 @@ export function reportSafetyError(err: unknown, logPrefix: string): void {
  * session (so from the LLM), and a bare `'` or `;` in one must not break out.
  */
 export function shellQuote(word: string): string {
-  return `'${word.replaceAll("'", String.raw`'\''`)}'`;
+  const escaped = word.replaceAll("'", String.raw`'\''`);
+  return `'${escaped}'`;
 }
 
 /**
@@ -1466,11 +1467,19 @@ export async function rollbackChtCore(
     // A pop now would merge the operator's work into a half-reset tree, and a
     // later `reset --hard` would then destroy it. Leave the stash and the files.
     await recordResetFailureState(chtCorePath, snapshot, result);
-    return result;
+  } else {
+    await cleanAndRestore(chtCorePath, snapshot, result);
   }
+  return result;
+}
+
+async function cleanAndRestore(
+  chtCorePath: string,
+  snapshot: ChtCoreSnapshot,
+  result: RollbackResult,
+): Promise<void> {
   await cleanStep(chtCorePath, snapshot, result);
   if (snapshot.stashSha) await popStep(chtCorePath, snapshot, result);
-  return result;
 }
 
 const rolledBackSnapshots = new WeakSet<ChtCoreSnapshot>();
