@@ -1024,4 +1024,68 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(next.baselineUntracked).to.include('nr/');
     expect((await rollbackChtCore(repo, next)).reset).to.equal('ok');
   });
+
+  describe('states that git stash cannot put back exactly', () => {
+    /** Refused before anything changes, the same way on a second run. */
+    const expectRefusedUnchanged = async (named: string) => {
+      const before = await treeState();
+      const first = await rejection(() => snapshotChtCore(repo));
+      const second = await rejection(() => snapshotChtCore(repo));
+      expect(first?.kind).to.equal('precondition');
+      expect((first?.lines ?? []).join('\n')).to.include(named);
+      expect((first?.lines ?? []).join('\n')).to.include('Nothing was changed.');
+      expect(await treeState()).to.deep.equal(before);
+      const { stdout: stashes } = await git('stash', 'list');
+      expect(stashes).to.not.include(STASH_MARKER_PREFIX);
+      expect(second?.kind).to.equal('precondition');
+      expect(second?.message).to.equal(first?.message);
+    };
+
+    it('refuses a path that is deleted in the index but still on disk', async () => {
+      await commitFile('d.txt', 'd\n');
+      await git('rm', '-q', '--cached', 'd.txt');
+      await write('tracked.txt', 'operator work in progress\n');
+      await expectRefusedUnchanged('"d.txt" is deleted in the index but still on disk');
+    });
+
+    it('refuses a staged rename whose source is on disk again', async () => {
+      await commitFile('a.txt', 'a\n');
+      await git('mv', 'a.txt', 'b.txt');
+      await write('a.txt', 'a new file at the old path\n');
+      await expectRefusedUnchanged('"a.txt" is the source of a staged rename');
+    });
+
+    it('refuses a tracked file whose path is now a directory', async () => {
+      await commitFile('b.txt', 'b\n');
+      await fs.rm(path.join(repo, 'b.txt'));
+      await fs.mkdir(path.join(repo, 'b.txt'));
+      await write('b.txt/inner.txt', 'inside the new dir\n');
+      await expectRefusedUnchanged('"b.txt" is a tracked file whose path is now a directory');
+    });
+
+    for (const [label, setUp] of [
+      ['a plain staged rename', async () => {
+        await commitFile('a.txt', 'a\n');
+        await git('mv', 'a.txt', 'b.txt');
+      }],
+      ['a tracked file replaced by a symlink', async () => {
+        await fs.rm(path.join(repo, 'tracked.txt'));
+        await fs.symlink('.gitignore', path.join(repo, 'tracked.txt'));
+      }],
+      ['a staged delete whose file is gone', async () => {
+        await commitFile('d.txt', 'd\n');
+        await git('rm', '-q', 'd.txt');
+      }],
+    ] as Array<[string, () => Promise<void>]>) {
+      it(`does not refuse ${label}, and a full cycle puts it back exactly`, async () => {
+        await setUp();
+        const before = await treeState();
+        const snapshot = await snapshotChtCore(repo);
+        await write('session.ts', 'export const s = 1;\n');
+        const rollback = await rollbackChtCore(repo, snapshot);
+        expect(rollback.stashPop).to.equal('ok');
+        expect(await treeState()).to.deep.equal(before);
+      });
+    }
+  });
 });

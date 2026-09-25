@@ -311,8 +311,13 @@ async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
 function pathsFromStatusLine(line: string): string[] {
   const unquote = (p: string) => (p.startsWith('"') && p.endsWith('"') ? p.slice(1, -1) : p);
   const body = line.substring(3).trim();
-  const parts = 'RC'.includes(line[0]) ? body.split(' -> ') : [body];
+  const parts = isRenameOrCopy(line[0], line[1]) ? body.split(' -> ') : [body];
   return parts.map(part => unquote(part.trim()));
+}
+
+/** A rename or copy in either status column; ` R` is an intent-to-add rename. */
+function isRenameOrCopy(x: string, y: string): boolean {
+  return 'RC'.includes(x) || 'RC'.includes(y);
 }
 
 /**
@@ -447,6 +452,7 @@ async function stashOperatorWork(
   statusLines: readonly string[],
   headSha: string,
 ): Promise<TakenStash> {
+  await assertStashCanRoundTrip(chtCorePath);
   warnOnIgnoreRuleEdits(statusLines, chtCorePath);
   const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
   const prePush = await listUntracked(chtCorePath);
@@ -573,16 +579,91 @@ async function stashLeftovers(chtCorePath: string, prePush: readonly string[]): 
   return [...statusZPaths(stdout), ...survivors];
 }
 
-/** Paths in `status --porcelain=v1 -z` output; a rename or copy carries its old path as an extra token. */
-function statusZPaths(stdout: string): string[] {
+interface StatusEntry {
+  x: string;
+  y: string;
+  path: string;
+  /** The source of a rename or copy. */
+  origPath?: string;
+}
+
+/** Entries of `status --porcelain=v1 -z`; a rename or copy carries its source as the next token. */
+function parseStatusZ(stdout: string): StatusEntry[] {
   const tokens = stdout.split('\0').filter(Boolean);
-  const paths: string[] = [];
+  const entries: StatusEntry[] = [];
   let i = 0;
   while (i < tokens.length) {
-    paths.push(tokens[i].slice(3));
-    i += 'RC'.includes(tokens[i][0]) ? 2 : 1;
+    const entry: StatusEntry = { x: tokens[i][0], y: tokens[i][1], path: tokens[i].slice(3) };
+    i += 1;
+    if (isRenameOrCopy(entry.x, entry.y)) {
+      entry.origPath = tokens[i];
+      i += 1;
+    }
+    entries.push(entry);
   }
-  return paths;
+  return entries;
+}
+
+/** Every real path in `status --porcelain=v1 -z` output. */
+function statusZPaths(stdout: string): string[] {
+  return parseStatusZ(stdout).flatMap(e => (e.origPath === undefined ? [e.path] : [e.path, e.origPath]));
+}
+
+/** A path that git stash cannot put back exactly, and why. */
+interface RoundTripCandidate {
+  relPath: string;
+  kind: 'deleted' | 'renameSource';
+}
+
+/**
+ * Refuse, before the push, the states that `git stash` cannot put back
+ * exactly: a path deleted in the index but kept on disk (`git rm --cached`),
+ * the source of a staged rename that is on disk again, and a tracked file whose
+ * path is now a directory. The stash would save them, but its restore fails or
+ * differs, so refusing up front is the only way to change nothing.
+ */
+async function assertStashCanRoundTrip(chtCorePath: string): Promise<void> {
+  const { stdout } = await runGit(
+    ['status', '-z', '--porcelain=v1', '--untracked-files=no', '--ignore-submodules=all'], chtCorePath,
+  );
+  const problems: string[] = [];
+  for (const candidate of parseStatusZ(stdout).flatMap(roundTripCandidates)) {
+    const problem = await roundTripProblem(chtCorePath, candidate);
+    if (problem) problems.push(problem);
+  }
+  if (problems.length === 0) return;
+  const lines = [
+    'git stash cannot put these changes back exactly, so cht-agent did not stash them. Nothing was changed.',
+    ...problems.map(problem => `  - ${problem}`),
+    'Then run again.',
+  ];
+  throw new WorkspaceSafetyError('precondition', lines[0], { lines });
+}
+
+function roundTripCandidates(entry: StatusEntry): RoundTripCandidate[] {
+  const candidates: RoundTripCandidate[] = [];
+  if (entry.x === 'D' || entry.y === 'D') candidates.push({ relPath: entry.path, kind: 'deleted' });
+  if (entry.origPath !== undefined && (entry.x === 'R' || entry.y === 'R')) {
+    candidates.push({ relPath: entry.origPath, kind: 'renameSource' });
+  }
+  return candidates;
+}
+
+/** The operator text for a candidate that is on disk, or null when it is not. */
+async function roundTripProblem(chtCorePath: string, candidate: RoundTripCandidate): Promise<string | null> {
+  const stat = await fs.lstat(path.join(chtCorePath, candidate.relPath)).catch(() => null);
+  if (!stat) return null;
+  const quoted = JSON.stringify(candidate.relPath);
+  if (candidate.kind === 'renameSource') {
+    return `${quoted} is the source of a staged rename, and a file at that path is on disk again. ` +
+      'Commit the rename, or move that file away.';
+  }
+  if (stat.isDirectory()) {
+    return `${quoted} is a tracked file whose path is now a directory. Commit the change, or move that directory away.`;
+  }
+  const restore = `git -C ${shellQuote(chtCorePath)} restore --staged -- ${shellQuote(toLiteralPathspec(candidate.relPath))}`;
+  return `${quoted} is deleted in the index but still on disk (as after git rm --cached). ` +
+    `Commit the delete, or undo it with: ${restore}`;
 }
 
 async function stashNotCreatedError(

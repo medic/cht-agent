@@ -523,6 +523,53 @@ describe('workspace.ts', () => {
       expect(warned).to.be.undefined;
     });
 
+    it('refuses, before the push, the paths that git stash cannot put back', async () => {
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // An index-only delete, a rename whose source is back, and a plain modify.
+        'git status -z --porcelain=v1': { stdout: 'D  d.txt\0R  b.txt\0a.txt\0 M c.txt\0' },
+        'git status --porcelain': { stdout: 'D  d.txt\n' },
+      }, {
+        lstat: sinon.stub().callsFake(async (p: string) => {
+          if (p.endsWith('/d.txt') || p.endsWith('/a.txt')) return { isDirectory: () => false };
+          throw errno('ENOENT');
+        }),
+      }, calls);
+      let thrown: unknown;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { kind: string }).kind).to.equal('precondition');
+      const lines = (thrown as { lines: string[] }).lines;
+      expect(lines.filter(l => l.startsWith('  - '))).to.have.length(2);
+      expect(lines.join('\n')).to.include(`restore --staged -- ':(literal)d.txt'`);
+      expect(lines.join('\n')).to.include('"a.txt" is the source of a staged rename');
+      expect(calls.some(c => c.startsWith('git stash push'))).to.equal(false);
+    });
+
+    it('reads an intent-to-add rename (" R") as two real paths', async () => {
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // The push left an intent-to-add rename: the Y column holds the R.
+        'git status --porcelain=v1 -z --untracked-files=no': { stdout: ' R new.txt\0old.txt\0' },
+        'git status --porcelain': { stdout: ' R old.txt -> new.txt\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -z': STASH_CREATED,
+        'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+      });
+      let thrown: unknown;
+      try {
+        await ws.snapshotChtCore('/tmp/cht-core');
+      } catch (err) {
+        thrown = err;
+      }
+      const listed = (thrown as { lines: string[] }).lines.filter(l => l.startsWith('  - '));
+      expect(listed).to.deep.equal(['  - "new.txt"', '  - "old.txt"']);
+    });
+
     it('refuses to run if cht-core has unmerged paths', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
