@@ -23,6 +23,22 @@ const EXEC_OPTS = { maxBuffer: 50 * 1024 * 1024, encoding: 'utf8' as const };
 const ghExec: ExecFn = (file, args) => execFileSync(file, args, EXEC_OPTS) as string;
 
 /**
+ * Strips HTML comments (e.g. CHT's PHI-warning template boilerplate) from a PR
+ * or issue body before it's truncated downstream. Un-stripped boilerplate can
+ * consume the entire truncation budget before the real content — see cht-core
+ * issue #10912, where a ~246-char PHI comment pushed the root-cause sentence
+ * past `ISSUE_BODY_LIMIT`.
+ *
+ * @example
+ * ```typescript
+ * stripBoilerplate('<!-- PHI warning -->\nActual content'); // 'Actual content'
+ * ```
+ */
+export function stripBoilerplate(text: string): string {
+  return text.replace(/<!--[\s\S]*?-->/g, '').trim();
+}
+
+/**
  * Validates that a value is a positive integer suitable for use as a PR number.
  *
  * @param n - The value to check.
@@ -71,7 +87,7 @@ function hydrateIssue(n: number, repo: string): LinkedIssue | null {
     const raw = ghExec('gh', ['issue', 'view', String(n), '--repo', repo, '--json', 'body,comments']);
     const parsed = JSON.parse(raw);
     const comments: string[] = (parsed.comments ?? []).map((c: { body: string }) => c.body);
-    return { number: n, body: parsed.body ?? '', comments };
+    return { number: n, body: stripBoilerplate(parsed.body ?? ''), comments };
   } catch {
     return null;
   }
@@ -149,7 +165,7 @@ function fetchMetadata(prNumber: number, repo: string): string {
         '--repo',
         repo,
         '--json',
-        'number,title,body,labels,mergeCommit,mergedAt,files,author,closingIssuesReferences',
+        'number,title,body,labels,mergeCommit,mergedAt,baseRefName,files,author,closingIssuesReferences',
       ],
       EXEC_OPTS
     );
@@ -234,6 +250,38 @@ function fetchReviews(prNumber: number, repo: string): string {
 /** A raw review from the gh API; `user` is null for since-deleted accounts. */
 type RawReview = { user: { login: string } | null; body: string | null; state: string };
 
+/** Per-run cache of each repo's default branch; null means the lookup failed. */
+const defaultBranchCache = new Map<string, string | null>();
+
+/**
+ * The repo's default branch via `gh repo view`, cached per run. Returns null on
+ * any gh failure so the base-branch gate fails open rather than blocking a scrape.
+ */
+function defaultBranch(repo: string): string | null {
+  const cached = defaultBranchCache.get(repo);
+  if (cached !== undefined) return cached;
+  let name: string | null = null;
+  try {
+    const raw = execFileSync('gh', ['repo', 'view', repo, '--json', 'defaultBranchRef'], EXEC_OPTS); // NOSONAR typescript:S4036 -- gh resolves from PATH like every other gh call here
+    const parsed = JSON.parse(raw) as { defaultBranchRef?: { name?: string } };
+    name = parsed.defaultBranchRef?.name ?? null;
+  } catch {
+    name = null;
+  }
+  defaultBranchCache.set(repo, name);
+  return name;
+}
+
+/**
+ * Base branch plus the repo default, so the filter can skip PRs merged into a
+ * feature branch as an audited exclusion. Empty when gh omitted `baseRefName`.
+ */
+function baseBranchFields(meta: Record<string, unknown>, repo: string): Pick<ScrapedPR, 'baseRefName' | 'defaultBranch'> {
+  const baseRefName = meta.baseRefName as string | undefined;
+  if (!baseRefName) return {};
+  return { baseRefName, defaultBranch: defaultBranch(repo) ?? undefined };
+}
+
 /** Fetch + parse PR metadata, asserting the PR is merged. */
 function fetchAndParseMetadata(prNumber: number, repo: string): Record<string, unknown> {
   const metaRaw = fetchMetadata(prNumber, repo);
@@ -297,7 +345,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   }
   const meta = fetchAndParseMetadata(prNumber, repo);
   const prTitle = (meta.title as string) ?? '';
-  const prBody = (meta.body as string) ?? '';
+  const prBody = stripBoilerplate((meta.body as string) ?? '');
   // Preserve the original fetch order (diff before reviews) so a diff error surfaces first.
   const diff = fetchDiff(prNumber, repo);
   const reviews = parseReviews(fetchReviews(prNumber, repo), prNumber);
@@ -308,6 +356,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
   );
 
   return {
+    repo,
     prNumber,
     prTitle,
     prBody,
@@ -319,6 +368,7 @@ export function scrapePR(prNumber: number, repo: string = 'medic/cht-core'): Scr
     linkedIssues,
     reviewComments: buildReviewComments(reviews),
     author: (meta.author as { login?: string })?.login ?? '',
+    ...baseBranchFields(meta, repo),
   };
 }
 

@@ -48,6 +48,8 @@ import { filterPR } from './filter';
 import { distillPR } from './distiller';
 import { isAuthError, isBatchFatalError } from '../llm/rate-limit';
 import { DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
+import { reconcile, formatReconciliation } from './reconcile';
+import type { SkipLogEntry, DistillResult } from '../types/pipeline';
 
 /** Exit code used when the batch stops early on a global LLM failure (rate limit / auth). */
 export const RATE_LIMIT_EXIT_CODE = 2;
@@ -313,7 +315,24 @@ async function runFilter(
   return result;
 }
 
-export async function processSinglePR(prNum: number, repo: string, force = false, tag = ' '): Promise<void> {
+/**
+ * Runs scrape → filter → distill for one PR. Returns the distill outcome (or
+ * undefined when the filter didn't forward to distillation), so the batch
+ * runner can aggregate report-worthy signals like `hallucinationRate` without
+ * re-scraping or re-reading the written draft.
+ *
+ * @example
+ * ```typescript
+ * const result = await processSinglePR(12345, 'medic/cht-core');
+ * // undefined if filtered out, else a DistillResult
+ * ```
+ */
+export async function processSinglePR(
+  prNum: number,
+  repo: string,
+  force = false,
+  tag = ' '
+): Promise<DistillResult | undefined> {
   console.log(`${tag} scraping...`);
   const pr = scrapePR(prNum, repo);
   console.log(`${tag} title:  ${pr.prTitle}`);
@@ -321,7 +340,7 @@ export async function processSinglePR(prNum: number, repo: string, force = false
   console.log(`${tag} files:  ${pr.fileList.length}`);
 
   const filterResult = await runFilter(pr, force, tag);
-  if (filterResult.decision !== 'distill') return;
+  if (filterResult.decision !== 'distill') return undefined;
 
   console.log(`${tag} distilling...`);
   const distillResult = await distillPR(pr);
@@ -329,6 +348,7 @@ export async function processSinglePR(prNum: number, repo: string, force = false
   if (distillResult.outputPath) {
     console.log(`${tag} output: ${distillResult.outputPath}`);
   }
+  return distillResult;
 }
 
 /**
@@ -348,6 +368,8 @@ interface BatchState {
   failures: number;
   nextIndex: number;
   abortKind: 'rate' | 'auth' | null;
+  /** hallucinationRate of every written draft this run — feeds the reconciliation report. */
+  hallucinationRates: number[];
 }
 
 /** Immutable run config + mutable state shared across the concurrent workers. */
@@ -388,7 +410,10 @@ async function processBatchItem(ctx: BatchCtx, index: number): Promise<boolean> 
   const tag = ctx.parallel ? ` [#${prNum}]` : ' ';
   logPrStart(ctx, index, tag);
   try {
-    await processSinglePR(prNum, ctx.repo, ctx.force, tag);
+    const result = await processSinglePR(prNum, ctx.repo, ctx.force, tag);
+    if (result?.hallucinationRate !== undefined) {
+      ctx.state.hallucinationRates.push(result.hallucinationRate);
+    }
     return true;
   } catch (err) {
     return !recordWorkerError(err, tag, ctx.state);
@@ -403,8 +428,48 @@ async function runWorker(ctx: BatchCtx): Promise<void> {
   }
 }
 
+/**
+ * Parses one audit-log line into a SkipLogEntry, or null if blank/malformed.
+ *
+ * @example
+ * ```typescript
+ * parseSkipLogLine('{"prNumber":1,"decision":"skip","reason":"x","timestamp":"t"}');
+ * ```
+ */
+function parseSkipLogLine(line: string): SkipLogEntry | null {
+  if (!line.trim()) return null;
+  try {
+    return JSON.parse(line) as SkipLogEntry;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads `_skipped.ndjson` and returns the entries logged for this run's PRs —
+ * the reconciliation report is scoped to the current batch, not the whole
+ * (potentially multi-run) audit log.
+ *
+ * @example
+ * ```typescript
+ * const entries = skipEntriesForRun([42], DEFAULT_PIPELINE_LOG_PATH);
+ * ```
+ */
+export function skipEntriesForRun(prNumbers: number[], logPath: string, startOffset = 0): SkipLogEntry[] {
+  const wanted = new Set(prNumbers);
+  let log: Buffer;
+  try {
+    log = fs.readFileSync(logPath);
+  } catch {
+    return [];
+  }
+  return log.subarray(startOffset).toString('utf8').split('\n')
+    .map(parseSkipLogLine)
+    .filter((e): e is SkipLogEntry => e !== null && wanted.has(e.prNumber));
+}
+
 /** Print the run summary and exit non-zero on abort or failures. */
-function reportOutcome(total: number, state: BatchState): void {
+function reportOutcome(total: number, state: BatchState, prNumbers: number[], auditOffset: number): void {
   console.log(`\n${'─'.repeat(60)}`);
   if (state.abortKind === 'auth') {
     console.log('Stopped early: Claude authentication failed (401). Re-login in the container — `docker exec -it cht-seeder claude` then run /login — and re-run with --resume.');
@@ -415,16 +480,24 @@ function reportOutcome(total: number, state: BatchState): void {
     process.exit(RATE_LIMIT_EXIT_CODE);
   }
   console.log(`Done. Processed ${total} PR(s), ${state.failures} failure(s).`);
+  console.log(formatReconciliation(reconcile(skipEntriesForRun(prNumbers, DEFAULT_PIPELINE_LOG_PATH, auditOffset))));
+  // >0 is a reporting threshold, not a gate — entities may legitimately
+  // name a module/concept rather than a literal path, so some drift is expected.
+  const unverified = state.hallucinationRates.filter(r => r > 0).length;
+  console.log(`${unverified} draft(s) with unverified file ref(s) (relatedFiles/entities not in the PR's fileList).`);
   if (state.failures > 0) process.exit(1);
 }
 
 export async function runPipeline(prNumbers: number[], repo: string, force = false, concurrency = 1): Promise<void> {
-  const state: BatchState = { failures: 0, nextIndex: 0, abortKind: null };
+  const auditOffset = (() => {
+    try { return fs.statSync(DEFAULT_PIPELINE_LOG_PATH).size; } catch { return 0; }
+  })();
+  const state: BatchState = { failures: 0, nextIndex: 0, abortKind: null, hallucinationRates: [] };
   const ctx: BatchCtx = { prNumbers, repo, force, parallel: concurrency > 1, state };
   const count = Math.min(concurrency, prNumbers.length);
   const workers = Array.from({ length: count }, () => runWorker(ctx));
   await Promise.all(workers);
-  reportOutcome(prNumbers.length, state);
+  reportOutcome(prNumbers.length, state, prNumbers, auditOffset);
 }
 
 /**

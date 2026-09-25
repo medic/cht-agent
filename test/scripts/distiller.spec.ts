@@ -140,6 +140,30 @@ describe('distillPR', () => {
       expect(fs.existsSync(result.outputPath!)).to.equal(true);
     });
 
+    it('should report a zero hallucinationRate when relatedFiles/entities match the PR fileList', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+      const result: DistillResult = await distillPR(makePR(), {
+        outputDir,
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft(),
+      });
+
+      expect(result.hallucinationRate).to.equal(0);
+    });
+
+    it('should report a nonzero hallucinationRate when the draft claims files not in the PR', async () => {
+      const { distillPR } = loadDistiller();
+      const outputDir = tmpOutputDir();
+      const result: DistillResult = await distillPR(makePR(), {
+        outputDir,
+        logPath: tmpLogPath(),
+        distillFn: async () => makeDraft({ relatedFiles: ['made/up/path.js'], entities: ['made/up/path.js'] }),
+      });
+
+      expect(result.hallucinationRate).to.equal(1);
+    });
+
     it('should place the file under _pending/<domain>/', async () => {
       const { distillPR } = loadDistiller();
       const outputDir = tmpOutputDir();
@@ -647,7 +671,7 @@ describe('slugify', () => {
 
   it('should strip special characters', () => {
     const { slugify } = loadDistiller();
-    expect(slugify('feat(contacts)!: add bulk create')).to.equal('featcontacts-add-bulk-create');
+    expect(slugify('feat(contacts)!: add bulk create')).to.equal('feat-contacts-add-bulk-create');
   });
 
   it('should truncate to 60 chars', () => {
@@ -669,5 +693,162 @@ describe('slugify', () => {
   it('should fall back to "untitled" for a non-Latin title', () => {
     const { slugify } = loadDistiller();
     expect(slugify('日本語タイトル')).to.equal('untitled');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPrompt — CONSTRAINTS block + adaptive issue-body limit
+// ---------------------------------------------------------------------------
+
+describe('buildPrompt', () => {
+  it('includes the grounding/no-fabrication CONSTRAINTS block', () => {
+    const { buildPrompt } = loadDistiller();
+    const prompt = buildPrompt(makePR());
+    expect(prompt).to.include('CONSTRAINTS:');
+    expect(prompt).to.include('chosen only from the Files changed list above');
+    expect(prompt).to.include('Do NOT mention communication channels');
+  });
+
+  it('grants an expanded issue-body budget when the PR body is near-empty', () => {
+    const { buildPrompt } = loadDistiller();
+    const longIssueBody = 'x'.repeat(1000);
+    const prompt = buildPrompt(makePR({
+      prBody: 'Fixes #99',
+      linkedIssues: [{ number: 99, body: longIssueBody, comments: [] }],
+    }));
+    // Near-empty PR body -> the expanded 2000-char budget, not the default 500.
+    expect(prompt).to.include(longIssueBody.slice(0, 1000));
+  });
+
+  it('uses the default issue-body budget when the PR body has real content', () => {
+    const { buildPrompt } = loadDistiller();
+    const longIssueBody = 'x'.repeat(1000);
+    const longPrBody = 'A'.repeat(200) + ' — a detailed PR body with real content.';
+    const prompt = buildPrompt(makePR({
+      prBody: longPrBody,
+      linkedIssues: [{ number: 99, body: longIssueBody, comments: [] }],
+    }));
+    expect(prompt).to.not.include(longIssueBody.slice(0, 600));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeConfidence
+// ---------------------------------------------------------------------------
+
+describe('computeConfidence', () => {
+  it('is medium for a grounded, non-backport draft', () => {
+    const { computeConfidence } = loadDistiller();
+    expect(computeConfidence(makeDraft(), makePR())).to.equal('medium');
+  });
+
+  it('is low when relatedFiles are not all in the PR file list', () => {
+    const { computeConfidence } = loadDistiller();
+    const draft = makeDraft({ relatedFiles: ['not/in/file-list.js'] });
+    expect(computeConfidence(draft, makePR())).to.equal('low');
+  });
+
+  it('is low for a cherry-pick backport body marker', () => {
+    const { computeConfidence } = loadDistiller();
+    const pr = makePR({ prBody: 'Backported. (cherry picked from commit abc123def)' });
+    expect(computeConfidence(makeDraft(), pr)).to.equal('low');
+  });
+
+  it('is low for a trailing (#NNNN) backport title suffix', () => {
+    const { computeConfidence } = loadDistiller();
+    const pr = makePR({ prTitle: 'fix: prevent duplicate contacts (#9098)' });
+    expect(computeConfidence(makeDraft(), pr)).to.equal('low');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildFrontmatter — related_issues grounded in secondary linked issues
+// ---------------------------------------------------------------------------
+
+describe('buildFrontmatter — related_issues', () => {
+  it('is empty when the PR has only its canonical linked issue', () => {
+    const { buildFrontmatter } = loadDistiller();
+    const fm = buildFrontmatter(makeDraft(), makePR());
+    expect(fm.related_issues).to.deep.equal([]);
+  });
+
+  it('lists secondary linked issues as candidate cht-core-<n> ids', () => {
+    const { buildFrontmatter } = loadDistiller();
+    const pr = makePR({
+      linkedIssues: [
+        { number: 99, body: 'canonical', comments: [] },
+        { number: 100, body: 'secondary', comments: [] },
+      ],
+    });
+    const fm = buildFrontmatter(makeDraft(), pr);
+    expect(fm.related_issues).to.deep.equal(['cht-core-100']);
+  });
+
+  it('uses the source repository for interoperability provenance and cross-links', () => {
+    const { buildFrontmatter } = loadDistiller();
+    const fm = buildFrontmatter(makeDraft(), makePR({
+      repo: 'medic/cht-interoperability',
+      linkedIssues: [
+        { number: 99, body: 'canonical', comments: [] },
+        { number: 100, body: 'secondary', comments: [] },
+      ],
+    }));
+    expect(fm.id).to.equal('cht-interoperability-99');
+    expect(fm.issueUrl).to.equal('https://github.com/medic/cht-interoperability/issues/99');
+    expect(fm.source_pr).to.equal('medic/cht-interoperability#42');
+    expect(fm.related_issues).to.deep.equal(['cht-interoperability-100']);
+  });
+
+  it('names the file from the resolved issue number, matching the title token', async () => {
+    const { distillPR } = loadDistiller();
+    const logPath = tmpLogPath();
+    const result = await distillPR(makePR({ prTitle: 'fix(#99): restore sync' }), {
+      outputDir: tmpOutputDir(),
+      logPath,
+      distillFn: async () => makeDraft(),
+    });
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-99-fix-99-/);
+    expect(fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '').to.not.include('"warn"');
+  });
+
+  it('names the file from the resolved issue number for breaking-change titles', async () => {
+    const { distillPR } = loadDistiller();
+    const result = await distillPR(makePR({ prTitle: 'fix(#99)!: restore sync' }), {
+      outputDir: tmpOutputDir(),
+      logPath: tmpLogPath(),
+      distillFn: async () => makeDraft(),
+    });
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-99-fix-99-/);
+  });
+
+  it('names the file from resolution and warns when the title token disagrees', async () => {
+    // The 9039 shape: title says fix(#9024) but resolution found issue 9023.
+    const { distillPR } = loadDistiller();
+    const logPath = tmpLogPath();
+    const result = await distillPR(
+      makePR({
+        prTitle: 'fix(#9024): assert couchdb version',
+        linkedIssues: [{ number: 9023, body: 'real issue', comments: [] }],
+      }),
+      { outputDir: tmpOutputDir(), logPath, distillFn: async () => makeDraft() }
+    );
+    expect(result.status).to.equal('written');
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-9023-/);
+    const log = fs.readFileSync(logPath, 'utf8');
+    const entries = log.trim().split('\n').map(l => JSON.parse(l));
+    const warn = entries.find(e => e.decision === 'warn');
+    expect(warn).to.exist;
+    expect(warn.reason).to.include('#9024');
+    expect(warn.reason).to.include('#9023');
+  });
+
+  it('embeds the resolved issue even when the title has no token', async () => {
+    const { distillPR } = loadDistiller();
+    const result = await distillPR(makePR(), {
+      outputDir: tmpOutputDir(),
+      logPath: tmpLogPath(),
+      distillFn: async () => makeDraft(),
+    });
+    expect(path.basename(result.outputPath!)).to.match(/^42-issue-99-/);
   });
 });

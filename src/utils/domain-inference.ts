@@ -143,6 +143,9 @@ Pitfalls (Common Misclassifications to Avoid):
    → Don't put CI/build/deploy/upgrade-lifecycle PRs into configuration — those are infrastructure.
    → Don't put in-application code refactors, data-layer/storage-engine internals (UUID/ID generation, CouchDB/Nouveau/Lucene index design docs, B-tree concerns), or library dependency bumps that change app behavior into infrastructure — keep those in the closest functional domain (often data-sync).
    → Exception: work on the cht-datasource library itself (entity modules, qualifiers, local/remote adapters, and the api controllers/routes backing them) is data-access, not data-sync and not the entity's product domain — data-sync keeps only genuine replication and storage-engine internals.
+
+7. Route guards, modals, app-shell wiring, and translation-only changes are NOT forms-and-reports merely because they render through the Enketo/forms UI.
+   → Classify by the changed subsystem (service/component/routing/i18n), not the user-facing surface it happens to appear on. Mark such PRs weak fit (or pick the domain matching the actual subsystem) and name that subsystem in the reasoning.
 `;
 
 // Derived from the single taxonomy source so it can't drift from CHT_DOMAINS.
