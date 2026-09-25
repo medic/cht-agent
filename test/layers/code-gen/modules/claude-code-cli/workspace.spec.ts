@@ -1081,10 +1081,89 @@ describe('workspace.ts', () => {
       expect((thrown as { kind: string }).kind).to.equal('stash');
       const lines = (thrown as { lines: string[] }).lines.join('\n');
       expect(lines).to.include(`Your work is still in stash ${OUR_NAME}`);
-      expect(lines).to.include('the restore failed: error: unable to unlink old rt/t.txt');
-      expect(lines).to.include('The rest of your work is already back');
+      // The trigger (the push's own error) and the restore error each on their own line.
+      expect(lines).to.include("git stash did not complete (error: unable to unlink old 'rt/t.txt': Permission denied).");
+      expect(lines).to.include('\nThe restore from the stash failed part way: error: unable to unlink old rt/t.txt\n');
+      // The restore threw, so the work is NOT back, and git's error is never a path entry.
+      expect(lines).to.not.include('The rest of your work is already back');
+      expect(lines).to.not.match(/ {2}- "\(/);
       expect(lines.indexOf('reset --hard abc1234')).to.be.lessThan(lines.indexOf('stash pop --index'));
       expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+    });
+
+    describe('a git read that fails after the push', () => {
+      const readError = () => Object.assign(new Error('Command failed: git x\nfatal: injected read failure'), {
+        code: 128, stderr: 'fatal: injected read failure',
+      });
+
+      const snapshotRejection = async (script: Script, calls: string[]) => {
+        // The test's keys come first, so a more specific key wins over these.
+        const ws = loadWorkspace({
+          ...script,
+          'git rev-parse HEAD': { stdout: 'abc1234\n' },
+          'git status --porcelain': { stdout: ' M file.ts\n' },
+          'git stash push': { stdout: 'Saved\n' },
+          'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+        }, {}, calls);
+        try {
+          await ws.snapshotChtCore('/tmp/cht-core');
+        } catch (err) {
+          return { err: err as { kind?: string; cause?: unknown; lines?: string[]; message: string }, ws };
+        }
+        throw new Error('expected the snapshot to reject');
+      };
+
+      it('puts the work back and stops when the post-push stash list read fails', async () => {
+        const calls: string[] = [];
+        const failure = readError();
+        const { err, ws } = await snapshotRejection({
+          'git status --porcelain=v1': { stdout: '' },
+          // The leftover check, then the failed post-push read, then the re-read.
+          'git stash list -z': [{ stdout: '' }, { error: failure }, { stdout: OUR_ENTRY }],
+        }, calls);
+        expect(err).to.be.instanceOf(ws.WorkspaceSafetyError);
+        expect(err.kind).to.equal('precondition');
+        expect(err.cause).to.equal(failure);
+        expect(err.message).to.include('put your work back, so nothing was changed');
+        expect(calls).to.include('git stash drop stash@{0}');
+      });
+
+      it('puts the work back and stops when the post-push status read fails', async () => {
+        const calls: string[] = [];
+        const failure = readError();
+        const { err } = await snapshotRejection({
+          'git status --porcelain=v1 -z --untracked-files=no': { error: failure },
+          'git stash list -z': STASH_CREATED,
+        }, calls);
+        expect(err.kind).to.equal('precondition');
+        expect(err.cause).to.equal(failure);
+        expect(calls).to.include('git stash drop stash@{0}');
+      });
+
+      it('stops with the lookup hint when the stash list cannot be read at all', async () => {
+        const calls: string[] = [];
+        const failure = readError();
+        const { err } = await snapshotRejection({
+          'git stash list -z': [{ stdout: '' }, { error: failure }],
+        }, calls);
+        expect(err.kind).to.equal('stash');
+        expect(err.cause).to.equal(failure);
+        const lines = (err.lines ?? []).join('\n');
+        expect(lines).to.include(`Your uncommitted work may be in stash ${OUR_NAME}`);
+        expect(lines).to.include('Find the stash: ');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('keeps "nothing was stashed" and adds the read error when the re-read finds no entry', async () => {
+        const { err } = await snapshotRejection({
+          'git status --porcelain=v1': { stdout: '' },
+          'git stash list -z': [{ stdout: '' }, { error: readError() }, { stdout: '' }],
+        }, []);
+        expect(err.kind).to.equal('stash');
+        const lines = (err.lines ?? []).join('\n');
+        expect(lines).to.include('nothing was stashed and your tree is unchanged');
+        expect(lines).to.include('A git read of the stash list failed too: fatal: injected read failure');
+      });
     });
 
     it('reset --hard exits non-zero but the tree matches the snapshot → no warning', async () => {

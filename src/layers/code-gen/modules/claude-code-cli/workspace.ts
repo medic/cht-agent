@@ -454,12 +454,12 @@ async function stashOperatorWork(
   // stash, zero with nothing saved (a dirty submodule) or a partial clean.
   const pushError = await runGit(['stash', 'push', '-u', '-m', name], chtCorePath)
     .then(() => undefined, (err: unknown) => err);
-  const ours = findStashByName(await listStashes(chtCorePath), name);
-  const leftovers = await stashLeftovers(chtCorePath, prePush);
-  if (!ours) throw await stashNotCreatedError(chtCorePath, pushError, leftovers, prePush);
-  const stash: TakenStash = { sha: ours.sha, name, prePush };
+  const lookup = await lookUpPushedStash(chtCorePath, name);
+  if (!lookup.entry) throw await stashNotCreatedError(chtCorePath, pushError, prePush, lookup.readError);
+  const stash: TakenStash = { sha: lookup.entry.sha, name, prePush };
+  const leftovers = await leftoversOrUndo(chtCorePath, stash, headSha, lookup.readError);
   if (leftovers.length > 0) {
-    await undoStash(chtCorePath, stash, headSha);
+    await undoStash(chtCorePath, stash, headSha, partialPushTrigger(pushError, leftovers, prePush));
     throw await partialStashError(chtCorePath, pushError, leftovers, prePush);
   }
 
@@ -468,6 +468,92 @@ async function stashOperatorWork(
   console.log(`[claude-code-cli] Stashed your uncommitted work as "${name}". If this run is interrupted:`);
   for (const line of recoveryHintLines(chtCorePath, name)) console.log(`[claude-code-cli]   ${line}`);
   return stash;
+}
+
+/**
+ * Our entry after the push. A failed read of the list is tried once more; a
+ * list that stays unreadable is a stop, because the work may be in the stash.
+ */
+async function lookUpPushedStash(
+  chtCorePath: string,
+  name: string,
+): Promise<{ entry?: StashEntry; readError?: unknown }> {
+  try {
+    return { entry: findStashByName(await listStashes(chtCorePath), name) };
+  } catch (firstError) {
+    return lookUpPushedStashAgain(chtCorePath, name, firstError);
+  }
+}
+
+async function lookUpPushedStashAgain(
+  chtCorePath: string,
+  name: string,
+  firstError: unknown,
+): Promise<{ entry?: StashEntry; readError: unknown }> {
+  try {
+    return { entry: findStashByName(await listStashes(chtCorePath), name), readError: firstError };
+  } catch (err) {
+    const lines = [
+      `git stash push ran, but cht-agent cannot read the stash list (${gitErrorText(err)}), so it cannot ` +
+        `check the result. Your uncommitted work may be in stash ${name}.`,
+      ...recoveryHintLines(chtCorePath, name),
+    ];
+    throw new WorkspaceSafetyError('stash', lines[0], { lines, cause: err });
+  }
+}
+
+/**
+ * The post-push leftovers. When a read after the push failed (this one, or the
+ * stash list read before it), the work goes back into the tree and the
+ * snapshot stops: an error must never leave the work only in our stash.
+ */
+async function leftoversOrUndo(
+  chtCorePath: string,
+  stash: TakenStash,
+  headSha: string,
+  earlierReadError: unknown,
+): Promise<string[]> {
+  let leftovers: string[];
+  try {
+    leftovers = await stashLeftovers(chtCorePath, stash.prePush);
+  } catch (err) {
+    return undoAfterReadFailure(chtCorePath, stash, headSha, err);
+  }
+  if (earlierReadError !== undefined) return undoAfterReadFailure(chtCorePath, stash, headSha, earlierReadError);
+  return leftovers;
+}
+
+/** Put the work back after a failed read, then stop with "nothing was changed". */
+async function undoAfterReadFailure(
+  chtCorePath: string,
+  stash: TakenStash,
+  headSha: string,
+  err: unknown,
+): Promise<never> {
+  const text = gitErrorText(err);
+  await undoStash(chtCorePath, stash, headSha, {
+    summary: `The stash push completed, but a later git read failed (${text}).`,
+    gitText: text,
+    cause: err,
+    pathsInPlay: stash.prePush,
+  });
+  const message = `The snapshot failed after the stash (${text}); cht-agent put your work back, so nothing was changed.`;
+  throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+}
+
+/** What the partial push itself reported, for the undo's own error text. */
+function partialPushTrigger(
+  pushError: unknown,
+  leftovers: readonly string[],
+  prePush: readonly string[],
+): UndoTrigger {
+  const text = pushError === undefined ? 'git stash push exited 0' : gitErrorText(pushError);
+  return {
+    summary: `git stash did not complete (${text}).`,
+    gitText: text,
+    cause: pushError,
+    pathsInPlay: [...leftovers, ...prePush],
+  };
 }
 
 /**
@@ -502,18 +588,37 @@ function statusZPaths(stdout: string): string[] {
 async function stashNotCreatedError(
   chtCorePath: string,
   pushError: unknown,
-  leftovers: readonly string[],
   prePush: readonly string[],
+  listReadError: unknown,
 ): Promise<WorkspaceSafetyError> {
   const text = pushError === undefined
     ? 'git stash push exited 0 but saved nothing (for example, changes inside a submodule, which git stash does not save)'
     : gitErrorText(pushError);
+  const leftovers = await readLeftoversForReport(chtCorePath, prePush);
   const lines = [
     `git stash could not save your uncommitted work, so nothing was stashed and your tree is unchanged: ${text}`,
-    ...pathListLines('Changes that were not stashed:', leftovers),
-    ...(await permissionLines(chtCorePath, text, [...leftovers, ...prePush])),
+    ...readFailureLines('the stash list', listReadError),
+    ...readFailureLines('the status', leftovers.readError),
+    ...pathListLines('Changes that were not stashed:', leftovers.paths),
+    ...(await permissionLines(chtCorePath, text, [...leftovers.paths, ...prePush])),
   ];
-  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError });
+  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError ?? listReadError });
+}
+
+async function readLeftoversForReport(
+  chtCorePath: string,
+  prePush: readonly string[],
+): Promise<{ paths: string[]; readError?: unknown }> {
+  try {
+    return { paths: await stashLeftovers(chtCorePath, prePush) };
+  } catch (err) {
+    return { paths: [], readError: err };
+  }
+}
+
+function readFailureLines(what: string, err: unknown): string[] {
+  if (err === undefined) return [];
+  return [`(A git read of ${what} failed too: ${gitErrorText(err)})`];
 }
 
 async function partialStashError(
@@ -632,6 +737,17 @@ async function isUnreadableFile(fullPath: string): Promise<boolean> {
   }
 }
 
+/** Why the undo runs: what went wrong first, in git's words, and the paths it touched. */
+interface UndoTrigger {
+  /** One sentence for the operator, true for this trigger. */
+  summary: string;
+  /** git's own text; the lock and permission checks read it. */
+  gitText: string;
+  cause?: unknown;
+  /** The paths whose dirs and files the permission check looks at. */
+  pathsInPlay: readonly string[];
+}
+
 /**
  * Put the tree back exactly as it was before the push, from our stash commit W
  * (worktree from W, index from W^2, untracked files from W^3), then drop W.
@@ -640,15 +756,24 @@ async function isUnreadableFile(fullPath: string): Promise<boolean> {
  * read-only dir whose files did not change is never written. W is dropped only
  * once the tree is proven back; otherwise it stays and this throws `stash`.
  */
-async function undoStash(chtCorePath: string, stash: TakenStash, headSha: string): Promise<void> {
-  let differing: string[];
+async function undoStash(
+  chtCorePath: string,
+  stash: TakenStash,
+  headSha: string,
+  trigger: UndoTrigger,
+): Promise<void> {
   try {
     await restoreFromStash(chtCorePath, stash.sha);
+  } catch (err) {
+    throw await undoFailedError(chtCorePath, stash, headSha, trigger, { restoreError: err });
+  }
+  let differing: string[];
+  try {
     differing = await pathsNotRestored(chtCorePath, stash);
   } catch (err) {
-    throw await undoFailedError(chtCorePath, stash, headSha, [`(the restore failed: ${gitErrorText(err)})`], err);
+    throw await undoFailedError(chtCorePath, stash, headSha, trigger, { verifyError: err });
   }
-  if (differing.length > 0) throw await undoFailedError(chtCorePath, stash, headSha, differing);
+  if (differing.length > 0) throw await undoFailedError(chtCorePath, stash, headSha, trigger, { differing });
   if (await dropStashBySha(chtCorePath, stash.sha)) return;
   console.warn(`[claude-code-cli] Your work is restored; the stash entry ${stash.name} is a spare copy.`);
 }
@@ -729,30 +854,61 @@ async function fileBlobIs(chtCorePath: string, relPath: string, oid: string): Pr
   return stdout.trim() === oid;
 }
 
-/** The undo could not prove the tree is back: keep the stash, and say how to finish by hand. */
+/**
+ * The undo could not prove the tree is back: keep the stash, and say how to
+ * finish by hand. "The rest is back" only when the restore itself completed.
+ */
 async function undoFailedError(
   chtCorePath: string,
   stash: TakenStash,
   headSha: string,
-  differing: readonly string[],
-  cause?: unknown,
+  trigger: UndoTrigger,
+  outcome: UndoOutcome,
 ): Promise<WorkspaceSafetyError> {
-  const onDisk: string[] = [];
-  for (const relPath of await stashUntrackedPaths(chtCorePath, stash.sha).catch(() => [])) {
-    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
-  }
-  const steps = [`git -C ${shellQuote(chtCorePath)} reset --hard ${headSha}`];
+  const differing = outcome.differing ?? [];
+  const onDisk = await stashUntrackedOnDisk(chtCorePath, stash.sha);
+  const steps = [
+    await permissionCauseStep(chtCorePath, trigger.gitText, [...trigger.pathsInPlay, ...differing], 'run the steps below'),
+    `git -C ${shellQuote(chtCorePath)} reset --hard ${headSha}`,
+  ];
   if (onDisk.length > 0) steps.push(literalCleanCommand(chtCorePath, onDisk));
   steps.push(...recoveryHintSteps(chtCorePath, stash.name));
   const lines = [
-    `git stash did not complete, and cht-agent could not fully put your work back. Your work is still in stash ${stash.name}.`,
+    `${trigger.summary} cht-agent could not fully put your work back. Your work is still in stash ${stash.name}.`,
+    ...undoErrorLines(outcome),
     ...pathListLines('These paths do not match what the stash holds (cht-agent did not delete any of them):', differing),
-    'The rest of your work is already back in the working tree.',
+    ...(differing.length > 0 ? ['The rest of your work is already back in the working tree.'] : []),
     'To recover, run these steps in this order:',
     ...steps.map((step, i) => `  ${i + 1}. ${step}`),
     RESTORE_WITHOUT_INDEX_NOTE,
   ];
-  return new WorkspaceSafetyError('stash', lines[0], { lines, cause });
+  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: trigger.cause ?? outcome.restoreError });
+}
+
+/** How far the undo got: a restore that threw, a check that could not run, or paths that differ. */
+interface UndoOutcome {
+  differing?: readonly string[];
+  restoreError?: unknown;
+  verifyError?: unknown;
+}
+
+function undoErrorLines(outcome: UndoOutcome): string[] {
+  if (outcome.restoreError !== undefined) {
+    return [`The restore from the stash failed part way: ${gitErrorText(outcome.restoreError)}`];
+  }
+  if (outcome.verifyError !== undefined) {
+    return [`The restore ran, but cht-agent could not check the result: ${gitErrorText(outcome.verifyError)}`];
+  }
+  return [];
+}
+
+/** The untracked files that the stash saved and that are on disk now (they block a restore). */
+async function stashUntrackedOnDisk(chtCorePath: string, stashSha: string): Promise<string[]> {
+  const onDisk: string[] = [];
+  for (const relPath of await stashUntrackedPaths(chtCorePath, stashSha).catch(() => [])) {
+    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
+  }
+  return onDisk;
 }
 
 /**
@@ -860,11 +1016,7 @@ async function readBaselineOrUndo(
     return [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
   } catch (err) {
     if (!stash) throw err;
-    await undoStash(chtCorePath, stash, headSha);
-    const message =
-      `The snapshot failed after the stash (${gitErrorText(err)}); cht-agent put your work back, ` +
-      'so nothing was changed.';
-    throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+    return undoAfterReadFailure(chtCorePath, stash, headSha, err);
   }
 }
 

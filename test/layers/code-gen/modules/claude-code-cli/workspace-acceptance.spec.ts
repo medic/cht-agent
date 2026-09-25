@@ -832,7 +832,13 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
 
       expect(err?.kind).to.equal('stash');
       if ((await ourStashes()).length > 0) {
-        expect((err?.lines ?? []).join('\n')).to.include('"d.txt"');
+        const lines = (err?.lines ?? []).join('\n');
+        expect(lines).to.include('"d.txt"');
+        // The cause comes first: the read-only dir, named, before the reset.
+        const fixAt = lines.indexOf('git cannot write inside "rt" (Permission denied). Fix the permissions');
+        expect(fixAt).to.be.greaterThan(-1);
+        expect(fixAt).to.be.lessThan(lines.indexOf('reset --hard'));
+        expect(lines).to.include('git stash did not complete (');
       } else {
         expect(await treeState()).to.deep.equal(before);
       }
