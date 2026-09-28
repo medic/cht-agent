@@ -179,6 +179,15 @@ function readRefusal(what: string, err: unknown): WorkspaceSafetyError {
   return new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
 }
 
+/** The log prefix of the snapshot and rollback lines when the caller names none. */
+const DEFAULT_LOG_PREFIX = '[claude-code-cli]';
+
+/** How a caller of the snapshot and the rollback wants their lines printed. */
+interface WorkspaceCallOptions {
+  /** The prefix of every line that these calls print (default `[claude-code-cli]`). */
+  logPrefix?: string;
+}
+
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
 export const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
 
@@ -348,13 +357,13 @@ function isRenameOrCopy(x: string, y: string): boolean {
  * (the baseline delta covers them), but the CLI itself is not constrained by the
  * baseline, so the warning must not promise the files are untouchable.
  */
-function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: string): void {
+function warnOnIgnoreRuleEdits(statusLines: readonly string[], chtCorePath: string, logPrefix: string): void {
   const touchesIgnoreRules = statusLines.some(line =>
     pathsFromStatusLine(line).some(p => p === '.gitignore' || p.endsWith('/.gitignore'))
   );
   if (!touchesIgnoreRules) return;
   console.warn(
-    `[claude-code-cli] Uncommitted .gitignore change in ${chtCorePath} will be stashed for this ` +
+    `${logPrefix} Uncommitted .gitignore change in ${chtCorePath} will be stashed for this ` +
     `session, so ignore rules revert to HEAD and files ignored only by that edit become visible. ` +
     `cht-agent records them in the session baseline and will not capture or delete them, but the ` +
     `CLI can still read, overwrite, or delete them while it runs, and such edits cannot be undone ` +
@@ -432,6 +441,7 @@ async function gitExecVerifyOrThrow(
   cwd: string,
   verifyDidSucceed: () => Promise<boolean>,
   successLabel: string,
+  logPrefix: string,
 ): Promise<void> {
   try {
     await runGit(args, cwd);
@@ -439,7 +449,7 @@ async function gitExecVerifyOrThrow(
     const succeeded = await verifyDidSucceed().catch(() => false);
     if (!succeeded) throw err;
     console.warn(
-      `[claude-code-cli] git ${args.slice(0, 2).join(' ')} exited non-zero but ${successLabel}; continuing.`
+      `${logPrefix} git ${args.slice(0, 2).join(' ')} exited non-zero but ${successLabel}; continuing.`
     );
   }
 }
@@ -450,7 +460,7 @@ const UNMERGED_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: string): void {
   if (!statusLines.some(line => UNMERGED_CODES.has(line.substring(0, 2)))) return;
   const message =
-    `cht-core has unmerged paths at ${chtCorePath}; refuse to run claude-code-cli. ` +
+    `cht-core has unmerged paths at ${chtCorePath}; refuse to run cht-agent. ` +
     `Resolve conflicts and try again.`;
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
@@ -499,10 +509,11 @@ async function stashOperatorWork(
   chtCorePath: string,
   statusLines: readonly string[],
   headSha: string,
+  logPrefix: string,
 ): Promise<TakenStash> {
   const prePush = await readBeforeStash('the untracked files', () => listUntracked(chtCorePath));
   await assertStashCanRoundTrip(chtCorePath, prePush);
-  warnOnIgnoreRuleEdits(statusLines, chtCorePath);
+  warnOnIgnoreRuleEdits(statusLines, chtCorePath, logPrefix);
   const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
   // Exit codes lie both ways: non-zero on a removal warning after a complete
   // stash, zero with nothing saved (a dirty submodule) or a partial clean.
@@ -511,16 +522,17 @@ async function stashOperatorWork(
   const lookup = await lookUpPushedStash(chtCorePath, name);
   if (!lookup.entry) throw await stashNotCreatedError(chtCorePath, pushError, prePush, lookup.readError);
   const stash: TakenStash = { sha: lookup.entry.sha, name, prePush };
-  const leftovers = await leftoversOrUndo(chtCorePath, stash, headSha, lookup.readError);
+  const leftovers = await leftoversOrUndo(chtCorePath, stash, headSha, lookup.readError, logPrefix);
   if (leftovers.length > 0) {
-    warnSpareCopy(await undoStash(chtCorePath, stash, headSha, partialPushTrigger(pushError, leftovers, prePush)), name);
+    const trigger = partialPushTrigger(pushError, leftovers, prePush);
+    warnSpareCopy(await undoStash(chtCorePath, stash, headSha, trigger, logPrefix), name, logPrefix);
     throw await partialStashError(chtCorePath, pushError, leftovers, prePush);
   }
 
   // Print recovery up front: if the process is hard-killed before rollback, these
   // lines are the operator's only pointer to their stashed work.
-  console.log(`[claude-code-cli] Stashed your uncommitted work as "${name}". If this run is interrupted:`);
-  for (const line of recoveryHintLines(chtCorePath, name)) console.log(`[claude-code-cli]   ${line}`);
+  console.log(`${logPrefix} Stashed your uncommitted work as "${name}". If this run is interrupted:`);
+  for (const line of recoveryHintLines(chtCorePath, name)) console.log(`${logPrefix}   ${line}`);
   return stash;
 }
 
@@ -566,14 +578,17 @@ async function leftoversOrUndo(
   stash: TakenStash,
   headSha: string,
   earlierReadError: unknown,
+  logPrefix: string,
 ): Promise<string[]> {
   let leftovers: string[];
   try {
     leftovers = await stashLeftovers(chtCorePath, stash.prePush);
   } catch (err) {
-    return undoAfterReadFailure(chtCorePath, stash, headSha, err);
+    return undoAfterReadFailure(chtCorePath, stash, headSha, err, logPrefix);
   }
-  if (earlierReadError !== undefined) return undoAfterReadFailure(chtCorePath, stash, headSha, earlierReadError);
+  if (earlierReadError !== undefined) {
+    return undoAfterReadFailure(chtCorePath, stash, headSha, earlierReadError, logPrefix);
+  }
   return leftovers;
 }
 
@@ -586,6 +601,7 @@ async function undoAfterReadFailure(
   stash: TakenStash,
   headSha: string,
   err: unknown,
+  logPrefix: string,
 ): Promise<never> {
   const text = gitErrorText(err);
   const drop = await undoStash(chtCorePath, stash, headSha, {
@@ -593,7 +609,7 @@ async function undoAfterReadFailure(
     gitText: text,
     cause: err,
     pathsInPlay: stash.prePush,
-  });
+  }, logPrefix);
   if (drop === 'kept') throw spareEntryError(stash.name, text, err);
   const message = `The snapshot failed after the stash (${text}); cht-agent put your work back, so nothing was changed.`;
   throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
@@ -611,9 +627,9 @@ function spareEntryError(stashName: string, gitText: string, err: unknown): Work
   return new WorkspaceSafetyError('stash', message, { cause: err, lines });
 }
 
-function warnSpareCopy(drop: DropOutcome, stashName: string): void {
+function warnSpareCopy(drop: DropOutcome, stashName: string, logPrefix: string): void {
   if (drop !== 'kept') return;
-  console.warn(`[claude-code-cli] Your work is restored; the stash entry ${stashName} is a spare copy.`);
+  console.warn(`${logPrefix} Your work is restored; the stash entry ${stashName} is a spare copy.`);
 }
 
 /** What the partial push itself reported, for the undo's own error text. */
@@ -1084,6 +1100,7 @@ async function undoStash(
   stash: TakenStash,
   headSha: string,
   trigger: UndoTrigger,
+  logPrefix: string,
 ): Promise<DropOutcome> {
   try {
     await restoreFromStash(chtCorePath, stash.sha);
@@ -1097,7 +1114,7 @@ async function undoStash(
     throw await undoFailedError(chtCorePath, stash, headSha, trigger, { verifyError: err });
   }
   if (differing.length > 0) throw await undoFailedError(chtCorePath, stash, headSha, trigger, { differing });
-  return dropStashBySha(chtCorePath, stash.sha);
+  return dropStashBySha(chtCorePath, stash.sha, logPrefix);
 }
 
 async function restoreFromStash(chtCorePath: string, sha: string): Promise<void> {
@@ -1294,7 +1311,7 @@ async function assertAtToplevel(chtCorePath: string): Promise<void> {
   if (!prefix) return;
   const message =
     `${chtCorePath} is the subdirectory ${prefix} of a git repo, not its top level; refuse to run ` +
-    'claude-code-cli. Point CHT_CORE_PATH at the repo root.';
+    'cht-agent. Point CHT_CORE_PATH at the repo root.';
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
 
@@ -1318,7 +1335,7 @@ async function assertNoOperationInProgress(chtCorePath: string): Promise<void> {
   if (found.length === 0) return;
   const message =
     `cht-core at ${chtCorePath} is in the middle of a git operation (${found.join(', ')}); refuse to ` +
-    'run claude-code-cli. Finish or abort that operation, then run again.';
+    'run cht-agent. Finish or abort that operation, then run again.';
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
 
@@ -1346,7 +1363,11 @@ async function readRepoRoot(chtCorePath: string): Promise<string> {
  * after rollback. Refuses to run if cht-core has unmerged paths or other state
  * that `git stash` cannot capture cleanly.
  */
-export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnapshot> {
+export async function snapshotChtCore(
+  chtCorePath: string,
+  options: WorkspaceCallOptions = {},
+): Promise<ChtCoreSnapshot> {
+  const logPrefix = options.logPrefix ?? DEFAULT_LOG_PREFIX;
   await assertAtToplevel(chtCorePath);
   // A leftover stash from an interrupted run holds the operator's work; stashing
   // on top of it would bury it deeper.
@@ -1365,8 +1386,8 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   await assertNoAssumeUnchanged(chtCorePath);
 
   // Stash uncommitted work (if any) so the CLI sees a clean workspace.
-  const stash = lines.length > 0 ? await stashOperatorWork(chtCorePath, lines, headSha) : null;
-  const baselineUntracked = await readBaselineOrUndo(chtCorePath, stash, headSha);
+  const stash = lines.length > 0 ? await stashOperatorWork(chtCorePath, lines, headSha, logPrefix) : null;
+  const baselineUntracked = await readBaselineOrUndo(chtCorePath, stash, headSha, logPrefix);
 
   return {
     headSha, headRef, repoRoot, stashSha: stash?.sha ?? null, stashName: stash?.name ?? null, baselineUntracked,
@@ -1385,12 +1406,13 @@ async function readBaselineOrUndo(
   chtCorePath: string,
   stash: TakenStash | null,
   headSha: string,
+  logPrefix: string,
 ): Promise<string[]> {
   try {
     return [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
   } catch (err) {
     if (!stash) throw readRefusal('the untracked and ignored files', err);
-    return undoAfterReadFailure(chtCorePath, stash, headSha, err);
+    return undoAfterReadFailure(chtCorePath, stash, headSha, err, logPrefix);
   }
 }
 
@@ -1774,17 +1796,19 @@ export function rollbackWarnings(rollback: RollbackResult): string[] {
 export async function rollbackChtCore(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
+  options: WorkspaceCallOptions = {},
 ): Promise<RollbackResult> {
+  const logPrefix = options.logPrefix ?? DEFAULT_LOG_PREFIX;
   await assertRollbackAllowed(chtCorePath, snapshot);
   const result: RollbackResult = { reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] };
 
-  await resetToSnapshot(chtCorePath, snapshot, result);
+  await resetToSnapshot(chtCorePath, snapshot, result, logPrefix);
   if (result.reset === 'failed') {
     // A pop now would merge the operator's work into a half-reset tree, and a
     // later `reset --hard` would then destroy it. Leave the stash and the files.
     await recordResetFailureState(chtCorePath, snapshot, result);
   } else {
-    await cleanAndRestore(chtCorePath, snapshot, result);
+    await cleanAndRestore(chtCorePath, snapshot, result, logPrefix);
   }
   return result;
 }
@@ -1793,9 +1817,10 @@ async function cleanAndRestore(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
+  logPrefix: string,
 ): Promise<void> {
-  await cleanStep(chtCorePath, snapshot, result);
-  if (snapshot.stashSha) await popStep(chtCorePath, snapshot, result);
+  await cleanStep(chtCorePath, snapshot, result, logPrefix);
+  if (snapshot.stashSha) await popStep(chtCorePath, snapshot, result, logPrefix);
 }
 
 const rolledBackSnapshots = new WeakSet<ChtCoreSnapshot>();
@@ -1978,6 +2003,7 @@ async function resetToSnapshot(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
+  logPrefix: string,
 ): Promise<void> {
   try {
     await gitExecVerifyOrThrow(
@@ -1990,11 +2016,12 @@ async function resetToSnapshot(
       // clean step's job.
       () => gitSucceeds(['diff', '--quiet', snapshot.headSha, '--'], chtCorePath),
       `working tree matches ${snapshot.headSha}`,
+      logPrefix,
     );
   } catch (err) {
     result.reset = 'failed';
     result.errors.push(`reset: ${gitErrorText(err)}`);
-    console.warn(`[claude-code-cli] git reset --hard during rollback failed: ${gitErrorText(err)}`);
+    console.warn(`${logPrefix} git reset --hard during rollback failed: ${gitErrorText(err)}`);
   }
 }
 
@@ -2059,6 +2086,7 @@ async function cleanStep(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
+  logPrefix: string,
 ): Promise<void> {
   let outcome: { survivors: string[]; gitErrors: string[] };
   try {
@@ -2068,29 +2096,33 @@ async function cleanStep(
     if (delta.length === 0) return;
     outcome = await cleanSessionCreatedFiles(chtCorePath, delta);
   } catch (err) {
-    recordCleanFailure(result, gitErrorText(err));
+    recordCleanFailure(result, gitErrorText(err), logPrefix);
     return;
   }
-  recordCleanOutcome(result, outcome);
+  recordCleanOutcome(result, outcome, logPrefix);
 }
 
 /** A clean failed only if a session path survived; the real paths go in the error, not chunk numbers. */
-function recordCleanOutcome(result: RollbackResult, outcome: { survivors: string[]; gitErrors: string[] }): void {
+function recordCleanOutcome(
+  result: RollbackResult,
+  outcome: { survivors: string[]; gitErrors: string[] },
+  logPrefix: string,
+): void {
   if (outcome.survivors.length > 0) {
     result.survivors = outcome.survivors;
     const gitSaid = outcome.gitErrors.length > 0 ? `; git said: ${outcome.gitErrors.join('; ')}` : '';
-    recordCleanFailure(result, `these session files are still on disk: ${summarizePaths(outcome.survivors)}${gitSaid}`);
+    recordCleanFailure(result, `these session files are still on disk: ${summarizePaths(outcome.survivors)}${gitSaid}`, logPrefix);
     return;
   }
   if (outcome.gitErrors.length > 0) {
-    console.warn('[claude-code-cli] git clean -fd exited non-zero but session-created files were removed; continuing.');
+    console.warn(`${logPrefix} git clean -fd exited non-zero but session-created files were removed; continuing.`);
   }
 }
 
-function recordCleanFailure(result: RollbackResult, text: string): void {
+function recordCleanFailure(result: RollbackResult, text: string, logPrefix: string): void {
   result.clean = 'failed';
   result.errors.push(`clean: ${text}`);
-  console.warn(`[claude-code-cli] git clean -fd during rollback failed: ${text}`);
+  console.warn(`${logPrefix} git clean -fd during rollback failed: ${text}`);
 }
 
 /**
@@ -2102,29 +2134,28 @@ async function popStep(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
+  logPrefix: string,
 ): Promise<void> {
   const stashSha = snapshot.stashSha as string;
   try {
     await runGit(['stash', 'apply', '--index', stashSha], chtCorePath);
   } catch (err) {
-    await recordPopFailure(chtCorePath, snapshot, result, err);
+    await recordPopFailure(chtCorePath, snapshot, result, err, logPrefix);
     return;
   }
   result.stashPop = 'ok';
-  if ((await dropStashBySha(chtCorePath, stashSha)) === 'dropped') return;
-  console.warn(
-    `[claude-code-cli] Your work is restored; the stash entry ${snapshot.stashName} is a spare copy.`
-  );
+  if ((await dropStashBySha(chtCorePath, stashSha, logPrefix)) === 'dropped') return;
+  console.warn(`${logPrefix} Your work is restored; the stash entry ${snapshot.stashName} is a spare copy.`);
 }
 
 /** What a drop did: git confirmed it dropped our entry, our entry was not listed, or it stays. */
 type DropOutcome = 'dropped' | 'missing' | 'kept';
 
 /** Drop the entry whose commit is `sha`. `dropped` only when git confirms it dropped that one. */
-async function dropStashBySha(chtCorePath: string, sha: string): Promise<DropOutcome> {
+async function dropStashBySha(chtCorePath: string, sha: string, logPrefix: string): Promise<DropOutcome> {
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const outcome = await dropStashOnce(chtCorePath, sha);
+      const outcome = await dropStashOnce(chtCorePath, sha, logPrefix);
       if (outcome !== 'retry') return outcome;
     }
   } catch {
@@ -2133,7 +2164,11 @@ async function dropStashBySha(chtCorePath: string, sha: string): Promise<DropOut
   return 'kept';
 }
 
-async function dropStashOnce(chtCorePath: string, sha: string): Promise<'dropped' | 'missing' | 'retry'> {
+async function dropStashOnce(
+  chtCorePath: string,
+  sha: string,
+  logPrefix: string,
+): Promise<'dropped' | 'missing' | 'retry'> {
   const entries = await listStashes(chtCorePath);
   const ours = entries.find(e => e.sha === sha);
   if (!ours) return 'missing';
@@ -2143,7 +2178,7 @@ async function dropStashOnce(chtCorePath: string, sha: string): Promise<'dropped
   if (dropped === sha) return 'dropped';
   // The list moved between our read and the drop (most often an operator push
   // on top): the drop took another entry, so put it back.
-  if (dropped) await putBackDroppedEntry(chtCorePath, dropped, entries);
+  if (dropped) await putBackDroppedEntry(chtCorePath, dropped, entries, logPrefix);
   return 'retry';
 }
 
@@ -2155,13 +2190,14 @@ async function putBackDroppedEntry(
   chtCorePath: string,
   droppedSha: string,
   entries: readonly StashEntry[],
+  logPrefix: string,
 ): Promise<void> {
   const message = entries.find(e => e.sha === droppedSha)?.message ?? await stashCommitSubject(chtCorePath, droppedSha);
   try {
     await runGit(['stash', 'store', '-m', message, droppedSha], chtCorePath);
   } catch (err) {
     console.error(
-      `[claude-code-cli] cht-agent dropped another stash entry (${droppedSha}, "${message}") by mistake and ` +
+      `${logPrefix} cht-agent dropped another stash entry (${droppedSha}, "${message}") by mistake and ` +
         `could not store it back (${gitErrorText(err)}). Store it back with: ` +
         `git -C ${shellQuote(chtCorePath)} stash store -m ${shellQuote(message)} ${droppedSha}`,
     );
@@ -2183,6 +2219,7 @@ async function recordPopFailure(
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
   err: unknown,
+  logPrefix: string,
 ): Promise<void> {
   const stashSha = snapshot.stashSha as string;
   const text = gitErrorText(err);
@@ -2201,7 +2238,7 @@ async function recordPopFailure(
     chtCorePath, result, 'stash apply: ', [...(result.popBlockers ?? []), ...(result.popResidue ?? [])],
   );
   console.warn(
-    `[claude-code-cli] git stash apply --index during rollback failed: ${text}. ` +
+    `${logPrefix} git stash apply --index during rollback failed: ${text}. ` +
     `Your work is still in stash ${snapshot.stashName}.`
   );
 }
@@ -2265,7 +2302,7 @@ export function buildRecoveryChecklist(
  * (failed reset or failed restore), or null when the run may continue. A failed
  * clean alone is not a halt.
  */
-export function rollbackHaltError(
+function rollbackHaltError(
   moduleLabel: string,
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,

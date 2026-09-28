@@ -837,6 +837,24 @@ describe('workspace.ts', () => {
       expect(err.cause).to.equal(failure);
     });
 
+    it('names cht-agent, not claude-code-cli, in the unmerged, subdirectory and in-progress refusals', async () => {
+      const unmerged = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: 'UU conflict.ts\n' },
+      });
+      const subdirectory = loadWorkspace({ 'git rev-parse --show-prefix': { stdout: 'sub/\n' } });
+      const inProgress = loadWorkspace(
+        { 'git rev-parse --path-format=absolute': { stdout: '/tmp/cht-core/.git/MERGE_HEAD\n' } },
+        { lstat: sinon.stub().resolves({}) },
+      );
+      const messages: string[] = [];
+      for (const ws of [unmerged, subdirectory, inProgress]) {
+        messages.push(((await ws.snapshotChtCore('/tmp/cht-core').catch((err: unknown) => err)) as Error).message);
+      }
+      expect(messages).to.have.length(3);
+      for (const message of messages) expect(message).to.include('refuse to run cht-agent.');
+    });
+
     it('refuses to run if cht-core has unmerged paths', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },

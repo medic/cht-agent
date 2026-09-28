@@ -171,7 +171,7 @@ function snapshotFailure(err: unknown): CompileValidationResult {
  */
 async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
   try {
-    const rollback = await rollbackChtCore(chtCorePath, snapshot);
+    const rollback = await rollbackChtCore(chtCorePath, snapshot, { logPrefix: LOG });
     return settleRollback(rollback, { logPrefix: LOG, label: 'claude-api compile gate', chtCorePath, snapshot });
   } catch (err) {
     reportSafetyError(err, LOG);
@@ -203,7 +203,7 @@ export async function runApiCompileGate(
 
   let snapshot: ChtCoreSnapshot;
   try {
-    snapshot = await snapshotChtCore(chtCorePath);
+    snapshot = await snapshotChtCore(chtCorePath, { logPrefix: LOG });
   } catch (err) {
     return snapshotFailure(err);
   }

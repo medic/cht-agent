@@ -2,6 +2,9 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import * as realWorkspace from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 import {
   WorkspaceSafetyError,
@@ -334,5 +337,43 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(result.skipped).to.equal(true);
     expect(result.skipReason).to.match(/materialization failed/);
     expect(rollbackStub.calledOnce).to.equal(true);
+  });
+
+  describe('with the real workspace module', () => {
+    let repo: string;
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+
+    beforeEach(() => {
+      repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-prefix-'));
+      git('init', '-q');
+      git('config', 'user.name', 'Test');
+      git('config', 'user.email', 'test@example.com');
+      git('config', 'commit.gpgsign', 'false');
+      fs.writeFileSync(path.join(repo, 'tracked.txt'), 'committed\n');
+      git('add', '.');
+      git('commit', '-q', '-m', 'initial');
+    });
+
+    afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
+
+    it('prints its own prefix, not the claude-code-cli one, for the stash it takes', async () => {
+      fs.writeFileSync(path.join(repo, 'tracked.txt'), 'operator work\n');
+      const compileCheck = sinon.stub().resolves({ passed: true, issues: [] });
+      const { runApiCompileGate } = proxyquire('../../../../../src/layers/code-gen/modules/claude-api/compile-gate', {
+        '../../../../agents/compile-validator': { compileCheck },
+      });
+      const printed: string[] = [];
+      for (const level of ['log', 'warn', 'error'] as const) {
+        sinon.stub(console, level).callsFake((...args: unknown[]) => { printed.push(args.map(String).join(' ')); });
+      }
+      const result = await runApiCompileGate(repo, [file('src/new.ts')]);
+      sinon.restore();
+      expect(compileCheck.calledOnce).to.equal(true);
+      expect(result.skipped).to.not.equal(true);
+      expect(printed.some(l => l.startsWith('[claude-api compile-gate] Stashed your uncommitted work'))).to.equal(true);
+      expect(printed.filter(l => l.includes('[claude-code-cli]'))).to.deep.equal([]);
+      expect(fs.readFileSync(path.join(repo, 'tracked.txt'), 'utf8')).to.equal('operator work\n');
+      expect(fs.existsSync(path.join(repo, 'src/new.ts'))).to.equal(false);
+    });
   });
 });
