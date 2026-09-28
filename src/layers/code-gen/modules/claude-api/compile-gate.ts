@@ -149,18 +149,20 @@ async function runCompileDefensive(chtCorePath: string): Promise<CompileValidati
 
 /**
  * A failed snapshot leaves nothing for the gate to roll back. A `precondition`
- * refusal (nothing was changed) or a plain error only skips the compile gate.
- * A `stash`, `drift` or `reset` stop halts the run, because the operator's tree
- * needs attention: the undo may have kept the stash, and its lines say how to
- * recover.
+ * refusal (nothing was changed) prints all its lines, which hold the way out,
+ * and skips the compile gate; a plain error only skips it. A `stash`, `drift`
+ * or `reset` stop halts the run, because the operator's tree needs attention:
+ * the undo may have kept the stash, and its lines say how to recover.
  */
 function snapshotFailure(err: unknown): CompileValidationResult {
-  if (err instanceof WorkspaceSafetyError && err.kind !== 'precondition') {
-    reportSafetyError(err, LOG);
-    throw err;
+  if (!(err instanceof WorkspaceSafetyError)) {
+    console.warn(`${LOG} Compile gate skipped: snapshot failed: ${msg(err)}`);
+    return skipped(`snapshot failed: ${msg(err)}`);
   }
-  console.warn(`${LOG} Compile gate skipped: snapshot failed: ${msg(err)}`);
-  return skipped(`snapshot failed: ${msg(err)}`);
+  reportSafetyError(err, LOG);
+  if (err.kind !== 'precondition') throw err;
+  console.warn(`${LOG} Compile gate skipped (see the lines above).`);
+  return skipped(`snapshot failed: ${err.message}`);
 }
 
 /**

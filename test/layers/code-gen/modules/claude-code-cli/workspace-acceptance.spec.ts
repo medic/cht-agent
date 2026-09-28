@@ -430,7 +430,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     try {
       await snapshotChtCore(repo);
     } catch (err) {
-      message = (err as Error).message;
+      message = (err as { lines: string[] }).lines.join('\n');
     }
     expect(message).to.match(/leftover cht-agent stash/i);
     expect(message).to.not.match(/stash@\{\d+\}/);

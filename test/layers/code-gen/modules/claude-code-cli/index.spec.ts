@@ -435,6 +435,32 @@ describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
       expect(printed).to.deep.equal(['[claude-code-cli] cht-core is in the middle of a git operation (MERGE_HEAD)']);
     });
 
+    it('halts on a failed read before the stash, with no session and no rollback', async () => {
+      const message = 'cht-agent could not read the status (fatal: bad index); nothing was changed.';
+      const refusal = new WorkspaceSafetyError('precondition', message, { lines: [message] });
+      const spawnStub = sinon.stub();
+      const rollbackStub = sinon.stub();
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: sinon.stub(), ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+        './workspace': workspaceStub({
+          snapshotChtCore: sinon.stub().rejects(refusal),
+          captureChtCoreDiff: sinon.stub(),
+          rollbackChtCore: rollbackStub,
+        }),
+      });
+      const errorSpy = sinon.stub(console, 'error');
+      let thrown: unknown;
+      try {
+        await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).to.equal(refusal);
+      expect(errorSpy.getCalls().map(c => String(c.args[0]))).to.deep.equal([`[claude-code-cli] ${message}`]);
+      expect(spawnStub.called).to.equal(false);
+      expect(rollbackStub.called).to.equal(false);
+    });
+
     it('prints both drift reports when capture and rollback see a moved HEAD', async () => {
       const captureDrift = new WorkspaceSafetyError('drift', 'HEAD moved', { lines: ['capture: HEAD moved'] });
       const rollbackDrift = new WorkspaceSafetyError('drift', 'HEAD moved', { lines: ['rollback: HEAD moved'] });

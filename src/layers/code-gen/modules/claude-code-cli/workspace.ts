@@ -161,6 +161,24 @@ function isMaxBufferError(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
 }
 
+/**
+ * A git read before `git stash push`: nothing has changed yet, so its failure
+ * is a `precondition` refusal, never a plain error that a caller retries.
+ * Never wrap a read that runs after the push; the undo rules apply there.
+ */
+async function readBeforeStash<T>(what: string, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    throw readRefusal(what, err);
+  }
+}
+
+function readRefusal(what: string, err: unknown): WorkspaceSafetyError {
+  const message = `cht-agent could not read ${what} (${gitErrorText(err)}); nothing was changed.`;
+  return new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+}
+
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
 export const STASH_MARKER_PREFIX = 'cht-agent-claude-code-cli-';
 
@@ -287,20 +305,22 @@ async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
   // crash") is not a false positive. Report every match, not just the first: a real
   // leak can sit underneath a user stash, and naming the wrong one sends the
   // operator to the wrong place.
-  const leaked = (await listStashes(chtCorePath)).filter(e => LEAKED_STASH_LINE.test(e.message));
+  const stashes = await readBeforeStash('the stash list', () => listStashes(chtCorePath));
+  const leaked = stashes.filter(e => LEAKED_STASH_LINE.test(e.message));
   if (leaked.length === 0) return;
   const names = leaked.map(e => leakedStashName(e.message));
   const listed = leaked.map((e, i) => `${names[i]} (created ${new Date(e.createdAt * 1000).toISOString()})`);
   // Not "from an interrupted run": the stash can belong to a run that is still
   // active on this checkout.
-  throw new Error([
+  const lines = [
     `cht-core at ${chtCorePath} has ${leaked.length} leftover cht-agent stash(es) that no run ` +
       `restored: ${listed.join('; ')}. It may hold your uncommitted work, or belong to another ` +
       'cht-agent run that is still active here.',
     ...names.flatMap(n => recoveryHintSteps(chtCorePath, n)),
     RESTORE_WITHOUT_INDEX_NOTE,
     'Or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place.',
-  ].join('\n'));
+  ];
+  throw new WorkspaceSafetyError('precondition', lines[0], { lines });
 }
 
 /**
@@ -429,10 +449,10 @@ const UNMERGED_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 
 function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: string): void {
   if (!statusLines.some(line => UNMERGED_CODES.has(line.substring(0, 2)))) return;
-  throw new Error(
+  const message =
     `cht-core has unmerged paths at ${chtCorePath}; refuse to run claude-code-cli. ` +
-    `Resolve conflicts and try again.`
-  );
+    `Resolve conflicts and try again.`;
+  throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
 
 /**
@@ -443,7 +463,7 @@ function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: stri
  * entries (`S`) keep their edits through a cycle, so they stay allowed.
  */
 async function assertNoAssumeUnchanged(chtCorePath: string): Promise<void> {
-  const { stdout } = await runGit(['ls-files', '-v', '-z'], chtCorePath);
+  const { stdout } = await readBeforeStash('the assume-unchanged flags', () => runGit(['ls-files', '-v', '-z'], chtCorePath));
   const flagged = stdout.split('\0').filter(isAssumeUnchangedEntry).map(entry => entry.slice(2));
   if (flagged.length === 0) return;
   const repo = shellQuote(chtCorePath);
@@ -480,7 +500,7 @@ async function stashOperatorWork(
   statusLines: readonly string[],
   headSha: string,
 ): Promise<TakenStash> {
-  const prePush = await listUntracked(chtCorePath);
+  const prePush = await readBeforeStash('the untracked files', () => listUntracked(chtCorePath));
   await assertStashCanRoundTrip(chtCorePath, prePush);
   warnOnIgnoreRuleEdits(statusLines, chtCorePath);
   const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
@@ -692,9 +712,9 @@ interface RoundTripCandidate {
  */
 async function assertStashCanRoundTrip(chtCorePath: string, prePush: readonly string[]): Promise<void> {
   // `--porcelain` is the v1 format; this argv stays apart from the post-push read.
-  const { stdout } = await runGit(
+  const { stdout } = await readBeforeStash('the staged and unstaged changes', () => runGit(
     ['status', '-z', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'], chtCorePath,
-  );
+  ));
   const entries = parseStatusZ(stdout);
   const saved: SavedPaths = { untracked: new Set(prePush), staged: new Set(entries.filter(isStaged).map(e => e.path)) };
   const problems: string[] = [];
@@ -1269,7 +1289,7 @@ async function stashUntrackedOnDisk(chtCorePath: string, stashSha: string): Prom
  * outside the baseline. A symlink to the toplevel is fine (the prefix is empty).
  */
 async function assertAtToplevel(chtCorePath: string): Promise<void> {
-  const { stdout } = await runGit(['rev-parse', '--show-prefix'], chtCorePath);
+  const { stdout } = await readBeforeStash('the path prefix', () => runGit(['rev-parse', '--show-prefix'], chtCorePath));
   const prefix = stdout.trim();
   if (!prefix) return;
   const message =
@@ -1287,10 +1307,10 @@ const IN_PROGRESS_MARKERS = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'r
 
 async function assertNoOperationInProgress(chtCorePath: string): Promise<void> {
   // --git-path, not path.join(.git, ...): in a linked worktree `.git` is a file.
-  const { stdout } = await runGit(
+  const { stdout } = await readBeforeStash('the in-progress operation markers', () => runGit(
     ['rev-parse', '--path-format=absolute', ...IN_PROGRESS_MARKERS.flatMap(m => ['--git-path', m])],
     chtCorePath,
-  );
+  ));
   const found: string[] = [];
   for (const markerPath of stdout.split('\n').filter(Boolean)) {
     if (!(await pathIsRemoved(markerPath))) found.push(path.basename(markerPath));
@@ -1332,13 +1352,13 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   // on top of it would bury it deeper.
   await assertNoLeakedStash(chtCorePath);
 
-  const repoRoot = await readRepoRoot(chtCorePath);
-  const headSha = await readHeadSha(chtCorePath);
-  const headRef = await readHeadRef(chtCorePath);
+  const repoRoot = await readBeforeStash('the repo top level', () => readRepoRoot(chtCorePath));
+  const headSha = await readBeforeStash('HEAD', () => readHeadSha(chtCorePath));
+  const headRef = await readBeforeStash('the branch HEAD points at', () => readHeadRef(chtCorePath));
   await assertNoOperationInProgress(chtCorePath);
 
   // Refuse if there are unmerged paths (git stash would fail later).
-  const { stdout: status } = await runGit(['status', '--porcelain'], chtCorePath);
+  const { stdout: status } = await readBeforeStash('the status', () => runGit(['status', '--porcelain'], chtCorePath));
   const lines = status.split('\n').filter(Boolean);
   assertNoUnmergedPaths(lines, chtCorePath);
   // Before the dirty-tree branch: such an edit hides from status, so the tree can look clean.
@@ -1369,7 +1389,7 @@ async function readBaselineOrUndo(
   try {
     return [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
   } catch (err) {
-    if (!stash) throw err;
+    if (!stash) throw readRefusal('the untracked and ignored files', err);
     return undoAfterReadFailure(chtCorePath, stash, headSha, err);
   }
 }

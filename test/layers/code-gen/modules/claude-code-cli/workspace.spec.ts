@@ -242,7 +242,7 @@ describe('workspace.ts', () => {
         await ws.snapshotChtCore('/tmp/cht-core');
       } catch (err) {
         threw = true;
-        const msg = (err as Error).message;
+        const msg = (err as { lines: string[] }).lines.join('\n');
         expect(msg).to.match(/leftover cht-agent stash/i);
         // Lookup by exact name, then restore the ref that line starts with: not
         // `stash pop <name>` (not a valid ref) and not a concrete stash@{N} (goes
@@ -344,7 +344,7 @@ describe('workspace.ts', () => {
       try {
         await ws.snapshotChtCore('/tmp/cht-core');
       } catch (err) {
-        msg = (err as Error).message;
+        msg = (err as { lines: string[] }).lines.join('\n');
       }
       // A real leak can sit under a user stash; naming only the first sends the
       // operator to the wrong entry. Each one gets its own lookup.
@@ -777,6 +777,64 @@ describe('workspace.ts', () => {
         expect(thrown).to.be.undefined;
         expect(snap?.stashSha).to.be.null;
       });
+    });
+
+    it('refuses a leftover stash and unmerged paths as precondition', async () => {
+      const leftover = loadWorkspace({
+        'git stash list -z': { stdout: OUR_ENTRY },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      const unmerged = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: 'UU conflict.ts\n' },
+      });
+      const leftoverError = await leftover.snapshotChtCore('/tmp/cht-core').catch((err: unknown) => err);
+      const unmergedError = await unmerged.snapshotChtCore('/tmp/cht-core').catch((err: unknown) => err);
+      expect(leftoverError).to.be.instanceOf(leftover.WorkspaceSafetyError);
+      expect((leftoverError as { kind: string }).kind).to.equal('precondition');
+      expect(unmergedError).to.be.instanceOf(unmerged.WorkspaceSafetyError);
+      expect((unmergedError as { kind: string }).kind).to.equal('precondition');
+      expect((unmergedError as { lines: string[] }).lines).to.deep.equal([(unmergedError as Error).message]);
+    });
+
+    it('refuses as precondition when a read before the push fails, and never stashes', async () => {
+      const calls: string[] = [];
+      const failure = Object.assign(new Error('Command failed: git ls-files\nfatal: injected'), {
+        code: 128, stderr: 'fatal: injected',
+      });
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: ' M x.ts\n' },
+        'git ls-files --others --exclude-standard -z': { error: failure },
+      }, {}, calls);
+      const err = await ws.snapshotChtCore('/tmp/cht-core').catch((e: unknown) => e) as {
+        kind?: string; message: string; cause?: unknown; lines?: string[];
+      };
+      expect(err.kind).to.equal('precondition');
+      expect(err.message).to.equal('cht-agent could not read the untracked files (fatal: injected); nothing was changed.');
+      expect(err.lines).to.deep.equal([err.message]);
+      expect(err.cause).to.equal(failure);
+      expect(calls.some(c => c.startsWith('git stash push'))).to.equal(false);
+    });
+
+    it('refuses as precondition when the ignored listing fails on a clean tree', async () => {
+      const failure = Object.assign(new Error('Command failed: git ls-files\nfatal: injected'), {
+        code: 128, stderr: 'fatal: injected',
+      });
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+        'git ls-files --others --ignored': { error: failure },
+      });
+      const err = await ws.snapshotChtCore('/tmp/cht-core').catch((e: unknown) => e) as {
+        kind?: string; message: string; cause?: unknown;
+      };
+      expect(err.kind).to.equal('precondition');
+      expect(err.message).to.equal(
+        'cht-agent could not read the untracked and ignored files (fatal: injected); nothing was changed.',
+      );
+      expect(err.cause).to.equal(failure);
     });
 
     it('refuses to run if cht-core has unmerged paths', async () => {

@@ -104,6 +104,28 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(rollbackStub.called).to.equal(false);
   });
 
+  it('prints every line of a snapshot refusal once, then skips', async () => {
+    const run = load();
+    const refusal = new WorkspaceSafetyError('precondition', 'git stash cannot put these changes back exactly.', {
+      lines: ['git stash cannot put these changes back exactly.', '  - "d" is an ignored file. Move "d" away.', 'Then run again.'],
+    });
+    snapshotStub.rejects(refusal);
+    const errSpy = sinon.stub(console, 'error');
+    const warnSpy = sinon.stub(console, 'warn');
+    const result = await run(CHT, [file()]);
+    expect(result.skipped).to.equal(true);
+    expect(result.skipReason).to.equal('snapshot failed: git stash cannot put these changes back exactly.');
+    expect(errSpy.getCalls().map(c => String(c.args[0]))).to.deep.equal([
+      '[claude-api compile-gate] git stash cannot put these changes back exactly.',
+      '[claude-api compile-gate]   - "d" is an ignored file. Move "d" away.',
+      '[claude-api compile-gate] Then run again.',
+    ]);
+    expect(warnSpy.getCalls().map(c => String(c.args[0]))).to.deep.equal([
+      '[claude-api compile-gate] Compile gate skipped (see the lines above).',
+    ]);
+    expect(rollbackStub.called).to.equal(false);
+  });
+
   it('halts, without a rollback, when the snapshot stash step failed', async () => {
     const run = load();
     const stashFailure = new WorkspaceSafetyError('stash', 'git stash could not save your work', {
