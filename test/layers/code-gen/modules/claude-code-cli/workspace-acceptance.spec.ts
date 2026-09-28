@@ -1271,7 +1271,12 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(stashes).to.not.include(STASH_MARKER_PREFIX);
       expect(second?.kind).to.equal('precondition');
       expect(second?.message).to.equal(first?.message);
+      return (first?.lines ?? []).join('\n');
     };
+
+    /** The snapshot, or a failed assert that names why it rejected. */
+    const snapshotOrFail = (): Promise<ChtCoreSnapshot> =>
+      snapshotChtCore(repo).catch((err: Error) => expect.fail(`the snapshot rejected: ${err.message}`));
 
     it('refuses a path that is deleted in the index but still on disk', async () => {
       await commitFile('d.txt', 'd\n');
@@ -1295,9 +1300,68 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       await expectRefusedUnchanged('"b.txt" is a tracked file whose path is now a directory');
     });
 
-    /** The snapshot, or a failed assert that names why it rejected. */
-    const snapshotOrFail = (): Promise<ChtCoreSnapshot> =>
-      snapshotChtCore(repo).catch((err: Error) => expect.fail(`the snapshot rejected: ${err.message}`));
+    it('refuses an ignored file where a tracked directory was, and the file stays', async () => {
+      await commitFile('d/b.txt', 'b\n');
+      await commitFile('.gitignore', 'node_modules/\n/d\n');
+      await fs.rm(path.join(repo, 'd'), { recursive: true });
+      await write('d', 'an ignored operator file\n');
+      await expectRefusedUnchanged('"d" is an ignored file where the tracked directory of "d/b.txt" was');
+      expect(await read('d')).to.equal('an ignored operator file\n');
+    });
+
+    it('refuses a worktree delete below a directory that is now a symbolic link, naming the link', async () => {
+      await commitFile('p/n.txt', 'n\n');
+      await fs.rm(path.join(repo, 'p'), { recursive: true });
+      await fs.mkdir(path.join(repo, 'q'));
+      await write('q/n.txt', 'a file the link leads to\n');
+      await fs.symlink('q', path.join(repo, 'p'));
+      const text = await expectRefusedUnchanged('"p", a directory above "p/n.txt", is now a symbolic link');
+      expect(text).to.include('Move "p" away.');
+      expect(text).to.not.include('deleted in the index');
+    });
+
+
+    it('refuses a staged symbolic link where a tracked directory was, with no command', async () => {
+      await commitFile('d/b.txt', 'b\n');
+      await git('rm', '-q', '-r', 'd');
+      await fs.symlink('tracked.txt', path.join(repo, 'd'));
+      await git('add', 'd');
+      const text = await expectRefusedUnchanged('"d", a directory above "d/b.txt", is now a staged symbolic link');
+      expect(text).to.include('Commit the change first.');
+      expect(text).to.not.include('git -C');
+    });
+
+    for (const [variant, stageFileAtD] of [
+      ['git add d', async () => {
+        await write('d', 'a staged file where the tracked dir was\n');
+        await git('add', 'd');
+      }],
+      ['an AM edit', async () => {
+        await write('d', 'a staged file where the tracked dir was\n');
+        await git('add', 'd');
+        await write('d', 'edited after the add\n');
+      }],
+      ['git mv x.txt d', async () => {
+        await git('mv', 'x.txt', 'd');
+      }],
+    ] as Array<[string, () => Promise<void>]>) {
+      it(`runs a full cycle when a staged file replaced a tracked directory (${variant})`, async () => {
+        await commitFile('d/b.txt', 'b\n');
+        await commitFile('x.txt', 'a file that git mv moves\n');
+        await git('rm', '-q', '-r', 'd');
+        await stageFileAtD();
+        const before = await treeState();
+        const bytes = await read('d');
+        const snapshot = await snapshotOrFail();
+        await write('session.ts', 'export const s = 1;\n');
+        const rollback = await rollbackChtCore(repo, snapshot);
+        expect(rollback.stashPop).to.equal('ok');
+        expect(await treeState()).to.deep.equal(before);
+        expect(await read('d')).to.equal(bytes);
+        const { stdout: stashes } = await git('stash', 'list');
+        expect(stashes).to.not.include(STASH_MARKER_PREFIX);
+      });
+    }
 
     for (const [suffix, withTrackedWork] of [['', false], [' next to tracked work', true]] as Array<[string, boolean]>) {
       it(`runs a full cycle when a tracked directory is now an untracked file${suffix}`, async () => {

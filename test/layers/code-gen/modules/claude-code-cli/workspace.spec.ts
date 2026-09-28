@@ -548,7 +548,7 @@ describe('workspace.ts', () => {
         'git status --porcelain': { stdout: 'D  d.txt\n' },
       }, {
         lstat: sinon.stub().callsFake(async (p: string) => {
-          if (p.endsWith('/d.txt') || p.endsWith('/a.txt')) return { isDirectory: () => false };
+          if (p.endsWith('/d.txt') || p.endsWith('/a.txt')) return { isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true };
           throw errno('ENOENT');
         }),
       }, calls);
@@ -584,6 +584,104 @@ describe('workspace.ts', () => {
       }
       const listed = (thrown as { lines: string[] }).lines.filter(l => l.startsWith('  - '));
       expect(listed).to.deep.equal(['  - "new.txt"', '  - "old.txt"']);
+    });
+
+    describe('what sits where a tracked path was', () => {
+      /** lstat answers by path; every path not named is gone. */
+      const lstatBy = (entries: Record<string, 'file' | 'dir' | 'symlink' | 'fifo'>) => sinon.stub().callsFake(async (p: string) => {
+        const type = entries[p];
+        if (!type) throw errno('ENOENT');
+        return {
+          isFile: () => type === 'file',
+          isDirectory: () => type === 'dir',
+          isSymbolicLink: () => type === 'symlink',
+          isFIFO: () => type === 'fifo',
+        };
+      });
+
+      /** A snapshot of this status; its rejection (if any) and the git calls. */
+      const snapshotWith = async (statusZ: string, lstat: sinon.SinonStub, untracked = '') => {
+        const calls: string[] = [];
+        const ws = loadWorkspace({
+          'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+          'git status -z --porcelain': { stdout: statusZ },
+          'git status --porcelain=v1': { stdout: '' },
+          'git status --porcelain': { stdout: ' D x\n' },
+          'git stash push': { stdout: 'Saved\n' },
+          'git stash list -z': STASH_CREATED,
+          'git ls-files --others --exclude-standard -z': [{ stdout: untracked }, { stdout: '' }],
+        }, { lstat }, calls);
+        let thrown: { kind?: string; lines?: string[] } | undefined;
+        const snap = await ws.snapshotChtCore('/tmp/cht-core').catch((err: { kind?: string; lines?: string[] }) => {
+          thrown = err;
+          return undefined;
+        });
+        return { snap, thrown, text: (thrown?.lines ?? []).join('\n'), calls };
+      };
+
+      it('refuses an ignored file where a tracked directory was', async () => {
+        const { thrown, text, calls } = await snapshotWith(' D d/b.txt\0', lstatBy({ '/tmp/cht-core/d': 'file' }));
+        expect(thrown?.kind).to.equal('precondition');
+        expect(text).to.include('"d" is an ignored file where the tracked directory of "d/b.txt" was');
+        expect(text).to.include('Move "d" away.');
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(false);
+      });
+
+      it('does not refuse an untracked file where a tracked directory was', async () => {
+        // The push saves the untracked `d`, and its reset puts the tracked dir back.
+        const types: Array<'file' | 'dir'> = ['file', 'dir'];
+        const lstat = sinon.stub().callsFake(async (p: string) => {
+          if (p !== '/tmp/cht-core/d') throw errno('ENOENT');
+          const type = types.shift() ?? 'dir';
+          return { isFile: () => type === 'file', isDirectory: () => type === 'dir', isSymbolicLink: () => false };
+        });
+        const { thrown, calls } = await snapshotWith(' D d/b.txt\0', lstat, 'd\0');
+        expect(thrown?.kind).to.not.equal('precondition');
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(true);
+      });
+
+      it('does not refuse a staged file where a tracked directory was', async () => {
+        const { thrown, calls } = await snapshotWith('A  d\0D  d/b.txt\0', lstatBy({ '/tmp/cht-core/d': 'file' }));
+        expect(thrown?.kind).to.not.equal('precondition');
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(true);
+      });
+
+      it('names the type of a special file where a tracked directory was', async () => {
+        const { thrown, text } = await snapshotWith(' D d/b.txt\0', lstatBy({ '/tmp/cht-core/d': 'fifo' }));
+        expect(thrown?.kind).to.equal('precondition');
+        expect(text).to.include('"d", a directory above "d/b.txt", is now a FIFO, and git stash cannot save a FIFO. Move it away.');
+      });
+
+      it('refuses when a directory above a deleted path cannot be checked', async () => {
+        const lstat = sinon.stub().callsFake(async (p: string) => {
+          throw errno(p === '/tmp/cht-core/d' ? 'EACCES' : 'ENOENT');
+        });
+        const { thrown, calls } = await snapshotWith(' D d/b.txt\0', lstat);
+        expect(thrown?.kind).to.equal('precondition');
+        expect(thrown?.lines).to.deep.equal([
+          'cht-agent cannot check "d" (EACCES), so it cannot tell what git stash would do there; nothing was changed.',
+        ]);
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(false);
+      });
+
+      it('names the symbolic link above a worktree delete, with no index-delete text', async () => {
+        // lstat of `p/n.txt` follows the link `p` to a real file.
+        const lstat = lstatBy({ '/tmp/cht-core/p': 'symlink', '/tmp/cht-core/p/n.txt': 'file' });
+        const { thrown, text } = await snapshotWith(' D p/n.txt\0', lstat);
+        expect(thrown?.kind).to.equal('precondition');
+        expect(text).to.include('"p", a directory above "p/n.txt", is now a symbolic link');
+        expect(text).to.include('Move "p" away.');
+        expect(text).to.not.include('deleted in the index');
+      });
+
+      it('says "directory" for a rename source that is now a directory', async () => {
+        const { thrown, text } = await snapshotWith('R  b.txt\0a.txt\0', lstatBy({ '/tmp/cht-core/a.txt': 'dir' }));
+        expect(thrown?.kind).to.equal('precondition');
+        expect(text).to.include(
+          '"a.txt" is the source of a staged rename, and a directory at that path is on disk again. ' +
+            'Commit the rename, or move that directory away.',
+        );
+      });
     });
 
     it('does not count a pre-push untracked file as left behind when its path is now a directory', async () => {

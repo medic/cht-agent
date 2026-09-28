@@ -25,7 +25,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
+import { constants as fsConstants, Stats } from 'node:fs';
 import * as path from 'node:path';
 import { CodeGenHaltError, GeneratedFile } from '../../interface';
 import { readEnv } from '../../../../utils/env';
@@ -453,10 +453,10 @@ async function stashOperatorWork(
   statusLines: readonly string[],
   headSha: string,
 ): Promise<TakenStash> {
-  await assertStashCanRoundTrip(chtCorePath);
+  const prePush = await listUntracked(chtCorePath);
+  await assertStashCanRoundTrip(chtCorePath, prePush);
   warnOnIgnoreRuleEdits(statusLines, chtCorePath);
   const name = `${STASH_MARKER_PREFIX}${Date.now()}`;
-  const prePush = await listUntracked(chtCorePath);
   // Exit codes lie both ways: non-zero on a removal warning after a complete
   // stash, zero with nothing saved (a dirty submodule) or a partial clean.
   const pushError = await runGit(['stash', 'push', '-u', '-m', name], chtCorePath)
@@ -624,24 +624,30 @@ function statusZPaths(stdout: string): string[] {
 /** A path that git stash cannot put back exactly, and why. */
 interface RoundTripCandidate {
   relPath: string;
-  kind: 'deleted' | 'renameSource';
+  /** Deleted in the index (`D `), deleted only in the working tree (` D`), or a rename source. */
+  kind: 'indexDeleted' | 'worktreeDeleted' | 'renameSource';
 }
 
 /**
  * Refuse, before the push, the states that `git stash` cannot put back
  * exactly: a path deleted in the index but kept on disk (`git rm --cached`),
- * the source of a staged rename that is on disk again, and a tracked file whose
- * path is now a directory. The stash would save them, but its restore fails or
- * differs, so refusing up front is the only way to change nothing.
+ * the source of a staged rename that is on disk again, a tracked file whose
+ * path is now a directory, and a tracked directory that is now an ignored file,
+ * a symbolic link or a special file. The stash would save them, but its
+ * restore fails or differs, or its reset deletes an ignored file, so refusing
+ * up front is the only way to change nothing. `prePush` is the untracked
+ * listing, which the stash saves.
  */
-async function assertStashCanRoundTrip(chtCorePath: string): Promise<void> {
+async function assertStashCanRoundTrip(chtCorePath: string, prePush: readonly string[]): Promise<void> {
   // `--porcelain` is the v1 format; this argv stays apart from the post-push read.
   const { stdout } = await runGit(
     ['status', '-z', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'], chtCorePath,
   );
+  const entries = parseStatusZ(stdout);
+  const saved: SavedPaths = { untracked: new Set(prePush), staged: new Set(entries.filter(isStaged).map(e => e.path)) };
   const problems: string[] = [];
-  for (const candidate of parseStatusZ(stdout).flatMap(roundTripCandidates)) {
-    const problem = await roundTripProblem(chtCorePath, candidate);
+  for (const candidate of entries.flatMap(roundTripCandidates)) {
+    const problem = await roundTripProblem(chtCorePath, candidate, saved);
     if (problem) problems.push(problem);
   }
   if (problems.length === 0) return;
@@ -655,28 +661,138 @@ async function assertStashCanRoundTrip(chtCorePath: string): Promise<void> {
 
 function roundTripCandidates(entry: StatusEntry): RoundTripCandidate[] {
   const candidates: RoundTripCandidate[] = [];
-  if (entry.x === 'D' || entry.y === 'D') candidates.push({ relPath: entry.path, kind: 'deleted' });
+  const deleted = deletedKind(entry);
+  if (deleted) candidates.push({ relPath: entry.path, kind: deleted });
   if (entry.origPath !== undefined && (entry.x === 'R' || entry.y === 'R')) {
     candidates.push({ relPath: entry.origPath, kind: 'renameSource' });
   }
   return candidates;
 }
 
-/** The operator text for a candidate that is on disk, or null when it is not. */
-async function roundTripProblem(chtCorePath: string, candidate: RoundTripCandidate): Promise<string | null> {
+/** The paths that the stash saves as they are: untracked (in W^3) and staged (in W and W^2). */
+interface SavedPaths {
+  untracked: ReadonlySet<string>;
+  staged: ReadonlySet<string>;
+}
+
+/** Staged content at the entry's path (for a rename or copy, its target). */
+function isStaged(entry: StatusEntry): boolean {
+  return 'AMTRC'.includes(entry.x);
+}
+
+function deletedKind(entry: StatusEntry): RoundTripCandidate['kind'] | null {
+  if (entry.x === 'D') return 'indexDeleted';
+  if (entry.y === 'D') return 'worktreeDeleted';
+  return null;
+}
+
+/** The operator text for a candidate that git stash cannot put back, or null when it can. */
+async function roundTripProblem(
+  chtCorePath: string,
+  candidate: RoundTripCandidate,
+  saved: SavedPaths,
+): Promise<string | null> {
+  const blocker = await blockerAbove(chtCorePath, candidate.relPath);
+  if (blocker) return blockerProblem(candidate.relPath, blocker, saved);
   const stat = await fs.lstat(path.join(chtCorePath, candidate.relPath)).catch(() => null);
   if (!stat) return null;
+  return onDiskProblem(chtCorePath, candidate, stat);
+}
+
+/** A path above a candidate that is on disk and is not a directory. */
+interface Blocker {
+  relPath: string;
+  stat: Stats;
+}
+
+/**
+ * The first path above `relPath`, from the top down, that is on disk and is
+ * not a directory. ENOENT at any level means none; any other lstat error is a
+ * refusal, because then nothing tells what git stash would do there.
+ */
+async function blockerAbove(chtCorePath: string, relPath: string): Promise<Blocker | null> {
+  for (const prefix of properAncestors(relPath)) {
+    const dir = prefix.slice(0, -1);
+    const stat = await lstatUnlessGone(chtCorePath, dir);
+    if (!stat) return null;
+    if (!stat.isDirectory()) return { relPath: dir, stat };
+  }
+  return null;
+}
+
+async function lstatUnlessGone(chtCorePath: string, relPath: string): Promise<Stats | null> {
+  try {
+    return await fs.lstat(path.join(chtCorePath, relPath));
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') return null;
+    const message = `cht-agent cannot check ${JSON.stringify(relPath)} (${code}), so it cannot tell what git ` +
+      'stash would do there; nothing was changed.';
+    throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+  }
+}
+
+/**
+ * A regular file that the stash saves (untracked or staged) round-trips where
+ * a tracked dir was. The push cannot save a path beyond a symbolic link or a
+ * special file, and its reset deletes an ignored file (git treats ignored
+ * files as expendable).
+ */
+function blockerProblem(relPath: string, blocker: Blocker, saved: SavedPaths): string | null {
+  if (blocker.stat.isSymbolicLink()) return symlinkBlockerText(relPath, blocker.relPath, saved.staged.has(blocker.relPath));
+  if (!blocker.stat.isFile()) return specialBlockerText(relPath, blocker);
+  if (saved.untracked.has(blocker.relPath) || saved.staged.has(blocker.relPath)) return null;
+  const quoted = JSON.stringify(blocker.relPath);
+  return `${quoted} is an ignored file where the tracked directory of ${JSON.stringify(relPath)} was, and git ` +
+    `stash would delete it. Move ${quoted} away.`;
+}
+
+/** A staged link moved away would only leave a staged file that was then deleted, so no move for it. */
+function symlinkBlockerText(relPath: string, linkPath: string, staged: boolean): string {
+  const quoted = JSON.stringify(linkPath);
+  const head = `${quoted}, a directory above ${JSON.stringify(relPath)}, is now a`;
+  const beyond = 'and git stash cannot save a path beyond a symbolic link.';
+  if (!staged) return `${head} symbolic link, ${beyond} Move ${quoted} away.`;
+  return `${head} staged symbolic link, ${beyond} Commit the change first. Moving a staged link away only ` +
+    'turns it into a staged file that was then deleted.';
+}
+
+function specialBlockerText(relPath: string, blocker: Blocker): string {
+  const type = entryTypeWord(blocker.stat);
+  return `${JSON.stringify(blocker.relPath)}, a directory above ${JSON.stringify(relPath)}, is now a ${type}, ` +
+    `and git stash cannot save a ${type}. Move it away.`;
+}
+
+/** The text for a candidate whose own path is on disk. */
+function onDiskProblem(chtCorePath: string, candidate: RoundTripCandidate, stat: Stats): string {
   const quoted = JSON.stringify(candidate.relPath);
+  const type = entryTypeWord(stat);
   if (candidate.kind === 'renameSource') {
-    return `${quoted} is the source of a staged rename, and a file at that path is on disk again. ` +
-      'Commit the rename, or move that file away.';
+    return `${quoted} is the source of a staged rename, and a ${type} at that path is on disk again. ` +
+      `Commit the rename, or move that ${type} away.`;
   }
   if (stat.isDirectory()) {
     return `${quoted} is a tracked file whose path is now a directory. Commit the change, or move that directory away.`;
   }
+  if (candidate.kind === 'worktreeDeleted') {
+    return `${quoted} is deleted in the working tree, but a ${type} is at that path. Move it away.`;
+  }
   const restore = `git -C ${shellQuote(chtCorePath)} restore --staged -- ${shellQuote(toLiteralPathspec(candidate.relPath))}`;
   return `${quoted} is deleted in the index but still on disk (as after git rm --cached). ` +
     `Commit the delete, or undo it with: ${restore}`;
+}
+
+function entryTypeWord(stat: Stats): string {
+  if (stat.isSymbolicLink()) return 'symbolic link';
+  if (stat.isDirectory()) return 'directory';
+  if (stat.isFile()) return 'file';
+  return specialTypeWord(stat);
+}
+
+function specialTypeWord(stat: Stats): string {
+  if (stat.isFIFO()) return 'FIFO';
+  if (stat.isSocket()) return 'socket';
+  return 'device file';
 }
 
 async function stashNotCreatedError(
