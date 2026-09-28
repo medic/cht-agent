@@ -1112,6 +1112,29 @@ describe('workspace.ts', () => {
       expect(result.stashPop).to.equal('ok');
     });
 
+    it('puts back a dropped entry that the pre-drop list held under its list message, not its commit subject', async () => {
+      const calls: string[] = [];
+      const listed = stashListZ(
+        ['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`],
+        ['stash@{1}', OTHER_SHA, 'custom message from stash store -m'],
+      );
+      const { snapshot, script } = rollbackFixture(WITH_STASH, {
+        // The pre-check, then every drop lookup: the list holds the other entry too.
+        'git stash list -z': [{ stdout: OUR_ENTRY }, { stdout: listed }],
+        'git stash drop stash@{0}': [
+          { stdout: `Dropped stash@{0} (${OTHER_SHA})\n` },
+          { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+        ],
+        [`git log -1 --format=%s ${OTHER_SHA}`]: { stdout: 'On main: the commit subject differs\n' },
+      });
+      const ws = loadWorkspace(script, {}, calls);
+
+      await ws.rollbackChtCore('/tmp/cht-core', snapshot);
+
+      expect(calls).to.include(`git stash store -m custom message from stash store -m ${OTHER_SHA}`);
+      expect(calls.filter(c => c.includes('the commit subject differs'))).to.deep.equal([]);
+    });
+
     it('names the entry, with a store command and no drop command, when the put-back fails', async () => {
       const { snapshot, script } = rollbackFixture(WITH_STASH, {
         'git stash list -z': [{ stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }],
