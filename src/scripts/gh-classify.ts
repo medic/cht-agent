@@ -28,12 +28,38 @@ export class GhTransientError extends Error {
 /** Per-run classification cache, keyed `repo#number`. */
 export type ClassifyCache = Map<string, NumberKind>;
 
+/**
+ * Memoises the full record, not just the kind. Anonymous GitHub allows 60
+ * requests an hour, and a corpus cites the same issue from many drafts — without
+ * this, a 25-draft scan spends its whole budget re-fetching a handful of numbers
+ * and reports the rest as "unverified", which reads like a clean run.
+ */
+export type DescribeCache = Map<string, { kind: NumberKind; title: string | null }>;
+
 function errText(err: unknown): string {
   if (err instanceof Error) {
     const stderr = (err as { stderr?: unknown }).stderr;
     return err.message + (typeof stderr === 'string' ? ` ${stderr}` : '');
   }
   return String(err);
+}
+
+/**
+ * Anonymous fallback for hosts with no `gh`. Returns the parsed body, `null` on a
+ * genuine 404, or throws for anything else — the same three-way answer `gh` gives,
+ * so the caller's "404 means missing, everything else means transient" rule holds.
+ * The status code is appended on its own line so it can be told from the body.
+ */
+function fetchViaCurl(repo: string, n: number, exec: ExecFn): Record<string, unknown> | null {
+  const raw = exec('curl', [
+    '-s', '--max-time', '20', '-w', '\n%{http_code}',
+    `https://api.github.com/repos/${repo}/issues/${n}`,
+  ]);
+  const cut = raw.lastIndexOf('\n');
+  const status = raw.slice(cut + 1).trim();
+  if (status === '404') return null;
+  if (status !== '200') throw new Error(`HTTP ${status}`);
+  return JSON.parse(raw.slice(0, cut)) as Record<string, unknown>;
 }
 
 /** Issues-endpoint record; null on 404; throws GhTransientError on any other failure. */
@@ -44,7 +70,16 @@ function fetchIssueRecord(repo: string, n: number, exec: ExecFn): Record<string,
   } catch (err) {
     const text = errText(err);
     if (/HTTP 404/i.test(text)) return null; // 404 only — never treat a transient "not found" as missing
-    throw new GhTransientError(`classifyNumber(${repo}#${n}): gh api failed: ${text}`, { cause: err });
+    // `gh` absent or unauthenticated is not a verdict about the issue. Retry
+    // anonymously before giving up, so a host without gh still gets checked.
+    try {
+      return fetchViaCurl(repo, n, exec);
+    } catch (curlErr) {
+      throw new GhTransientError(
+        `classifyNumber(${repo}#${n}): gh api failed: ${text}; curl fallback: ${errText(curlErr)}`,
+        { cause: err }
+      );
+    }
   }
   try {
     return JSON.parse(raw) as Record<string, unknown>;
@@ -71,6 +106,28 @@ export function classifyNumber(repo: string, n: number, exec: ExecFn, cache?: Cl
   const kind: NumberKind = obj === null ? 'missing' : recordKind(obj, repo);
   cache?.set(key, kind);
   return kind;
+}
+
+/**
+ * Kind plus title for `n`. The title is what lets a caller check a draft's
+ * one-line gloss of a cross-reference against reality: a draft citing #10754 as
+ * "Scheduled task duplicate processing" is only catchable by reading that the
+ * real title is "Cookies not being sent with `secure: true`".
+ *
+ * @throws {GhTransientError} on a non-404 gh failure.
+ */
+export function describeNumber(
+  repo: string, n: number, exec: ExecFn, cache?: DescribeCache
+): { kind: NumberKind; title: string | null } {
+  const key = `${repo}#${n}`;
+  const hit = cache?.get(key);
+  if (hit) return hit;
+  const obj = fetchIssueRecord(repo, n, exec);
+  const out = obj === null
+    ? { kind: 'missing' as NumberKind, title: null }
+    : { kind: recordKind(obj, repo), title: typeof obj.title === 'string' ? obj.title : null };
+  cache?.set(key, out);
+  return out;
 }
 
 /** Same-repo issues a PR closes (cross-repo closing-refs dropped). */
