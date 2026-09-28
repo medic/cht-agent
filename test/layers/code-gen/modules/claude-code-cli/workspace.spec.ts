@@ -1532,6 +1532,32 @@ describe('workspace.ts', () => {
         expect(warned).to.include(`[claude-code-cli] Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
       });
 
+      it('names the pre-push files to move, and prints no clean step, when the stash cannot be read', async () => {
+        const readFailure = Object.assign(new Error('Command failed: git rev-parse\nfatal: bad object'), {
+          code: 128, stderr: 'fatal: bad object',
+        });
+        const { err, text } = await partialPush({
+          'git ls-files --others --exclude-standard -z': { stdout: 'u.txt\0' },
+          'git rev-parse -q --verify': { error: readFailure },
+        }, { lstat: sinon.stub().resolves({ isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false }) });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.not.include('clean -fd');
+        expect(text).to.include(`Move these files out of the way before 'Restore it', and do not delete them: "u.txt".`);
+        expect(text).to.include(`cht-agent could not read the untracked files in stash ${OUR_NAME}: fatal: bad object`);
+      });
+
+      it('prints no step and no read error when the stash has no untracked files (exit 1)', async () => {
+        const { err, text } = await partialPush({
+          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+          'git rev-parse -q --verify': { error: Object.assign(new Error('exit 1'), { code: 1 }) },
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('could not fully put your work back');
+        expect(text).to.not.include('clean -fd');
+        expect(text).to.not.include('Move these files');
+        expect(text).to.not.include('could not read the untracked files');
+      });
+
       /** The stash deletes `d/b.txt`; lstat of it fails with `code`, and every other path is gone. */
       const deletedPathLstat = (code: string) => ({
         lstat: sinon.stub().callsFake(async (p: string) => {
@@ -1602,6 +1628,34 @@ describe('workspace.ts', () => {
         expect(err.kind).to.equal('precondition');
         expect(err.cause).to.equal(failure);
         expect(calls).to.include('git stash drop stash@{0}');
+      });
+
+      it('says a spare copy is left, not "nothing was changed", when the undo cannot drop our entry', async () => {
+        const warnSpy = sinon.stub(console, 'warn');
+        const { err } = await snapshotRejection({
+          'git status --porcelain=v1 -z --untracked-files=no': { error: readError() },
+          'git stash list -z': STASH_CREATED,
+          'git stash drop': { error: new Error('fatal: cannot lock ref') },
+        }, []);
+        expect(err.kind).to.equal('stash');
+        const text = (err.lines ?? []).join('\n');
+        expect(text).to.not.include('nothing was changed');
+        expect(err.message).to.include(`put your work back, but could not remove its stash entry ${OUR_NAME}`);
+        expect(err.lines).to.include(`Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
+        expect(text).to.not.include('stash drop');
+        expect(warnSpy.getCalls().filter(c => String(c.args[0]).includes('spare copy'))).to.deep.equal([]);
+      });
+
+      it('keeps "nothing was changed" when our entry is gone before the undo drops it', async () => {
+        const calls: string[] = [];
+        const { err } = await snapshotRejection({
+          'git status --porcelain=v1 -z --untracked-files=no': { error: readError() },
+          // The leftover check, the post-push lookup, then the drop's own read: gone.
+          'git stash list -z': [{ stdout: '' }, { stdout: OUR_ENTRY }, { stdout: '' }],
+        }, calls);
+        expect(err.kind).to.equal('precondition');
+        expect(err.message).to.include('put your work back, so nothing was changed');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
       });
 
       it('stops with the lookup hint when the stash list cannot be read at all', async () => {
@@ -1848,7 +1902,7 @@ describe('workspace.ts', () => {
         // Nothing to clean before the restore; the failed restore then wrote ro/new.txt.
         'git ls-files --others --exclude-standard': [{ stdout: '' }, { stdout: 'ro/new.txt\0' }],
         'git diff --name-only --no-renames -z': { stdout: 'ro/f.txt\0' },
-        'git rev-parse -q --verify': { error: new Error('no third parent') },
+        'git rev-parse -q --verify': { error: Object.assign(new Error('no third parent'), { code: 1 }) },
       });
       const ws = loadWorkspace(script, {
         lstat: sinon.stub().resolves({}),

@@ -493,7 +493,7 @@ async function stashOperatorWork(
   const stash: TakenStash = { sha: lookup.entry.sha, name, prePush };
   const leftovers = await leftoversOrUndo(chtCorePath, stash, headSha, lookup.readError);
   if (leftovers.length > 0) {
-    await undoStash(chtCorePath, stash, headSha, partialPushTrigger(pushError, leftovers, prePush));
+    warnSpareCopy(await undoStash(chtCorePath, stash, headSha, partialPushTrigger(pushError, leftovers, prePush)), name);
     throw await partialStashError(chtCorePath, pushError, leftovers, prePush);
   }
 
@@ -557,7 +557,10 @@ async function leftoversOrUndo(
   return leftovers;
 }
 
-/** Put the work back after a failed read, then stop with "nothing was changed". */
+/**
+ * Put the work back after a failed read, then stop. "Nothing was changed" only
+ * when our entry is gone; a spare entry left behind blocks the next run.
+ */
 async function undoAfterReadFailure(
   chtCorePath: string,
   stash: TakenStash,
@@ -565,14 +568,32 @@ async function undoAfterReadFailure(
   err: unknown,
 ): Promise<never> {
   const text = gitErrorText(err);
-  await undoStash(chtCorePath, stash, headSha, {
+  const drop = await undoStash(chtCorePath, stash, headSha, {
     summary: `The stash push completed, but a later git read failed (${text}).`,
     gitText: text,
     cause: err,
     pathsInPlay: stash.prePush,
   });
+  if (drop === 'kept') throw spareEntryError(stash.name, text, err);
   const message = `The snapshot failed after the stash (${text}); cht-agent put your work back, so nothing was changed.`;
   throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+}
+
+/** The work is back, but our entry stays in the list, where the next run's leftover check stops. */
+function spareEntryError(stashName: string, gitText: string, err: unknown): WorkspaceSafetyError {
+  const message = `The snapshot failed after the stash (${gitText}); cht-agent put your work back, but could not ` +
+    `remove its stash entry ${stashName}.`;
+  const lines = [
+    message,
+    `Your work is restored; the stash entry ${stashName} is a spare copy.`,
+    'The next run stops at that entry until you remove it from the stash list.',
+  ];
+  return new WorkspaceSafetyError('stash', message, { cause: err, lines });
+}
+
+function warnSpareCopy(drop: DropOutcome, stashName: string): void {
+  if (drop !== 'kept') return;
+  console.warn(`[claude-code-cli] Your work is restored; the stash entry ${stashName} is a spare copy.`);
 }
 
 /** What the partial push itself reported, for the undo's own error text. */
@@ -1036,13 +1057,14 @@ interface UndoTrigger {
  * `checkout W^3 --`, which stages. Only the differing paths are restored, so a
  * read-only dir whose files did not change is never written. W is dropped only
  * once the tree is proven back; otherwise it stays and this throws `stash`.
+ * Returns what the drop did; the caller reports a spare entry.
  */
 async function undoStash(
   chtCorePath: string,
   stash: TakenStash,
   headSha: string,
   trigger: UndoTrigger,
-): Promise<void> {
+): Promise<DropOutcome> {
   try {
     await restoreFromStash(chtCorePath, stash.sha);
   } catch (err) {
@@ -1055,8 +1077,7 @@ async function undoStash(
     throw await undoFailedError(chtCorePath, stash, headSha, trigger, { verifyError: err });
   }
   if (differing.length > 0) throw await undoFailedError(chtCorePath, stash, headSha, trigger, { differing });
-  if (await dropStashBySha(chtCorePath, stash.sha)) return;
-  console.warn(`[claude-code-cli] Your work is restored; the stash entry ${stash.name} is a spare copy.`);
+  return dropStashBySha(chtCorePath, stash.sha);
 }
 
 async function restoreFromStash(chtCorePath: string, sha: string): Promise<void> {
@@ -1126,7 +1147,7 @@ async function deletedPathOnDisk(fullPath: string): Promise<boolean> {
 }
 
 async function untrackedEntriesNotRestored(chtCorePath: string, sha: string): Promise<string[]> {
-  if (!(await gitSucceeds(['rev-parse', '-q', '--verify', `${sha}^3`], chtCorePath))) return [];
+  if (!(await hasUntrackedCommit(chtCorePath, sha))) return [];
   const { stdout } = await runGit(['ls-tree', '-r', '-z', `${sha}^3`], chtCorePath);
   const notRestored: string[] = [];
   for (const entry of stdout.split('\0').filter(Boolean)) {
@@ -1172,16 +1193,19 @@ async function undoFailedError(
   outcome: UndoOutcome,
 ): Promise<WorkspaceSafetyError> {
   const differing = outcome.differing ?? [];
-  const onDisk = await stashUntrackedOnDisk(chtCorePath, stash.sha).catch((): string[] => []);
+  const inTheWay = await untrackedInTheWay(chtCorePath, stash);
   const cause = await permissionCauseStep(
     chtCorePath, trigger.gitText, [...trigger.pathsInPlay, ...differing], 'run the steps below',
   );
   const lines = [
     `${trigger.summary} cht-agent could not fully put your work back. Your work is still in stash ${stash.name}.`,
     ...undoErrorLines(outcome),
+    ...untrackedReadErrorLines(stash.name, inTheWay.readError),
     ...pathListLines('These paths do not match what the stash holds (cht-agent did not delete any of them):', differing),
     ...(differing.length > 0 ? ['The rest of your work is already back in the working tree.'] : []),
-    ...recoveryStepLines(chtCorePath, { cause, headSha, remove: onDisk, stashName: stash.name }),
+    ...recoveryStepLines(chtCorePath, {
+      cause, headSha, remove: inTheWay.remove, moveAside: inTheWay.moveAside, stashName: stash.name,
+    }),
   ];
   return new WorkspaceSafetyError('stash', lines[0], { lines, cause: trigger.cause ?? outcome.restoreError });
 }
@@ -1201,6 +1225,37 @@ function undoErrorLines(outcome: UndoOutcome): string[] {
     return [`The restore ran, but cht-agent could not check the result: ${gitErrorText(outcome.verifyError)}`];
   }
   return [];
+}
+
+/**
+ * What blocks the restore of the stash's untracked files: those on disk, which
+ * a clean step removes. When the stash cannot be read, the pre-push files that
+ * are on disk go to a move step instead: a delete could lose a file that the
+ * restore does not bring back.
+ */
+async function untrackedInTheWay(
+  chtCorePath: string,
+  stash: TakenStash,
+): Promise<{ remove: string[]; moveAside: string[]; readError?: unknown }> {
+  try {
+    return { remove: await stashUntrackedOnDisk(chtCorePath, stash.sha), moveAside: [] };
+  } catch (err) {
+    const files = await pathsWhere(chtCorePath, stash.prePush.filter(p => !p.endsWith('/')), isFileNotDir);
+    return { remove: [], moveAside: files, readError: err };
+  }
+}
+
+async function isFileNotDir(fullPath: string): Promise<boolean> {
+  try {
+    return !(await fs.lstat(fullPath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function untrackedReadErrorLines(stashName: string, err: unknown): string[] {
+  if (err === undefined) return [];
+  return [`cht-agent could not read the untracked files in stash ${stashName}: ${gitErrorText(err)}`];
 }
 
 /** The untracked files that the stash saved and that are on disk now (they block a restore). */
@@ -2004,23 +2059,26 @@ async function popStep(
     return;
   }
   result.stashPop = 'ok';
-  if (await dropStashBySha(chtCorePath, stashSha)) return;
+  if ((await dropStashBySha(chtCorePath, stashSha)) === 'dropped') return;
   console.warn(
     `[claude-code-cli] Your work is restored; the stash entry ${snapshot.stashName} is a spare copy.`
   );
 }
 
-/** Drop the entry whose commit is `sha`. True only when git confirms it dropped that one. */
-async function dropStashBySha(chtCorePath: string, sha: string): Promise<boolean> {
+/** What a drop did: git confirmed it dropped our entry, our entry was not listed, or it stays. */
+type DropOutcome = 'dropped' | 'missing' | 'kept';
+
+/** Drop the entry whose commit is `sha`. `dropped` only when git confirms it dropped that one. */
+async function dropStashBySha(chtCorePath: string, sha: string): Promise<DropOutcome> {
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       const outcome = await dropStashOnce(chtCorePath, sha);
-      if (outcome !== 'retry') return outcome === 'dropped';
+      if (outcome !== 'retry') return outcome;
     }
   } catch {
     // Fall through: the entry stays, and the caller reports it as a spare copy.
   }
-  return false;
+  return 'kept';
 }
 
 async function dropStashOnce(chtCorePath: string, sha: string): Promise<'dropped' | 'missing' | 'retry'> {
@@ -2105,9 +2163,24 @@ async function stashBlockingPaths(chtCorePath: string, stashSha: string): Promis
 
 /** The untracked files a `stash push -u` saved (its third parent), if any. */
 async function stashUntrackedPaths(chtCorePath: string, stashSha: string): Promise<string[]> {
-  if (!(await gitSucceeds(['rev-parse', '-q', '--verify', `${stashSha}^3`], chtCorePath))) return [];
+  if (!(await hasUntrackedCommit(chtCorePath, stashSha))) return [];
   const { stdout } = await runGit(['ls-tree', '-r', '-z', '--name-only', `${stashSha}^3`], chtCorePath);
   return stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * Whether the stash has a third parent (its untracked files). `rev-parse -q
+ * --verify` exits 1 when there is none; any other failure is a failed read,
+ * which must not pass for "no untracked files".
+ */
+async function hasUntrackedCommit(chtCorePath: string, stashSha: string): Promise<boolean> {
+  try {
+    await runGit(['rev-parse', '-q', '--verify', `${stashSha}^3`], chtCorePath);
+    return true;
+  } catch (err) {
+    if ((err as { code?: unknown }).code === 1) return false;
+    throw err;
+  }
 }
 
 /** False only when the OS positively refuses write access. */
@@ -2254,11 +2327,15 @@ function pathListLines(heading: string, paths: readonly string[] | undefined): s
   return [heading, ...paths.map(p => `  - ${JSON.stringify(p)}`)];
 }
 
-/** What a manual recovery must do: fix the cause, reset to `headSha`, remove `remove`, restore the stash. */
+/**
+ * What a manual recovery must do: fix the cause, reset to `headSha`, remove
+ * `remove` (or move `moveAside` out of the way), restore the stash.
+ */
 interface RecoveryPlan {
   cause: string;
   headSha: string;
   remove: readonly string[];
+  moveAside?: readonly string[];
   stashName: string | null;
 }
 
@@ -2271,6 +2348,7 @@ function recoveryStepLines(chtCorePath: string, plan: RecoveryPlan): string[] {
     plan.cause,
     `git -C ${shellQuote(chtCorePath)} reset --hard ${plan.headSha}`,
     ...removalSteps(chtCorePath, plan.remove),
+    ...moveAsideSteps(plan.moveAside ?? []),
     ...(plan.stashName ? recoveryHintSteps(chtCorePath, plan.stashName) : []),
   ];
   return [
@@ -2296,6 +2374,16 @@ function removalSteps(chtCorePath: string, paths: readonly string[]): string[] {
     );
   }
   return steps;
+}
+
+/** Never a delete: cht-agent could not read the stash's copy of these files. */
+function moveAsideSteps(files: readonly string[]): string[] {
+  if (files.length === 0) return [];
+  return [
+    "Move these files out of the way before 'Restore it', and do not delete them: " +
+      `${files.map(f => JSON.stringify(f)).join(', ')}. cht-agent could not read the stash's copy of them. ` +
+      'After the restore, move back each file that the restore did not bring back.',
+  ];
 }
 
 /** A clean of exactly these paths: each one a quoted `:(literal)` word, never a blanket clean. */
