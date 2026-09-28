@@ -65,8 +65,8 @@ function appendIssueGroup(lines: string[], type: string, items: CrossFileIssue[]
 
 /**
  * Render a separate banner when the compile gate did not run (e.g., tsc
- * unavailable in cht-core's node_modules). The user sees the remediation
- * command alongside the diff so they know what to do.
+ * unavailable in cht-core's node_modules). The user sees the next step for the
+ * reason alongside the diff: the install command only when tsc is missing.
  */
 export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: string): string => {
   return [
@@ -74,11 +74,18 @@ export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: str
     '⚠️  COMPILE GATE NOT RUN',
     '─'.repeat(70),
     `Reason: ${skipReason}`,
-    `Remediation: cd ${chtCorePath} && npm install`,
+    ...compileGateSkipGuidance(skipReason, chtCorePath),
     'You may still accept the diff (compile not verified), refine, or abandon.',
     '─'.repeat(70),
   ].join('\n');
 };
+
+/** A snapshot refusal printed its own way out above the banner. */
+function compileGateSkipGuidance(skipReason: string, chtCorePath: string): string[] {
+  if (skipReason.startsWith('tsc not available')) return [`Remediation: cd ${chtCorePath} && npm install`];
+  if (skipReason.startsWith('snapshot failed:')) return ['See the lines above for the cause.'];
+  return [];
+}
 
 /**
  * Render the non-fatal warnings of a run (for example, session files that a

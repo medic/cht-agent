@@ -122,6 +122,26 @@ describe('renderCompileGateSkipBanner (H.4)', () => {
     expect(banner).to.include('cd /home/me/cht-core && npm install');
     expect(banner).to.include('You may still accept the diff');
   });
+
+  it('points at the lines above for a snapshot refusal, with no npm install', () => {
+    const banner = renderCompileGateSkipBanner(
+      'snapshot failed: git stash cannot put these changes back exactly, so cht-agent did not stash them.',
+      '/home/me/cht-core',
+    );
+    expect(banner).to.include('Reason: snapshot failed: git stash cannot put these changes back exactly');
+    expect(banner).to.include('See the lines above for the cause.');
+    expect(banner).to.not.include('npm install');
+  });
+
+  it('prints only the reason when cht-core is not a git repo', () => {
+    const banner = renderCompileGateSkipBanner(
+      'cht-core is not a git repo; compile gate needs snapshot/rollback',
+      '/home/me/cht-core',
+    );
+    expect(banner).to.include('Reason: cht-core is not a git repo; compile gate needs snapshot/rollback');
+    expect(banner).to.not.include('npm install');
+    expect(banner).to.not.include('See the lines above');
+  });
 });
 
 describe('renderWarningsBanner', () => {
