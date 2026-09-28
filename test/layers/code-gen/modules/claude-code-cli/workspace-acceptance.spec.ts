@@ -1320,7 +1320,6 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(text).to.not.include('deleted in the index');
     });
 
-
     it('refuses a staged symbolic link where a tracked directory was, with no command', async () => {
       await commitFile('d/b.txt', 'b\n');
       await git('rm', '-q', '-r', 'd');
@@ -1363,6 +1362,30 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       });
     }
 
+    it('refuses a staged add whose file is deleted, and its printed restore lets the next run through', async () => {
+      await write('n.txt', 'staged new content\n');
+      await git('add', 'n.txt');
+      await fs.rm(path.join(repo, 'n.txt'));
+      const text = await expectRefusedUnchanged('"n.txt" is staged but deleted from the working tree');
+      const restore = /put the file back with: (git .*)$/m.exec(text)?.[1];
+      expect(restore).to.be.a('string');
+      await execFileAsync('bash', ['-c', String(restore)]);
+      expect(await read('n.txt')).to.equal('staged new content\n');
+      const afterWayOut = await treeState();
+      const snapshot = await snapshotOrFail();
+      await write('session.ts', 'export const s = 1;\n');
+      const rollback = await rollbackChtCore(repo, snapshot);
+      expect(rollback.stashPop).to.equal('ok');
+      expect(await treeState()).to.deep.equal(afterWayOut);
+    });
+
+    it('refuses a staged rename whose target is deleted', async () => {
+      await commitFile('a.txt', 'a\n');
+      await git('mv', 'a.txt', 'b.txt');
+      await fs.rm(path.join(repo, 'b.txt'));
+      await expectRefusedUnchanged('"b.txt" is staged but deleted from the working tree');
+    });
+
     for (const [suffix, withTrackedWork] of [['', false], [' next to tracked work', true]] as Array<[string, boolean]>) {
       it(`runs a full cycle when a tracked directory is now an untracked file${suffix}`, async () => {
         await commitFile('d/b.txt', 'b\n');
@@ -1393,6 +1416,12 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       ['a staged delete whose file is gone', async () => {
         await commitFile('d.txt', 'd\n');
         await git('rm', '-q', 'd.txt');
+      }],
+      ['a staged modify whose file is then deleted (MD)', async () => {
+        await commitFile('m.txt', 'm1\n');
+        await write('m.txt', 'm2\n');
+        await git('add', 'm.txt');
+        await fs.rm(path.join(repo, 'm.txt'));
       }],
     ] as Array<[string, () => Promise<void>]>) {
       it(`does not refuse ${label}, and a full cycle puts it back exactly`, async () => {

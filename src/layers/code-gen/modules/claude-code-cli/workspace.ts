@@ -624,19 +624,23 @@ function statusZPaths(stdout: string): string[] {
 /** A path that git stash cannot put back exactly, and why. */
 interface RoundTripCandidate {
   relPath: string;
-  /** Deleted in the index (`D `), deleted only in the working tree (` D`), or a rename source. */
-  kind: 'indexDeleted' | 'worktreeDeleted' | 'renameSource';
+  /**
+   * Deleted in the index (`D `), deleted only in the working tree (` D`, `MD`,
+   * `TD`), staged as new content and then deleted (`AD`, `RD`, `CD`), or a
+   * rename source.
+   */
+  kind: 'indexDeleted' | 'worktreeDeleted' | 'stagedThenDeleted' | 'renameSource';
 }
 
 /**
  * Refuse, before the push, the states that `git stash` cannot put back
  * exactly: a path deleted in the index but kept on disk (`git rm --cached`),
  * the source of a staged rename that is on disk again, a tracked file whose
- * path is now a directory, and a tracked directory that is now an ignored file,
- * a symbolic link or a special file. The stash would save them, but its
- * restore fails or differs, or its reset deletes an ignored file, so refusing
- * up front is the only way to change nothing. `prePush` is the untracked
- * listing, which the stash saves.
+ * path is now a directory, a staged file that was then deleted, and a tracked
+ * directory that is now an ignored file, a symbolic link or a special file.
+ * The stash would save them, but its restore fails or differs, or its reset
+ * deletes an ignored file, so refusing up front is the only way to change
+ * nothing. `prePush` is the untracked listing, which the stash saves.
  */
 async function assertStashCanRoundTrip(chtCorePath: string, prePush: readonly string[]): Promise<void> {
   // `--porcelain` is the v1 format; this argv stays apart from the post-push read.
@@ -682,8 +686,9 @@ function isStaged(entry: StatusEntry): boolean {
 
 function deletedKind(entry: StatusEntry): RoundTripCandidate['kind'] | null {
   if (entry.x === 'D') return 'indexDeleted';
-  if (entry.y === 'D') return 'worktreeDeleted';
-  return null;
+  if (entry.y !== 'D') return null;
+  // The stash keeps the staged content, and its restore writes that file back.
+  return 'ARC'.includes(entry.x) ? 'stagedThenDeleted' : 'worktreeDeleted';
 }
 
 /** The operator text for a candidate that git stash cannot put back, or null when it can. */
@@ -693,6 +698,9 @@ async function roundTripProblem(
   saved: SavedPaths,
 ): Promise<string | null> {
   const blocker = await blockerAbove(chtCorePath, candidate.relPath);
+  if (candidate.kind === 'stagedThenDeleted') {
+    return stagedThenDeletedProblem(chtCorePath, candidate.relPath, blocker, saved);
+  }
   if (blocker) return blockerProblem(candidate.relPath, blocker, saved);
   const stat = await fs.lstat(path.join(chtCorePath, candidate.relPath)).catch(() => null);
   if (!stat) return null;
@@ -761,6 +769,42 @@ function specialBlockerText(relPath: string, blocker: Blocker): string {
   const type = entryTypeWord(blocker.stat);
   return `${JSON.stringify(blocker.relPath)}, a directory above ${JSON.stringify(relPath)}, is now a ${type}, ` +
     `and git stash cannot save a ${type}. Move it away.`;
+}
+
+/**
+ * Always a problem, on disk or not. The restore command only when nothing is in
+ * the way: `git restore` deletes an untracked file or directory in its path.
+ * Never an unstage: for a staged add it drops the only copy of the content.
+ */
+async function stagedThenDeletedProblem(
+  chtCorePath: string,
+  relPath: string,
+  blocker: Blocker | null,
+  saved: SavedPaths,
+): Promise<string> {
+  if (blocker) return blockedStagedFileText(relPath, blocker, saved);
+  const head = stagedThenDeletedHead(relPath);
+  const stat = await fs.lstat(path.join(chtCorePath, relPath)).catch(() => null);
+  if (stat) {
+    const type = entryTypeWord(stat);
+    return `${head}, and a ${type} is at its path now, so git stash cannot put it back. Move that ${type} away.`;
+  }
+  const restore = `git -C ${shellQuote(chtCorePath)} restore -- ${shellQuote(toLiteralPathspec(relPath))}`;
+  return `${head}, and git stash would put the staged file back on disk. Commit it, or put the file back with: ${restore}`;
+}
+
+function stagedThenDeletedHead(relPath: string): string {
+  return `${JSON.stringify(relPath)} is staged but deleted from the working tree`;
+}
+
+/** Move the blocker, never a restore; a staged link gets the B2 text, since moving it loops. */
+function blockedStagedFileText(relPath: string, blocker: Blocker, saved: SavedPaths): string {
+  if (blocker.stat.isSymbolicLink() && saved.staged.has(blocker.relPath)) {
+    return symlinkBlockerText(relPath, blocker.relPath, true);
+  }
+  const quoted = JSON.stringify(blocker.relPath);
+  return `${stagedThenDeletedHead(relPath)}, and the ${entryTypeWord(blocker.stat)} ${quoted} is where its ` +
+    `directory was, so git stash cannot put it back. Move ${quoted} away.`;
 }
 
 /** The text for a candidate whose own path is on disk. */

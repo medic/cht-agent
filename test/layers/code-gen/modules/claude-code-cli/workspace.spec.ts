@@ -674,6 +674,39 @@ describe('workspace.ts', () => {
         expect(text).to.not.include('deleted in the index');
       });
 
+      it('refuses a staged add whose file is deleted, and prints a restore, not an unstage', async () => {
+        const { thrown, text, calls } = await snapshotWith('AD n.txt\0', lstatBy({}));
+        expect(thrown?.kind).to.equal('precondition');
+        expect(text).to.include('"n.txt" is staged but deleted from the working tree');
+        expect(text).to.include("put the file back with: git -C '/tmp/cht-core' restore -- ':(literal)n.txt'");
+        expect(text).to.not.include('--staged');
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(false);
+      });
+
+      it('refuses the target of a staged rename or copy whose file is deleted', async () => {
+        const { thrown } = await snapshotWith('RD b.txt\0a.txt\0CD c.txt\0a.txt\0', lstatBy({}));
+        expect(thrown?.kind).to.equal('precondition');
+        const listed = (thrown?.lines ?? []).filter(l => l.startsWith('  - '));
+        expect(listed).to.have.length(2);
+        expect(listed[0]).to.include('"b.txt" is staged but deleted from the working tree');
+        expect(listed[1]).to.include('"c.txt" is staged but deleted from the working tree');
+      });
+
+      it('prints no restore command when something is in the way of the staged file', async () => {
+        const lstat = lstatBy({ '/tmp/cht-core/p': 'file', '/tmp/cht-core/m.txt': 'dir' });
+        const { thrown, text } = await snapshotWith('AD p/n.txt\0AD m.txt\0', lstat);
+        expect(thrown?.kind).to.equal('precondition');
+        expect(text).to.include('the file "p" is where its directory was, so git stash cannot put it back. Move "p" away.');
+        expect(text).to.include('a directory is at its path now, so git stash cannot put it back. Move that directory away.');
+        expect(text).to.not.include('restore');
+      });
+
+      it('does not refuse a staged modify whose file is deleted (MD round-trips)', async () => {
+        const { thrown, calls } = await snapshotWith('MD m.txt\0', lstatBy({}));
+        expect(thrown?.kind).to.not.equal('precondition');
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(true);
+      });
+
       it('says "directory" for a rename source that is now a directory', async () => {
         const { thrown, text } = await snapshotWith('R  b.txt\0a.txt\0', lstatBy({ '/tmp/cht-core/a.txt': 'dir' }));
         expect(thrown?.kind).to.equal('precondition');
