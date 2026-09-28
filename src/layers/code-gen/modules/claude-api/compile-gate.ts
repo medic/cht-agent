@@ -19,11 +19,9 @@ import { compileCheck, CompileValidationResult } from '../../../../agents/compil
 import {
   snapshotChtCore,
   rollbackChtCore,
-  rollbackHaltError,
-  rollbackWarnings,
+  settleRollback,
   reportSafetyError,
   ChtCoreSnapshot,
-  RollbackResult,
   WorkspaceSafetyError,
 } from '../claude-code-cli/workspace';
 
@@ -150,28 +148,6 @@ async function runCompileDefensive(chtCorePath: string): Promise<CompileValidati
 }
 
 /**
- * Act on the rollback result. Throws ONLY when the hard reset or the stash
- * restore failed (the operator's work is still in the stash and the run must
- * halt; the throw is a halt error, so the supervisor does not retry it); a
- * clean failure is logged but not fatal. Mirrors the claude-code-cli policy.
- */
-function handleApiRollbackOutcome(
-  rollback: RollbackResult,
-  snapshot: ChtCoreSnapshot,
-  chtCorePath: string,
-): void {
-  const anyFailed =
-    rollback.reset === 'failed' || rollback.clean === 'failed' || rollback.stashPop === 'failed';
-  if (!anyFailed) return;
-
-  console.error(`${LOG} ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:`);
-  for (const e of rollback.errors) console.error(`${LOG}   - ${e}`);
-
-  const halt = rollbackHaltError('claude-api compile gate', chtCorePath, snapshot, rollback);
-  if (halt) throw halt;
-}
-
-/**
  * A failed snapshot leaves nothing for the gate to roll back. A `precondition`
  * refusal (nothing was changed) or a plain error only skips the compile gate.
  * A `stash`, `drift` or `reset` stop halts the run, because the operator's tree
@@ -194,8 +170,7 @@ function snapshotFailure(err: unknown): CompileValidationResult {
 async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
   try {
     const rollback = await rollbackChtCore(chtCorePath, snapshot);
-    handleApiRollbackOutcome(rollback, snapshot, chtCorePath);
-    return rollbackWarnings(rollback);
+    return settleRollback(rollback, { logPrefix: LOG, label: 'claude-api compile gate', chtCorePath, snapshot });
   } catch (err) {
     reportSafetyError(err, LOG);
     throw err;

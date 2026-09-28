@@ -36,11 +36,9 @@ import {
   snapshotChtCore,
   captureChtCoreDiff,
   rollbackChtCore,
-  rollbackHaltError,
-  rollbackWarnings,
+  settleRollback,
   reportSafetyError,
   ChtCoreSnapshot,
-  RollbackResult,
   WorkspaceSafetyError,
 } from './workspace';
 import { validateClaudeCLI } from '../../../../llm';
@@ -341,8 +339,7 @@ async function rollBackAfterWork(
 ): Promise<string[]> {
   try {
     const rollback = await rollbackChtCore(chtCorePath, snapshot);
-    handleRollbackOutcome(rollback, snapshot, chtCorePath);
-    return rollbackWarnings(rollback);
+    return settleRollback(rollback, { logPrefix: LOG, label: 'claude-code-cli', chtCorePath, snapshot });
   } catch (err) {
     reportSafetyError(err, LOG);
     throw withCause(err, workError);
@@ -373,31 +370,6 @@ function reportUnchainedWorkError(workError: unknown): void {
   if (workError instanceof WorkspaceSafetyError) return;
   const text = workError instanceof Error ? workError.message : String(workError);
   console.error(`${LOG} The session failed before the rollback: ${text}`);
-}
-
-/**
- * Inspect the rollback result and surface failures.
- *  - reset or stash restore failed → throw a halt error carrying the recovery
- *    checklist; the operator's work is still in the stash.
- *  - clean failed → log warnings; do not throw.
- *  - all ok → silent.
- */
-function handleRollbackOutcome(
-  rollback: RollbackResult,
-  snapshot: ChtCoreSnapshot,
-  chtCorePath: string,
-): void {
-  const anyFailed =
-    rollback.reset === 'failed' ||
-    rollback.clean === 'failed' ||
-    rollback.stashPop === 'failed';
-  if (!anyFailed) return;
-
-  console.error(`${LOG} ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:`);
-  for (const e of rollback.errors) console.error(`${LOG}   - ${e}`);
-
-  const halt = rollbackHaltError('claude-code-cli', chtCorePath, snapshot, rollback);
-  if (halt) throw halt;
 }
 
 /**

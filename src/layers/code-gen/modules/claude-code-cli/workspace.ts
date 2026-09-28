@@ -39,7 +39,7 @@ const execFileAsync = promisify(execFile);
  *  - drift: the repo changed under the session, so rollback did nothing;
  *  - reset: rollback could not reset the tree, so it left the stash in place.
  */
-export type WorkspaceSafetyKind = 'precondition' | 'stash' | 'drift' | 'reset';
+type WorkspaceSafetyKind = 'precondition' | 'stash' | 'drift' | 'reset';
 
 /**
  * A stop that must end the run. `lines` are the operator instructions; the
@@ -75,7 +75,7 @@ export function reportSafetyError(err: unknown, logPrefix: string): void {
  * One POSIX shell word. Paths printed inside copy-paste commands come from the
  * session (so from the LLM), and a bare `'` or `;` in one must not break out.
  */
-export function shellQuote(word: string): string {
+function shellQuote(word: string): string {
   const escaped = word.replaceAll("'", String.raw`'\''`);
   return `'${escaped}'`;
 }
@@ -573,10 +573,7 @@ async function stashLeftovers(chtCorePath: string, prePush: readonly string[]): 
   const { stdout } = await runGit(
     ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none'], chtCorePath,
   );
-  const survivors: string[] = [];
-  for (const relPath of prePush.filter(p => !p.endsWith('/'))) {
-    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) survivors.push(relPath);
-  }
+  const survivors = await pathsWhere(chtCorePath, prePush.filter(p => !p.endsWith('/')), isOnDisk);
   return [...statusZPaths(stdout), ...survivors];
 }
 
@@ -866,10 +863,7 @@ async function restoreFromStash(chtCorePath: string, sha: string): Promise<void>
   await restorePaths(chtCorePath, sha, '--worktree', worktree);
   const index = await zPaths(chtCorePath, ['diff', '--cached', '--name-only', '--no-renames', '-z', `${sha}^2`, '--']);
   await restorePaths(chtCorePath, `${sha}^2`, '--staged', index);
-  const missing: string[] = [];
-  for (const relPath of await stashUntrackedPaths(chtCorePath, sha)) {
-    if (await pathIsRemoved(path.join(chtCorePath, relPath))) missing.push(relPath);
-  }
+  const missing = await pathsWhere(chtCorePath, await stashUntrackedPaths(chtCorePath, sha), pathIsRemoved);
   await restorePaths(chtCorePath, `${sha}^3`, '--worktree', missing);
 }
 
@@ -913,11 +907,7 @@ async function deletedPathsOnDisk(chtCorePath: string, sha: string): Promise<str
     ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${sha}^1`, sha]),
     ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${sha}^1`, `${sha}^2`]),
   ]);
-  const onDisk: string[] = [];
-  for (const relPath of deleted) {
-    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
-  }
-  return onDisk;
+  return pathsWhere(chtCorePath, deleted, isOnDisk);
 }
 
 async function untrackedEntriesNotRestored(chtCorePath: string, sha: string): Promise<string[]> {
@@ -967,21 +957,16 @@ async function undoFailedError(
   outcome: UndoOutcome,
 ): Promise<WorkspaceSafetyError> {
   const differing = outcome.differing ?? [];
-  const onDisk = await stashUntrackedOnDisk(chtCorePath, stash.sha);
-  const steps = [
-    await permissionCauseStep(chtCorePath, trigger.gitText, [...trigger.pathsInPlay, ...differing], 'run the steps below'),
-    `git -C ${shellQuote(chtCorePath)} reset --hard ${headSha}`,
-  ];
-  if (onDisk.length > 0) steps.push(literalCleanCommand(chtCorePath, onDisk));
-  steps.push(...recoveryHintSteps(chtCorePath, stash.name));
+  const onDisk = await stashUntrackedOnDisk(chtCorePath, stash.sha).catch((): string[] => []);
+  const cause = await permissionCauseStep(
+    chtCorePath, trigger.gitText, [...trigger.pathsInPlay, ...differing], 'run the steps below',
+  );
   const lines = [
     `${trigger.summary} cht-agent could not fully put your work back. Your work is still in stash ${stash.name}.`,
     ...undoErrorLines(outcome),
     ...pathListLines('These paths do not match what the stash holds (cht-agent did not delete any of them):', differing),
     ...(differing.length > 0 ? ['The rest of your work is already back in the working tree.'] : []),
-    'To recover, run these steps in this order:',
-    ...steps.map((step, i) => `  ${i + 1}. ${step}`),
-    RESTORE_WITHOUT_INDEX_NOTE,
+    ...recoveryStepLines(chtCorePath, { cause, headSha, remove: onDisk, stashName: stash.name }),
   ];
   return new WorkspaceSafetyError('stash', lines[0], { lines, cause: trigger.cause ?? outcome.restoreError });
 }
@@ -1005,11 +990,7 @@ function undoErrorLines(outcome: UndoOutcome): string[] {
 
 /** The untracked files that the stash saved and that are on disk now (they block a restore). */
 async function stashUntrackedOnDisk(chtCorePath: string, stashSha: string): Promise<string[]> {
-  const onDisk: string[] = [];
-  for (const relPath of await stashUntrackedPaths(chtCorePath, stashSha).catch(() => [])) {
-    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
-  }
-  return onDisk;
+  return pathsWhere(chtCorePath, await stashUntrackedPaths(chtCorePath, stashSha), isOnDisk);
 }
 
 /**
@@ -1367,11 +1348,20 @@ async function computeCleanDelta(
  * or gitfile dir, which `git clean -fd` never removes) always survives.
  */
 async function pathsStillOnDisk(chtCorePath: string, deltaPaths: readonly string[]): Promise<string[]> {
-  const survivors: string[] = [];
-  for (const relPath of deltaPaths) {
-    if (relPath.endsWith('/') || !(await pathIsRemoved(path.join(chtCorePath, relPath)))) survivors.push(relPath);
+  return pathsWhere(chtCorePath, deltaPaths, survivesClean);
+}
+
+/** The paths below chtCorePath for which `test` holds, in input order. */
+async function pathsWhere(
+  chtCorePath: string,
+  relPaths: Iterable<string>,
+  test: (fullPath: string) => Promise<boolean>,
+): Promise<string[]> {
+  const found: string[] = [];
+  for (const relPath of relPaths) {
+    if (await test(path.join(chtCorePath, relPath))) found.push(relPath);
   }
-  return survivors;
+  return found;
 }
 
 /** ENOENT means removed; anything still stat-able, or any other errno, does not. */
@@ -1382,6 +1372,15 @@ async function pathIsRemoved(fullPath: string): Promise<boolean> {
   } catch (err) {
     return (err as NodeJS.ErrnoException)?.code === 'ENOENT';
   }
+}
+
+async function isOnDisk(fullPath: string): Promise<boolean> {
+  return !(await pathIsRemoved(fullPath));
+}
+
+/** `path.join` keeps the trailing `/` of a dir entry, which `git clean -fd` never removes. */
+async function survivesClean(fullPath: string): Promise<boolean> {
+  return fullPath.endsWith('/') || isOnDisk(fullPath);
 }
 
 /**
@@ -1576,7 +1575,7 @@ async function headDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promis
   if (!moved) return null;
   return [
     moved,
-    ...stashKeptLines(chtCorePath, snapshot),
+    ...stashKeptLines(snapshot, chtCorePath),
     ...(await sessionStateLines(chtCorePath, snapshot)),
   ];
 }
@@ -1621,11 +1620,12 @@ async function stashDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promi
   ];
 }
 
-function stashKeptLines(chtCorePath: string, snapshot: ChtCoreSnapshot): string[] {
+/** Where the work is when rollback did not restore it, with the recovery hint when `hintPath` is given. */
+function stashKeptLines(snapshot: ChtCoreSnapshot, hintPath?: string): string[] {
   if (!snapshot.stashName) return [];
   return [
     `Your uncommitted work is still in stash ${snapshot.stashName}. It was NOT restored.`,
-    ...recoveryHintLines(chtCorePath, snapshot.stashName),
+    ...(hintPath ? recoveryHintLines(hintPath, snapshot.stashName) : []),
   ];
 }
 
@@ -1882,10 +1882,7 @@ async function recordPopFailure(
 /** Tracked paths whose content differs from the stash, plus its untracked files already on disk. */
 async function stashBlockingPaths(chtCorePath: string, stashSha: string): Promise<string[]> {
   const { stdout } = await runGit(['diff', '--name-only', '--no-renames', '-z', stashSha, '--'], chtCorePath);
-  const onDisk: string[] = [];
-  for (const relPath of await stashUntrackedPaths(chtCorePath, stashSha)) {
-    if (!(await pathIsRemoved(path.join(chtCorePath, relPath)))) onDisk.push(relPath);
-  }
+  const onDisk = await stashUntrackedOnDisk(chtCorePath, stashSha);
   return [...new Set([...stdout.split('\0').filter(Boolean), ...onDisk])];
 }
 
@@ -1948,6 +1945,34 @@ function rollbackHaltKind(rollback: RollbackResult): 'reset' | 'stash' | null {
   return null;
 }
 
+/** Who settles a rollback: the prefix and label for its lines, and what it rolled back. */
+export interface RollbackCaller {
+  logPrefix: string;
+  label: string;
+  chtCorePath: string;
+  snapshot: ChtCoreSnapshot;
+}
+
+/**
+ * Act on a rollback result for its caller. An incomplete rollback prints its
+ * errors under the caller's prefix. A failed reset or restore prints its
+ * checklist once and throws the halt; otherwise this returns the non-fatal
+ * warnings (a failed clean). It takes the result and never rolls back itself.
+ */
+export function settleRollback(rollback: RollbackResult, caller: RollbackCaller): string[] {
+  reportIncompleteRollback(rollback, caller.logPrefix);
+  const halt = rollbackHaltError(caller.label, caller.chtCorePath, caller.snapshot, rollback);
+  if (!halt) return rollbackWarnings(rollback);
+  reportSafetyError(halt, caller.logPrefix);
+  throw halt;
+}
+
+function reportIncompleteRollback(rollback: RollbackResult, logPrefix: string): void {
+  if (rollback.reset !== 'failed' && rollback.clean !== 'failed' && rollback.stashPop !== 'failed') return;
+  console.error(`${logPrefix} ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:`);
+  for (const e of rollback.errors) console.error(`${logPrefix}   - ${e}`);
+}
+
 /**
  * The safe order after a failed restore. The reset and the removal are safe
  * because the stash entry was not touched: it still holds all of the work that
@@ -1960,20 +1985,17 @@ function popFailureChecklist(
 ): string[] {
   const residue = rollback.popResidue ?? [];
   const survivors = rollback.survivors ?? [];
-  const steps = [
-    popCauseStep(rollback),
-    `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`,
-    ...removalSteps(chtCorePath, [...residue, ...survivors]),
-    ...recoveryHintSteps(chtCorePath, String(snapshot.stashName)),
-  ];
   return [
     `Rollback could not restore your work: git stash apply --index failed. Your work is still in stash ${snapshot.stashName}.`,
     ...pathListLines('Paths that block the restore:', rollback.popBlockers),
     ...pathListLines('Untracked files the failed restore wrote (the stash also holds them):', residue),
     ...pathListLines('Session files the clean could not remove:', survivors),
-    'To recover, run these steps in this order:',
-    ...steps.map((step, i) => `  ${i + 1}. ${step}`),
-    RESTORE_WITHOUT_INDEX_NOTE,
+    ...recoveryStepLines(chtCorePath, {
+      cause: popCauseStep(rollback),
+      headSha: snapshot.headSha,
+      remove: [...residue, ...survivors],
+      stashName: snapshot.stashName,
+    }),
   ];
 }
 
@@ -1991,27 +2013,19 @@ function resetFailureChecklist(
   rollback: RollbackResult,
 ): string[] {
   const survivors = rollback.survivors ?? [];
-  const steps = [
-    resetCauseStep(rollback),
-    `git -C ${shellQuote(chtCorePath)} reset --hard ${snapshot.headSha}`,
-    ...removalSteps(chtCorePath, survivors),
-  ];
-  if (snapshot.stashName) steps.push(...recoveryHintSteps(chtCorePath, snapshot.stashName));
   return [
     'Rollback stopped: git reset --hard failed, so cht-agent did not clean or restore anything.',
-    ...stashStillHeldLines(snapshot),
+    ...stashKeptLines(snapshot),
     ...pathListLines('Tracked files that still hold session edits:', rollback.sessionEdits),
     ...pathListLines('Session files still on disk:', survivors),
-    'To recover, run these steps in this order:',
-    ...steps.map((step, i) => `  ${i + 1}. ${step}`),
-    ...(snapshot.stashName ? [RESTORE_WITHOUT_INDEX_NOTE] : []),
+    ...recoveryStepLines(chtCorePath, {
+      cause: resetCauseStep(rollback),
+      headSha: snapshot.headSha,
+      remove: survivors,
+      stashName: snapshot.stashName,
+    }),
     'Run cht-agent again only after your working tree is back to your own state.',
   ];
-}
-
-function stashStillHeldLines(snapshot: ChtCoreSnapshot): string[] {
-  if (!snapshot.stashName) return [];
-  return [`Your uncommitted work is still in stash ${snapshot.stashName}. It was NOT restored.`];
 }
 
 function resetCauseStep(rollback: RollbackResult): string {
@@ -2021,6 +2035,32 @@ function resetCauseStep(rollback: RollbackResult): string {
 function pathListLines(heading: string, paths: readonly string[] | undefined): string[] {
   if (!paths || paths.length === 0) return [];
   return [heading, ...paths.map(p => `  - ${JSON.stringify(p)}`)];
+}
+
+/** What a manual recovery must do: fix the cause, reset to `headSha`, remove `remove`, restore the stash. */
+interface RecoveryPlan {
+  cause: string;
+  headSha: string;
+  remove: readonly string[];
+  stashName: string | null;
+}
+
+/**
+ * The numbered recovery steps, in the only safe order: the reset and the
+ * removal come before the restore, because the stash still holds the work.
+ */
+function recoveryStepLines(chtCorePath: string, plan: RecoveryPlan): string[] {
+  const steps = [
+    plan.cause,
+    `git -C ${shellQuote(chtCorePath)} reset --hard ${plan.headSha}`,
+    ...removalSteps(chtCorePath, plan.remove),
+    ...(plan.stashName ? recoveryHintSteps(chtCorePath, plan.stashName) : []),
+  ];
+  return [
+    'To recover, run these steps in this order:',
+    ...steps.map((step, i) => `  ${i + 1}. ${step}`),
+    ...(plan.stashName ? [RESTORE_WITHOUT_INDEX_NOTE] : []),
+  ];
 }
 
 /**
