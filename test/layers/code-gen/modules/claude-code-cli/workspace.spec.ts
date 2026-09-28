@@ -586,6 +586,32 @@ describe('workspace.ts', () => {
       expect(listed).to.deep.equal(['  - "new.txt"', '  - "old.txt"']);
     });
 
+    it('does not count a pre-push untracked file as left behind when its path is now a directory', async () => {
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain=v1': { stdout: '' },
+        'git status --porcelain': { stdout: ' D d/b.txt\n?? d\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -z': STASH_CREATED,
+        // Before the push `d` is an untracked file; the push's reset puts the tracked dir `d/` back.
+        'git ls-files --others --exclude-standard -z': [{ stdout: 'd\0' }, { stdout: '' }],
+      }, {
+        lstat: sinon.stub().callsFake(async (p: string) => {
+          if (p === '/tmp/cht-core/d') return { isDirectory: () => true };
+          throw errno('ENOENT');
+        }),
+      }, calls);
+      let thrown: unknown;
+      const snap = await ws.snapshotChtCore('/tmp/cht-core').catch((err: unknown) => {
+        thrown = err;
+        return undefined;
+      });
+      expect(thrown).to.be.undefined;
+      expect(snap?.stashSha).to.equal(OUR_SHA);
+      expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+    });
+
     it('refuses to run if cht-core has unmerged paths', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
@@ -1337,6 +1363,29 @@ describe('workspace.ts', () => {
         });
         expect(err?.kind).to.equal('stash');
         expect(warned).to.include(`[claude-code-cli] Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
+      });
+
+      /** The stash deletes `d/b.txt`; lstat of it fails with `code`, and every other path is gone. */
+      const deletedPathLstat = (code: string) => ({
+        lstat: sinon.stub().callsFake(async (p: string) => {
+          throw errno(p === '/tmp/cht-core/d/b.txt' ? code : 'ENOENT');
+        }),
+      });
+      const STASH_DELETES_D_B = {
+        [`git diff --name-only --no-renames --diff-filter=D -z ${OUR_SHA}^1 ${OUR_SHA}`]: { stdout: 'd/b.txt\0' },
+      };
+
+      it('counts a deleted path as absent when a dir above it is now a file (ENOTDIR)', async () => {
+        const { calls, text } = await partialPush(STASH_DELETES_D_B, deletedPathLstat('ENOTDIR'));
+        expect(calls).to.include('git stash drop stash@{0}');
+        expect(text).to.not.include('could not fully put your work back');
+      });
+
+      it('still counts a deleted path as on disk after any other lstat error', async () => {
+        const { calls, text } = await partialPush(STASH_DELETES_D_B, deletedPathLstat('EACCES'));
+        expect(text).to.include('could not fully put your work back');
+        expect(text).to.include('  - "d/b.txt"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
       });
     });
 

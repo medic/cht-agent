@@ -573,8 +573,22 @@ async function stashLeftovers(chtCorePath: string, prePush: readonly string[]): 
   const { stdout } = await runGit(
     ['status', '--porcelain=v1', '-z', '--untracked-files=no', '--ignore-submodules=none'], chtCorePath,
   );
-  const survivors = await pathsWhere(chtCorePath, prePush.filter(p => !p.endsWith('/')), isOnDisk);
+  const survivors = await pathsWhere(chtCorePath, prePush.filter(p => !p.endsWith('/')), prePushFileSurvives);
   return [...statusZPaths(stdout), ...survivors];
+}
+
+/**
+ * A pre-push untracked file that the push did not take. A directory at its
+ * path is never that file: the push's reset put a tracked directory back there
+ * (a tracked dir that the operator replaced with a file). Any lstat error other
+ * than ENOENT counts as still there.
+ */
+async function prePushFileSurvives(fullPath: string): Promise<boolean> {
+  try {
+    return !(await fs.lstat(fullPath)).isDirectory();
+  } catch (err) {
+    return (err as NodeJS.ErrnoException)?.code !== 'ENOENT';
+  }
 }
 
 interface StatusEntry {
@@ -907,7 +921,21 @@ async function deletedPathsOnDisk(chtCorePath: string, sha: string): Promise<str
     ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${sha}^1`, sha]),
     ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--diff-filter=D', '-z', `${sha}^1`, `${sha}^2`]),
   ]);
-  return pathsWhere(chtCorePath, deleted, isOnDisk);
+  return pathsWhere(chtCorePath, deleted, deletedPathOnDisk);
+}
+
+/**
+ * ENOENT and ENOTDIR both mean the deleted path is absent: after the undo of a
+ * tracked dir that the operator replaced with a file, `d/b.txt` gives ENOTDIR.
+ * Success, or any other errno, means on disk.
+ */
+async function deletedPathOnDisk(fullPath: string): Promise<boolean> {
+  try {
+    await fs.lstat(fullPath);
+    return true;
+  } catch (err) {
+    return !['ENOENT', 'ENOTDIR'].includes(String((err as NodeJS.ErrnoException)?.code));
+  }
 }
 
 async function untrackedEntriesNotRestored(chtCorePath: string, sha: string): Promise<string[]> {

@@ -10,6 +10,7 @@ import {
   rollbackChtCore,
   buildRecoveryChecklist,
   STASH_MARKER_PREFIX,
+  ChtCoreSnapshot,
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const execFileAsync = promisify(execFile);
@@ -1006,6 +1007,30 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(await ourStashes()).to.deep.equal([]);
     });
 
+    it('puts a tracked dir that is now a file back, and names only what the push left, on a partial push', async function () {
+      skipAsRoot(this);
+      await commitFile('d/b.txt', 'b\n');
+      await fs.rm(path.join(repo, 'd'), { recursive: true });
+      await write('d', 'a file where the tracked dir was\n');
+      await fs.mkdir(path.join(repo, 'ro'));
+      await write('ro/u.txt', 'untracked in a read-only dir\n');
+      const before = await treeState();
+
+      let err: { kind?: string; lines?: string[] } | undefined;
+      await withReadOnlyDir('ro', async () => {
+        err = await rejection(() => snapshotChtCore(repo));
+      });
+
+      expect(err?.kind).to.equal('stash');
+      const lines = err?.lines ?? [];
+      expect(lines[0]).to.include('git stash did not clear these paths');
+      expect(lines).to.include('  - "ro/u.txt"');
+      expect(lines).to.not.include('  - "d"');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await read('d')).to.equal('a file where the tracked dir was\n');
+      expect(await ourStashes()).to.deep.equal([]);
+    });
+
     it('catches an untracked file the push could not remove even with no tracked work', async function () {
       skipAsRoot(this);
       await fs.mkdir(path.join(repo, 'ro'));
@@ -1269,6 +1294,28 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       await write('b.txt/inner.txt', 'inside the new dir\n');
       await expectRefusedUnchanged('"b.txt" is a tracked file whose path is now a directory');
     });
+
+    /** The snapshot, or a failed assert that names why it rejected. */
+    const snapshotOrFail = (): Promise<ChtCoreSnapshot> =>
+      snapshotChtCore(repo).catch((err: Error) => expect.fail(`the snapshot rejected: ${err.message}`));
+
+    for (const [suffix, withTrackedWork] of [['', false], [' next to tracked work', true]] as Array<[string, boolean]>) {
+      it(`runs a full cycle when a tracked directory is now an untracked file${suffix}`, async () => {
+        await commitFile('d/b.txt', 'b\n');
+        await fs.rm(path.join(repo, 'd'), { recursive: true });
+        await write('d', 'a file where the tracked dir was\n');
+        if (withTrackedWork) await write('tracked.txt', 'operator work in progress\n');
+        const before = await treeState();
+        const snapshot = await snapshotOrFail();
+        await write('session.ts', 'export const s = 1;\n');
+        const rollback = await rollbackChtCore(repo, snapshot);
+        expect(rollback.stashPop).to.equal('ok');
+        expect(await treeState()).to.deep.equal(before);
+        expect(await read('d')).to.equal('a file where the tracked dir was\n');
+        const { stdout: stashes } = await git('stash', 'list');
+        expect(stashes).to.not.include(STASH_MARKER_PREFIX);
+      });
+    }
 
     for (const [label, setUp] of [
       ['a plain staged rename', async () => {
