@@ -118,8 +118,10 @@ const STRIPPED_GIT_ENV = [
 
 /**
  * Config that stops a repo-local `core.fsmonitor` or hook from running a program
- * inside our git calls. Passed through the env, not `-c`, so the argv (and every
- * spec stub keyed on it) stays unchanged; git treats both forms the same.
+ * inside our git calls. One builder hardens every call, through the env, not
+ * `-c`. Both forms reach the git programs that git runs. The env form keeps our
+ * argv, so every node 'Command failed: git <argv>' message shows the command as
+ * the operator would type it. The env form needs git 2.31 or later.
  */
 const HARDENED_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
   ['core.fsmonitor', 'false'],
@@ -287,9 +289,7 @@ export interface ChtCoreSnapshot {
   stashName: string | null;
   /**
    * Untracked paths present immediately AFTER the stash, i.e. the files that were
-   * already in the operator's working tree and are NOT ours. Capture and rollback
-   * both work against this baseline so the cycle reasons about a session DELTA
-   * rather than absolute repo state.
+   * already in the operator's working tree and are NOT ours.
    *
    * Entries include the paths that were IGNORED at snapshot time, so a session
    * that changes an ignore rule cannot turn an operator file into session output.
@@ -727,7 +727,6 @@ interface RoundTripCandidate {
  * nothing. `prePush` is the untracked listing, which the stash saves.
  */
 async function assertStashCanRoundTrip(chtCorePath: string, prePush: readonly string[]): Promise<void> {
-  // `--porcelain` is the v1 format; this argv stays apart from the post-push read.
   const { stdout } = await readBeforeStash('the staged and unstaged changes', () => runGit(
     ['status', '-z', '--porcelain', '--untracked-files=no', '--ignore-submodules=all'], chtCorePath,
   ));
@@ -1439,8 +1438,7 @@ function assertBaseline(
  *
  * Untracked files are attributed to the session only when they are NOT in
  * `baselineUntracked` (the post-stash snapshot of the operator's own untracked
- * files). Without that subtraction, pre-existing files are reported as
- * session-generated and an HC2 approve would write them back into cht-core.
+ * files).
  */
 export async function captureChtCoreDiff(
   chtCorePath: string,
@@ -1521,8 +1519,7 @@ function parseDiffNameStatusZ(nameList: string): DiffEntry[] {
   let i = 0;
   while (i < tokens.length) {
     const code = tokens[i].charAt(0);
-    // For R/C the NEW path is the one on disk now (matches the previous
-    // `parts.at(-1)` semantics).
+    // R and C carry OLD then NEW; the NEW path is the one on disk now.
     const pathCount = pathTokenCount(code);
     const entry = diffEntryFor(code, tokens[i + pathCount]);
     i += pathCount + 1;
@@ -1637,8 +1634,7 @@ function toLiteralPathspec(relPath: string): string {
 /**
  * Untracked paths that appeared DURING the session: everything untracked now
  * minus the operator's post-stash baseline. Only these may be deleted on
- * rollback. A blanket `git clean -fd` would also delete pre-existing untracked
- * files that the stash never captured, which is unrecoverable.
+ * rollback.
  */
 async function computeCleanDelta(
   chtCorePath: string,
@@ -1786,7 +1782,7 @@ export function rollbackWarnings(rollback: RollbackResult): string[] {
  * succeeded does not generate a misleading warning. Returns a typed result the
  * caller turns into a halt (failed reset or restore) or warnings (failed clean).
  *
- * Residuals: the full list is on #140. The two that operators will hit:
+ * Residuals: the full list is in the description of PR #149. The two that operators will hit:
  *  - OVERWRITE: if the session overwrites a file that was untracked or ignored
  *    at snapshot, capture excludes it and rollback cannot restore its prior
  *    content, because it was never in the stash. The file keeps the session's
