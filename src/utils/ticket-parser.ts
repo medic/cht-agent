@@ -155,7 +155,7 @@ const validateMetadata = (metadata: Record<string, string>) => {
   }
   if (!metadata.domain) {
     throw new Error(
-      'Ticket must have a "domain" in frontmatter (authentication|contacts|forms-and-reports|tasks-and-targets|messaging|data-sync|configuration|interoperability)'
+      `Ticket must have a "domain" in frontmatter (${VALID_DOMAINS.join('|')})`
     );
   }
 };

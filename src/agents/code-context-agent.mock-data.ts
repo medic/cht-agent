@@ -8,7 +8,7 @@ export type MockCodeContextData = {
 
 type MockCodeContextDataset = {
   secondaryRepos: Record<string, MockCodeContextData>;
-  domains: Record<CHTDomain, MockCodeContextData>;
+  domains: Partial<Record<CHTDomain, MockCodeContextData>>;
 };
 
 const rawMockCodeContextData = String.raw`{

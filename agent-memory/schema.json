@@ -16,7 +16,8 @@
         "data-sync",
         "configuration",
         "interoperability",
-        "infrastructure"
+        "infrastructure",
+        "data-access"
       ],
       "description": "One of the functional domains in CHT"
     },
@@ -71,6 +72,13 @@
           "type": "string",
           "enum": ["strong", "weak"],
           "description": "Whether the chosen domain is a principled match (strong) or a forced least-bad pick (weak)"
+        },
+        "secondaryDomains": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CHTDomain" },
+          "uniqueItems": true,
+          "minItems": 1,
+          "description": "Additional domains this memory is also relevant to, ranked below the primary `domain`. To be human-set on the cht-datasource cluster (annotations pending); not auto-emitted by the distiller. Must not include the primary `domain` itself — draft-07 cannot express that, so validate-schema enforces it. NB retrieval selects candidates by primary-domain directory (see #135), so a secondary domain does not surface a memory until candidate selection reads this field."
         },
         "subDomain": {
           "type": "string",
@@ -137,6 +145,15 @@
           "type": "string",
           "pattern": "^medic/(cht-core|cht-interoperability)#[1-9][0-9]*$",
           "description": "Source PR reference, format: medic/<repo>#<number>"
+        },
+        "source_prs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^medic/(cht-core|cht-interoperability)#[1-9][0-9]*$"
+          },
+          "minItems": 1,
+          "description": "All PR refs that resolve to this issue (backport cherry-picks, multi-PR epics), set by the dedup pass when more than one draft collapsed into this one. source_pr remains the canonical PR."
         },
         "source_sha": {
           "type": "string",

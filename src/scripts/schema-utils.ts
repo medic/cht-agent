@@ -51,3 +51,17 @@ export function hasFrontmatter(content: string): boolean {
   const s = content.replace(/^\uFEFF/, '');
   return s.startsWith('---\n') || s.startsWith('---\r\n');
 }
+
+/**
+ * Cross-field rules draft-07 cannot express, in the same printable shape as
+ * formatted AJV errors. Currently one rule: `secondaryDomains` must not
+ * include the primary `domain`, or union selection would double-surface the
+ * memory once candidate selection reads the field.
+ */
+export function crossFieldErrors(data: Record<string, unknown>): string[] {
+  const { domain, secondaryDomains } = data;
+  if (typeof domain === 'string' && Array.isArray(secondaryDomains) && secondaryDomains.includes(domain)) {
+    return [`  field="secondaryDomains" must not include the primary domain ("${domain}")`];
+  }
+  return [];
+}

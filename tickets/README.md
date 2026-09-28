@@ -62,7 +62,7 @@ Detailed description of what needs to be done and why...
 - **title** — Short title of the ticket
 - **type** — One of `feature`, `bug`, or `improvement`
 - **priority** — One of `high`, `medium`, or `low`
-- **domain** — One of the eight CHT domains (see below)
+- **domain** — One of the CHT domains (see below)
 
 **Optional:**
 
@@ -100,6 +100,8 @@ The `domain` frontmatter value must be exactly one of:
 6. **data-sync** — Replication, offline-first, conflict resolution
 7. **configuration** — App configuration, settings
 8. **interoperability** — FHIR, outbound push, mediators, external systems
+9. **infrastructure** — CI, build, release, deploy, upgrade tooling
+10. **data-access** — cht-datasource library: qualifiers, local/remote adapters, backing API controllers
 
 ## Example
 

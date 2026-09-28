@@ -6,7 +6,7 @@ This directory contains the context database for CHT agents. It provides structu
 
 ```
 agent-memory/
-├── domains/                    # 8 functional domain contexts
+├── domains/                    # 10 functional domain contexts
 ├── workflows/                  # Cross-domain process contexts
 ├── infrastructure/             # Cross-cutting concerns
 ├── services/                   # Service-specific deep dives
@@ -15,7 +15,7 @@ agent-memory/
 └── agent-workspaces/           # Agent-specific runtime data (gitignored)
 ```
 
-### Domains (8 Functional Areas)
+### Domains (10 Functional Areas)
 
 | Domain | Description |
 |--------|-------------|
@@ -27,6 +27,8 @@ agent-memory/
 | `data-sync/` | CouchDB replication, offline sync, purging |
 | `configuration/` | App settings, translations, branding, deployment config |
 | `interoperability/` | FHIR resources, OpenHIM mediators, outbound push, DHIS2/OpenMRS integration |
+| `infrastructure/` | CI, build, release, deploy, Docker/Helm/HAProxy, upgrade tooling |
+| `data-access/` | cht-datasource library API — entity modules, local/remote implementations, qualifiers, and the api controllers backing the remote path |
 
 ### Workflows (Cross-Domain Processes)
 

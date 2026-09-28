@@ -17,6 +17,7 @@ export const DEFAULT_MCP_SERVER_URL = 'https://mcp-docs.dev.medicmobile.org/mcp'
 export const CHT_DOMAINS = [
   'authentication', 'contacts', 'forms-and-reports', 'tasks-and-targets',
   'messaging', 'data-sync', 'configuration', 'interoperability', 'infrastructure',
+  'data-access',
 ] as const;
 
 /**

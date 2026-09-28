@@ -79,6 +79,8 @@ Must be exactly one of:
 | `data-sync` | Replication, offline-first, conflicts |
 | `configuration` | App settings, `cht-conf`, configuration |
 | `interoperability` | FHIR, outbound push, mediators, external systems |
+| `infrastructure` | CI, build, release, deploy, Docker/Helm, upgrade tooling |
+| `data-access` | cht-datasource library — qualifiers, local/remote adapters, backing API controllers |
 
 ### `priority`
 

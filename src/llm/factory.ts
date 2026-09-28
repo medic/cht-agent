@@ -74,9 +74,6 @@ export const getAPIConfigFromEnv = (): APIProviderConfig => {
   }
 
   const model = process.env.LLM_MODEL || DEFAULT_MODELS[provider];
-  const temperature = process.env.LLM_TEMPERATURE
-    ? Number.parseFloat(process.env.LLM_TEMPERATURE)
-    : undefined;
   const maxTokens = process.env.LLM_MAX_TOKENS
     ? Number.parseInt(process.env.LLM_MAX_TOKENS, 10)
     : undefined;
@@ -86,7 +83,6 @@ export const getAPIConfigFromEnv = (): APIProviderConfig => {
     provider,
     apiKey,
     model,
-    temperature,
     maxTokens,
   };
 };
@@ -107,9 +103,6 @@ export const getCLIConfigFromEnv = (): CLIProviderConfig => {
       ? Number.parseInt(process.env.CLAUDE_CLI_MAX_TURNS, 10)
       : 20, // CLI needs multiple turns to complete (test files can need 15+ turns)
     model: process.env.LLM_MODEL || 'claude-cli',
-    temperature: process.env.LLM_TEMPERATURE
-      ? Number.parseFloat(process.env.LLM_TEMPERATURE)
-      : undefined,
     maxTokens: process.env.LLM_MAX_TOKENS
       ? Number.parseInt(process.env.LLM_MAX_TOKENS, 10)
       : undefined,

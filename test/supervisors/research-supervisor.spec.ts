@@ -696,3 +696,180 @@ describe('ResearchSupervisor.research (v9b.2) — end-to-end orchestration', () 
   // referencing it here. The original tests imported it as a type.
   void {} as ResolvedIssueContext | undefined;
 });
+
+describe('ResearchSupervisor plan prompt provenance (#156)', () => {
+  const mkCodeContextFindings = (
+    overrides: Partial<CodeContextFindings> = {}
+  ): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
+    confidence: 0.3,
+    source: 'opendeepwiki',
+    ...overrides,
+  });
+
+  const FETCH_FAILED = 'Failed to fetch code context from cht-core';
+
+  const promptFor = async (codeContextFindings?: CodeContextFindings): Promise<string> => {
+    const llm = v9b2mkLLM('### 1. IMPLEMENTATION APPROACH\n- ok\n');
+    const { supervisor } = v9b2buildSupervisor({ llm });
+
+    await supervisor.generatePlanNode({
+      issue: v9b2mkIssue(),
+      researchFindings: v9b2mkFindings(),
+      contextAnalysis: v9b2mkAnalysis(),
+      codeContextFindings,
+    });
+
+    return (llm.invoke as sinon.SinonStub).firstCall.args[0] as string;
+  };
+
+  it('names the upstream failure in the prompt when the fetch failed', async () => {
+    const prompt = await promptFor(mkCodeContextFindings({ warnings: [FETCH_FAILED] }));
+    expect(prompt).to.contain(FETCH_FAILED);
+  });
+
+  it('distinguishes a failed fetch from a search that genuinely found nothing', async () => {
+    const failed = await promptFor(mkCodeContextFindings({ warnings: [FETCH_FAILED] }));
+    const empty = await promptFor(mkCodeContextFindings());
+
+    expect(failed).to.not.equal(empty);
+    expect(failed).to.contain(`**Architecture Insights**: unavailable (${FETCH_FAILED})`);
+    expect(empty).to.contain('**Architecture Insights**: none returned for this issue');
+  });
+
+  it('keeps the section present instead of omitting it when there are no insights', async () => {
+    const prompt = await promptFor(mkCodeContextFindings());
+    expect(prompt).to.contain('## Code Architecture Context');
+  });
+
+  it('reports confidence even when no insights came back', async () => {
+    const prompt = await promptFor(mkCodeContextFindings({ confidence: 0.3 }));
+    expect(prompt).to.contain('**Confidence**: 30%');
+  });
+
+  it('says so when the code context search never produced findings at all', async () => {
+    const prompt = await promptFor(undefined);
+    expect(prompt).to.contain('code context search did not complete');
+  });
+
+  it('names the configuration fault when no code snippets were available', async () => {
+    const prompt = await promptFor(mkCodeContextFindings());
+    expect(prompt).to.contain('## CHT Core Code Context');
+    expect(prompt).to.contain('unavailable (no cht-core checkout found');
+    expect(prompt).to.contain('no component mapping for this domain');
+  });
+
+  it('leaves a healthy run reporting its insights and no gap wording', async () => {
+    const prompt = await promptFor(
+      mkCodeContextFindings({
+        confidence: 0.8,
+        architectureInsights: [
+          {
+            component: 'cht-datasource',
+            description: 'Datasource qualifier layer',
+            patterns: ['qualifier'],
+            dependencies: [],
+          },
+        ],
+      })
+    );
+
+    expect(prompt).to.contain('## Code Architecture Context');
+    expect(prompt).to.contain('Datasource qualifier layer');
+    expect(prompt).to.contain('**Architecture Insights**: 1');
+    expect(prompt).to.contain('**Confidence**: 80%');
+    expect(prompt).to.not.contain('**Architecture Insights**: unavailable');
+    expect(prompt).to.not.contain('none returned for this issue');
+  });
+});
+
+describe('ResearchSupervisor riskFactors ordering (#156)', () => {
+  const FETCH_FAILED = 'Failed to fetch code context from cht-core';
+
+  const degradedFindings = (): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [FETCH_FAILED],
+    confidence: 0.3,
+    source: 'opendeepwiki',
+  });
+
+  /**
+   * A search that completed and correctly found nothing: no warnings, and the
+   * 0.3 confidence upstream assigns to any insight-free result. Nothing failed
+   * on this run, so it must keep the risk ordering it had before #156.
+   */
+  const emptyButHealthyFindings = (): CodeContextFindings => ({
+    architectureInsights: [],
+    moduleRelationships: [],
+    diagrams: [],
+    relevantRepos: ['cht-core'],
+    warnings: [],
+    confidence: 0.3,
+    source: 'opendeepwiki',
+  });
+
+  /** An issue and analysis that trip every one of the five heuristic rules. */
+  const maximallyRiskyState = () => ({
+    issue: v9b2mkIssue({
+      priority: 'high',
+      constraints: ['c1', 'c2', 'c3', 'c4'],
+      technical_context: {
+        domain: 'contacts',
+        components: ['api/src', 'webapp/src', 'sentinel/src', 'admin/src', 'shared-libs'],
+      },
+    }),
+    researchFindings: v9b2mkFindings({ confidence: 0.3 }),
+    contextAnalysis: v9b2mkAnalysis({ similarContexts: [] }),
+  });
+
+  const riskFactorsFor = async (codeContextFindings?: CodeContextFindings): Promise<string[]> => {
+    const llm = v9b2mkLLM('### 1. IMPLEMENTATION APPROACH\n- ok\n');
+    const { supervisor } = v9b2buildSupervisor({ llm });
+
+    const out = await supervisor.generatePlanNode({
+      ...maximallyRiskyState(),
+      codeContextFindings,
+    });
+
+    return (out.orchestrationPlan as { riskFactors: string[] }).riskFactors;
+  };
+
+  it('keeps the upstream-failure risk when every heuristic rule also fires', async () => {
+    const riskFactors = await riskFactorsFor(degradedFindings());
+    expect(riskFactors.some(r => r.includes(FETCH_FAILED))).to.equal(true);
+  });
+
+  it('ranks code context provenance ahead of advisory risks', async () => {
+    const riskFactors = await riskFactorsFor(degradedFindings());
+    expect(riskFactors[0]).to.contain('Code context warnings');
+  });
+
+  it('still respects the five-risk cap', async () => {
+    const riskFactors = await riskFactorsFor(degradedFindings());
+    expect(riskFactors).to.have.lengthOf(5);
+  });
+
+  it('leaves the heuristic risks alone when there are no code context risks', async () => {
+    const riskFactors = await riskFactorsFor(undefined);
+    expect(riskFactors).to.have.lengthOf(5);
+    expect(riskFactors.some(r => r.includes('Code context warnings'))).to.equal(false);
+    expect(riskFactors[0]).to.contain('Low confidence in documentation findings');
+  });
+
+  it('does not promote the advisory risk when the search found nothing but nothing failed', async () => {
+    const riskFactors = await riskFactorsFor(emptyButHealthyFindings());
+
+    expect(riskFactors[0]).to.contain('Low confidence in documentation findings');
+    expect(riskFactors.some(r => r.includes('Changes span multiple components'))).to.equal(true);
+    expect(riskFactors.some(r => r.includes('Low confidence in code architecture'))).to.equal(
+      false
+    );
+  });
+});

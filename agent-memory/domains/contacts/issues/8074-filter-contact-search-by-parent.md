@@ -6,7 +6,7 @@ subDomain: search
 issueNumber: 8074
 issueUrl: https://github.com/medic/cht-core/issues/8074
 title: Support filtering contact search by descendants of current contact
-lastUpdated: 2026-03-16
+lastUpdated: '2026-08-17'
 summary: Added a descendant-of-current-contact appearance keyword for form fields that scopes contact search to only contacts under the currently viewed place, using the existing contacts_by_parent CouchDB view.
 services:
   - webapp
@@ -14,11 +14,13 @@ techStack:
   - typescript
   - angular
   - couchdb
+related_issues:
+  - cht-core-9915
 ---
 
 ## Problem
 
-The `db-object` widget (and later `select-contact`) only supported searching contacts by document type, not by parent. In deployments with common or duplicate names, users had to scroll through entire lists of a given contact type with no way to narrow the scope to the relevant place. This made building relational forms (e.g., selecting a child's mother from the same household) cumbersome.
+The `db-object` widget (and later `select-contact`) could narrow contacts by document type and by the shared freetext search, but not by parent. In deployments with common or duplicate names, users had to scroll through entire lists of a given contact type with no way to narrow the scope to the relevant place. This made building relational forms (e.g., selecting a child's mother from the same household) cumbersome.
 
 ## Root Cause
 
@@ -31,7 +33,7 @@ PR #8759 added a `descendant-of-current-contact` appearance keyword. When presen
 2. **Contact ID resolution:** `select2-search.service.ts` added `getContactId()` that traverses `ActivatedRoute` to extract `parent_id` or `id` from the URL
 3. **Filter type safety:** New `Filter` interface in `search.service.ts` with a `parent?: string` field
 4. **CouchDB query generation:** New `getContactsByParentRequest()` in `generate-search-requests.js` builds compound keys `[parentId, type]` for the `contacts_by_parent` view
-5. **Set intersection:** Parent-filtered results intersect with other search constraints (freetext, type) via existing `search:getIntersection` mechanism
+5. **Set intersection:** the type constraint is folded into the parent request's compound key rather than intersected — with parent + type only, `getContactsByParentRequest()` is the sole request; when freetext is also present the parent request is emitted alongside the freetext requests and `search:getIntersection` intersects the results
 
 ## Code Patterns
 
@@ -47,7 +49,7 @@ PR #8759 added a `descendant-of-current-contact` appearance keyword. When presen
 
 - Feature is URL-driven — only works from the contacts tab where the URL contains the parent contact ID
 - Reuses existing `contacts_by_parent` CouchDB view rather than creating a new index
-- Parent filter participates in set intersection with other constraints, meaning freetext search within a parent's descendants works correctly
+- Parent filter participates in set intersection with the freetext constraint, meaning freetext search within a parent's descendants works correctly (the type constraint is instead folded into the parent request's compound key)
 - The `parent_id` route param covers new-contact creation; `id` covers existing-contact view — both are checked
 
 ## Related Files

@@ -6,7 +6,7 @@ subDomain: admin
 issueNumber: 9203
 issueUrl: https://github.com/medic/cht-core/issues/9203
 title: Backward compatibility of facility_id in Admin app
-lastUpdated: 2026-03-16
+lastUpdated: '2026-08-11'
 summary: Fixed the Admin app's edit-user form crashing when facility_id was stored as a legacy string instead of an array, by adding defensive normalization at the point of consumption.
 services:
   - admin
@@ -15,11 +15,13 @@ techStack:
   - javascript
   - angular
   - couchdb
+source_prs:
+  - "medic/cht-core#9204"
 ---
 
 ## Problem
 
-In CHT v4.8.0, the Admin app introduced a multi-select facility picker that changed `facility_id` from a `string` to an `Array`. However, existing users in older databases still had a `string` value. When editing such a user in the Admin app, the `facility_id` string was passed directly as `keys` to a CouchDB `_bulk_get` query, which requires an array. CouchDB returned `{"error":"bad_request","reason":"\`keys\` body member must be an array."}`, causing the user's place to fail to load entirely.
+In CHT v4.9.0, the Admin app introduced a multi-select facility picker (PR #9128) that changed `facility_id` from a `string` to an `Array`; the fix (#9204) shipped in the same release. However, existing users in older databases still had a `string` value. When editing such a user in the Admin app, the `facility_id` string was passed directly as `keys` to a PouchDB `allDocs` call (CouchDB `POST /_all_docs`), which requires an array. CouchDB returned `{"error":"bad_request","reason":"\`keys\` body member must be an array."}`, causing the user's place to fail to load entirely.
 
 ## Root Cause
 
@@ -62,4 +64,4 @@ PR #9204 added defensive normalization at multiple consumption points:
 
 ## Related Issues
 
-- None directly referenced
+- PR #9128: the Admin multi-select facility picker that changed `facility_id` from a `string` to an `Array`. It created the new array shape, not the legacy string one — the string is what pre-#9128 databases still hold, and tolerating both is what this fix adds
