@@ -743,6 +743,42 @@ describe('workspace.ts', () => {
       expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
     });
 
+    describe('assume-unchanged entries', () => {
+      const snapshotWithFlags = async (lsFilesV: string) => {
+        const calls: string[] = [];
+        const ws = loadWorkspace({
+          'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+          'git status --porcelain': { stdout: '' },
+          'git ls-files -v -z': { stdout: lsFilesV },
+        }, {}, calls);
+        let thrown: { kind?: string; lines?: string[] } | undefined;
+        const snap = await ws.snapshotChtCore('/tmp/cht-core').catch((err: { kind?: string; lines?: string[] }) => {
+          thrown = err;
+          return undefined;
+        });
+        return { snap, thrown, calls };
+      };
+
+      it('refuses an assume-unchanged entry, even on a tree that looks clean, and names the way out', async () => {
+        const { thrown, calls } = await snapshotWithFlags('H a.txt\0h cfg\0');
+        expect(thrown?.kind).to.equal('precondition');
+        expect(thrown?.lines).to.deep.equal([
+          'git stash cannot save edits to files marked assume-unchanged, so cht-agent did not stash anything. ' +
+            'Nothing was changed.',
+          `  - "cfg" is marked assume-unchanged. Clear the flag with: git -C '/tmp/cht-core' update-index ` +
+            "--no-assume-unchanged -- 'cfg'",
+          'Then run again.',
+        ]);
+        expect(calls.some(c => c.startsWith('git stash push'))).to.equal(false);
+      });
+
+      it('does not refuse an entry that is not assume-unchanged', async () => {
+        const { snap, thrown } = await snapshotWithFlags('H cfg\0S local.cfg\0');
+        expect(thrown).to.be.undefined;
+        expect(snap?.stashSha).to.be.null;
+      });
+    });
+
     it('refuses to run if cht-core has unmerged paths', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },

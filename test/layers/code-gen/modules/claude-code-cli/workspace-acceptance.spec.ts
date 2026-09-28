@@ -1320,6 +1320,34 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(text).to.not.include('deleted in the index');
     });
 
+    const flagLocalConfig = async () => {
+      await commitFile('cfg.txt', 'committed\n');
+      await git('update-index', '--assume-unchanged', 'cfg.txt');
+      await write('cfg.txt', 'LOCAL EDIT\n');
+    };
+
+    it('refuses an assume-unchanged file with a local edit, and the edit stays', async () => {
+      await flagLocalConfig();
+      await expectRefusedUnchanged('"cfg.txt" is marked assume-unchanged');
+      expect(await read('cfg.txt')).to.equal('LOCAL EDIT\n');
+    });
+
+    it('its printed way out lets the next run save and restore the edit', async () => {
+      await flagLocalConfig();
+      const text = await expectRefusedUnchanged('"cfg.txt" is marked assume-unchanged');
+      const clear = /Clear the flag with: (git .*)$/m.exec(text)?.[1];
+      expect(clear).to.be.a('string');
+      await execFileAsync('bash', ['-c', String(clear)]);
+      const afterWayOut = await treeState();
+      const snapshot = await snapshotOrFail();
+      expect(snapshot.stashSha).to.be.a('string');
+      await write('cfg.txt', 'a session edit\n');
+      const rollback = await rollbackChtCore(repo, snapshot);
+      expect(rollback.stashPop).to.equal('ok');
+      expect(await treeState()).to.deep.equal(afterWayOut);
+      expect(await read('cfg.txt')).to.equal('LOCAL EDIT\n');
+    });
+
     it('refuses a staged symbolic link where a tracked directory was, with no command', async () => {
       await commitFile('d/b.txt', 'b\n');
       await git('rm', '-q', '-r', 'd');

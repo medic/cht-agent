@@ -435,6 +435,33 @@ function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: stri
   );
 }
 
+/**
+ * Refuse tracked files flagged `--assume-unchanged`: status does not show their
+ * edits, so git stash does not save them, and the rollback reset overwrites
+ * them. `ls-files -v` tags such an entry with a lowercase letter. Clearing the
+ * flag makes the edit visible, and the stash then saves it. skip-worktree
+ * entries (`S`) keep their edits through a cycle, so they stay allowed.
+ */
+async function assertNoAssumeUnchanged(chtCorePath: string): Promise<void> {
+  const { stdout } = await runGit(['ls-files', '-v', '-z'], chtCorePath);
+  const flagged = stdout.split('\0').filter(isAssumeUnchangedEntry).map(entry => entry.slice(2));
+  if (flagged.length === 0) return;
+  const repo = shellQuote(chtCorePath);
+  const lines = [
+    'git stash cannot save edits to files marked assume-unchanged, so cht-agent did not stash anything. ' +
+      'Nothing was changed.',
+    ...flagged.map(p => `  - ${JSON.stringify(p)} is marked assume-unchanged. Clear the flag with: ` +
+      `git -C ${repo} update-index --no-assume-unchanged -- ${shellQuote(p)}`),
+    'Then run again.',
+  ];
+  throw new WorkspaceSafetyError('precondition', lines[0], { lines });
+}
+
+/** `<tag> <path>`, where a lowercase tag marks an assume-unchanged entry. */
+function isAssumeUnchangedEntry(entry: string): boolean {
+  return entry[1] === ' ' && /^[a-z]$/.test(entry[0]);
+}
+
 /** Our stash, as the snapshot took it, plus the untracked listing from just before the push. */
 interface TakenStash {
   sha: string;
@@ -1259,6 +1286,8 @@ export async function snapshotChtCore(chtCorePath: string): Promise<ChtCoreSnaps
   const { stdout: status } = await runGit(['status', '--porcelain'], chtCorePath);
   const lines = status.split('\n').filter(Boolean);
   assertNoUnmergedPaths(lines, chtCorePath);
+  // Before the dirty-tree branch: such an edit hides from status, so the tree can look clean.
+  await assertNoAssumeUnchanged(chtCorePath);
 
   // Stash uncommitted work (if any) so the CLI sees a clean workspace.
   const stash = lines.length > 0 ? await stashOperatorWork(chtCorePath, lines, headSha) : null;
