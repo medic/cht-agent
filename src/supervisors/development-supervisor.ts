@@ -167,6 +167,17 @@ interface DevelopmentSupervisorOptions {
   codeGenRegistry?: CodeGenModuleRegistry;
 }
 
+/**
+ * The state update for a failed code-generation attempt. `codeGeneration` is
+ * named as absent, so a reader of the node's result can check it on every branch.
+ */
+interface CodeGenerationFailureUpdate {
+  errors: string[];
+  currentPhase: 'code-generation';
+  iterationCount: number;
+  codeGeneration?: undefined;
+}
+
 // Define the state annotation for type safety
 const DevelopmentStateAnnotation = Annotation.Root({
   messages: Annotation<DevelopmentState['messages']>({
@@ -326,7 +337,7 @@ export class DevelopmentSupervisor {
     iteration: number,
     error: unknown,
     earlierWarnings: readonly string[] = [],
-  ) {
+  ): CodeGenerationFailureUpdate {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     this.todos.fail(todoId, errorMessage);
     if (error instanceof CodeGenHaltError) {
