@@ -605,6 +605,22 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(lines).to.include('Untracked files that appeared during the session:\n  - "session.ts"');
   });
 
+  it('does not say "still in stash" on a HEAD move after the operator popped our stash', async () => {
+    await makeDirty();
+    const snapshot = await snapshotChtCore(repo);
+    await git('stash', 'pop', '--index');
+    await write('op.txt', 'operator commit\n');
+    await git('add', 'op.txt');
+    await git('commit', '-m', 'operator commit');
+
+    const err = await rejection(() => rollbackChtCore(repo, snapshot));
+
+    const lines = (err?.lines ?? []).join('\n');
+    expect(err?.kind).to.equal('drift');
+    expect(lines).to.not.include('still in stash');
+    expect(lines).to.include(`Stash ${snapshot.stashName} is no longer in the stash list`);
+  });
+
   it('refuses capture and rollback when the operator switches branch during the session', async () => {
     const { stdout: home } = await git('symbolic-ref', '--short', 'HEAD');
     await git('checkout', '-b', 'other');

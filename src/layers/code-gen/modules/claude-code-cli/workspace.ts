@@ -1795,10 +1795,10 @@ async function assertRollbackAllowed(chtCorePath: string, snapshot: ChtCoreSnaps
   try {
     lines = await firstDrift(chtCorePath, snapshot);
   } catch (err) {
-    throw driftError(
-      [`cht-agent could not read the repo state before rollback (${gitErrorText(err)}); nothing was changed.`],
-      err,
-    );
+    throw driftError([
+      `cht-agent could not read the repo state before rollback (${gitErrorText(err)}); nothing was changed.`,
+      ...stashNotRestoredLines(snapshot),
+    ], err);
   }
   if (lines) throw driftError(lines);
   rolledBackSnapshots.add(snapshot);
@@ -1847,8 +1847,40 @@ async function headDrift(chtCorePath: string, snapshot: ChtCoreSnapshot): Promis
   if (!moved) return null;
   return [
     moved,
-    ...stashKeptLines(snapshot, chtCorePath),
+    ...(await stashStateLines(chtCorePath, snapshot)),
     ...(await sessionStateLines(chtCorePath, snapshot)),
+  ];
+}
+
+/**
+ * Where the work is after a move, from a read of the stash list: the operator
+ * may have popped our stash. Read only here, with a stash taken, so the other
+ * checks read the list as before.
+ */
+async function stashStateLines(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
+  if (!snapshot.stashSha) return [];
+  let entries: StashEntry[];
+  try {
+    entries = await listStashes(chtCorePath);
+  } catch {
+    return stashNotRestoredLines(snapshot);
+  }
+  if (entries.some(e => e.sha === snapshot.stashSha)) return stashKeptLines(snapshot, chtCorePath);
+  return [
+    `Stash ${snapshot.stashName} is no longer in the stash list (popped or dropped outside cht-agent). If you ` +
+      "restored it, your work is in the working tree together with the session's edits.",
+  ];
+}
+
+/**
+ * Where the work is when the stash list was not read: no claim that the entry
+ * is still listed. The hint names the snapshot's repo, where the stash lives.
+ */
+function stashNotRestoredLines(snapshot: ChtCoreSnapshot): string[] {
+  if (!snapshot.stashSha || !snapshot.stashName) return [];
+  return [
+    `cht-agent did not restore stash ${snapshot.stashName}. Unless you restored it yourself, your uncommitted work is in it.`,
+    ...recoveryHintLines(snapshot.repoRoot, snapshot.stashName),
   ];
 }
 

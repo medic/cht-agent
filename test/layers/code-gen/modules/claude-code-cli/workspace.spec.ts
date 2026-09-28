@@ -1258,6 +1258,39 @@ describe('workspace.ts', () => {
         const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot);
         expect(result.reset).to.equal('ok');
       });
+
+      /** The rollback's drift lines after a failed first read, called at `chtCorePath`. */
+      const precheckFailureLines = async (overrides: Partial<typeof SNAPSHOT>, chtCorePath: string) => {
+        const { snapshot, script } = rollbackFixture(overrides, {
+          'git rev-parse --show-toplevel': { error: new Error('fatal: not a git repository') },
+        });
+        const ws = loadWorkspace(script);
+        let thrown: { kind?: string; lines?: string[] } | undefined;
+        await ws.rollbackChtCore(chtCorePath, snapshot).catch((err: { kind?: string; lines?: string[] }) => {
+          thrown = err;
+        });
+        expect(thrown?.kind).to.equal('drift');
+        return thrown?.lines ?? [];
+      };
+
+      it('says where the work is after a failed pre-check read, with the hint for the snapshot repo', async () => {
+        const lines = await precheckFailureLines(WITH_STASH, '/tmp/elsewhere');
+        const text = lines.join('\n');
+        expect(text).to.include(
+          `cht-agent did not restore stash ${OUR_NAME}. Unless you restored it yourself, your uncommitted work is in it.`,
+        );
+        expect(text).to.include("Find the stash: git -C '/tmp/cht-core' stash list");
+        expect(text).to.include("Restore it: ref=$(git -C '/tmp/cht-core' stash list");
+        expect(text).to.not.include('/tmp/elsewhere');
+        expect(text).to.not.include('is still in stash');
+      });
+
+      it('prints only the read failure after a failed pre-check read when no stash was taken', async () => {
+        const lines = await precheckFailureLines({}, '/tmp/cht-core');
+        expect(lines).to.deep.equal([
+          'cht-agent could not read the repo state before rollback (fatal: not a git repository); nothing was changed.',
+        ]);
+      });
     });
   });
 
