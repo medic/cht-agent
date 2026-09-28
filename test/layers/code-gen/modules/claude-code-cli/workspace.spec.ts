@@ -1256,6 +1256,90 @@ describe('workspace.ts', () => {
       expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
     });
 
+    describe('the undo of a partial push', () => {
+      /** A push that leaves `x.ts` changed, so the snapshot undoes it; the test's keys come first. */
+      const partialPush = async (script: Script, fsStubs: Record<string, unknown> = {}) => {
+        const calls: string[] = [];
+        const ws = loadWorkspace(withDefaults(script, {
+          'git rev-parse HEAD': { stdout: 'abc1234\n' },
+          'git status --porcelain=v1 -z --untracked-files=no': { stdout: ' M x.ts\0' },
+          'git status --porcelain': { stdout: ' M x.ts\n' },
+          'git stash push': { stdout: 'Saved\n' },
+          'git stash list -z': STASH_CREATED,
+          'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+        }), fsStubs, calls);
+        const warnSpy = sinon.stub(console, 'warn');
+        let err: { kind?: string; lines?: string[] } | undefined;
+        try {
+          await ws.snapshotChtCore('/tmp/cht-core');
+        } catch (e) {
+          err = e as { kind?: string; lines?: string[] };
+        }
+        const warned = warnSpy.getCalls().map(c => String(c.args[0]));
+        warnSpy.restore();
+        return { calls, err, text: (err?.lines ?? []).join('\n'), warned };
+      };
+
+      it('restores the index from the stash index commit', async () => {
+        const { calls } = await partialPush({
+          [`git diff --cached --name-only --no-renames -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+        });
+        expect(calls).to.include(`git restore --source=${OUR_SHA}^2 --staged -- :(literal)a.txt`);
+      });
+
+      it('keeps the stash when the index does not match after the undo', async () => {
+        const { calls, err, text } = await partialPush({
+          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('  - "a.txt"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('keeps the stash when an untracked file differs from its stored blob', async () => {
+        const { calls, err, text } = await partialPush({
+          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '100644 blob 1234567890abcdef\tu.txt\0' },
+          'git hash-object --no-filters -- u.txt': { stdout: 'fedcba0987654321\n' },
+        }, { lstat: sinon.stub().resolves({ isFile: () => true, isSymbolicLink: () => false }) });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('  - "u.txt"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('keeps the stash when an untracked symlink points elsewhere than its stored target', async () => {
+        const { calls, err, text } = await partialPush({
+          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '120000 blob 1234567890abcdef\tlnk\0' },
+          'git cat-file blob 1234567890abcdef': { stdout: 'tracked.txt' },
+        }, {
+          lstat: sinon.stub().resolves({ isFile: () => false, isSymbolicLink: () => true }),
+          readlink: sinon.stub().resolves('somewhere-else.txt'),
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(text).to.include('  - "lnk"');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+      });
+
+      it('puts the removal of the stashed untracked files between the reset and the lookup', async () => {
+        const { text } = await partialPush({
+          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
+          [`git ls-tree -r -z --name-only ${OUR_SHA}^3`]: { stdout: 'u.txt\0' },
+        }, { lstat: sinon.stub().resolves({}) });
+        const resetAt = text.indexOf('reset --hard abc1234');
+        const cleanAt = text.indexOf("clean -fd -- ':(literal)u.txt'");
+        expect(resetAt).to.be.greaterThan(-1);
+        expect(cleanAt).to.be.greaterThan(resetAt);
+        expect(cleanAt).to.be.lessThan(text.indexOf('Find the stash: '));
+      });
+
+      it('notes a spare copy when the undo worked but our entry cannot be dropped', async () => {
+        const { err, warned } = await partialPush({
+          'git stash drop': { error: new Error('fatal: cannot lock ref') },
+        });
+        expect(err?.kind).to.equal('stash');
+        expect(warned).to.include(`[claude-code-cli] Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
+      });
+    });
+
     describe('a git read that fails after the push', () => {
       const readError = () => Object.assign(new Error('Command failed: git x\nfatal: injected read failure'), {
         code: 128, stderr: 'fatal: injected read failure',
@@ -1610,7 +1694,7 @@ describe('workspace.ts', () => {
     });
   });
 
-  describe('guards that a mutation must not remove', () => {
+  describe('reportSafetyError', () => {
     afterEach(() => sinon.restore());
 
     it('prints a safety error once, however many layers report it', () => {
@@ -1621,7 +1705,9 @@ describe('workspace.ts', () => {
       ws.reportSafetyError(err, '[b]');
       expect(errorSpy.getCalls().map(c => String(c.args[0]))).to.deep.equal(['[a] line one', '[a] line two']);
     });
+  });
 
+  describe('the git child environment', () => {
     it('runs every git call with LC_ALL=C and the hardened config', async () => {
       const options: Array<{ env?: NodeJS.ProcessEnv }> = [];
       const ws = loadWorkspace({
@@ -1635,92 +1721,6 @@ describe('workspace.ts', () => {
         expect(opts.env?.GIT_CONFIG_KEY_0).to.equal('core.fsmonitor');
         expect(opts.env?.GIT_CONFIG_KEY_1).to.equal('core.hooksPath');
       }
-    });
-
-    describe('the undo of a partial push', () => {
-      beforeEach(() => sinon.stub(Date, 'now').returns(NOW));
-
-      /** A push that leaves `x.ts` changed, so the snapshot undoes it; the test's keys come first. */
-      const partialPush = async (script: Script, fsStubs: Record<string, unknown> = {}) => {
-        const calls: string[] = [];
-        const ws = loadWorkspace(withDefaults(script, {
-          'git rev-parse HEAD': { stdout: 'abc1234\n' },
-          'git status --porcelain=v1 -z --untracked-files=no': { stdout: ' M x.ts\0' },
-          'git status --porcelain': { stdout: ' M x.ts\n' },
-          'git stash push': { stdout: 'Saved\n' },
-          'git stash list -z': STASH_CREATED,
-          'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
-        }), fsStubs, calls);
-        const warnSpy = sinon.stub(console, 'warn');
-        let err: { kind?: string; lines?: string[] } | undefined;
-        try {
-          await ws.snapshotChtCore('/tmp/cht-core');
-        } catch (e) {
-          err = e as { kind?: string; lines?: string[] };
-        }
-        const warned = warnSpy.getCalls().map(c => String(c.args[0]));
-        warnSpy.restore();
-        return { calls, err, text: (err?.lines ?? []).join('\n'), warned };
-      };
-
-      it('restores the index from the stash index commit', async () => {
-        const { calls } = await partialPush({
-          [`git diff --cached --name-only --no-renames -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
-        });
-        expect(calls).to.include(`git restore --source=${OUR_SHA}^2 --staged -- :(literal)a.txt`);
-      });
-
-      it('keeps the stash when the index does not match after the undo', async () => {
-        const { calls, err, text } = await partialPush({
-          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
-        });
-        expect(err?.kind).to.equal('stash');
-        expect(text).to.include('  - "a.txt"');
-        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
-      });
-
-      it('keeps the stash when an untracked file differs from its stored blob', async () => {
-        const { calls, err, text } = await partialPush({
-          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '100644 blob 1234567890abcdef\tu.txt\0' },
-          'git hash-object --no-filters -- u.txt': { stdout: 'fedcba0987654321\n' },
-        }, { lstat: sinon.stub().resolves({ isFile: () => true, isSymbolicLink: () => false }) });
-        expect(err?.kind).to.equal('stash');
-        expect(text).to.include('  - "u.txt"');
-        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
-      });
-
-      it('keeps the stash when an untracked symlink points elsewhere than its stored target', async () => {
-        const { calls, err, text } = await partialPush({
-          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '120000 blob 1234567890abcdef\tlnk\0' },
-          'git cat-file blob 1234567890abcdef': { stdout: 'tracked.txt' },
-        }, {
-          lstat: sinon.stub().resolves({ isFile: () => false, isSymbolicLink: () => true }),
-          readlink: sinon.stub().resolves('somewhere-else.txt'),
-        });
-        expect(err?.kind).to.equal('stash');
-        expect(text).to.include('  - "lnk"');
-        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
-      });
-
-      it('puts the removal of the stashed untracked files between the reset and the lookup', async () => {
-        const { text } = await partialPush({
-          [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`]: { stdout: 'a.txt\0' },
-          [`git ls-tree -r -z --name-only ${OUR_SHA}^3`]: { stdout: 'u.txt\0' },
-        }, { lstat: sinon.stub().resolves({}) });
-        const resetAt = text.indexOf('reset --hard abc1234');
-        const cleanAt = text.indexOf("clean -fd -- ':(literal)u.txt'");
-        expect(resetAt).to.be.greaterThan(-1);
-        expect(cleanAt).to.be.greaterThan(resetAt);
-        expect(cleanAt).to.be.lessThan(text.indexOf('Find the stash: '));
-      });
-
-      it('notes a spare copy when the undo worked but our entry cannot be dropped', async () => {
-        const { err, warned } = await partialPush({
-          'git stash drop': { error: new Error('fatal: cannot lock ref') },
-        });
-        expect(err?.kind).to.equal('stash');
-        expect(warned).to.include(`[claude-code-cli] Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
-      });
     });
   });
 });
