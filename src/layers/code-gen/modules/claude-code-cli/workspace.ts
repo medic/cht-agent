@@ -264,14 +264,14 @@ function withPushChoices(error: WorkspaceSafetyError, spares: readonly SpareStas
   return error;
 }
 
-/** At a failed undo, restore or drop, the steps above are the way out. */
-const RESTORE_CHOICES: readonly StashChoice[] = ['handled', 'abort'];
-
-const RESTORE_TRAILER = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run. ' +
-  'The steps above still apply after Abort.';
+/** At a failed undo, restore or drop, the steps above are the way out, and Retry runs the step again. */
+const RESTORE_CHOICES: readonly StashChoice[] = ['handled', 'retry', 'abort'];
 
 /** When HEAD moved, the reset step is gone from the screen, so the last sentence would not be true. */
-const RESTORE_TRAILER_HEAD_MOVED = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run.';
+const RESTORE_TRAILER_HEAD_MOVED = 'Choose Retry after you fix the cause above, "I handled it myself" after you ran ' +
+  'the steps above, or Abort to stop the run.';
+
+const RESTORE_TRAILER = `${RESTORE_TRAILER_HEAD_MOVED} The steps above still apply after Abort.`;
 
 function rerun(spares: readonly SpareStash[] = []): SnapshotNext {
   return { rerun: true, spares };
@@ -1466,15 +1466,19 @@ function withUndoChoices(ctx: UndoContext, error: WorkspaceSafetyError): Workspa
     step: 'undo',
     choices: RESTORE_CHOICES,
     trailer: RESTORE_TRAILER,
-    next: () => recheckUndo(ctx, error),
+    next: choice => afterFailedUndo(ctx, error, choice),
     beforeAbort: () => abortVariant(undoHint(ctx), error, ctx.logPrefix),
   });
   return error;
 }
 
+function afterFailedUndo(ctx: UndoContext, error: WorkspaceSafetyError, choice: 'handled' | 'retry'): Promise<SnapshotNext> {
+  return choice === 'retry' ? retryUndo(ctx, error) : recheckUndo(ctx, error);
+}
+
 function withMovedUndoChoices(ctx: UndoContext, variant: WorkspaceSafetyError, base: WorkspaceSafetyError): WorkspaceSafetyError {
   registeredFailures.set(variant, {
-    step: 'undo', choices: RESTORE_CHOICES, trailer: RESTORE_TRAILER_HEAD_MOVED, next: () => recheckUndo(ctx, base),
+    step: 'undo', choices: RESTORE_CHOICES, trailer: RESTORE_TRAILER_HEAD_MOVED, next: choice => afterFailedUndo(ctx, base, choice),
   });
   return variant;
 }
@@ -1501,6 +1505,29 @@ async function undoScreenAgain(ctx: UndoContext, error: WorkspaceSafetyError, re
   const variant = await headMovedVariant(undoHint(ctx), error);
   if (!variant) return showAgain(error, reason);
   return showAgain(withMovedUndoChoices(ctx, variant, error));
+}
+
+/**
+ * Retry after a failed undo: put the work back from our entry again, then the
+ * snapshot runs again. Our entry gone: the operator took it, so check the
+ * tree. HEAD moved: write nothing, and show the failure without the reset step.
+ */
+async function retryUndo(ctx: UndoContext, error: WorkspaceSafetyError): Promise<SnapshotNext> {
+  const listed = await entryListed(ctx.chtCorePath, ctx.stash);
+  if (typeof listed === 'string') return undoScreenAgain(ctx, error, [listed]);
+  if (!listed) return recheckUndo(ctx, error);
+  const variant = await headMovedVariant(undoHint(ctx), error);
+  if (variant) return showAgain(withMovedUndoChoices(ctx, variant, error));
+  return undoThenRerun(ctx);
+}
+
+/** Whether our entry is in the stash list, or the line that says the list could not be read. */
+async function entryListed(chtCorePath: string, stash: TakenStash): Promise<boolean | string> {
+  try {
+    return (await listStashes(chtCorePath)).some(e => e.sha === stash.sha);
+  } catch (err) {
+    return `cht-agent could not read the stash list (${gitErrorText(err)}).`;
+  }
 }
 
 async function dropThenRerun(ctx: UndoContext): Promise<SnapshotNext> {
@@ -2687,7 +2714,7 @@ async function resolveRestoreFailure(ctx: RestoreContext, resolve: StashFailureR
     first = false;
     const choice = await askOperator(resolve, { step: 'restore', lines: shownLines(screen), choices: RESTORE_CHOICES });
     if (choice === 'abort') return keepAbort(ctx, await restoreAbortError(ctx, screen));
-    const notBack = await recheckRestore(ctx);
+    const notBack = await RESTORE_ACTIONS[choice](ctx);
     if (!notBack) return;
     screen = await restoreScreenAgain(ctx, notBack);
   }
@@ -2723,6 +2750,32 @@ async function restoreAbortError(ctx: RestoreContext, screen: RollbackScreen): P
 
 function keepAbort(ctx: RollbackContext, error: WorkspaceSafetyError): void {
   rollbackHalts.set(ctx.result, markAbort(error));
+}
+
+/** Each gives null when the work is back (the result then says so), or the lines that say why not. */
+const RESTORE_ACTIONS: Readonly<Record<'handled' | 'retry', (ctx: RestoreContext) => Promise<readonly string[] | null>>> = {
+  handled: ctx => recheckRestore(ctx),
+  retry: ctx => retryRestore(ctx),
+};
+
+/**
+ * Retry after a failed restore, inside this rollback (the snapshot is used
+ * already, so a second rollbackChtCore call would refuse): our entry still
+ * listed and HEAD and the branch unchanged, then the undo's restore from the
+ * stash (no reset), then the same check as "handled" before the drop.
+ */
+async function retryRestore(ctx: RestoreContext): Promise<readonly string[] | null> {
+  const listed = await entryListed(ctx.chtCorePath, ctx.stash);
+  if (typeof listed === 'string') return [listed];
+  if (!listed) return recheckRestore(ctx);
+  // An empty reason: the screen again shows the HEAD line itself.
+  if (await headMovedSince(ctx.chtCorePath, restoreHint(ctx).head)) return [];
+  try {
+    await restoreFromStash(ctx.chtCorePath, ctx.stash.sha);
+  } catch (err) {
+    return [`The restore failed again: ${gitErrorText(err)}`];
+  }
+  return recheckRestore(ctx);
 }
 
 /**
@@ -2796,11 +2849,20 @@ async function resolveSpareEntry(ctx: RollbackContext, resolve: StashFailureReso
     first = false;
     const choice = await askOperator(resolve, { step: 'drop', lines: shownLines(screen), choices: RESTORE_CHOICES });
     if (choice === 'abort') return keepSpareAbort(ctx, screen.error);
-    const stillListed = await spareStillListed(ctx);
+    const stillListed = await SPARE_ACTIONS[choice](ctx);
     if (!stillListed) return;
     screen = { error: screen.error, reason: stillListed };
   }
 }
+
+/** Each gives null when our entry is gone, or the line that says why the screen shows again. */
+const SPARE_ACTIONS: Readonly<Record<'handled' | 'retry', (ctx: RollbackContext) => Promise<string[] | null>>> = {
+  handled: ctx => spareStillListed(ctx),
+  retry: async ctx => {
+    const drop = await dropStashBySha(ctx.chtCorePath, ctx.snapshot.stashSha as string, ctx.call.logPrefix);
+    return drop === 'kept' ? [`cht-agent still could not remove stash ${ctx.snapshot.stashName} from the stash list.`] : null;
+  },
+};
 
 function spareEntryLines(snapshot: ChtCoreSnapshot, dropError: unknown): string[] {
   return [

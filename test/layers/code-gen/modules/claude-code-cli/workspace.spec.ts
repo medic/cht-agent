@@ -1039,8 +1039,8 @@ describe('workspace.ts', () => {
       });
 
       describe('at a failed undo or an unreadable list', () => {
-        const RESTORE_TRAILER = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run. ' +
-          'The steps above still apply after Abort.';
+        const RESTORE_TRAILER = 'Choose Retry after you fix the cause above, "I handled it myself" after you ran the ' +
+          'steps above, or Abort to stop the run. The steps above still apply after Abort.';
         const CACHED = `git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`;
         /** A partial push whose undo leaves `a.txt` differing in the index; `recheck` answers the check after "handled". */
         const failedUndo = (recheck: string, list: Answer[], rest: Script = {}): Script => ({
@@ -1062,7 +1062,7 @@ describe('workspace.ts', () => {
           ]), { resolveStashFailure: resolve }, calls);
           expect(resolve.calledOnce).to.equal(true);
           expect(seen[0].step).to.equal('undo');
-          expect(seen[0].choices).to.deep.equal(['handled', 'abort']);
+          expect(seen[0].choices).to.deep.equal(['handled', 'retry', 'abort']);
           expect(printed.at(-1)).to.equal(`[claude-code-cli] ${RESTORE_TRAILER}`);
           expect(calls.filter(c => c === 'git stash drop stash@{0}')).to.have.length(1);
           expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
@@ -1134,10 +1134,59 @@ describe('workspace.ts', () => {
           }, { resolveStashFailure: resolve }, calls);
           expect(resolve.calledOnce).to.equal(true);
           expect(seen[0].step).to.equal('push');
-          expect(seen[0].choices).to.deep.equal(['handled', 'abort']);
+          expect(seen[0].choices).to.deep.equal(['handled', 'retry', 'abort']);
           expect(calls.filter(c => c === 'git stash drop stash@{0}')).to.have.length(1);
           expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
         });
+
+        it('runs the undo again on Retry, then the snapshot', async () => {
+          const calls: string[] = [];
+          const { resolve } = scriptedResolver(['retry'], calls);
+          const { outcome } = await snapshotWith(failedUndo('', [
+            // The check and lookup; Retry's read (listed); the second undo's drop; the re-run's check and lookup.
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: OUR_ENTRY },
+          ], { [`git diff --name-only --no-renames -z ${OUR_SHA} --`]: { stdout: 'x.ts\0' } }), { resolveStashFailure: resolve }, calls);
+          expect(resolve.calledOnce).to.equal(true);
+          const restores = calls.filter(c => c.startsWith(`git restore --source=${OUR_SHA} --worktree`));
+          expect(restores).to.have.length(2);
+          expect(calls.lastIndexOf(restores[1])).to.be.greaterThan(calls.indexOf('RESOLVER'));
+          expect(calls.filter(c => c === 'git stash drop stash@{0}')).to.have.length(1);
+          expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        });
+
+        it('writes nothing on Retry when HEAD moved, and shows the failure without the reset step', async () => {
+          const calls: string[] = [];
+          const { resolve, seen } = scriptedResolver(['retry', 'abort'], calls);
+          const { outcome } = await snapshotWith(failedUndo('b.txt\0', [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY },
+          ], {
+            'git rev-parse HEAD': [{ stdout: 'abc1234deadbeef\n' }, { stdout: 'fedcba9876543210\n' }],
+            [`git diff --name-only --no-renames -z ${OUR_SHA} --`]: { stdout: 'x.ts\0' },
+          }), { resolveStashFailure: resolve }, calls);
+          expect(resolve.calledTwice).to.equal(true);
+          const restores = calls.filter(c => c.startsWith(`git restore --source=${OUR_SHA}`));
+          expect(calls.lastIndexOf(restores.at(-1) as string)).to.be.lessThan(calls.indexOf('RESOLVER'));
+          expect(seen[1].lines[0]).to.match(/^HEAD is at fedcba9876543210 /);
+          expect(seen[1].lines.some(l => l.includes('reset --hard'))).to.equal(false);
+          expect(outcome.error?.lines).to.deep.equal(seen[1].lines);
+        });
+
+        for (const [label, list] of [
+          ['finds our entry', [OUR_ENTRY, OUR_ENTRY]],
+          ['does not find our entry', ['']],
+        ] as Array<[string, string[]]>) {
+          it(`runs the snapshot again on Retry after an unreadable list that ${label}`, async () => {
+            const { resolve } = scriptedResolver(['retry']);
+            const { outcome } = await snapshotWith({
+              'git stash list -z': [
+                { stdout: '' }, { error: listFailure() }, { error: listFailure() },
+                ...list.map(stdout => ({ stdout })), { stdout: '' }, { stdout: OUR_ENTRY },
+              ],
+            }, { resolveStashFailure: resolve });
+            expect(resolve.calledOnce).to.equal(true);
+            expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+          });
+        }
 
         it('runs the snapshot again when "handled" does not find our entry after an unreadable list', async () => {
           const calls: string[] = [];
@@ -1804,8 +1853,8 @@ describe('workspace.ts', () => {
     });
 
     describe('the choices at a failed restore or drop', () => {
-      const RESTORE_TRAILER = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run. ' +
-        'The steps above still apply after Abort.';
+      const RESTORE_TRAILER = 'Choose Retry after you fix the cause above, "I handled it myself" after you ran the ' +
+        'steps above, or Abort to stop the run. The steps above still apply after Abort.';
       const OURS = stashListZ(['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`]);
       const TRACKED = `git diff --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA} --`;
       const applyFailure = () => Object.assign(new Error('Command failed: git stash apply'), {
@@ -1858,7 +1907,7 @@ describe('workspace.ts', () => {
         const { result, halt, calls, printed, logged } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
         expect(resolve.calledOnce).to.equal(true);
         expect(seen[0].step).to.equal('restore');
-        expect(seen[0].choices).to.deep.equal(['handled', 'abort']);
+        expect(seen[0].choices).to.deep.equal(['handled', 'retry', 'abort']);
         expect(seen[0].lines[0]).to.include('Rollback could not restore your work');
         expect(printed).to.include(`[claude-code-cli] ${RESTORE_TRAILER}`);
         expect(result.stashPop).to.equal('ok');
@@ -2020,6 +2069,57 @@ describe('workspace.ts', () => {
         expect(reason).to.be.greaterThan(-1);
         expect(printed[reason + 1]).to.equal('[claude-code-cli]   - "keep.txt"');
         expect(result.stashPop).to.equal('failed');
+      });
+
+      it('runs the restore again on Retry, drops our entry, and cuts the errors back', async () => {
+        const { resolve } = answering(['retry']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          [`git diff --name-only --no-renames -z ${OUR_SHA} --`]: { stdout: 'f.txt\0' },
+        });
+        const { result, halt, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(calls).to.include(`git restore --source=${OUR_SHA} --worktree -- :(literal)f.txt`);
+        expect(calls).to.include('git stash drop stash@{0}');
+        expect(result.stashPop).to.equal('ok');
+        expect(result.errors).to.deep.equal([]);
+        expect(halt).to.be.undefined;
+      });
+
+      it('checks the tree instead on Retry when our entry is gone', async () => {
+        const { resolve } = answering(['retry']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          'git stash list -z': [{ stdout: OURS }, { stdout: '' }],
+        });
+        const { result, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+        expect(result.stashPop).to.equal('ok');
+      });
+
+      it('writes nothing on Retry when HEAD moved, and shows the checklist without the reset step', async () => {
+        const { resolve, seen } = answering(['retry', 'abort']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          'git rev-parse HEAD': [{ stdout: 'abc1234\n' }, { stdout: 'fedcba9876543210\n' }],
+        });
+        const { halt, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledTwice).to.equal(true);
+        expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+        expect(seen[1].lines[0]).to.match(/^HEAD is at fedcba9876543210 /);
+        expect(halt?.lines).to.deep.equal(seen[1].lines);
+      });
+
+      it('drops our spare entry again on Retry', async () => {
+        const { resolve } = answering(['retry']);
+        const { snapshot, script } = restoreFixture({
+          'git stash drop': [{ error: new Error('fatal: cannot lock ref') }, { stdout: `Dropped stash@{0} (${OUR_SHA})\n` }],
+        });
+        const { halt, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(calls.filter(c => c === 'git stash drop stash@{0}')).to.have.length(2);
+        expect(halt).to.be.undefined;
       });
 
       it('asks at a spare entry after a good restore, and goes on when "handled" finds it gone', async () => {
