@@ -26,6 +26,8 @@ import type {
 } from '../types/pipeline';
 import { CHT_DOMAINS, CHT_SERVICES, CHT_WORKFLOWS, DEFAULT_PIPELINE_LOG_PATH, DEFAULT_PIPELINE_OUTPUT_DIR } from '../constants';
 import { buildValidator } from './schema-utils';
+import { hallucinationRate } from './reconcile';
+import { parseTitleIssue } from './issue-linkage';
 
 
 // Compiled once — the same validator open-review-pr re-runs before promotion.
@@ -39,6 +41,15 @@ const ANTHROPIC_DISTILL_MODEL = 'claude-sonnet-4-5-20251015';
 const BODY_LIMIT = 4000;
 /** Max chars of each linked issue body */
 const ISSUE_BODY_LIMIT = 500;
+/**
+ * Raised issue-body budget granted when the PR body is near-empty (e.g. a bare
+ * "Fixes #N"), so a near-empty PR whose detail lives entirely in the issue
+ * doesn't lose its root-cause mechanism to truncation (cht-core issue #10912 /
+ * memory 10914).
+ */
+const ISSUE_BODY_LIMIT_EXPANDED = 2000;
+/** A PR body at or below this length is treated as "near-empty" for the adaptive issue-body limit. */
+const NEAR_EMPTY_BODY_THRESHOLD = 100;
 /** Max linked issues to include */
 const MAX_ISSUES = 3;
 /** Max review comments to include */
@@ -140,9 +151,16 @@ export function buildPrompt(pr: ScrapedPR): string {
   const body = (pr.prBody ?? '').slice(0, BODY_LIMIT);
   const fileList = pr.fileList.slice(0, 50).join('\n');
 
+  // A near-empty PR body (often just "Fixes #N") puts all the real detail in
+  // the linked issue — grant it a larger budget rather than truncating away
+  // the root-cause mechanism.
+  const issueBodyLimit = body.trim().length <= NEAR_EMPTY_BODY_THRESHOLD
+    ? ISSUE_BODY_LIMIT_EXPANDED
+    : ISSUE_BODY_LIMIT;
+
   const issueContext = pr.linkedIssues
     .slice(0, MAX_ISSUES)
-    .map(i => `Issue #${i.number} (body excerpt):\n${i.body.slice(0, ISSUE_BODY_LIMIT)}`)
+    .map(i => `Issue #${i.number} (body excerpt):\n${i.body.slice(0, issueBodyLimit)}`)
     .join('\n\n');
 
   const reviewContext = pr.reviewComments
@@ -185,7 +203,7 @@ Respond with a JSON object matching this structure exactly:
 {
   "domain": "<one of the domains above>",
   "domainFit": "strong" | "weak",
-  "domainReasoning": "<1-2 sentences: why this domain, and what made it weak if so>",
+  "domainReasoning": "<1 clean sentence naming the changed subsystem that makes this domain correct. Do NOT reference internal seeds/rules, other drafts, or hedging like 'a reviewer could re-bin'.>",
   "title": "<concise title ≤200 chars describing the change>",
   "category": "bug" | "feature" | "improvement",
   "summary": "<1-2 sentence summary of the problem and resolution>",
@@ -193,17 +211,22 @@ Respond with a JSON object matching this structure exactly:
   "techStack": ["<technologies touched, e.g. typescript, couchdb, angular>"],
   "tags": ["<tag1>", "<tag2>"],
   "relatedWorkflows": ["<0+ cross-domain workstreams this PR is part of, from the list above; [] if none>"],
-  "entities": ["<file or module path>"],
+  "entities": ["<file or module path, chosen only from the Files changed list above>"],
   "concepts": ["<architectural concept>"],
   "problem": "<what was wrong — symptoms, affected users, error messages>",
-  "rootCause": "<specific code path or architectural reason>",
+  "rootCause": "<the concrete mechanism — name the specific function, API misuse, or code path (e.g. 'Set.add(...keys) drops all but the first id because add() takes one argument'). If the mechanism is stated in the linked issue, reproduce it; do not paraphrase into vagueness.>",
   "solution": "<how it was fixed — approach and key changes>",
   "codePatterns": "<reusable patterns from this fix with file paths>",
-  "designChoices": "<why this approach over alternatives>",
-  "relatedFiles": ["<path1>", "<path2>"],
+  "designChoices": "<why this approach over alternatives, grounded only in the PR body, linked issues, or review comments above>",
+  "relatedFiles": ["<path1 — chosen only from the Files changed list above>", "<path2>"],
   "testing": "<how the change was tested — tests added/modified, strategy; may be empty string>",
   "relatedIssues": ["#<issue>: <brief description>"]
-}`;
+}
+
+CONSTRAINTS:
+- "relatedFiles" and "entities" MUST be chosen only from the Files changed list above. Do not infer, guess, or invent paths. If a file is not in that list, do not include it.
+- Do NOT mention communication channels (Slack, forum, etc.), reviewer usernames, approval status (LGTM/approved), number of review rounds, or one-off CI/environment/dependency issues unless they appear verbatim in the Review comments above. "testing" describes test strategy and coverage, not the review process.
+- Classify by the changed subsystem (service/component/routing/i18n), not the user-facing surface. Route guards, modals, app-shell wiring, and translation-only changes are NOT forms-and-reports merely because they render through Enketo/forms UI — mark such PRs weak (or pick the more specific domain) and name the actual subsystem in "domainReasoning".`;
 }
 
 /**
@@ -241,12 +264,37 @@ async function llmDistill(pr: ScrapedPR): Promise<DistillDraft> {
 export function slugify(text: string): string {
   const slug = text
     .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[^a-z0-9\s-]/g, ' ')
     .trim()
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .slice(0, 60);
   return slug || 'untitled';
+}
+
+/** Backport marker: a "(cherry picked from commit ...)" note or a trailing "(#NNNN)" title suffix. */
+const BACKPORT_MARKER = /(cherry[- ]?picked from commit)|(\(#\d+\)\s*$)/i;
+
+/**
+ * Heuristic confidence gradient, replacing the previous hardcoded `'medium'`.
+ * `'low'` when the draft's `relatedFiles` aren't all grounded in the PR's own
+ * file list, or when the PR looks like a backport cherry-pick (which usually
+ * duplicates an already-distilled fix); `'medium'` otherwise. `'high'` is
+ * reserved for human-reviewed entries and is never set here.
+ *
+ * @example
+ * ```typescript
+ * computeConfidence({ relatedFiles: ['a.ts'] } as DistillDraft, { fileList: ['a.ts'], prBody: '', prTitle: '' } as ScrapedPR);
+ * // 'medium'
+ * computeConfidence({ relatedFiles: ['missing.ts'] } as DistillDraft, { fileList: ['a.ts'], prBody: '', prTitle: '' } as ScrapedPR);
+ * // 'low'
+ * ```
+ */
+export function computeConfidence(draft: DistillDraft, pr: ScrapedPR): 'medium' | 'low' {
+  const grounded = draft.relatedFiles.every(f => pr.fileList.includes(f));
+  if (!grounded) return 'low';
+  if (BACKPORT_MARKER.test(pr.prBody) || BACKPORT_MARKER.test(pr.prTitle)) return 'low';
+  return 'medium';
 }
 
 /**
@@ -265,6 +313,8 @@ export function slugify(text: string): string {
  */
 export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<string, unknown> {
   const today = new Date().toISOString().slice(0, 10);
+  const repo = pr.repo ?? 'medic/cht-core';
+  const repoName = repo.split('/')[1];
   const issueNumber = pr.linkedIssues[0]?.number;
   if (issueNumber === undefined) {
     throw new Error(
@@ -274,12 +324,12 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
   }
 
   return {
-    id: `cht-core-${issueNumber}`,
+    id: `${repoName}-${issueNumber}`,
     category: draft.category,
     domain: draft.domain,
     domainFit: draft.domainFit,
     issueNumber,
-    issueUrl: `https://github.com/medic/cht-core/issues/${issueNumber}`,
+    issueUrl: `https://github.com/${repo}/issues/${issueNumber}`,
     title: draft.title,
     lastUpdated: today,
     summary: draft.summary,
@@ -287,17 +337,19 @@ export function buildFrontmatter(draft: DistillDraft, pr: ScrapedPR): Record<str
     techStack: draft.techStack,
     tags: draft.tags,
     related_workflows: draft.relatedWorkflows,
-    source_pr: `medic/cht-core#${pr.prNumber}`,
+    source_pr: `${repo}#${pr.prNumber}`,
     source_sha: pr.mergeSha,
     distilled_at: today,
     reviewed_by: null,
     reviewed_at: null,
-    confidence: 'medium',
+    confidence: computeConfidence(draft, pr),
     entities: draft.entities,
     concepts: draft.concepts,
-    // Cross-links to other agent-memory entries (populated by a later post-pass);
-    // distinct from the GitHub issues in the draft body's ## Related Issues section.
-    related_issues: [],
+    // Candidate agent-memory ids for the PR's other linked issues (beyond the
+    // canonical one) — real, grounded cross-links from this PR's own linkage,
+    // not yet verified to have a promoted memory entry. Distinct from the
+    // GitHub issues listed in the draft body's ## Related Issues section.
+    related_issues: pr.linkedIssues.slice(1).map(i => `${repoName}-${i.number}`),
     stale: false,
   };
 }
@@ -378,6 +430,17 @@ export function assembleDraft(draft: DistillDraft, pr: ScrapedPR): string {
   return renderMarkdown(buildFrontmatter(draft, pr), draft);
 }
 
+/** Log a non-fatal warning to the audit log; the draft is still written. */
+async function logWarning(prNumber: number, reason: string, logPath: string): Promise<void> {
+  const entry: SkipLogEntry = {
+    prNumber,
+    decision: 'warn',
+    reason,
+    timestamp: new Date().toISOString(),
+  };
+  await fs.promises.appendFile(logPath, JSON.stringify(entry) + '\n', 'utf8');
+}
+
 /** Log a flag-for-human outcome to the audit log and return the result. */
 async function flagForHuman(prNumber: number, reason: string, logPath: string): Promise<DistillResult> {
   const entry: SkipLogEntry = {
@@ -418,7 +481,9 @@ async function handleDistillError(err: unknown, prNumber: number, logPath: strin
 
 /**
  * Distill a scraped PR into a schema-valid knowledge draft.
- * Writes the draft to agent-memory/_pending/<domain>/<prNumber>-<slug>.md.
+ * Writes the draft to agent-memory/_pending/<domain>/<prNumber>-issue-<issueNumber>-<slug>.md,
+ * where <issueNumber> is the RESOLVED issue, so the filename can never contradict
+ * the frontmatter it was written with.
  * Never throws — failures return flag-for-human and write to _skipped.ndjson.
  *
  * @example
@@ -453,9 +518,21 @@ export async function distillPR(
     return flagForHuman(pr.prNumber, reason, logPath);
   }
 
+  // The filename embeds the RESOLVED issue number — never the raw title token.
+  // A title that disagrees with resolution is a warning for a human (below),
+  // not something to bake into the name for the CI guard to trip on.
+  const titleIssue = parseTitleIssue(pr.prTitle);
+  if (titleIssue !== null && titleIssue !== frontmatter.issueNumber) {
+    await logWarning(
+      pr.prNumber,
+      `title says #${titleIssue} but resolution chose #${frontmatter.issueNumber} — verify linkage`,
+      logPath
+    );
+  }
+
   const markdown = renderMarkdown(frontmatter, draft);
   const slug = slugify(pr.prTitle);
-  const filename = `${pr.prNumber}-${slug}.md`;
+  const filename = `${pr.prNumber}-issue-${frontmatter.issueNumber}-${slug}.md`;
   const domainDir = path.join(outputDir, draft.domain);
 
   await fs.promises.mkdir(domainDir, { recursive: true });
@@ -467,5 +544,6 @@ export async function distillPR(
     status: 'written',
     outputPath,
     reason: `Distilled PR #${pr.prNumber} to ${draft.domain}`,
+    hallucinationRate: hallucinationRate([...draft.relatedFiles, ...draft.entities], pr.fileList),
   };
 }

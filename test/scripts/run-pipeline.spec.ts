@@ -292,6 +292,64 @@ describe('run-pipeline runPipeline', () => {
     expect(exitCode).to.be.undefined;
   });
 
+  it('prints a reconciliation summary line at the end of the run', async () => {
+    const logs: string[] = [];
+    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    const { runPipeline } = loadPipeline({
+      scrapePR: (prNum: number) => ({ prTitle: `T${prNum}`, labels: [], fileList: [] }),
+      filterPR: async () => ({ decision: 'skip', reason: 'x' }),
+    });
+    await runPipeline([12, 13], 'medic/cht-core');
+    expect(logs.join('\n')).to.include('Reconciliation:');
+  });
+
+  it('counts a distilled draft with unverified file refs in the end-of-run summary', async () => {
+    const logs: string[] = [];
+    console.log = (...a: unknown[]) => { logs.push(a.join(' ')); };
+    const { runPipeline } = loadPipeline({
+      scrapePR: (prNum: number) => ({ prTitle: `T${prNum}`, labels: [], fileList: [] }),
+      filterPR: async () => ({ decision: 'distill', reason: 'x' }),
+      distillPR: async () => ({ status: 'written', reason: 'ok', outputPath: '/tmp/x.md', hallucinationRate: 1 }),
+    });
+    await runPipeline([14], 'medic/cht-core');
+    expect(logs.join('\n')).to.include('1 draft(s) with unverified file ref(s)');
+  });
+
+  it('skips a PR merged into a non-default branch without failing the batch (D3)', async () => {
+    const logPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rp-d3-')), 'skipped.ndjson');
+    const realFilter = proxyquire('../../src/scripts/filter', {
+      '../constants': { DEFAULT_PIPELINE_LOG_PATH: logPath },
+    });
+    const distilled: number[] = [];
+    const { runPipeline } = loadPipeline({
+      scrapePR: (prNum: number) => ({
+        prNumber: prNum,
+        prTitle: `fix(#1): T${prNum}`,
+        labels: ['type: bug'],
+        author: 'human',
+        fileList: ['api/a.ts', 'webapp/b.ts'],
+        linkedIssues: [{ number: 1 }],
+        baseRefName: prNum === 20 ? '10224-ui-extensions' : 'master',
+        defaultBranch: 'master',
+      }),
+      filterPR: realFilter.filterPR,
+      distillPR: async (pr: unknown) => {
+        distilled.push((pr as { prNumber: number }).prNumber);
+        return { status: 'written', reason: 'ok', outputPath: '/tmp/x.md' };
+      },
+    });
+
+    await runPipeline([20, 21], 'medic/cht-core');
+
+    expect(exitCode).to.be.undefined;
+    expect(distilled).to.deep.equal([21]);
+    const rows = fs.readFileSync(logPath, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    expect(rows).to.have.length(1);
+    expect(rows[0].prNumber).to.equal(20);
+    expect(rows[0].decision).to.equal('skip');
+    expect(rows[0].reason).to.include("non-default branch '10224-ui-extensions'");
+  });
+
   it('records a failure and exits 1 when a PR throws', async () => {
     const { runPipeline } = loadPipeline({
       scrapePR: () => { throw new Error('scrape failed'); },
@@ -363,6 +421,50 @@ describe('run-pipeline prNumbersFromLog', () => {
   it('returns [] when the log file is absent', () => {
     const { prNumbersFromLog } = loadPipeline();
     expect(prNumbersFromLog('/no/such/file.ndjson')).to.deep.equal([]);
+  });
+});
+
+describe('run-pipeline skipEntriesForRun', () => {
+  it('returns only entries whose prNumber is in the requested list', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-recon-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    fs.writeFileSync(logPath, [
+      JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'a', timestamp: 't' }),
+      JSON.stringify({ prNumber: 999, decision: 'skip', reason: 'not in this run', timestamp: 't' }),
+      '',
+      'not json',
+      JSON.stringify({ prNumber: 11, decision: 'flag-for-human', reason: 'b', timestamp: 't' }),
+    ].join('\n'));
+    const { skipEntriesForRun } = loadPipeline();
+    const entries: Array<{ prNumber: number }> = skipEntriesForRun([10, 11], logPath);
+    expect(entries.map((e: { prNumber: number }) => e.prNumber)).to.deep.equal([10, 11]);
+  });
+
+  it('returns [] when the log file is absent', () => {
+    const { skipEntriesForRun } = loadPipeline();
+    expect(skipEntriesForRun([1], '/no/such/file.ndjson')).to.deep.equal([]);
+  });
+
+  it('excludes entries written before this run even for the same PR', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-recon-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    const historical = JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'old', timestamp: 't' }) + '\n';
+    fs.writeFileSync(logPath, historical);
+    fs.appendFileSync(logPath, JSON.stringify({ prNumber: 10, decision: 'flag-for-human', reason: 'new', timestamp: 't' }) + '\n');
+    const { skipEntriesForRun } = loadPipeline();
+    expect(skipEntriesForRun([10], logPath, Buffer.byteLength(historical)).map((entry: { reason: string }) => entry.reason))
+      .to.deep.equal(['new']);
+  });
+
+  it('uses byte offsets when historical entries contain Unicode', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-recon-'));
+    const logPath = path.join(dir, 'skipped.ndjson');
+    const historical = JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'old ✓', timestamp: 't' }) + '\n';
+    fs.writeFileSync(logPath, historical);
+    fs.appendFileSync(logPath, JSON.stringify({ prNumber: 10, decision: 'skip', reason: 'new', timestamp: 't' }) + '\n');
+    const { skipEntriesForRun } = loadPipeline();
+    expect(skipEntriesForRun([10], logPath, Buffer.byteLength(historical)).map((entry: { reason: string }) => entry.reason))
+      .to.deep.equal(['new']);
   });
 });
 
