@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10062
 issueUrl: https://github.com/medic/cht-core/issues/10062
 title: Fix race condition in admin user edit modal that broke Facility and Associated contact field population for SSO users
-lastUpdated: '2026-06-22'
-summary: The edit user modal in the admin app intermittently failed to populate the Facility and Associated contact fields, reproducibly for SSO-enabled users, due to a race condition in the edit-user controller. The fix corrects the ordering of the asynchronous model population so the fields render reliably.
+lastUpdated: '2026-09-29'
+summary: 'The admin app''s edit user modal intermittently left the Place (`facilitySelect`) and Associated contact (`contactSelect`) selects unpopulated, reproducibly for SSO users. The Select2 setup for both ran on `$uibModalInstance.rendered` without waiting for `determineEditUserModel()`, which for SSO users also waits on an extra `GET /api/v2/users/<name>`; the fix moves that setup into `populateFacilitynContact()`, called only after `$scope.editUserModel` is assigned.'
 services:
   - admin
 techStack:
@@ -22,6 +22,7 @@ tags:
   - admin-app
   - facility
   - associated-contact
+  - select2
 related_workflows:
   - user-registration
 source_pr: medic/cht-core#10153
@@ -40,44 +41,49 @@ concepts:
   - data binding ordering
 related_issues:
   - cht-core-9735
+  - cht-core-9761
 stale: false
 ---
 
 ## Problem
 
-When opening the edit user modal in the admin app, the Facility and Associated contact fields sometimes failed to be populated/rendered. The issue was intermittent (reproducible but not on every attempt) and surfaced for SSO-enabled users on CHT v4.20.0, as reported on the community forum and shown in the linked screenshot.
+When the edit user modal was opened in the admin app, the Place (label key `Facility`) and Associated contact selects were sometimes left empty or uninitialised. It was intermittent — the issue's repro is to give a user an SSO Email Address, then close and reopen their edit modal until it happens — and was reported from the community forum for SSO-enabled users; the issue is labelled as affecting 4.20.0 and 4.21.0.
 
 ## Root Cause
 
-A race condition in the edit-user.js controller: the user edit model/form fields were being populated before the asynchronous data required for the Facility and Associated contact fields had finished loading, so the bindings could be left empty. The SSO user code path made the timing window more likely to be hit.
+A race in admin/src/js/controllers/edit-user.js. `this.setupPromise = determineEditUserModel().then(model => { $scope.editUserModel = model; ... })` and a separate `$uibModalInstance.rendered.then(() => ContactTypes.getAll()).then(...)` chain ran independently. The second chain initialised both Select2 widgets from the model: the contact select via `Select2Search`, which takes its initial value from the `<option ng-value="editUserModel.contactSelect">` in the template, and the place select with `usersPlaces($scope.editUserModel.facilitySelect)`. If the modal rendered before the model had been assigned, the contact widget came up empty and reading `facilitySelect` off the still-undefined `$scope.editUserModel` threw, leaving the place widget uninitialised.
+
+The race was latent: the `rendered` chain dates from the admin app's creation and has read `$scope.editUserModel.facilitySelect` since PR #9128 (multiple places per user). What made it reproducible for SSO users is PR #9900, part of the SSO epic that reached master as PR #9955: `determineEditUserModel` now waits on `$q.all([Settings(), getOidcUsername()])`, and `getOidcUsername()` issues an extra `GET /api/v2/users/<name>` for users whose user-settings doc has `oidc_login`, so the model resolves later for exactly those users.
 
 ## Solution
 
-Reworked the edit-user controller so the Facility and Associated contact fields are populated only after their backing asynchronous data has resolved, eliminating the race so the modal renders the fields reliably for SSO and non-SSO users alike.
+Wrapped the `rendered` chain in a new `populateFacilitynContact()` (the name as spelled in the source) and called it from `setupPromise`'s `.then`, right after `$scope.editUserModel = model` and `validateSkipPasswordPermission()`. The contact select's `Select2Search` call also moved inside the `usersPlaces(...)` callback, so both widgets are initialised together, after the model exists and the place ids have been resolved. The fix was cherry-picked to 4.20.x (`7197a46c1`, first released in 4.20.1) and 4.21.x (`f02285311`, 4.21.1); on master it is first in 4.22.0. The same code is on master today, where `setupPromise` waits on `$q.all([determineEditUserModel(), datasourcePromise])` (added by PR #10795) before calling it.
 
 ## Code Patterns
 
-Ensure async data dependencies are awaited/resolved before assigning them into a form/view model (admin/src/js/controllers/edit-user.js) rather than populating model fields optimistically; guard modal field binding against not-yet-loaded async results to avoid timing-dependent empty fields.
+Do not run view-widget initialisation off a render promise that races the model; chain it after the model promise instead. In admin/src/js/controllers/edit-user.js the `$uibModalInstance.rendered` → `ContactTypes.getAll()` → `Select2Search` sequence is started from inside `setupPromise`'s `.then`, after `$scope.editUserModel` is set, so it still waits for the modal to render but can no longer run before the model exists.
 
 ## Design Choices
 
-Fixed the ordering of asynchronous model population in the controller rather than masking the symptom in the view, so the modal behaves deterministically regardless of how quickly the underlying lookups resolve. Added e2e coverage (rather than only a unit fix) to lock in the user-visible behavior given the intermittent nature of the bug.
+The fix orders the widget setup after the model rather than masking the symptom in the view, so the modal behaves the same whichever of the model lookups and the render finishes first. No unit spec was changed; coverage is an e2e case, and rather than adding a new spec file the PR consolidated the add-user spec into one covering both creating and editing users.
 
 ## Related Files
 
-- tests/e2e/default/users/user.wdio-spec.js
+- tests/e2e/default/users/user.wdio-spec.js (renamed by this PR from tests/e2e/default/users/add-user.wdio-spec.js)
 - tests/page-objects/default/users/user.wdio.page.js
 
 ## Testing
 
-Added new e2e test cases in tests/e2e/default/users/user.wdio-spec.js covering the edit user modal field population, with supporting selectors/methods added to the user.wdio.page.js page object. The fix was also verified manually in a local environment.
+tests/e2e/default/users/add-user.wdio-spec.js was renamed to tests/e2e/default/users/user.wdio-spec.js (77% similar), with its fixtures hoisted to module scope. It gains one case, 'Editing User -> should render user details', which, with an `oidc_provider` configured, creates an offline (`chw`) user with a place, a contact and an `oidc_username`, opens the edit modal and asserts the username, role, place (`#facilitySelect`), contact (`#contactSelect`) and SSO email (`#sso-login`) values. The users page object (tests/page-objects/default/users/user.wdio.page.js) gains `openEditUserDialog` and `editUserDialogDetails`, plus the `getUsernameRow` and `userList` helpers they use.
 
 ## Related Issues
 
-- #10062: Unable to edit place for SSO-enabled user on CHT v4.20.0 — edit user modal intermittently fails to populate Facility and Associated contact fields
+- #10062: "Rendering issue in edit user modal for SSO user" — this draft's issue.
+- #9761: "Update user creation frontend to support creating SSO users" — its PR #9900 added the `getOidcUsername()` request whose delay exposed this race.
+- #9735: "Single sign on (SSO) using identity provider" — the SSO epic that carried PR #9900 to master.
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The PR fixes the admin app's user edit modal and the bug manifests specifically for SSO-enabled users; user account management and SSO are squarely the authentication domain. The Facility/Associated-contact fields are properties of the user account, not standalone contact records.
+The fix is in the admin app's user-account editor (`EditUserCtrl`), which configures a user's roles, place, contact and login method, and the regression it repairs was made reproducible by the SSO epic's `getOidcUsername()` lookup. User-account management and SSO are authentication concerns; the Place and Associated contact fields here are the user account's assignments, not contact records being edited.

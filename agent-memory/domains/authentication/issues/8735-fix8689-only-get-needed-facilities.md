@@ -1,13 +1,13 @@
 ---
 id: cht-core-8689
-category: improvement
+category: bug
 domain: authentication
 domainFit: strong
 issueNumber: 8689
 issueUrl: https://github.com/medic/cht-core/issues/8689
-title: 'Users API: fetch only the needed facilities instead of all facilities to improve response time'
-lastUpdated: '2026-06-23'
-summary: The users API responded slowly on servers with many facilities because it loaded every facility document even though only those linked to the returned users were needed. The fix scopes the facility lookup to just the required facilities, significantly improving performance.
+title: 'Users API: fetch only the place and contact docs the listed users need instead of every contact, to fix response time'
+lastUpdated: '2026-09-29'
+summary: 'The users list API (GET /api/v1/users and /api/v2/users) timed out on large instances because it loaded every contact document on the server (places and people, via the medic-client/contacts_by_type view) to resolve each user''s place and contact. The fix fetches only the place and contact docs the returned users reference, by id.'
 services:
   - api
 techStack:
@@ -42,37 +42,39 @@ stale: false
 
 ## Problem
 
-The users API exhibited poor (slow) response times on servers with a high number of facilities. Listing users became progressively more expensive as the total facility count grew, because facility data was loaded regardless of how many users were actually being returned.
+The users API exhibited poor (slow) response times on servers with a high number of facilities — the issue reports `/api/v1/users` and `/api/v2/users` returning 504 Gateway Time-out on an instance with about 8,400 `_users` docs and 4.6 million medic docs. Listing users became progressively more expensive as the total contact count grew, because every contact doc was loaded regardless of how many users were actually being returned.
 
 ## Root Cause
 
-The facility-fetching logic in the user-management library retrieved all facility documents on the server and then used them, so the cost scaled with the total number of facilities rather than with the set of facilities actually referenced by the users being returned.
+`getList` in shared-libs/user-management/src/users.js called `getFacilities()`, which queried `medic-client/contacts_by_type` with `include_docs: true` — every place and person on the server — and then looked each user's place and contact up in that set, so the cost scaled with the total number of contacts rather than with the docs actually referenced by the users being returned.
 
 ## Solution
 
-Changed facility.js and users.js so the API fetches only the facilities needed for the users in the response (scoped by their facility IDs) instead of loading the entire facility set, cutting unnecessary CouchDB reads and data processing.
+Added shared-libs/user-management/src/libs/facility.js, whose `list()` collects the users' `facility_id` values and their settings docs' `contact_id` values and fetches just those docs with one `db.medic.allDocs({ keys: Array.from(ids), include_docs: true })`; `getList` in shared-libs/user-management/src/users.js now calls it and `getFacilities()` was removed. This cuts the CouchDB reads to the docs the response needs. (On master `list()` takes only the user docs and reads both ids from them, since #8928 copied `contact_id` onto `_users` docs.)
 
 ## Code Patterns
 
-Scope database reads to the required document IDs (fetch-by-keys) rather than loading an entire collection and filtering/joining in memory — see the facility lookup in shared-libs/user-management/src/libs/facility.js consumed by users.js.
+Scope database reads to the required document IDs (fetch-by-keys) rather than loading an entire collection and filtering/joining in memory — see the facility lookup in shared-libs/user-management/src/libs/facility.js consumed by shared-libs/user-management/src/users.js.
 
 ## Design Choices
 
-The author deliberately shipped a simple, high-impact partial fix: it removes the scaling-with-facility-count cost but acknowledges the endpoint will still degrade with very large numbers of users (which would require additional per-user scoping). Low-hanging-fruit optimization chosen over a full rewrite.
+The author deliberately shipped a simple, high-impact partial fix: it removes the cost that scaled with the total number of contacts but acknowledges the endpoint will still degrade with very large numbers of users (which would require additional per-user scoping). Low-hanging-fruit optimization chosen over a full rewrite.
 
 ## Related Files
 
-- shared-libs/user-management/test/unit/libs/facility.spec.js
+- shared-libs/user-management/src/libs/facility.js (added)
+- shared-libs/user-management/src/users.js
+- shared-libs/user-management/test/unit/libs/facility.spec.js (added)
 - shared-libs/user-management/test/unit/users.spec.js
 - tests/integration/api/controllers/users.spec.js
 
 ## Testing
 
-Unit tests added/updated for the facility lookup and users logic (facility.spec.js, users.spec.js). An e2e/integration test in tests/integration/api/controllers/users.spec.js validates the users API response and confirmed reduced response times when many facilities exist on the server.
+Added unit tests for the facility lookup (shared-libs/user-management/test/unit/libs/facility.spec.js, a new file) and updated shared-libs/user-management/test/unit/users.spec.js to stub `facility.list` instead of `getFacilities`. The integration test tests/integration/api/controllers/users.spec.js adds a `POST/GET api/v2/users` case that creates ten users and checks each listed user's place and contact are hydrated; it does not measure response time.
 
 ## Related Issues
 
-- #8689: users API performing badly — slow response times on servers with a high number of facilities
+- #8689: "Users API not responsive" — this draft's issue: `/api/v1/users` and `/api/v2/users` timing out on a large instance
 
 ## Domain Rationale
 

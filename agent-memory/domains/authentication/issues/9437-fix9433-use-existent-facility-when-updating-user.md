@@ -5,9 +5,9 @@ domain: authentication
 domainFit: strong
 issueNumber: 9433
 issueUrl: https://github.com/medic/cht-core/issues/9433
-title: Use the user's existing facility when updating a user instead of requiring/re-deriving it
-lastUpdated: '2026-06-23'
-summary: Updating an existing user could fail or behave incorrectly because the update path did not fall back to the facility already stored on the user. The fix makes user updates reuse the existent facility when one is not explicitly supplied.
+title: Validate a new contact against the user's stored facility when a user update changes only the contact
+lastUpdated: '2026-09-29'
+summary: 'Since the 4.9.0 multi-facility change (PR #9126), updating only a user''s contact through /api/v1/users/{username} returned a 500, because `validateUserContact` mapped over `data.facility_id`, which is undefined when the payload has no `place`. The fix validates the new contact against the payload''s facility or, failing that, the facility stored on the user doc.'
 services:
   - api
 techStack:
@@ -35,29 +35,30 @@ concepts:
   - facility/place association
   - partial-update field resolution
   - user update validation
-related_issues: []
+related_issues:
+  - cht-core-6543
 stale: false
 ---
 
 ## Problem
 
-When updating an existing user, the user-management logic did not use the facility already persisted on the user document. If a facility was not re-supplied in the update payload (or was resolved against a missing/incorrect value), the update would fail or produce an inconsistent user record.
+Updating a user's contact without re-sending its place — a request to `/api/v1/users/{username}` with body `{"contact": "<contact_id>"}` — returned 500 Server Error. The issue reports it as a regression: the same request worked in 4.8.0 and failed in 4.9.0 and 4.10.0.
 
 ## Root Cause
 
-The user-update code path in shared-libs/user-management/src/users.js did not fall back to the user's existing (stored) facility when resolving/validating the facility for the update, treating the field as if it always needed to be provided or re-derived rather than reusing the existent one.
+Since PR #9126, `validateUserContact` in shared-libs/user-management/src/users.js checked the new contact with `data.facility_id.map(...)`. `hydratePayload` only sets `data.facility_id` from `data.place`, so when the payload had no `place` it was undefined and the `.map` threw, which surfaced as the 500. The check never looked at the facility already stored on the user doc.
 
 ## Solution
 
-Update the user-management update logic to read and reuse the existent facility from the stored user document when one is not explicitly provided in the update, so the existing facility association is preserved and validated correctly.
+Added `validateNewContact`, which checks the contact against `forceArray(data.facility_id || user?.facility_id)` — the payload's facilities if a place was sent, otherwise the user doc's stored `facility_id` — and passes if the contact sits under any of them (`Promise.any` over `validateContact`). The new `forceArray` helper also covers a legacy string `facility_id` and replaces the inline `Array.isArray` checks in `getUsers`, `mapUser` and `getUserSettings`; the offline-role "contact required" branch moved into `validateContactForRoles`, which now reads `data.roles || user?.roles`.
 
 ## Code Patterns
 
-Partial-update resolution pattern in shared-libs/user-management/src/users.js: when handling an update, fall back to the value persisted on the existing document (here, the facility) for fields absent from the update payload rather than requiring callers to resupply them.
+Partial-update validation in shared-libs/user-management/src/users.js: when a request changes one field (the contact) whose validity depends on another (the facility), read the dependent value from the payload first and fall back to the merged user doc (`data.facility_id || user?.facility_id`) instead of assuming the caller resent it; normalize string-or-array fields once with `forceArray`.
 
 ## Design Choices
 
-Preserve and reuse the already-associated facility on update rather than forcing every update request to include a facility or rejecting updates that omit it, keeping user edits backward compatible with existing data.
+Validate against the already-associated facility rather than requiring every contact update to resend the place — before PR #9126 the check used the user doc's `facility_id`, so this restores contact-only updates; `forceArray` keeps users whose stored `facility_id` is still a string working.
 
 ## Related Files
 
@@ -67,14 +68,15 @@ Preserve and reuse the already-associated facility on update rather than forcing
 
 ## Testing
 
-Added/updated unit tests in shared-libs/user-management/test/unit/users.spec.js covering the update path using the existing facility, plus integration coverage in tests/integration/api/controllers/users.spec.js exercising the API user-update controller end to end.
+Both test files were modified, not added. The existing shared-libs/user-management/test/unit/users.spec.js gained a case (`should update contact on user and user settings`: a contact-only update keeps `facility_id: ['maine']` and writes the updated `contact_id` to both docs). The existing tests/integration/api/controllers/users.spec.js gained one (`should allow to only update the contact`: POST `/api/v1/users/{username}` with only `contact`, after which both the user-settings and `_users` docs carry the new `contact_id`).
 
 ## Related Issues
 
-- #9433: user update should use the existing facility instead of failing/requiring it
+- #9433: "REST Endpoint `/api/v1/users/{{username}}` throwing Server error when updating `contact`" — this draft's issue
+- #6543: "Allow for multiple places to be assigned to users" — its API PR #9126 introduced the `data.facility_id.map(...)` contact check this fixes
 
 ## Domain Rationale
 
 **Fit:** strong
 
-User account creation/update logic in shared-libs/user-management is canonically the authentication domain (user provisioning, roles, and their facility/contact associations); this PR fixes how a user's facility association is resolved during an update, not contact lookup or place configuration.
+User account creation/update logic in shared-libs/user-management is canonically the authentication domain (user provisioning, roles, and their facility/contact associations); this PR fixes how a changed contact is validated against the user's facility during an update, not contact lookup or place configuration.

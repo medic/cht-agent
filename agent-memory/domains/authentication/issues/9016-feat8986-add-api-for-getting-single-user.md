@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8986
 issueUrl: https://github.com/medic/cht-core/issues/8986
 title: Add GET /api/v2/users/:username endpoint to fetch a single user
-lastUpdated: '2026-06-23'
-summary: The API could only list all users, with no way to retrieve one user by username. This PR adds a GET /api/v2/users/:username endpoint, wired through the API controller/routing and a new single-user lookup in the user-management shared library.
+lastUpdated: '2026-09-29'
+summary: The API could only list all users, with no way to retrieve one user by username. This PR adds a GET /api/v2/users/:username endpoint, open to holders of `can_view_users` or to the user fetching themselves, wired through the API controller/routing and a new single-user lookup (`getUser`) in the user-management shared library.
 services:
   - api
 techStack:
@@ -41,7 +41,8 @@ concepts:
   - GET single resource by key
   - shared-library delegation
   - controller/routing separation
-related_issues: []
+related_issues:
+  - cht-core-8877
 stale: false
 ---
 
@@ -55,7 +56,7 @@ The API exposed no route or controller handler for fetching an individual user b
 
 ## Solution
 
-Registered a new GET /api/v2/users/:username route in api/src/routing.js, added a controller handler in api/src/controllers/users.js that resolves the username, and implemented the single-user retrieval logic in shared-libs/user-management/src/users.js, mirroring the existing list-users flow but keyed on a single username.
+Registered a new GET /api/v2/users/:username route in api/src/routing.js, added a controller handler in api/src/controllers/users.js that resolves the username, and implemented the single-user retrieval logic in shared-libs/user-management/src/users.js, mirroring the existing list-users flow but keyed on a single username. The new handler takes the name `users.v2.get`; the list handlers it displaced were renamed `users.list` (v1) and `users.v2.list`. It allows the request when the requester has `can_view_users` or is fetching their own user (`isReferencingSelf`: session name equals the username and any Basic-auth username matches too), otherwise it returns 403 `Insufficient privileges`. `getUser(username)` reads the `_users` and `user-settings` docs, fetches the user's place and contact via `facility.list([user])`, and builds the result with `mapUser`, a helper extracted from `mapUsers`.
 
 ## Code Patterns
 
@@ -76,16 +77,16 @@ Reused the existing user-management shared library instead of duplicating user-l
 
 ## Testing
 
-Added unit tests for the new controller handler (api/tests/mocha/controllers/users.spec.js) and the shared-library single-user function (shared-libs/user-management/test/unit/users.spec.js), plus integration coverage of the endpoint behavior in tests/integration/api/controllers/users.spec.js.
+Added cases to the existing specs: the controller's `get single user` block (api/tests/mocha/controllers/users.spec.js — including self-access with and without Basic auth, refusal when not self, and conflicting Basic auth vs session cookie), the shared library's `getUser` block (shared-libs/user-management/test/unit/users.spec.js — missing username, missing `_users` or `user-settings` doc), and `GET api/v2/users/{username}` integration cases in tests/integration/api/controllers/users.spec.js (with and without `can_view_users`, self-retrieval, unknown user).
 
 ## Related Issues
 
-- #8986: Add API support for retrieving data about a single user (GET /api/v2/users/username)
-- #8877: Parent issue this work was split off from — broader user API support
-- medic/cht-docs#1350: Documentation PR for the new single-user endpoint
+- #8986: "/api/v2/users look up data for single user" — this draft's issue
+- #8877: "/api/v2/users look up users by `facility_id` and/or `contact_id`" — the issue #8986 was split off from; shipped by PR #8928
+- PR medic/cht-docs#1350: "feat: add API docs for getting user by username" — documents the new endpoint
 
 ## Domain Rationale
 
 **Fit:** strong
 
-User management (users, their roles and facility associations) is canonically part of the authentication domain in CHT; this PR adds a user-retrieval API endpoint backed by the user-management shared library, a squarely auth-domain concern rather than an external-system integration.
+User management (users, their roles and facility associations) is canonically part of the authentication domain in CHT; this PR adds a user-retrieval API endpoint backed by the user-management shared library, and its access rule (`can_view_users` or the user themselves) is an authorization decision, so it is an auth-domain concern rather than an external-system integration.

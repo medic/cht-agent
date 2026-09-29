@@ -1,13 +1,13 @@
 ---
 id: cht-core-6784
-category: improvement
+category: feature
 domain: authentication
 domainFit: strong
 issueNumber: 6784
 issueUrl: https://github.com/medic/cht-core/issues/6784
-title: Show unsupported-browser message for Safari users on the login page
-lastUpdated: '2026-06-22'
-summary: Safari users reached the CHT login page with no indication the browser is unsupported, yielding a degraded experience. Added Safari detection that displays a localized 'unsupported browser' message advising users to switch to Chrome or Firefox.
+title: Show an unsupported-browser message and hide the login fields for Safari users on the login page
+lastUpdated: '2026-09-29'
+summary: 'Safari users could log in from the CHT login page with no warning that Safari is unsupported. The PR adds client-side user-agent Safari detection to the login page script, which shows a localized "Safari is not supported. Please use Chrome or Firefox." message and hides the login form fields. Token (magic-link) login was not covered and was left to a follow-up issue.'
 services:
   - api
 techStack:
@@ -41,29 +41,30 @@ concepts:
   - server-rendered login page
   - token (magic link) login
   - unsupported browser handling
-related_issues: []
+related_issues:
+  - cht-core-10494
 stale: false
 ---
 
 ## Problem
 
-On the login page, Safari users were not warned that Safari is unsupported by the CHT app, so they proceeded to a broken/degraded experience with no explanation (issue #6784). The expected message was: 'For a better app experience, please contact your administrator or supervisor. Safari is not supported. Please use Chrome or Firefox.'
+Safari users could log in from the login page with no warning that Safari is unsupported by the CHT app, and then hit subtle, non-obvious breakage with no explanation (issue #6784). The expected message was: 'For a better app experience, please contact your administrator or supervisor. Safari is not supported. Please use Chrome or Firefox.'
 
 ## Root Cause
 
-The login page's browser-detection logic in api/src/public/login/script.js did not identify Safari as an unsupported browser, so no warning message was rendered for Safari users on the login template.
+`checkUnsupportedBrowser()` in api/src/public/login/script.js had no Safari case. Outside cht-android, its only check was bowser's `parser.satisfies()` with `chrome: '>=90'` and `firefox: '>=98'`. That call returns `undefined` for a browser it does not list, so at most Safari got the generic `login.unsupported_browser.outdated_browser` text ("Let them know to update your browser."), and nothing hid the login form. Separately, the `DOMContentLoaded` handler called `ssoLoginButton.addEventListener('click', requestSSOLogin, false)` without a null check. The `id="login-sso"` button is rendered only `if(hasOidcProvider)` in api/src/templates/login/index.html and not at all in api/src/templates/login/token-login.html, so on the login page without an OIDC provider, and always on the token-login page, the handler threw before it reached `checkUnsupportedBrowser()`.
 
 ## Solution
 
-Added Safari detection to the login page and rendered a localized unsupported-browser message on the login template when Safari is detected. The new message string was added to all supported locale files (en, ar, es, fr, ne, sw) and wired through the login controller, client script, and HTML template. A separate error that triggered when token_login was enabled (and was breaking the e2e suite) was also fixed.
+The PR added `isSafariBrowser()` to api/src/public/login/script.js. It tests `navigator.userAgent` against `/^((?!chrome|android|crios|fxios).)*safari/i`, which skips user agents where `chrome`, `android`, `crios` or `fxios` appears before `safari`. For non-cht-android browsers, `checkUnsupportedBrowser()` tests it before the bowser version check and selects the new `login.unsupported_browser.safari` key. On Safari it also adds `hidden` to a new `id="login-fields"` wrapper in api/src/templates/login/index.html, which holds the username and password inputs, the error messages, and the login and SSO buttons, so the form cannot be used. api/src/controllers/login.js adds the key to the login template's `translationStrings`. The string was added to six of the nine bundled locale files: ar, en, es, fr, ne and sw, but not bm, hi or id. The PR also null-guards the `getElementById('login-sso')` listener and the `getElementById('user')` lookup, moving the page wiring into `handleLoginButton()`, `handleUserInputFocus()`, `handlePasswordInputFocus()`, `handlePasswordToggle()` and `handleServiceWorker()`. It also makes `isUsingSupportedBrowser()` return `false` instead of throwing when bowser is not loaded.
 
 ## Code Patterns
 
-User-agent based browser detection in api/src/public/login/script.js; conditional rendering of a localized warning in api/src/templates/login/index.html driven by translation keys in api/resources/translations/messages-*.properties; controller wiring in api/src/controllers/login.js.
+Client-side user-agent detection (`isSafariBrowser()` in api/src/public/login/script.js) feeds the existing `checkUnsupportedBrowser()`. That function writes the translated text into the `id="unsupported-browser-update"` span, un-hides the `id="unsupported-browser"` paragraph, and on Safari hides the `id="login-fields"` wrapper, all three in api/src/templates/login/index.html. A translation key reaches a login page only if it is listed in that template's `translationStrings` in api/src/controllers/login.js (`getTranslationsString()` encodes just those keys). A new message therefore needs an entry there as well as in api/resources/translations/messages-*.properties.
 
 ## Design Choices
 
-Surface an informational warning rather than hard-blocking Safari. The browser-support check runs only after token/magic-link login, so logging in via a magic link on an unsupported browser remains possible — explicitly deferred to a follow-up PR. New text was internationalised across all bundled locales rather than English-only.
+On Safari the login form is hidden, not just accompanied by a warning. The issue asked for an alert at minimum and preferably for blocking Safari logins. The hiding is client-side only, and the API performs no browser check. In the `DOMContentLoaded` handler, `checkUnsupportedBrowser()` still runs after `requestTokenLogin()` has fired, so a token (magic-link) login still went through on Safari. That gap was left to a follow-up (#10494, PR #10502). The Safari detection lives inside the existing `checkUnsupportedBrowser()` rather than in a separate check, so all unsupported-browser handling stays in one function. The new string covers six of the nine bundled locales (not bm, hi or id).
 
 ## Related Files
 
@@ -79,14 +80,15 @@ Surface an informational warning rather than hard-blocking Safari. The browser-s
 
 ## Testing
 
-e2e tests covered the login-page behavior; they were initially failing consistently because of an error triggered when token_login was enabled, which was then fixed so the suite passed before merge.
+No tests were added or changed. The diff touches only the six translation files, api/src/controllers/login.js, api/src/public/login/script.js and api/src/templates/login/index.html.
 
 ## Related Issues
 
-- #6784: Safari unsupported browser message missing on login page
+- #6784: "Alert Safari users CHT doesn't support their browser" — this draft's issue, which asks for an alert at minimum and preferably for blocking Safari logins
+- #10494: "Prevent logging in with token in Safari Browser" — the follow-up (PR #10502) that closed the token-login gap left open here
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The change lives entirely in the CHT login page (controller, client script, template) and interacts with the token/magic-link login flow noted in review — the login surface is canonically the authentication domain. Despite the six translation-properties files, the PR is primarily about login-page browser detection, not locale registration, so it is not configuration.
+The PR decides whether a Safari user can log in at all: on Safari it hides the login form and shows an unsupported-browser warning, as #6784 asked (an alert at minimum, preferably blocking Safari logins). That is login-flow policy, which is authentication. Enforcement is client-side only: it changes no credential, session or token handling, and the API still accepts logins from Safari. The six translation files carry the new string and do not register locales, so this is not configuration.

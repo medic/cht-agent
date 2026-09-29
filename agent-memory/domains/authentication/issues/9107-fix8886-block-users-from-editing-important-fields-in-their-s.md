@@ -5,9 +5,9 @@ domain: authentication
 domainFit: strong
 issueNumber: 8886
 issueUrl: https://github.com/medic/cht-core/issues/8886
-title: Block non-admin users from editing protected fields in their own user-settings via validate_doc_update
-lastUpdated: '2026-06-23'
-summary: Users had write access to their own user-settings document and could modify security-sensitive fields (e.g. roles, facility), enabling privilege escalation. Added validate_doc_update checks in both the server (medic) and offline (medic-client) design docs to reject such edits by non-admin users.
+title: Block non-admin users from creating user-settings docs or changing their roles via validate_doc_update
+lastUpdated: '2026-09-29'
+summary: Users could edit their own user-settings doc in the medic database, including the `roles` array that shadows their `_users` roles, through direct API calls or by replicating a PouchDB edit. The medic-client `validate_doc_update` now rejects, for anyone who is not a DB admin, creating a user-settings doc or changing its `roles`. The PR also fixes the medic ddoc's `isDbAdmin` check so that users made admins by role in the database security object are recognised.
 services:
   - admin
   - webapp
@@ -43,51 +43,53 @@ concepts:
   - field-level write authorization
   - privilege-escalation prevention
   - user-settings document protection
-  - mirrored server/offline (medic and medic-client) design-doc validation
+  - DB-admin bypass via the security object (secObj)
 related_issues: []
 stale: false
 ---
 
 ## Problem
 
-A user has write access to their own user-settings document, which replicates to their device. Nothing enforced field-level immutability, so a non-admin user could edit important/protected fields (such as roles, facility_id, or contact_id) and potentially escalate their own privileges or change their data access.
+A user can write their own user-settings doc (`_id` `org.couchdb.user:<name>`, `type: 'user-settings'`) in the medic database, either through direct API calls or by editing it in PouchDB and letting it replicate. Its `roles` array shadows the authoritative `_users` doc. An edited copy can therefore drift from `_users`, mislead code that reads the medic copy, or let a malicious user rewrite their own roles shadow. The issue rated the severity low because the shadow roles are not authoritative on the server.
 
 ## Root Cause
 
-The validate_doc_update validation functions in the medic and medic-client design docs enforced document-level write access but did not restrict which fields a non-admin user could change on a user-settings document, leaving sensitive fields mutable by the user themselves.
+Before this PR, the medic-client `validate_doc_update` checked only the structure of user-settings docs. `validateUserSettings()` checked the `_id` prefix and case, `name`, the type of `known`, and that `roles` exists, but nothing about who was writing. The medic ddoc's `checkAuthority()` did not look at user-settings at all. Separately, the medic ddoc's `isDbAdmin()` looped with `for (var i = 0; i < userCtx.roles; i++)`, missing `.length`, so the loop did not run for role names. Users who were admins by role in the database security object (`secObj.admins.roles`) were therefore not treated as DB admins.
 
 ## Solution
 
-Updated validate_doc_update.js in both ddocs/medic-db/medic and ddocs/medic-db/medic-client to compare old and new document values for the set of protected user-settings fields and reject (forbidden) changes made by non-admin users. Companion changes were made to the admin privacy-policies service and preview controller, with unit tests added for both the validation logic and the admin service.
+- `ddocs/medic-db/medic-client/validate_doc_update.js`: the function now takes `secObj` and adds two helpers, `hasRole` (`var hasRole = function(roles, role)`) and `isDbAdmin`. `isDbAdmin` is true for the `_admin` role, or for a name or role listed in `secObj.admins`, and DB admins return early before any other check. For `type === 'user-settings'`, `authorizeUserSettings()` now runs after `validateUserSettings()`. It throws `forbidden` with "You are not authorized to create user-settings" when there is no `oldDoc`. It throws "You are not authorized to edit roles" when `oldDoc.roles` is not an object, or when `newDoc.roles` differs from it in length or in any element by position. Only `roles` is compared; other fields, including `known` and `privacy_policy_acceptance_log`, stay writable by the user.
+- `ddocs/medic-db/medic/validate_doc_update.js`: `hasRole` now takes a roles array, and `isDbAdmin` loops with `i < userCtx.roles.length` over `secObj.admins.roles`.
+- Admin app: the PR deleted the `PrivacyPolicies` service (`admin/src/js/services/privacy-policies.js`) and its spec, and dropped its `require` from `admin/src/js/main.js`. Its `decodeUnicode` logic, the only part the admin app used, was inlined into `admin/src/js/controllers/display-privacy-policies-preview.js`.
 
 ## Code Patterns
 
-Field-level write authorization in CouchDB validate_doc_update: compare oldDoc vs newDoc for a defined set of protected fields and throw { forbidden } when a non-admin user attempts to change them (ddocs/medic-db/medic/validate_doc_update.js, ddocs/medic-db/medic-client/validate_doc_update.js). The check is mirrored across the server-side (medic) and offline (medic-client) design docs so offline/replicated edits are rejected too.
+Authority check inside `validate_doc_update`: return early for DB admins (`isDbAdmin(userCtx, secObj)`, which checks `_admin` and `secObj.admins.names`/`secObj.admins.roles`). Then compare `oldDoc` with `newDoc` on the protected field and `throw({ forbidden: msg })` (via `_err`) on any difference, and reject creation when `oldDoc` is absent. An array field is compared by length and then element by element.
 
 ## Design Choices
 
-Enforce the rule at the database/validation layer (validate_doc_update) rather than only in application code, so it cannot be bypassed via offline PouchDB edits, direct CouchDB writes, or replication. Mirroring the validation in both the medic (server) and medic-client (offline) ddocs keeps online and offline enforcement consistent.
+The rule is enforced in the database (`validate_doc_update`) rather than in application code, so it covers both routes the issue names: direct API/CouchDB writes and edits replicated up from PouchDB. CouchDB runs every design doc's `validate_doc_update` on each write to the medic database, so the check in `medic-client` applies on the server. That file's header comment reserves it for structure checks "irrespective of authority", yet the PR put the authority check there and added no user-settings check to the medic ddoc. The early `isDbAdmin()` return also exempts DB admins from medic-client's form `_id` and user-settings structure checks, which applied to them before.
 
 ## Related Files
 
 - ddocs/medic-db/medic/validate_doc_update.js
 - ddocs/medic-db/medic-client/validate_doc_update.js
 - webapp/tests/mocha/unit/validate_doc_update.spec.js
-- admin/src/js/services/privacy-policies.js
+- admin/src/js/services/privacy-policies.js (deleted)
 - admin/src/js/controllers/display-privacy-policies-preview.js
 - admin/src/js/main.js
-- admin/tests/unit/services/privacy-policies.spec.js
+- admin/tests/unit/services/privacy-policies.spec.js (deleted)
 
 ## Testing
 
-Added/modified unit tests for the validate_doc_update validation logic in webapp/tests/mocha/unit/validate_doc_update.spec.js and for the admin privacy-policies service in admin/tests/unit/services/privacy-policies.spec.js.
+`webapp/tests/mocha/unit/validate_doc_update.spec.js` (modified) loads both ddocs' validators. It groups the user-settings cases under `describe('type:user-settings')` and adds four cases: "does not allow non-admins to change roles", "allows admins to change roles", "allows everyone to update their own privacy policy acceptance", and "allows everyone to update their own known status". Existing tests were converted from `done` callbacks to synchronous functions, and "only db and national admins are allowed change their own place" became "only db admins are allowed change their own place". The admin `admin/tests/unit/services/privacy-policies.spec.js` was deleted along with the service.
 
 ## Related Issues
 
-- #8886: Block users from editing important/protected fields in their own user settings (privilege-escalation prevention)
+- #8886: "Block users from editing important fields in user settings docs" (this draft's issue)
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The PR enforces field-level write authorization on user-settings documents to stop users from changing privileged fields (e.g. roles, facility, contact), which is a privilege-escalation/permissions concern. Per the roles/permissions rule, that lands squarely in authentication rather than data-sync, even though the hook lives in a CouchDB validate_doc_update ddoc.
+The PR adds an authorization rule: only DB admins may create user-settings docs or change their `roles`. It also fixes how the medic ddoc recognises DB admins by role. Both are roles and access-control logic. The CouchDB design doc is only where the rule is enforced, and no replication or sync behaviour changes.

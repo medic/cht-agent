@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8877
 issueUrl: https://github.com/medic/cht-core/issues/8877
 title: Extend GET /api/v2/users to look up users by facility_id and/or contact_id
-lastUpdated: '2026-06-23'
+lastUpdated: '2026-09-29'
 summary: There was no way to query the users API to find which users are linked to a given facility or contact. This PR extends `GET /api/v2/users` to accept `facility_id` and/or `contact_id` query parameters (gated behind `can_view_users`), backed by a new `_users` db view and a migration that backfills `contact_id` onto existing user docs.
 services:
   - api
@@ -42,13 +42,14 @@ concepts:
   - user docs in the _users database
   - idempotent backfill migration
   - query-parameter-based filtering on an existing route
-related_issues: []
-stale: false
+related_issues:
+  - cht-core-8986
+stale: true
 ---
 
 ## Problem
 
-The `GET /api/v2/users` route could not be filtered, so there was no efficient, supported way to find which users are associated with a particular facility (`facility_id`) or contact (`contact_id`). User docs also did not consistently carry a `contact_id` field that could be indexed for such a lookup.
+The `GET /api/v2/users` route could not be filtered, so there was no efficient, supported way to find which users are associated with a particular facility (`facility_id`) or contact (`contact_id`). User management also did not write `contact_id` onto `_users` docs — it lived only on the `user-settings` doc in the medic db — so there was nothing to index for a contact lookup.
 
 ## Root Cause
 
@@ -56,11 +57,11 @@ The users API exposed no filtering mechanism for `facility_id`/`contact_id`, the
 
 ## Solution
 
-Extended `GET /api/v2/users` (controller in api/src/controllers/users.js) to accept `facility_id` and/or `contact_id` query parameters and return the matching users, reusing the existing `can_view_users` permission gate. Added a `users_by_field` map view (ddocs/users-db/users/views/users_by_field/map.js) to index users by these fields, added the query logic in shared-libs/user-management (users.js, libs/facility.js), updated setup/databases ddoc handling, and added the `add-contact-id-to-user-docs` migration to backfill `contact_id` onto existing user docs so they are indexable.
+Extended `GET /api/v2/users` (controller in api/src/controllers/users.js) to accept `facility_id` and/or `contact_id` query parameters and return the matching users, reusing the existing `can_view_users` permission gate. Added a `users_by_field` map view (ddocs/users-db/users/views/users_by_field/map.js) to index users by these fields, added the query logic in shared-libs/user-management/src/users.js (`getUsers` queries `users/users_by_field`; `getUsersAndSettings` then fetches the matching settings docs by id), made user create/update also write `contact_id` onto the `_users` doc (`getUserUpdates`), changed shared-libs/user-management/src/libs/facility.js `list()` to read `facility_id` and `contact_id` from the user docs, registered the new `_design/users` ddoc (`jsonFileName: 'users.json'` in api/src/services/setup/databases.js) for the users db in setup/databases, and added the `add-contact-id-to-user-docs` migration to backfill `contact_id` onto existing user docs so they are indexable.
 
 ## Code Patterns
 
-CouchDB view `ddocs/users-db/users/views/users_by_field/map.js` emits user fields (facility_id, contact_id) as view keys for indexed lookup, queried from api/src/controllers/users.js. Idempotent backfill migration pattern in api/src/migrations/add-contact-id-to-user-docs.js populates a new field onto existing `_users` docs. New ddoc/view bundled via scripts/build/ddoc-compile.js.
+CouchDB view `ddocs/users-db/users/views/users_by_field/map.js` emits user fields (facility_id, contact_id) as view keys for indexed lookup, queried from shared-libs/user-management/src/users.js (`getUsers`) — the api controller only passes `req.query.facility_id`/`contact_id` through as filters. Idempotent backfill migration pattern in api/src/migrations/add-contact-id-to-user-docs.js populates a new field onto existing `_users` docs. New ddoc/view bundled via scripts/build/ddoc-compile.js.
 
 ## Design Choices
 
@@ -69,10 +70,10 @@ Reused the existing `GET /api/v2/users` route and `can_view_users` permission in
 ## Related Files
 
 - api/src/controllers/users.js
-- api/src/migrations/add-contact-id-to-user-docs.js
+- api/src/migrations/add-contact-id-to-user-docs.js (added)
 - api/src/services/setup/databases.js
-- ddocs/users-db/users/_id
-- ddocs/users-db/users/views/users_by_field/map.js
+- ddocs/users-db/users/_id (added)
+- ddocs/users-db/users/views/users_by_field/map.js (added)
 - scripts/build/ddoc-compile.js
 - shared-libs/user-management/src/libs/facility.js
 - shared-libs/user-management/src/users.js
@@ -80,12 +81,13 @@ Reused the existing `GET /api/v2/users` route and `can_view_users` permission in
 
 ## Testing
 
-Added mocha unit tests for the controller (api/tests/mocha/controllers/users.spec.js), the migration (api/tests/mocha/migrations/add-contact-id-to-user-docs.spec.js), setup/databases and utils, and shared-libs/user-management (users.spec.js, libs/facility.spec.js). Added integration tests for the migration (api/tests/integration/migrations/add-contact-id-to-user-docs.js) and the users API route (tests/integration/api/controllers/users.spec.js).
+Added a mocha unit spec for the migration (api/tests/mocha/migrations/add-contact-id-to-user-docs.spec.js, new) and updated the existing specs for the controller (api/tests/mocha/controllers/users.spec.js), setup/databases and utils, and shared-libs/user-management (shared-libs/user-management/test/unit/users.spec.js, shared-libs/user-management/test/unit/libs/facility.spec.js). Added an integration test for the migration (api/tests/integration/migrations/add-contact-id-to-user-docs.js, new at this PR; removed on master by #10187, `chore(#9639): remove old migrations [5.0]`, though the migration and its mocha spec remain) and updated the users API route integration test (tests/integration/api/controllers/users.spec.js).
 
 ## Related Issues
 
-- #8877: Look up users from their facility_id or contact_id
-- medic/cht-docs#1318: docs for the new facility_id/contact_id user lookup query parameters
+- #8877: "/api/v2/users look up users by `facility_id` and/or `contact_id`" — this draft's issue
+- #8986: "/api/v2/users look up data for single user" — split off from #8877; shipped as `GET /api/v2/users/:username` by PR #9016
+- PR medic/cht-docs#1318: "feat: Document looking up users from their `facility_id` or `contact_id`" — documents the new query parameters
 
 ## Domain Rationale
 

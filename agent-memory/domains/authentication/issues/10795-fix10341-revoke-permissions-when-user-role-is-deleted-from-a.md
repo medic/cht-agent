@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10341
 issueUrl: https://github.com/medic/cht-core/issues/10341
 title: Revoke permissions when a user's role is deleted from app_settings by filtering effective roles against configured roles
-lastUpdated: '2026-06-22'
-summary: Users kept permissions granted by a role even after that role was deleted in Admin, because permission checks never verified the role still existed in app_settings.roles. Fixed by filtering a user's effective roles down to only configured roles before evaluating permissions across all three permission-checking codepaths.
+lastUpdated: '2026-09-29'
+summary: Users kept permissions granted by a role even after that role was deleted in Admin, because permission checks never verified the role still existed in app_settings.roles. Fixed in cht-datasource's `hasPermissions`/`hasAnyPermission`, which now read settings from the data context and drop any role missing from `app_settings.roles` (DB admin roles are always kept) before evaluating permissions; api's and user-management's own permission lookups were replaced by calls to these functions.
 services:
   - api
   - webapp
@@ -45,10 +45,10 @@ concepts:
   - role-based access control
   - permission evaluation
   - centralized authorization logic
-  - passive (side-effect-free) permission functions
-  - backwards-compatible config defaults
+  - passive (backwards-compatible) permission-check signatures
+  - restrictive default when roles config is absent
 related_issues: []
-stale: false
+stale: true
 ---
 
 ## Problem
@@ -57,23 +57,37 @@ When an admin deleted a role via Admin > Roles & Permissions, the role was remov
 
 ## Root Cause
 
-All three permission-checking codepaths (shared-libs/cht-datasource/src/auth.js, shared-libs/user-management/src/roles.js, api/src/auth.js) evaluated a user's roles only against app_settings.permissions and never cross-referenced app_settings.roles. Deleting a role removed it from roles but left dangling references in permissions that were still treated as valid.
+All three permission-checking codepaths evaluated a user's roles only against app_settings.permissions and never cross-referenced app_settings.roles. Before this PR those were cht-datasource's `hasPermissions()`/`hasAnyPermission()` in shared-libs/cht-datasource/src/auth.js, and the private `hasPermission()` helpers behind `hasAllPermissions()` in shared-libs/user-management/src/roles.js and api/src/auth.js, both of which read `config.get('permissions')`. Deleting a role removed it from roles but left dangling references in permissions that were still treated as valid.
 
 ## Solution
 
-Before evaluating any permission, filter the user's effective roles to only those still present in app_settings.roles. Added filterRolesByConfigured() in cht-datasource and an optional chtRolesSettings param to hasPermissions()/hasAnyPermission(); user-management hasPermission() reads config.get('roles') and filters; api hasPermission() applies the same filtering; webapp cht-datasource.service.ts now extracts and forwards roles from app settings alongside permissions. An empty or absent roles config falls back to no filtering for backwards compatibility. The duplicated logic was consolidated toward cht-datasource.
+The filtering lives in cht-datasource, and the other two codepaths now delegate to it.
+
+- `shared-libs/cht-datasource/src/auth.js`: the internal `hasPermissions` and `hasAnyPermission` became curried on the data context, `(ctx) => (permissions, userRoles, chtPermissionsSettings)`, and read settings internally with `ctx.settings.getAll()`. Permissions come from `settings.permissions` unless the caller passes `chtPermissionsSettings`, which is now a deprecated override. Roles always come from `settings.roles`. For a non-admin user, the new internal helper `filterRolesByConfigured` (`const filterRolesByConfigured = (userRoles, chtRolesSettings = {}) =>`) keeps only roles that are keys of `settings.roles` or in `DB_ADMIN_ROLES`, and does so before any permission lookup. `isAdmin()` now accepts any role in `DB_ADMIN_ROLES` (`admin` and `_admin`), where before it accepted only `_admin`.
+- Public API: `v1.hasPermissions` and `v1.hasAnyPermission` on the object `getDatasource` returns keep their argument order (shared-libs/cht-datasource/src/index.ts: `ctx.bind(hasPermissions)(permissions, userRoles, chtPermissionsSettings)` and `ctx.bind(hasAnyPermission)(permissionsGroupList, userRoles, chtPermissionsSettings)`) and call the curried functions through `ctx.bind`, so existing two- and three-argument callers still work. `DataContext` must now carry a `settings` service, and `getRemoteDataContext` takes that service as a new first parameter (`export const getRemoteDataContext = (settings: SettingsService, url = '')`). The `SettingsService` type moved to `shared-libs/cht-datasource/src/libs/data-context.ts`.
+- `api/src/auth.js`: its private `hasPermission(userCtx, permission)` was removed. `assertPermissions()` now calls `datasource.v1.hasPermissions(hasAll, userCtx.roles)` and `datasource.v1.hasAnyPermission(hasAny.map(perm => [perm]), userCtx.roles)`, and the exported `hasAllPermissions` calls `getDatasource(dataContext).v1.hasPermissions(permissions, userCtx.roles)`.
+- `shared-libs/user-management/src/roles.js`: the private `hasPermission()` and the exported `hasAllPermissions()` were removed, and `DB_ADMIN_ROLES` moved to `@medic/constants` (`shared-libs/constants/src/index.js`). `shared-libs/user-management/src/users.js` now checks `can_skip_password_change` (in `isPasswordChangeRequired`) and `can_have_multiple_places` (in `validateAllowedMultipleFacilities`) through `getDatasource(dataContext).v1.hasPermissions`.
+- `webapp/src/ts/services/cht-datasource.service.ts`: online-only users now get `getRemoteDataContext(settingsService)`, backed by the same settings service as the local context. The `getChtPermissionsFromSettings()` helper was removed, and the `hasPermissions`/`hasAnyPermission` wrappers forward only `chtSettings?.permissions` as the override.
+- Admin app: the `DataContext` service (`admin/src/js/services/data-context.js`) now resolves to a promise. It loads `Settings()` first and refreshes its cached settings whenever the settings doc changes. `Auth` (`admin/src/js/services/auth.js`), `admin/src/js/controllers/edit-user.js` and `admin/src/js/services/search.js` wait on that promise, and no longer pass `settings.permissions` in.
 
 ## Code Patterns
 
-filterRolesByConfigured() helper in shared-libs/cht-datasource/src/auth.js filters assigned roles against configured roles prior to permission lookup. Configured roles are passed in via an optional chtRolesSettings parameter (rather than fetched internally) to keep hasPermissions()/hasAnyPermission() passive. Backwards-compat guard: empty/absent roles config short-circuits to no filtering. user-management/src/roles.js obtains configured roles via config.get('roles').
+Data-context-bound permission checks: define the function curried on the data context, as in `const hasPermissions = (ctx) => (permissions, userRoles, chtPermissionsSettings) =>`, read current settings synchronously with `ctx.settings.getAll()`, and expose it from `getDatasource` through `ctx.bind(hasPermissions)(permissions, userRoles, chtPermissionsSettings)`. Keep a legacy settings argument as an optional override (`chtPermissionsSettings ?? settings.permissions`) so older call sites keep working. Apply `filterRolesByConfigured` after the admin short-circuit and before the permission lookup. In api and user-management, call `getDatasource(dataContext).v1.hasPermissions` rather than re-implementing the lookup.
 
 ## Design Choices
 
-The logic was centralized in cht-datasource instead of maintaining three near-identical copies. Critically, the cht-datasource permission functions MUST remain passive (pure, no side effects / no internal config fetch) because they are reused in custom tasks/targets/contact-summary configurations — failing e2e tests revealed that fetching config inside them broke those consumers, so configured roles are injected as an optional argument. Empty/absent roles config means no filtering, preserving existing deployments.
+- One implementation instead of three: the private permission lookups in api and user-management were deleted, and those checks now route through cht-datasource, so the role filter is applied in one place.
+- Passive changes to the permission functions: the cht-datasource permission functions are also called by deployment config code (contact-summary, and tasks/targets through the rules engine's `cht` API) and by purge functions that sentinel runs. The public `v1.hasPermissions`/`v1.hasAnyPermission` signatures therefore stayed compatible, and the settings they now need come from the data context's `SettingsService` rather than from a new parameter. Sentinel still passes `config.get('permissions')` to purge functions, which may forward it as the override.
+- Restrictive default: when `settings.roles` is absent or `{}`, `filterRolesByConfigured` keeps only DB admin roles, so non-admin users get no permissions. The spec "should return false when no roles are configured and user is not admin" pins this behaviour. The PR description still says an empty or absent `roles` config falls back to no filtering; the merged code does not.
 
 ## Related Files
 
 - shared-libs/cht-datasource/src/auth.js
+- shared-libs/cht-datasource/src/index.ts
+- shared-libs/cht-datasource/src/libs/core.ts
+- shared-libs/cht-datasource/src/libs/data-context.ts
+- shared-libs/cht-datasource/src/local/libs/data-context.ts
+- shared-libs/cht-datasource/src/remote/libs/data-context.ts
 - shared-libs/user-management/src/roles.js
 - shared-libs/user-management/src/users.js
 - api/src/auth.js
@@ -81,19 +95,28 @@ The logic was centralized in cht-datasource instead of maintaining three near-id
 - shared-libs/constants/src/index.js
 - admin/src/js/controllers/edit-user.js
 - admin/src/js/services/auth.js
-- shared-libs/cht-datasource/src/local/libs/data-context.ts
-- shared-libs/cht-datasource/src/remote/libs/data-context.ts
+- admin/src/js/services/data-context.js
+- admin/src/js/services/search.js
 
 ## Testing
 
-Unit tests added/updated across all touched modules: shared-libs/cht-datasource/test/auth.spec.js, shared-libs/user-management/test/unit/roles.spec.js & users.spec.js, api/tests/mocha/auth.spec.js plus bulk-docs and settings controller specs, admin specs (edit-user, auth, data-context), and webapp karma specs (auth.service, cht-datasource.service). Integration tests for cht-datasource (contact/person/place/report/target) and the users controller were updated, and the e2e purge spec (tests/e2e/default/purge/purge.wdio-spec.js) — failing e2e tests are what surfaced the requirement to keep the permission functions passive.
+All touched test files were modified; none were added.
+
+- cht-datasource: `shared-libs/cht-datasource/test/auth.spec.js` builds a fake context (`makeCtx(settings)`). It adds cases for a deleted role ("should return false when the user role has been deleted from the configured roles"), a still-configured role, no roles configured (`{}` or `undefined`, where a non-admin gets no permissions), each role in `DB_ADMIN_ROLES`, and the `chtPermissionsSettings` override (used when given, otherwise `settings.permissions`). `shared-libs/cht-datasource/test/index.spec.ts`, `shared-libs/cht-datasource/test/libs/core.spec.ts`, `shared-libs/cht-datasource/test/libs/data-context.spec.ts` and `shared-libs/cht-datasource/test/remote/libs/data-context.spec.ts` cover the settings-carrying data context.
+- user-management: the `hasAllPermissions` cases were removed from `shared-libs/user-management/test/unit/roles.spec.js`, and `shared-libs/user-management/test/unit/users.spec.js` was updated.
+- api: `api/tests/mocha/auth.spec.js`, plus the bulk-docs and settings controller specs.
+- admin: the edit-user, auth and data-context specs; the data-context spec covers the refresh on settings-doc changes.
+- webapp karma: `webapp/tests/karma/ts/services/auth.service.spec.ts` and `webapp/tests/karma/ts/services/cht-datasource.service.spec.ts`, whose mock settings now include `roles`.
+- sentinel: `sentinel/tests/unit/lib/purging.spec.js` now calls `chtScript.v1.hasPermissions`/`hasAnyPermission` from a purge function without a settings argument.
+- Integration: the cht-datasource contact/person/place/report/target specs pass a settings service to `getRemoteDataContext`, and `tests/integration/api/controllers/users.spec.js` configures a `program_officer` role.
+- e2e: the purge spec (`tests/e2e/default/purge/purge.wdio-spec.js`) dropped the settings argument from its purge function's `hasPermissions` call. That spec is present at this PR's anchor but was removed on master by PR #11139 ("adds archiving").
 
 ## Related Issues
 
-- #10341: user retains permissions (e.g. contacts-tab access) after the role granting them is deleted from app_settings
+- #10341: "Deleting roles does not result in users with those roles losing permission" (this draft's issue)
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The PR is entirely about role-based permission evaluation and revocation — per the rule that roles/permissions work belongs to authentication, this is the canonical, strong fit (not contacts, even though the visible symptom was contacts-tab access).
+The PR changes how permission checks resolve a user's roles: roles no longer present in `app_settings.roles` stop granting permissions, and the api and user-management checks now share cht-datasource's implementation. That is role-based access control. The contacts tab in the issue's repro is only the symptom.

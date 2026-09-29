@@ -5,9 +5,9 @@ domain: authentication
 domainFit: strong
 issueNumber: 9213
 issueUrl: https://github.com/medic/cht-core/issues/9213
-title: Clear browser history on logout to prevent back-button navigation to authenticated admin pages
-lastUpdated: '2026-06-22'
-summary: After logging out of the AngularJS admin console, the browser back button could navigate the user back to previously authenticated pages. The fix cleans the browser history during logout so back navigation no longer returns to those pages.
+title: Push a root history entry before redirecting to login so the back button after logout does not return to the admin page
+lastUpdated: '2026-09-29'
+summary: After logging out of the AngularJS admin app, the browser back button loaded the previously authenticated admin page. The fix makes the admin Session service's navigateToLogin() call history.pushState(null, null, '/') just before it navigates to the login page, so the history step immediately behind the login page is / rather than the admin page. It does not remove the earlier entries.
 services:
   - admin
 techStack:
@@ -41,23 +41,23 @@ stale: false
 
 ## Problem
 
-After a user logged out of the admin app, pressing the browser back button navigated them back to authenticated admin pages, exposing content from the ended session. Standard interception events (beforeunload, popstate, etc.) did not prevent this navigation under AngularJS (Angular v1).
+After a user logged out of the admin app, pressing the browser back button loaded the authenticated admin page again instead of redirecting to login, exposing content from the ended session (issue #9213, reported on 4.6.0 in Chrome).
 
 ## Root Cause
 
-AngularJS retained the prior authenticated routes in the browser history, and none of the attempted navigation-guard events (beforeunload, popstate) could block the back-button transition in Angular v1, so the back button re-rendered authenticated views after logout.
+`navigateToLogin()` in admin/src/js/services/session.js removed the `userCtx` cookie and then set `$window.location.href` to `/${Location.dbName}/login?...`. That is an ordinary navigation, so the authenticated admin page stayed as the previous browser-history entry and Back returned to it.
 
 ## Solution
 
-Modified the admin session service's logout handling to clean/clear the browser history so the authenticated pages are no longer reachable via the back button. This worked reliably across Chrome and Firefox where event-based interception failed.
+`navigateToLogin()` now calls `$window.history.pushState(null, null, '/')` immediately before the `$window.location.href` assignment. The inline comment calls this clearing the browser history, but it adds a same-document entry with URL `/` rather than removing anything. The step immediately behind the login page is therefore `/`, not the admin page URL (the `redirect` query parameter is read from `$window.location.href` before the push, so it still names the admin page). `logout()` (after `$http` `.delete('/_session')`) and `checkCurrentSession()` (on a 401 from `/_session`) both go through `navigateToLogin()`, so every redirect to login gets the extra entry.
 
 ## Code Patterns
 
-Browser history cleanup invoked from the logout path in admin/src/js/services/session.js, used as a fallback when SPA navigation-guard events (beforeunload/popstate) cannot block back navigation.
+Push a neutral history entry (`$window.history.pushState(null, null, '/')`) right before a full-page redirect to login, in the one function every logout path shares (`navigateToLogin()` in admin/src/js/services/session.js). It is used in place of SPA navigation-guard events (beforeunload/popstate), which the PR description reports could not block back navigation under AngularJS.
 
 ## Design Choices
 
-The author first tried event-based interception (beforeunload, popstate, etc.) but none prevented back navigation in AngularJS; cleaning the history proved the most reliable approach in Chrome and Firefox. Acknowledged as imperfect but a significant improvement over the prior behavior.
+The PR description reports that event-based interception (beforeunload, popstate, etc.) did not prevent the navigation in Angular v1, and that the history approach worked best in Chrome and Firefox. It calls the result not perfect but a significant improvement. The earlier admin entries remain in history.
 
 ## Related Files
 
@@ -66,14 +66,14 @@ The author first tried event-based interception (beforeunload, popstate, etc.) b
 
 ## Testing
 
-Unit tests added/updated in admin/tests/unit/services/session.spec.js, plus manual verification of back-button behavior in Chrome and Firefox (test video attached to the PR).
+Updated admin/tests/unit/services/session.spec.js. The `$window` mock gains a `history.pushState` stub. 'logs out', 'logs out if no user context' and 'logs out if remote userCtx inconsistent' assert it was called once with `(null, null, '/')`. The 401 case ('cookie gets deleted when session expires') gains no `pushState` assertion. 'does not log out if server not found' and 'does not log out if remote userCtx consistent' assert it was not called.
 
 ## Related Issues
 
-- #9213: back button navigation after logout returns user to authenticated pages
+- #9213: "Admin app allows navigating back after logout" — this draft's issue
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The change lives in the admin app's session service and hardens the logout flow so users cannot return to authenticated pages — session/logout handling is canonically the authentication domain.
+The change lives in the admin app's session service and hardens the logout flow, so that the back step after logout no longer lands on the authenticated admin page. Session and logout handling is canonically the authentication domain.

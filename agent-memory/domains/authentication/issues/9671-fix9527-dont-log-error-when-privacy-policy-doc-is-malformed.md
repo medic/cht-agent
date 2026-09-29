@@ -2,12 +2,12 @@
 id: cht-core-9527
 category: bug
 domain: authentication
-domainFit: strong
+domainFit: weak
 issueNumber: 9527
 issueUrl: https://github.com/medic/cht-core/issues/9527
-title: Treat malformed privacy policy document as a 404 instead of logging a custom error
-lastUpdated: '2026-06-22'
-summary: When the privacy policy document was malformed, the API's privacy-policy service surfaced a custom error and logged it, producing noisy/misleading error logs. The fix treats a malformed privacy policy doc as a 404 (not found) so it degrades gracefully without erroneous logging.
+title: Treat a privacy-policies doc with no policies as a 404 instead of logging an error
+lastUpdated: '2026-09-29'
+summary: When the `privacy-policies` doc existed but had a missing or empty `privacy_policies` property, the API's privacy-policy service threw a plain `Error` that its own catch passed to `logger.error`, so every login-page render (including service-worker generation) logged a misleading error. The fix throws a new `NotFoundError` (status 404) instead, which that catch does not log, so the doc is treated exactly like a missing one.
 services:
   - api
 techStack:
@@ -39,49 +39,49 @@ concepts:
   - HTTP status codes
   - graceful degradation
   - shared error abstractions
-  - privacy policy access gate
+  - privacy policy existence check on the login page
 related_issues: []
 stale: false
 ---
 
 ## Problem
 
-When the privacy policy document stored in CouchDB was malformed (e.g. invalid/unexpected structure), the API privacy-policy service raised a custom error and logged it, generating noisy and misleading error-log entries and returning a non-standard error response during the login/access flow rather than failing gracefully.
+When the `privacy-policies` doc in the medic database existed but lacked a non-empty `privacy_policies` property (for example after an empty privacy-policies.json configuration was uploaded), the API logged `Invalid privacy-policies doc: missing required "privacy_policies" property` as an error. The error is harmless — the login page simply shows no privacy-policy link — but issue #9527 reports it caused confusion and was often mistaken for an API crash. It was logged on every login-page render, including the one done during service-worker generation, and `GET /medic/privacy-policy` answered 500.
 
 ## Root Cause
 
-The privacy-policy service did not distinguish a malformed/unusable policy document from a genuine server error, so it threw and logged a custom error instead of treating an unusable policy as 'not found'. The shared error abstractions in errors.js/public-error.js needed to support mapping this case to a 404.
+`getDoc()` in api/src/services/privacy-policy.js threw a plain `Error` when the doc had no policies, and its `.catch` logs every error whose `status` is not 404 before rethrowing — so a doc that is present but unusable was logged like a genuine server error, while a missing doc (a PouchDB 404) was silent. api had no error class carrying a 404 status.
 
 ## Solution
 
-Changed the privacy-policy service to treat a malformed privacy policy document as a 404 (not found) instead of raising a logged custom error. Updated the shared error classes (api/src/errors.js, api/src/public-error.js) to support this mapping, aligned api/src/services/records.js (which shares those error abstractions) with the refactored API, and updated unit tests in privacy-policy.spec.js.
+Added api/src/errors.js with a `NotFoundError` class that sets both `status` and `statusCode` to 404 (commented as simulating PouchDB and request errors), and made `getDoc()` throw `NotFoundError` for a doc without policies, so the catch no longer logs it. `exists()` still returns false, so the login page shows no policy link, and `GET /medic/privacy-policy` now responds 404 through `serverUtils.error` instead of 500. `PublicError` moved from api/src/public-error.js (deleted) into api/src/errors.js, and api/src/services/records.js — the only module that imported it — now requires `{ PublicError }` from `../errors`. The issue suggested logging a warning with configuration guidance; the PR instead stops logging this case at all.
 
 ## Code Patterns
 
-Map malformed or missing config-style documents to appropriate HTTP status codes (404) via the shared error helpers in api/src/public-error.js and api/src/errors.js rather than throwing and logging generic/custom errors. Differentiate expected 'data not usable' conditions from true server errors to avoid log noise; centralizing this in shared error classes keeps consumers (privacy-policy.js, records.js) consistent.
+Give an expected absence its own error type that looks like the platform's not-found errors: `NotFoundError` (api/src/errors.js) sets `status` (PouchDB style) and `statusCode` (request style) to 404, so existing checks such as the `err.status !== 404` log filter in api/src/services/privacy-policy.js and `serverUtils.error()` (which reads `err.code || err.statusCode || err.status`) treat a present-but-unusable doc exactly like a missing one, with no special-casing at the call sites. Differentiate expected 'data not usable' conditions from true server errors to avoid log noise. api/src/errors.js became api's shared module for error classes; on master it also holds `PermissionError`, `AuthenticationError`, `ContentTypeError`, `BadRequestError` and `PayloadTooLargeError`.
 
 ## Design Choices
 
-Treating a malformed policy doc as 404 (instead of 500/custom error) makes failure graceful — clients behave as if no policy exists — and stops the malformed-doc case from polluting error logs. Implementing it in the shared error abstractions keeps privacy-policy.js and records.js consistent rather than special-casing one service.
+Treating a malformed policy doc as 404 (instead of a logged plain `Error` and a 500 from the endpoint) makes failure graceful — clients behave as if no policy exists — and stops the malformed-doc case from polluting error logs. `PublicError` was moved into the same new module rather than left in its own file, so api's error classes live in one place.
 
 ## Related Files
 
 - api/src/services/privacy-policy.js
-- api/src/errors.js
-- api/src/public-error.js
+- api/src/errors.js (added)
+- api/src/public-error.js (deleted)
 - api/src/services/records.js
 - api/tests/mocha/services/privacy-policy.spec.js
 
 ## Testing
 
-Updated Mocha unit tests in api/tests/mocha/services/privacy-policy.spec.js to assert that a malformed privacy policy document results in a 404 and does not emit an error log.
+Added three Mocha unit cases to api/tests/mocha/services/privacy-policy.spec.js — the doc does not exist, `privacy_policies` is empty, and the property is missing — each asserting that `get()` rejects with status 404 and that `logger.error` is not called.
 
 ## Related Issues
 
-- #9527: don't log error when privacy policy doc is malformed — treat the malformed doc as a 404
+- #9527: "API logs error when privacy policies doc contains no privacy policies" — the issue this PR closes
 
 ## Domain Rationale
 
-**Fit:** strong
+**Fit:** weak
 
-The privacy policy is CHT's consent gate served during the login/access flow — users must accept it before using the app — so the API privacy-policy service lives in the authentication/access subsystem. The policy content is admin-configured (config-adjacent), but this PR changes the runtime serving/error path, not the configuration of the policy, so authentication is the principled home; configuration only supplies the policy content.
+The change is error classification and logging in api/src/services/privacy-policy.js: a present-but-empty `privacy-policies` doc now throws a 404 `NotFoundError` instead of a logged plain `Error`. It touches no credential, session or access handling. Authentication is the least-bad home because one of the service's two consumers is the login page render (`privacyPolicy.exists()` in api/src/controllers/login.js decides whether the login page links to the policy); configuration is the other candidate, since the doc is admin-uploaded content, but the PR changes no settings or configuration handling.

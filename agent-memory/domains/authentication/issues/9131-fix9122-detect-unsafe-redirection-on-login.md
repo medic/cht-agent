@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9122
 issueUrl: https://github.com/medic/cht-core/issues/9122
 title: Detect and reject unsafe (double-slash / protocol-relative) redirect URLs on login
-lastUpdated: '2026-06-23'
-summary: The login controller accepted a redirect target without validating it was same-origin, allowing protocol-relative (double-slash) URLs to silently send users to external sites after login. The fix detects such unsafe redirections and blocks them.
+lastUpdated: '2026-09-29'
+summary: The login controller reduced a requested post-login redirect to its path and hash, but a URL whose path itself began with a double slash (typically the CHT host's own URL) came back as a protocol-relative //other-host/... URL, which the browser follows to another site after login. The fix rejects any requested redirect whose path or hash contains a double slash, after repeated percent-decoding, and falls back to the user's home URL.
 services:
   - api
 techStack:
@@ -36,28 +36,28 @@ concepts:
   - same-origin URL validation
   - protocol-relative URL handling
 related_issues: []
-stale: false
+stale: true
 ---
 
 ## Problem
 
-After a successful login, the API login controller redirected users to a client-supplied redirect target. Targets that were protocol-relative (e.g. starting with `//` or `/\`) were treated by browsers as absolute external URLs, so a crafted login link could redirect an authenticated user to an attacker-controlled domain (open redirect / phishing vector).
+After a successful login, the API login controller answers the login POST with a redirect URL derived from the client-supplied `redirect` value, and the login page script navigates to it (`window.location = xmlhttp.response`). A URL whose path begins with a double slash, such as the same-host `https://demo-cht.dev.medicmobile.org//MYFAKESITE.com/phishing-example/login/`, came back as the protocol-relative `//MYFAKESITE.com/phishing-example/login/`, which browsers treat as another host. A crafted login link could therefore send a freshly authenticated user to an attacker-controlled site (open redirect / phishing vector). The issue's details are in a private tracker.
 
 ## Root Cause
 
-The redirect-target validation in api/src/controllers/login.js only confirmed the value began with a slash and did not account for double-slash / protocol-relative URLs, which browsers resolve to an external origin rather than a local path.
+At this PR's parent, `getRedirectUrl` (params `userCtx`, `requested`) in api/src/controllers/login.js ran `url.resolve('/', requested)`, parsed the result against a dummy `resolve://` base, and returned `parsed.pathname + (parsed.hash || '')`. That drops any scheme and host, and a requested value that itself starts with `//host` resolves to just its path. A double slash inside the path was kept, though, so the returned string could start with `//`.
 
 ## Solution
 
-Added detection of unsafe redirection in the login controller so that protocol-relative / double-slash redirect targets are recognized as non-local and rejected (falling back to a safe default) instead of being honored, ensuring only same-origin relative paths are used for the post-login redirect.
+`getRedirectUrl()` now delegates to `sanitizeRequestedRedirect()`. That function resolves the value with `resolveUrl()`, which at this PR is a try/catch around `url.resolve('/', requested)` (on master, since the ESLint 9 bump in PR #10066, it builds `new URL(requested, new URL('/', 'resolve://'))` instead). It then takes `parsed.pathname + (parsed.hash || '')` as before and rejects the result when `hasDoubleSlash()` finds `//` anywhere in it. `hasDoubleSlash()` keeps percent-decoding while decoding still changes the string, so encoded and double-encoded slashes are caught too. A rejected or unresolvable value falls back to the user's home URL (`getHomeUrl(userCtx)`), so only same-origin paths without `//` are honored.
 
 ## Code Patterns
 
-Server-side redirect-safety check in api/src/controllers/login.js: treat a redirect target as unsafe unless it is a single-leading-slash, same-origin relative path — explicitly reject `//`/`/\` (protocol-relative) prefixes before issuing the redirect.
+Server-side redirect sanitizing in api/src/controllers/login.js. Reduce the requested target to its path and hash, dropping scheme and host. Then reject it outright if it contains `//` anywhere after recursive percent-decoding (`hasDoubleSlash()`), and fall back to the home URL rather than trying to repair it. Rejecting any `//`, not just a leading one, also refuses otherwise harmless paths such as `/a//b`.
 
 ## Design Choices
 
-Validation is enforced server-side in the login controller rather than relying on the client, and unsafe targets are rejected in favor of a safe default rather than attempting to rewrite them, keeping the allow-list to genuine same-origin relative paths.
+Validation is enforced server-side in the login controller, and unsafe targets are rejected in favor of the home URL rather than rewritten (for example by collapsing slashes), keeping the allow-list to genuine same-origin relative paths. Only the server-side `getRedirectUrl()` changed. The client-side `getRedirectUrl()` in api/src/public/login/script.js returns the raw `redirect` query parameter when the `username` query parameter matches the entered username. `checkSession()` also uses it to send an already-logged-in user onward (`window.location = getRedirectUrl() || userCtx.home || '/'`), and this PR left it untouched.
 
 ## Related Files
 
@@ -66,11 +66,15 @@ Validation is enforced server-side in the login controller rather than relying o
 
 ## Testing
 
-Mocha unit tests in api/tests/mocha/controllers/login.spec.js were added/updated to cover unsafe redirect detection, asserting that double-slash / protocol-relative targets are rejected while legitimate same-origin relative paths are still honored.
+Added two cases to the existing table-driven tests (`Bad URL "${given}" should redirect to root`) for `getRedirectUrl` in api/tests/mocha/controllers/login.spec.js, both expected to return `/`:
+- `https://demo-cht.dev.medicmobile.org//MYFAKESITE.com/phishing-example/login/`
+- a fully percent-encoded `https://demo-cht.dev.medicmobile.org/%2F%61%6C…` path
+
+The existing `Good URL "${requested}" should redirect unchanged` cases were not modified and cover the paths that must still be honored.
 
 ## Related Issues
 
-- #9122: detect double-slash redirection on login (open-redirect vulnerability)
+- #9122: "Protect against redirection attack" — this draft's issue (labelled Type: Security; the details are in a private tracker)
 
 ## Domain Rationale
 

@@ -1,13 +1,13 @@
 ---
 id: cht-core-9890
-category: feature
+category: improvement
 domain: authentication
 domainFit: strong
 issueNumber: 9890
 issueUrl: https://github.com/medic/cht-core/issues/9890
 title: Map OIDC/SSO identities to CHT users via oidc_username on _users doc and oidc_login flag on user-settings, hiding password update for SSO users
-lastUpdated: '2026-06-22'
-summary: OIDC users could not be reliably mapped to CHT users (CouchDB usernames can't contain '@' but SSO providers identify users by email), and SSO users were wrongly shown the in-app Update Password option. Replaced the boolean `oidc` field with an `oidc_username` string on the `_users` doc plus an `oidc_login` boolean on the replicated user-settings doc, mirroring the token-login pattern so the offline UI can hide password update for SSO users.
+lastUpdated: '2026-09-29'
+summary: 'OIDC identities could not be mapped cleanly to CHT users: CHT usernames allow only `[a-z0-9_-]` (so no `@`) while identity providers identify users by email, and the SSO callback matched the id_token `preferred_username` claim to the CHT username. SSO users were also still offered the in-app Update password option. This PR replaces the per-user `oidc` boolean with an `oidc_username` string on the `_users` doc, matched against the id_token `email` claim through the `users_by_field` view, and mirrors a boolean `oidc_login` onto the replicated user-settings doc so the webapp can hide password update, offline included.'
 services:
   - api
   - webapp
@@ -52,28 +52,44 @@ concepts:
   - offline-aware UI gating via replicated user-settings flags
 related_issues:
   - cht-core-9735
-stale: false
+  - cht-core-9760
+  - cht-core-9762
+  - cht-core-9765
+  - cht-core-9836
+  - cht-core-9938
+stale: true
 ---
+
+> **Epic child.** PR #9961 was squash-merged into the feature branch `9735_sso`
+> (`4b77459de`, 2025-05-16), not into master. That branch reached master as PR #9955
+> (`2cbe9c109`, 2025-06-03). Its own PR number is stamped nowhere on master, which is
+> why this draft's `source_sha` does not resolve in a plain clone. Fetch it with
+> `git fetch origin +refs/pull/9955/head:refs/verify/pr9955` — the epic PR's head ref.
 
 ## Problem
 
-CouchDB usernames have strict requirements (notably no '@'), but OIDC/SSO providers such as Microsoft Entra ID identify users by email via the id_token `email` claim, so there was no clean way to map an OIDC identity to a CHT user. The original design used only a boolean `oidc` flag on the `_users` doc, which could not store the mapping email and — because `_users` is not replicated to offline clients — gave the webapp no way to know a user was an SSO user. As a result, the in-app self-serve 'Update password' dialog was incorrectly shown to SSO users, who do not manage their password in CHT.
+CHT usernames are restricted to lower-case letters, digits, `_` and `-` (`USERNAME_ALLOWED_CHARS = /^[a-z0-9_-]+$/` in shared-libs/user-management/src/users.js), so they cannot hold an `@`, but OIDC/SSO providers such as Microsoft Entra ID identify users by email (the id_token `email` claim). Before this PR the SSO callback read the id_token `preferred_username` claim and used it directly as the CHT username, so a provider identity could only be mapped when the two happened to match. The per-user state was a boolean `oidc` flag on the `_users` doc, which could not store the mapping email and — because `_users` is not replicated to offline clients — gave the webapp no way to know a user was an SSO user. As a result, the in-app self-serve 'Update password' option was still shown to SSO users, who do not manage their password in CHT.
 
 ## Root Cause
 
-OIDC state was modeled as a single boolean `oidc` field on the `_users` doc. That field could not hold the OIDC email/username used to map the provider identity to the CHT account, and since the `_users` database does not replicate to the offline webapp, the client UI had no signal to branch on for SSO users (e.g. to hide the password-update option). There was also no enforcement that OIDC users carry an email value to anchor the mapping.
+OIDC state was modeled as a single boolean `oidc` field on the `_users` doc (added by PR #9800), and the login-time match was `preferred_username` = CHT username, via `getUserSalt` in api/src/services/sso-login.js (removed by this PR). That field could not hold the provider-side identifier, and since the `_users` database does not replicate to the offline webapp, the client UI had no signal to branch on for SSO users (e.g. to hide the password-update option). Nothing required an OIDC user to carry an email to anchor the mapping either.
 
 ## Solution
 
-Replaced the boolean `oidc` field with a string `oidc_username` field on the `_users` doc (the auth-sensitive OIDC email/identifier used to map the provider identity to the CHT user) and added a boolean `oidc_login` field on the replicated `user-settings` doc. This mirrors the existing token-login pattern: sensitive auth data lives on `_users`, while a non-sensitive flag is mirrored onto `user-settings` so offline UI logic can react. The webapp reads `oidc_login` to hide the 'Update password' option for SSO users. The user-management library enforces that OIDC users must have an email, and the `users_by_field` view map was updated to index by the new field.
+Replaced the boolean `oidc` field with a string `oidc_username` on the `_users` doc — `'oidc'` becomes `'oidc_username'` in `USER_EDITABLE_FIELDS`, and in `missingFields` a user with `oidc_username` needs no password (shared-libs/user-management/src/users.js) — and made the provider's email the mapping key:
+
+- ddocs/users-db/users/views/users_by_field/map.js now lists `'oidc_username'` beside `'contact_id'` among the properties it emits as `[property, doc[property]]`. shared-libs/user-management/src/sso-login.js gains `getUsersByOidcUsername` (a `users/users_by_field` query) and a uniqueness check in `validateSsoLogin` (`The oidc_username [...] already exists for user [...]`); `isSsoLoginEnabled` becomes a zero-argument `!!config.get('oidc_provider')`. Both are exported to the API through a new `ssoLogin` object in shared-libs/user-management/src/index.js.
+- In api/src/services/sso-login.js, `getIdToken` reads the `email` claim instead of `preferred_username`, throwing `Email claim is missing in the id token.` when it is absent, and `getCookie` resolves the CHT user with `getUsersByOidcUsername` — a 401 when none matches, an error when more than one does — replacing the `getUserSalt` lookup, which PR #9833 had added.
+- `getSettingsUpdates` in shared-libs/user-management/src/users.js sets `oidc_login = !!data.oidc_username` on the user-settings doc whenever an update carries `oidc_username`. webapp/src/ts/modules/configuration-user/configuration-user.component.ts now computes `canUpdatePassword = !user.token_login && !user.oidc_login && !this.sessionService.isAdmin()`, and the `UserSettings` interface in webapp/src/ts/services/user-settings.service.ts gains `oidc_login?: boolean`.
+- api/src/controllers/login.js (`isOidcUser`) and shared-libs/user-management/src/token-login.js (`getUserByToken`) switch their SSO checks to `oidc_username && ssoLogin.isSsoLoginEnabled()`, and `renderLogin` uses `ssoLogin.isSsoLoginEnabled()` in place of `hasOidcProvider`, which is removed from api/src/services/settings.js.
 
 ## Code Patterns
 
-Dual-doc auth pattern: store auth-sensitive identity on the `_users` doc and mirror a non-sensitive boolean flag onto the replicated `user-settings` doc so offline clients can branch on it — implemented in shared-libs/user-management/src/sso-login.js mirroring shared-libs/user-management/src/token-login.js. UI gating by replicated user-settings flag: webapp/src/ts/modules/configuration-user/configuration-user.component.ts (via user-settings.service.ts) reads `oidc_login` to conditionally hide the update-password affordance.
+Dual-doc auth pattern: keep the auth-sensitive identifier on the `_users` doc and mirror a non-sensitive boolean onto the replicated user-settings doc so offline clients can branch on it. Here the mirror is written by `getSettingsUpdates` in shared-libs/user-management/src/users.js (`settings.oidc_login = !!data.oidc_username`) — the same split shared-libs/user-management/src/token-login.js already uses for `token_login`, which it writes to both `user` and `userSettings`. View-backed identity lookup: a `users_by_field` key `['oidc_username', value]` plus `getUsersByOidcUsername` serves both the login-time match and the create/update-time uniqueness check. UI gating on the replicated flag: `canUpdatePassword` in webapp/src/ts/modules/configuration-user/configuration-user.component.ts reads `oidc_login` from the user-settings doc that `UserSettingsService` returns.
 
 ## Design Choices
 
-The data is deliberately split because the `_users` database is not replicated to offline clients: `oidc_username` (sensitive mapping key) stays on `_users`, while `oidc_login` (non-sensitive flag) goes on the replicated `user-settings` doc so the webapp can drive UI without exposing auth data. This reuses the established token-login convention rather than inventing a new mechanism. Email is used as the mapping key because CouchDB usernames cannot contain '@' while OIDC providers identify by email. Scope was kept to an MVP targeting Microsoft Entra ID.
+The data is deliberately split because the `_users` database is not replicated to offline clients: `oidc_username` (the sensitive mapping key) stays on `_users`, while `oidc_login` (a non-sensitive flag) goes on the replicated `user-settings` doc so the webapp can drive UI without exposing auth data — the convention token_login already used. Email is the mapping key because CHT usernames cannot contain `@` while OIDC providers identify users by email. Issue #9938 proposed requiring a separate `email` on users with `oidc = true`; instead the email is the `oidc_username` value itself, which must be unique, and a login whose id_token has no `email` claim is refused. The issue scoped this as an MVP targeting Microsoft Entra ID.
 
 ## Related Files
 
@@ -96,18 +112,22 @@ The data is deliberately split because the `_users` database is not replicated t
 - webapp/src/ts/modules/configuration-user/configuration-user.component.ts
 - webapp/src/ts/services/user-settings.service.ts
 - webapp/tests/karma/karma-unit.base.conf.js
-- webapp/tests/karma/ts/modules/configuration-user/configuration-user.component.spec.ts
-- webapp/tests/karma/ts/services/update-password.service.spec.ts
+- webapp/tests/karma/ts/modules/configuration-user/configuration-user.component.spec.ts (added)
+- webapp/tests/karma/ts/services/update-password.service.spec.ts (added)
 
 ## Testing
 
-Extensive unit and integration coverage updated/added: api mocha specs (controllers/login.spec.js, services/sso-login.spec.js); shared-libs/user-management unit specs (sso-login, token-login, users); webapp karma specs for configuration-user.component and update-password.service; integration specs (api/controllers/login.spec.js, api/controllers/users.spec.js) backed by a mock OIDC provider util (tests/utils/mock-oidc-provider.js). PR checklist confirms UI/UX backwards compatibility (new and old navigation designs, RTL) and backwards compatibility with existing data/config.
+Updated: the api mocha specs api/tests/mocha/controllers/login.spec.js (rewrites 'should return 400 if is SSO User', which previously asserted `password-short`, to assert `Password Reset Not Permitted For SSO Users`) and api/tests/mocha/services/sso-login.spec.js (e.g. 'throws error if email claim not returned', 'throws error if multiple users are found for oidc_username'), and the shared-libs/user-management unit specs (sso-login, token-login, users). Added: two webapp karma specs, webapp/tests/karma/ts/modules/configuration-user/configuration-user.component.spec.ts and webapp/tests/karma/ts/services/update-password.service.spec.ts; webapp/tests/karma/karma-unit.base.conf.js lowers its `functions` coverage threshold from 86 to 85. Integration specs tests/integration/api/controllers/login.spec.js and tests/integration/api/controllers/users.spec.js are updated (the latter adds 'should fail to create/update a user when oidc_username is a duplicate', retitled 'should fail to create a user when oidc_username is a duplicate' by PR #9900 before landing); the login spec runs against tests/utils/mock-oidc-provider.js, whose id_token now carries an `email` claim.
 
 ## Related Issues
 
-- #9890: Map OIDC users to CHT users using email since CouchDB usernames cannot contain '@'; MVP targeting Microsoft Entra ID.
-- #9836: Hide the in-app self-serve 'Update password' dialog for SSO users.
-- #9938: Require an email value for OIDC users so they can be mapped to the OIDC provider's id_token email claim.
+- #9890: "Ensure proper mapping for SSO users to Couch users" — this draft's issue; usernames cannot contain `@` while SSO providers identify users by email, scoped to an MVP for Microsoft Entra ID.
+- #9836: "Disable in-app password change functionality for SSO users" — addressed here by `oidc_login` gating `canUpdatePassword`.
+- #9938: "Require `email` to be provided for user when `oidc = true`" — referenced by this PR; superseded by making the email the `oidc_username` value and refusing id_tokens without an `email` claim.
+- #9735: "Single sign on (SSO) using identity provider" — the SSO epic this PR is a child of.
+- #9760: "Update `shared-libs/user-management` to accept an `oidc_provider` property for users" — delivered by PR #9800 as the boolean `oidc` flag that this PR replaces with `oidc_username`.
+- #9762: "Update CHT login page to have button for redirecting to OIDC provider" — delivered by PR #9877 with the `settings.hasOidcProvider()` helper that this PR removes in favour of `ssoLogin.isSsoLoginEnabled()`
+- #9765: "Add support to the CHT api for new endpoint for OIDC login" — delivered by PR #9833, which added api/src/services/sso-login.js with the `preferred_username` lookup (`getUserSalt`) that this PR replaces with the `email` claim matched against `oidc_username`.
 
 ## Domain Rationale
 

@@ -5,9 +5,9 @@ domain: authentication
 domainFit: strong
 issueNumber: 9108
 issueUrl: https://github.com/medic/cht-core/issues/9108
-title: Block non-admin users from updating admin-only (protected) documents in validate_doc_update
-lastUpdated: '2026-06-23'
-summary: Non-admin users could overwrite admin-only/protected documents because the medic database's validate_doc_update function had no guard for them; the fix rejects any create/update/delete of admin-only docs by non-admin users.
+title: Block non-admin users from updating admin-only docs by also checking oldDoc in validate_doc_update
+lastUpdated: '2026-09-29'
+summary: Non-admin users could modify admin-only docs because the medic ddoc's `validate_doc_update` classified only the incoming `newDoc`, so a write whose new revision no longer looked admin-only (for example a `form` doc saved with another `type`) passed. The fix also classifies `oldDoc` and rejects a non-admin write when either revision is admin-only.
 services:
   - webapp
 techStack:
@@ -44,23 +44,23 @@ stale: false
 
 ## Problem
 
-Non-admin users could update or overwrite 'admin-only' (protected) documents — configuration/system documents intended to be editable only by administrators. The medic database's validate_doc_update function did not reject these writes, so an offline user could modify a protected document locally and replicate the change up to the server, affecting the whole instance.
+Non-admin users could modify admin-only docs. These are the documents the medic ddoc reserves for DB admins by `type` (`form`, `translations` and `token_login` as of this PR) or by `_id` (any `_design/` doc, plus `resources`, `service-worker-meta`, `zscore-charts`, `settings`, `branding`, `partners`, `privacy-policies` and `extension-libs`). On master the lists also include the `ui-extension` type, which arrived with the ui-extensions epic (PR #11050), and the `migration-log` id, added by PR #10187. The public issue withholds the details. The check applies to every user write that reaches CouchDB, whether made directly or replicated up from a device.
 
 ## Root Cause
 
-validate_doc_update.js lacked an authorization guard for admin-only documents on the write path: it did not verify that the document being created/updated/deleted was outside the protected set before permitting a non-admin user's write, leaving an unauthorized-overwrite / privilege-escalation gap.
+Before this PR, `checkAuthority()` in `ddocs/medic-db/medic/validate_doc_update.js` already rejected non-admin writes to admin-only docs with "You are not authorized to edit admin only docs", but its condition was `if (isAdminOnlyDoc(newDoc)) {`, which tests the new revision alone. `isAdminOnlyDoc` matches on `_id` (the `_design/` prefix or `ADMIN_ONLY_IDS`) or on `type` (`ADMIN_ONLY_TYPES`). A non-admin could therefore overwrite a type-classified doc, such as a form or translations doc, by saving a revision with a different `type`, or delete one, because a deletion stub carries no `type`; the new tests cover the type swap (`type: 'feedback'`). Id-classified docs were already covered, because the new revision keeps the same `_id`.
 
 ## Solution
 
-Extended ddocs/medic-db/medic/validate_doc_update.js to identify admin-only/protected documents and throw a forbidden/unauthorized error when a user who is not a database admin attempts to write them. Added unit tests asserting admins are allowed while non-admin users are blocked.
+The guard became `if (isAdminOnlyDoc(newDoc) || (oldDoc && isAdminOnlyDoc(oldDoc)))`, so a non-admin write is rejected when either the stored revision or the incoming one is admin-only. DB admins still return early through `isDbAdmin()` before this check.
 
 ## Code Patterns
 
-Authorization guard inside a CouchDB validate_doc_update(newDoc, oldDoc, userCtx, secObj) function: resolve admin status (userCtx roles / _admin / secObj), classify the target document against the admin-only/protected set, and throw({ unauthorized|forbidden: '...' }) to reject the write at the database layer — enforced uniformly across all write paths (offline replication, API), not just in the UI. See ddocs/medic-db/medic/validate_doc_update.js.
+Authorization guard inside a CouchDB `validate_doc_update` function (`function(newDoc, oldDoc, userCtx, secObj)`): resolve admin status first (`isDbAdmin`, meaning the `_admin` role or a name or role in `secObj.admins`) and return early. Then classify both `newDoc` and `oldDoc` against the admin-only set, and `throw({ forbidden: msg })` (via `_err`) if either matches. Classifying only the incoming revision lets a writer escape the check by changing the field the classification keys on. See ddocs/medic-db/medic/validate_doc_update.js.
 
 ## Design Choices
 
-Enforce the restriction in the database-layer validate_doc_update function rather than only in API/application code, so the rule applies to every write path and cannot be bypassed by a crafted offline client pushing changes during replication.
+The fix stays in the medic ddoc's `validate_doc_update`, which CouchDB runs on every write to the medic database. It closes the gap by classifying the stored revision as well as the incoming one. `oldDoc` is null when a doc is created, hence the `oldDoc &&` guard.
 
 ## Related Files
 
@@ -69,14 +69,14 @@ Enforce the restriction in the database-layer validate_doc_update function rathe
 
 ## Testing
 
-Added/updated Mocha unit tests in webapp/tests/mocha/unit/validate_doc_update.spec.js covering the new behavior — database-admin users can update admin-only docs while non-admin users are rejected.
+`webapp/tests/mocha/unit/validate_doc_update.spec.js` (modified). The existing creation cases, now under the describe "only db and national admins are allowed to create...", still assert that `_admin` is allowed and that the `national_admin` and `test` roles are forbidden. A new block, "only db and national admins are allowed to update...", covers two kinds of update: forms and translations docs rewritten as `type: 'feedback'`, and `extension-libs`, `branding` and `partners` docs given an extra field. Each case asserts that `_admin` is allowed and a `test`-role user is forbidden. Despite both describe names, no case expects `national_admin` to be allowed.
 
 ## Related Issues
 
-- #9108: block overwriting/updating admin-only (protected) documents
+- #9108: "Admin only docs can be modified by non-admin users" (this draft's issue)
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The PR enforces role-based write authorization in the medic database's validate_doc_update function, blocking non-admin users from modifying admin-only/protected documents. Per the roles/permissions rule, access control by user role is canonically the authentication domain.
+The PR changes who may write admin-only docs: it widens the authority check in the medic ddoc's `validate_doc_update` so that non-admins cannot modify them by changing the doc's `type`. That is role-based access control. CouchDB is only where the check is enforced.
