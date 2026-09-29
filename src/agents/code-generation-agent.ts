@@ -781,7 +781,25 @@ export class CodeGenerationAgent {
    * Validate generated files
    */
   private validateGeneratedFiles(files: GeneratedFile[]): GeneratedFile[] {
-    return files.filter(file => this.normalizeGeneratedFile(file));
+    return files
+      .filter(file => this.normalizeGeneratedFile(file))
+      .filter(file => this.keepNonTestFile(file));
+  }
+
+  /**
+   * F-D: test-gen owns test authorship in all modes (matches the prompt policy).
+   * The CLI code-gen module can author `*.spec.*`/`*.test.*` via its native tools;
+   * drop those so the test-gen phase is the single author (and there is no
+   * same-path collision with test-gen's output). Anchored to the extension so it
+   * never catches `manifest.js` / `latest.js` / `contest/...` (unlike a substring
+   * check on "test"/"spec").
+   */
+  private keepNonTestFile(file: GeneratedFile): boolean {
+    if (/\.(spec|test)\.[cm]?[jt]sx?$/.test(file.relativePath)) {
+      console.log(`[Code Gen Agent] Dropping code-gen-authored test file (test-gen owns tests): ${file.relativePath}`);
+      return false;
+    }
+    return true;
   }
 
   /**

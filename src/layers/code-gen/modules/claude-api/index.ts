@@ -27,6 +27,7 @@ import {
 } from '../../lib/file-manifest';
 import {
   parseSingleFileContent as libParseSingleFileContent,
+  parseFirstGenFileContent as libParseFirstGenFileContent,
   looksLikeCodeContent as libLooksLikeCodeContent,
   looksLikePythonScript as libLooksLikePythonScript,
   extractPythonScript as libExtractPythonScript,
@@ -664,7 +665,10 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
     if (!response) return { file: null, tokensUsed: 0, truncated: false };
     const tokensUsed = (response.usage?.inputTokens ?? 0) + (response.usage?.outputTokens ?? 0);
     const truncated = response.stopReason === 'max_tokens';
-    const rawContent = this.parseSingleFileContent(response.content);
+    // First-gen parse: hardened for CLI preamble/fence/prose (F-B). The
+    // continuation path keeps this.parseSingleFileContent (byte-identical) to
+    // avoid eating a mid-construct resumed line.
+    const rawContent = libParseFirstGenFileContent(response.content);
 
     if (!this.isUsableContent(rawContent, planItem.filePath, response.content.length)) {
       return { file: null, tokensUsed, truncated: false };

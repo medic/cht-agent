@@ -166,10 +166,13 @@ describe('CodeGenerationAgent', () => {
 
       const result = await agent.generate(createInput());
 
-      expect(result.files).to.have.length(3);
+      // The code-gen-authored *.spec.ts is filtered (F-D: test-gen owns tests),
+      // leaving the two source files with their inferred metadata.
+      expect(result.files).to.have.length(2);
+      expect(result.files.find(f => f.relativePath.includes('.spec.'))).to.not.exist;
 
       // TypeScript file (new file → create)
-      const tsFile = result.files.find(f => f.relativePath.endsWith('.ts') && !f.relativePath.includes('spec'));
+      const tsFile = result.files.find(f => f.relativePath.endsWith('.ts'));
       expect(tsFile).to.exist;
       expect(tsFile!.language).to.equal('typescript');
       expect(tsFile!.type).to.equal('source');
@@ -180,11 +183,31 @@ describe('CodeGenerationAgent', () => {
       const jsFile = result.files.find(f => f.relativePath.endsWith('.js'));
       expect(jsFile).to.exist;
       expect(jsFile!.language).to.equal('javascript');
+    });
 
-      // Test file
-      const testFile = result.files.find(f => f.relativePath.includes('spec'));
-      expect(testFile).to.exist;
-      expect(testFile!.type).to.equal('test');
+    it('filters code-gen-authored *.spec.*/*.test.* files but keeps look-alikes (F-D)', async () => {
+      const moduleOutput: CodeGenModuleOutput = {
+        files: [
+          { path: 'api/src/services/messaging.js', content: 'module.exports = {};', purpose: 'Source' },
+          { path: 'api/tests/messaging.spec.js', content: 'describe("m", () => {});', purpose: 'Code-gen test' },
+          { path: 'webapp/src/foo.test.ts', content: 'describe("f", () => {});', purpose: 'Code-gen test' },
+          { path: 'api/src/manifest.js', content: 'module.exports = [];', purpose: 'Manifest (not a test)' },
+          { path: 'api/src/latest.js', content: 'module.exports = 1;', purpose: 'latest (not a test)' },
+        ],
+        explanation: 'Generated 5 files',
+      };
+      generateStub.resolves(moduleOutput);
+
+      const agent = new CodeGenerationAgent({ llmProvider: mockProvider, codeGenRegistry: mockRegistry });
+      const result = await agent.generate(createInput());
+
+      const paths = result.files.map(f => f.relativePath);
+      expect(paths).to.not.include('api/tests/messaging.spec.js');
+      expect(paths).to.not.include('webapp/src/foo.test.ts');
+      // Anchored regex must NOT drop these look-alikes:
+      expect(paths).to.include('api/src/manifest.js');
+      expect(paths).to.include('api/src/latest.js');
+      expect(paths).to.include('api/src/services/messaging.js');
     });
 
     it('should handle empty purpose by mapping to empty description', async () => {
@@ -406,10 +429,12 @@ describe('CodeGenerationAgent', () => {
     });
 
     it('should increase confidence for files with tests', async () => {
+      // A test-support file (fixture/helper), NOT a *.spec.*/*.test.* — F-D keeps
+      // those (code-gen may author fixtures) and inferFileType still types it 'test'.
       const moduleOutput: CodeGenModuleOutput = {
         files: [
           { path: 'src/service.ts', content: 'export class Service {}', purpose: 'Service' },
-          { path: 'test/service.spec.ts', content: 'describe("Service", () => {});', purpose: 'Tests' },
+          { path: 'test/fixtures/service-mock.ts', content: 'export const mock = {};', purpose: 'Test fixture' },
         ],
         explanation: 'Generated',
       };
@@ -504,7 +529,7 @@ describe('CodeGenerationAgent', () => {
       const moduleOutput: CodeGenModuleOutput = {
         files: [
           { path: 'src/service.ts', content: 'export class Service {}', purpose: 'Service' },
-          { path: 'test/service.spec.ts', content: 'describe("test", () => {});', purpose: 'Tests' },
+          { path: 'test/fixtures/service-mock.ts', content: 'export const mock = {};', purpose: 'Test fixture' },
         ],
         explanation: 'Generated',
       };
