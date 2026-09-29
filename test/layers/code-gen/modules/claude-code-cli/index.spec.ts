@@ -60,6 +60,34 @@ describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
     sinon.restore();
   });
 
+  it("passes the run's stash policy to the snapshot and the rollback", async () => {
+    // Loaded here, not at the top, so that this file still loads where the holder does not exist.
+    const holder = await import('../../../../../src/utils/stash-policy');
+    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)] });
+    try {
+      const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashSha: null, baselineUntracked: [] });
+      const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
+      const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+        './cli-driver': {
+          spawnClaudeCli: sinon.stub().resolves('no plan'),
+          parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1 }),
+          ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
+        },
+        './workspace': workspaceStub({
+          snapshotChtCore: snapshotStub,
+          captureChtCoreDiff: sinon.stub().resolves([]),
+          rollbackChtCore: rollbackStub,
+        }),
+      });
+      sinon.stub(console, 'warn');
+      await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+      expect(snapshotStub.firstCall.args[1]).to.deep.equal({ acceptedLeftoverShas: ['a'.repeat(40)] });
+      expect(rollbackStub.firstCall.args[2]).to.deep.equal({ acceptedLeftoverShas: ['a'.repeat(40)] });
+    } finally {
+      holder.__resetStashPolicyForTests();
+    }
+  });
+
   it('runs plan + execute and captures the diff (happy path)', async () => {
     const spawnStub = sinon.stub()
       .onFirstCall().resolves(planResultText) // plan phase

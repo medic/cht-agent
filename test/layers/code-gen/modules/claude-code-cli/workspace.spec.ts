@@ -281,6 +281,99 @@ describe('workspace.ts', () => {
       }
     });
 
+    it('proceeds past a leftover stash whose SHA the caller accepted', async () => {
+      const ws = loadWorkspace({
+        'git stash list -z': { stdout: OUR_ENTRY },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      const snap = await ws.snapshotChtCore('/tmp/cht-core', { acceptedLeftoverShas: [OUR_SHA] })
+        .catch((err: Error) => expect.fail(`the snapshot refused: ${err.message}`));
+      expect(snap.headSha).to.equal('abc1234deadbeef');
+    });
+
+    it('still refuses a leftover that the caller did not accept, naming only that one', async () => {
+      const ws = loadWorkspace({
+        'git stash list -z': {
+          stdout: stashListZ(
+            ['stash@{0}', OUR_SHA, `On main: ${STASH_MARKER_PREFIX}1700000000001`],
+            ['stash@{1}', OTHER_SHA, `On main: ${STASH_MARKER_PREFIX}1700000000000`],
+          ),
+        },
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain': { stdout: '' },
+      });
+      const err = await ws.snapshotChtCore('/tmp/cht-core', { acceptedLeftoverShas: [OUR_SHA] })
+        .catch((e: unknown) => e) as { kind?: string; lines?: string[] };
+      expect(err.kind).to.equal('precondition');
+      const text = (err.lines ?? []).join('\n');
+      expect(text).to.include('has 1 leftover cht-agent stash(es)');
+      expect(text).to.include(`grep -E ': ${STASH_MARKER_PREFIX}1700000000000$'`);
+      expect(text).to.not.include(`${STASH_MARKER_PREFIX}1700000000001`);
+    });
+
+    describe('the leftover list and its lines', () => {
+      const nowSeconds = NOW / 1000;
+      const rawEntry = (ref: string, sha: string, createdAt: number, message: string) =>
+        `${ref}\0${sha}\0${createdAt}\0${message}\0`;
+
+      it('lists every leftover with its SHA, time and age, and skips user stashes that mention the marker', async () => {
+        const ws = loadWorkspace({
+          'git stash list -z': {
+            stdout: [
+              rawEntry('stash@{0}', OUR_SHA, nowSeconds - 30, `On main: ${STASH_MARKER_PREFIX}1`),
+              rawEntry('stash@{1}', OTHER_SHA, nowSeconds, `On main: wip after ${STASH_MARKER_PREFIX}1700000000000 crash`),
+              rawEntry('stash@{2}', '3'.repeat(40), nowSeconds - 60, `On main: ${STASH_MARKER_PREFIX}2`),
+              rawEntry('stash@{3}', '4'.repeat(40), nowSeconds - 2 * 3600, `On main: ${STASH_MARKER_PREFIX}3`),
+              rawEntry('stash@{4}', '5'.repeat(40), nowSeconds - 5 * 86400, `On main: ${STASH_MARKER_PREFIX}4`),
+            ].join(''),
+          },
+        });
+        expect(await ws.listLeftoverStashes('/tmp/cht-core')).to.deep.equal([
+          { name: `${STASH_MARKER_PREFIX}1`, sha: OUR_SHA, createdAt: nowSeconds - 30, age: 'less than a minute ago' },
+          { name: `${STASH_MARKER_PREFIX}2`, sha: '3'.repeat(40), createdAt: nowSeconds - 60, age: '1 minute ago' },
+          { name: `${STASH_MARKER_PREFIX}3`, sha: '4'.repeat(40), createdAt: nowSeconds - 2 * 3600, age: '2 hours ago' },
+          { name: `${STASH_MARKER_PREFIX}4`, sha: '5'.repeat(40), createdAt: nowSeconds - 5 * 86400, age: '5 days ago' },
+        ]);
+      });
+
+      it('reads the stash list once', async () => {
+        const calls: string[] = [];
+        const ws = loadWorkspace({ 'git stash list -z': { stdout: OUR_ENTRY } }, {}, calls);
+        await ws.listLeftoverStashes('/tmp/cht-core');
+        expect(calls.filter(c => c.startsWith('git stash list'))).to.have.length(1);
+      });
+
+      it('refuses as precondition when the stash list cannot be read', async () => {
+        const failure = Object.assign(new Error('Command failed: git stash list\nfatal: bad config'), {
+          code: 128, stderr: 'fatal: bad config',
+        });
+        const ws = loadWorkspace({ 'git stash list -z': { error: failure } });
+        const err = await ws.listLeftoverStashes('/tmp/cht-core').catch((e: unknown) => e) as {
+          kind?: string; message: string; cause?: unknown;
+        };
+        expect(err.kind).to.equal('precondition');
+        expect(err.message).to.equal('cht-agent could not read the stash list (fatal: bad config); nothing was changed.');
+        expect(err.cause).to.equal(failure);
+      });
+
+      it('gives the refusal lines with the age and the commands, and no action line', () => {
+        const ws = loadWorkspace({});
+        const lines: string[] = ws.leftoverStashLines('/tmp/cht-core', [
+          { name: OUR_NAME, sha: OUR_SHA, createdAt: nowSeconds, age: 'less than a minute ago' },
+        ]);
+        expect(lines).to.have.length(4);
+        expect(lines[0]).to.equal(
+          `cht-core at /tmp/cht-core has 1 leftover cht-agent stash(es) that no run restored: ${OUR_NAME} ` +
+            '(created 2023-11-14T22:13:20.000Z, less than a minute ago). It may hold your uncommitted work, or ' +
+            'belong to another cht-agent run that is still active here.',
+        );
+        expect(lines[1]).to.match(/^Find the stash: /);
+        expect(lines[2]).to.match(/^Restore it: /);
+        expect(lines[3]).to.equal('If git says "conflicts in index", run the restore again without --index.');
+      });
+    });
+
     it('builds the leftover-stash pattern from the marker, matching it literally', () => {
       const pattern = buildLeakedStashLine('x.y+');
       expect(pattern.test('On main: x.y+123')).to.equal(true);

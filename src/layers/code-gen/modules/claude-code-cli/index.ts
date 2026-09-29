@@ -27,6 +27,7 @@ import {
 } from '../../interface';
 import { CrossFileIssue } from '../../../../types';
 import { compileCheck, CompileValidationResult } from '../../../../agents/compile-validator';
+import { getStashPolicy } from '../../../../utils/stash-policy';
 import { PlanItem, parsePlan } from '../../lib/plan';
 import { buildPlanPrompt } from '../../lib/prompts';
 import { buildFileManifest } from '../../lib/file-manifest';
@@ -76,7 +77,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before snapshot');
 
     // Snapshot pre-run state so we can roll back after capture.
-    const snapshot = await snapshotChtCore(chtCorePath).catch((err: unknown) => {
+    const snapshot = await snapshotChtCore(chtCorePath, getStashPolicy()).catch((err: unknown) => {
       reportSafetyError(err, LOG);
       throw err;
     });
@@ -338,7 +339,7 @@ async function rollBackAfterWork(
   workError: unknown,
 ): Promise<string[]> {
   try {
-    const rollback = await rollbackChtCore(chtCorePath, snapshot);
+    const rollback = await rollbackChtCore(chtCorePath, snapshot, getStashPolicy());
     return settleRollback(rollback, { logPrefix: LOG, label: 'claude-code-cli', chtCorePath, snapshot });
   } catch (err) {
     reportSafetyError(err, LOG);

@@ -481,6 +481,24 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     return undefined;
   };
 
+  it('continues past an accepted leftover, pops only its own stash, and leaves the leftover in place', async () => {
+    await write('tracked.txt', 'work in a leftover stash\n');
+    await git('stash', 'push', '-m', `${STASH_MARKER_PREFIX}1700000000000`);
+    const leftoverSha = (await git('rev-parse', 'stash@{0}')).stdout.trim();
+    await makeDirty();
+    const before = await treeState();
+
+    const snapshot = await snapshotChtCore(repo, { acceptedLeftoverShas: [leftoverSha] })
+      .catch((err: Error) => expect.fail(`the snapshot refused: ${err.message}`));
+    await write('session.ts', 'export const s = 1;\n');
+    const rollback = await rollbackChtCore(repo, snapshot);
+
+    expect(rollback.stashPop).to.equal('ok');
+    expect(await treeState()).to.deep.equal(before);
+    const { stdout } = await git('stash', 'list', '--format=%H');
+    expect(stdout.trim().split('\n')).to.deep.equal([leftoverSha]);
+  });
+
   it('restores and drops only our stash when the operator stashes during the session', async () => {
     await makeDirty();
     const snapshot = await snapshotChtCore(repo);

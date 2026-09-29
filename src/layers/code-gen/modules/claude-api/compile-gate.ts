@@ -24,6 +24,7 @@ import {
   ChtCoreSnapshot,
   WorkspaceSafetyError,
 } from '../claude-code-cli/workspace';
+import { getStashPolicy } from '../../../../utils/stash-policy';
 
 const LOG = '[claude-api compile-gate]';
 
@@ -171,7 +172,7 @@ function snapshotFailure(err: unknown): CompileValidationResult {
  */
 async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
   try {
-    const rollback = await rollbackChtCore(chtCorePath, snapshot, { logPrefix: LOG });
+    const rollback = await rollbackChtCore(chtCorePath, snapshot, { ...getStashPolicy(), logPrefix: LOG });
     return settleRollback(rollback, { logPrefix: LOG, label: 'claude-api compile gate', chtCorePath, snapshot });
   } catch (err) {
     reportSafetyError(err, LOG);
@@ -203,7 +204,7 @@ export async function runApiCompileGate(
 
   let snapshot: ChtCoreSnapshot;
   try {
-    snapshot = await snapshotChtCore(chtCorePath, { logPrefix: LOG });
+    snapshot = await snapshotChtCore(chtCorePath, { ...getStashPolicy(), logPrefix: LOG });
   } catch (err) {
     return snapshotFailure(err);
   }

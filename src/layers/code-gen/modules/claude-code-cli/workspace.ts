@@ -184,10 +184,15 @@ function readRefusal(what: string, err: unknown): WorkspaceSafetyError {
 /** The log prefix of the snapshot and rollback lines when the caller names none. */
 const DEFAULT_LOG_PREFIX = '[claude-code-cli]';
 
-/** How a caller of the snapshot and the rollback wants their lines printed. */
-interface WorkspaceCallOptions {
+/** How a caller of the snapshot and the rollback wants their lines printed, and what it accepts. */
+export interface WorkspaceCallOptions {
   /** The prefix of every line that these calls print (default `[claude-code-cli]`). */
   logPrefix?: string;
+  /**
+   * Leftover cht-agent stashes that the operator chose to keep at the start of
+   * the run. The leftover check skips them; this run never pops or drops them.
+   */
+  acceptedLeftoverShas?: readonly string[];
 }
 
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
@@ -301,32 +306,77 @@ export interface ChtCoreSnapshot {
   baselineUntracked: string[];
 }
 
+/** A cht-agent stash that no run restored, as the leftover check lists it. */
+export interface LeftoverStash {
+  /** The marker name, which the Find and Restore commands look up. */
+  name: string;
+  /** The stash commit, the only stable identity (a `stash@{N}` ref shifts). */
+  sha: string;
+  /** Unix seconds (`%ct`). */
+  createdAt: number;
+  /** How long ago, for example "3 days ago". */
+  age: string;
+}
+
+const AGE_UNITS: ReadonlyArray<readonly [seconds: number, unit: string]> = [
+  [86400, 'day'], [3600, 'hour'], [60, 'minute'],
+];
+
+/** A coarse "how long ago", from `%ct` in JS: a new `stash list` argv would add a git call. */
+function ageText(createdAt: number, nowMs: number): string {
+  const seconds = Math.max(0, Math.floor(nowMs / 1000) - createdAt);
+  const found = AGE_UNITS.find(([size]) => seconds >= size);
+  if (!found) return 'less than a minute ago';
+  const count = Math.floor(seconds / found[0]);
+  return `${count} ${found[1]}${count === 1 ? '' : 's'} ago`;
+}
+
 /**
- * Refuse to start when a previous run left one of our stashes behind (a hard
- * kill between snapshot and rollback strands the operator's work there). Taking
- * a second stash on top would bury it further, so stop and print the recovery
- * command. Set CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed deliberately.
+ * The leftover cht-agent stashes of this checkout, from one read of the stash
+ * list. Anchored: our stash message always ENDS with the marker plus a
+ * timestamp, so a user stash that merely mentions the marker ("wip after
+ * cht-agent-claude-code-cli crash") is not one. Every match, not the first: a
+ * real leftover can sit under a user stash. Throws a `precondition`
+ * WorkspaceSafetyError when git cannot read the list.
  */
-async function assertNoLeakedStash(chtCorePath: string): Promise<void> {
-  if (isFlagEnabled('CHT_AGENT_IGNORE_LEAKED_STASH')) return;
-  // Anchored: our stash message always ENDS with the marker plus a timestamp, so a
-  // user stash that merely mentions the marker ("wip after cht-agent-claude-code-cli
-  // crash") is not a false positive. Report every match, not just the first: a real
-  // leak can sit underneath a user stash, and naming the wrong one sends the
-  // operator to the wrong place.
+export async function listLeftoverStashes(chtCorePath: string): Promise<LeftoverStash[]> {
   const stashes = await readBeforeStash('the stash list', () => listStashes(chtCorePath));
-  const leaked = stashes.filter(e => LEAKED_STASH_LINE.test(e.message));
-  if (leaked.length === 0) return;
-  const names = leaked.map(e => leakedStashName(e.message));
-  const listed = leaked.map((e, i) => `${names[i]} (created ${new Date(e.createdAt * 1000).toISOString()})`);
-  // Not "from an interrupted run": the stash can belong to a run that is still
-  // active on this checkout.
-  const lines = [
-    `cht-core at ${chtCorePath} has ${leaked.length} leftover cht-agent stash(es) that no run ` +
+  const now = Date.now();
+  return stashes
+    .filter(e => LEAKED_STASH_LINE.test(e.message))
+    .map(e => ({ name: leakedStashName(e.message), sha: e.sha, createdAt: e.createdAt, age: ageText(e.createdAt, now) }));
+}
+
+/**
+ * What the operator needs to decide about leftover stashes: each name with its
+ * time and age, and the commands to find and restore each one. Each caller adds
+ * its own action line. Not "from an interrupted run": the stash can belong to a
+ * run that is still active on this checkout.
+ */
+export function leftoverStashLines(chtCorePath: string, entries: readonly LeftoverStash[]): string[] {
+  const listed = entries.map(e => `${e.name} (created ${new Date(e.createdAt * 1000).toISOString()}, ${e.age})`);
+  return [
+    `cht-core at ${chtCorePath} has ${entries.length} leftover cht-agent stash(es) that no run ` +
       `restored: ${listed.join('; ')}. It may hold your uncommitted work, or belong to another ` +
       'cht-agent run that is still active here.',
-    ...names.flatMap(n => recoveryHintSteps(chtCorePath, n)),
+    ...entries.flatMap(e => recoveryHintSteps(chtCorePath, e.name)),
     RESTORE_WITHOUT_INDEX_NOTE,
+  ];
+}
+
+/**
+ * Refuse to stash while a leftover cht-agent stash that the caller did not
+ * accept is in the list (a hard kill between snapshot and rollback strands the
+ * operator's work there, or another run is active here). Taking a second
+ * stash on top would bury it further, so stop and print the recovery command.
+ * Set CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed deliberately.
+ */
+async function assertNoLeakedStash(chtCorePath: string, accepted: readonly string[] = []): Promise<void> {
+  if (isFlagEnabled('CHT_AGENT_IGNORE_LEAKED_STASH')) return;
+  const leaked = (await listLeftoverStashes(chtCorePath)).filter(e => !accepted.includes(e.sha));
+  if (leaked.length === 0) return;
+  const lines = [
+    ...leftoverStashLines(chtCorePath, leaked),
     'Or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place.',
   ];
   throw new WorkspaceSafetyError('precondition', lines[0], { lines });
@@ -1370,7 +1420,7 @@ export async function snapshotChtCore(
   await assertAtToplevel(chtCorePath);
   // A leftover stash from an interrupted run holds the operator's work; stashing
   // on top of it would bury it deeper.
-  await assertNoLeakedStash(chtCorePath);
+  await assertNoLeakedStash(chtCorePath, options.acceptedLeftoverShas);
 
   const repoRoot = await readBeforeStash('the repo top level', () => readRepoRoot(chtCorePath));
   const headSha = await readBeforeStash('HEAD', () => readHeadSha(chtCorePath));

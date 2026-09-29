@@ -97,6 +97,21 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     expect(warnSpy.getCalls().map(c => String(c.args[0])).join('\n')).to.include('Compile gate skipped: snapshot failed');
   });
 
+  it("passes the run's stash policy, with its own prefix, to the snapshot and the rollback", async () => {
+    // Loaded here, not at the top, so that this file still loads where the holder does not exist.
+    const holder = await import('../../../../../src/utils/stash-policy');
+    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)] });
+    try {
+      const run = load();
+      await run(CHT, [file()]);
+      const expected = { acceptedLeftoverShas: ['a'.repeat(40)], logPrefix: '[claude-api compile-gate]' };
+      expect(snapshotStub.firstCall.args[1]).to.deep.equal(expected);
+      expect(rollbackStub.firstCall.args[2]).to.deep.equal(expected);
+    } finally {
+      holder.__resetStashPolicyForTests();
+    }
+  });
+
   it('skips when the snapshot refused before it changed anything', async () => {
     const run = load();
     snapshotStub.rejects(new WorkspaceSafetyError('precondition', 'in the middle of a merge (MERGE_HEAD)'));
