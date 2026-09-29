@@ -1065,6 +1065,51 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(await ourStashes()).to.deep.equal([]);
     });
 
+    it('runs a byte-identical cycle after the operator removes an index.lock and chooses Retry', async () => {
+      await makeDirty();
+      const before = await treeState();
+      const lock = path.join(repo, '.git', 'index.lock');
+      await fs.writeFile(lock, '');
+      const steps: string[] = [];
+      const resolveStashFailure = async (failure: { step: string }) => {
+        steps.push(failure.step);
+        await fs.rm(lock);
+        return 'retry' as const;
+      };
+      const snapshot = await snapshotChtCore(repo, { resolveStashFailure })
+        .catch((err: Error) => expect.fail(`the snapshot failed: ${err.message}`));
+      expect(steps).to.deep.equal(['push']);
+      await write('session.ts', 'export const s = 1;\n');
+      const rollback = await rollbackChtCore(repo, snapshot);
+      expect(rollback.stashPop).to.equal('ok');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await ourStashes()).to.deep.equal([]);
+    });
+
+    it('runs a byte-identical cycle after the operator fixes a read-only dir at a partial push and chooses "handled"', async function () {
+      skipAsRoot(this);
+      await commitFile('a.txt', 'a1\n');
+      await write('a.txt', 'a2\n');
+      await fs.mkdir(path.join(repo, 'ro'));
+      await write('ro/u.txt', 'untracked in a read-only dir\n');
+      const before = await treeState();
+      await fs.chmod(path.join(repo, 'ro'), 0o555);
+      const steps: string[] = [];
+      const resolveStashFailure = async (failure: { step: string }) => {
+        steps.push(failure.step);
+        await fs.chmod(path.join(repo, 'ro'), 0o755);
+        return 'handled' as const;
+      };
+      const snapshot = await snapshotChtCore(repo, { resolveStashFailure })
+        .catch((err: Error) => expect.fail(`the snapshot failed: ${err.message}`));
+      expect(steps).to.deep.equal(['push']);
+      await write('session.ts', 'export const s = 1;\n');
+      const rollback = await rollbackChtCore(repo, snapshot);
+      expect(rollback.stashPop).to.equal('ok');
+      expect(await treeState()).to.deep.equal(before);
+      expect(await ourStashes()).to.deep.equal([]);
+    });
+
     it('catches an untracked file the push could not remove even with no tracked work', async function () {
       skipAsRoot(this);
       await fs.mkdir(path.join(repo, 'ro'));

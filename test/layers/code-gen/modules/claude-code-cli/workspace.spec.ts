@@ -824,6 +824,204 @@ describe('workspace.ts', () => {
       expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
     });
 
+    describe('the choices at a failed stash push', () => {
+      const TRAILER = 'Choose Retry after you fix the cause above, "I handled it myself" after you dealt with it ' +
+        'another way, or Abort to stop the run.';
+      const indexLock = () => Object.assign(new Error('Command failed: git stash push\nfatal: index.lock exists'), {
+        code: 128, stderr: "fatal: Unable to create '/tmp/cht-core/.git/index.lock': File exists.",
+      });
+      const readFailure = () => Object.assign(new Error('Command failed: git x\nfatal: injected read failure'), {
+        code: 128, stderr: 'fatal: injected read failure',
+      });
+      const OTHER_LEFTOVER = `${STASH_MARKER_PREFIX}1600000000000`;
+      const OURS_AND_OTHER = stashListZ(
+        ['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`], ['stash@{1}', OTHER_SHA, `On main: ${OTHER_LEFTOVER}`],
+      );
+      const BASE: Script = {
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git status --porcelain=v1': { stdout: '' },
+        'git status --porcelain': { stdout: ' M x.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash drop': { stdout: `Dropped stash@{0} (${OUR_SHA})\n` },
+      };
+      /** A push that saves nothing once (an index.lock), then works. */
+      const FP1_ONCE: Script = {
+        'git stash push': [{ error: indexLock() }, { stdout: 'Saved\n' }],
+        // The leftover check and the lookup (nothing), then both again (ours).
+        'git stash list -z': [{ stdout: '' }, { stdout: '' }, { stdout: '' }, { stdout: OUR_ENTRY }],
+      };
+
+      /** A resolver that answers in order (then Abort) and marks each call in `calls`. */
+      const scriptedResolver = (answers: string[], calls: string[] = []) => {
+        const seen: Array<{ step: string; lines: readonly string[]; choices: readonly string[] }> = [];
+        const resolve = sinon.stub().callsFake(async (failure: { step: string; lines: readonly string[]; choices: readonly string[] }) => {
+          seen.push(failure);
+          calls.push('RESOLVER');
+          return answers.shift() ?? 'abort';
+        });
+        return { resolve, seen };
+      };
+
+      /** Run the snapshot; console output is captured, and the outcome is the snapshot or the error. */
+      const snapshotWith = async (script: Script, options: Record<string, unknown>, calls: string[] = []) => {
+        const ws = loadWorkspace(withDefaults(script, BASE), {}, calls);
+        const errorSpy = sinon.stub(console, 'error');
+        sinon.stub(console, 'warn');
+        sinon.stub(console, 'log');
+        const outcome = await ws.snapshotChtCore('/tmp/cht-core', options).then(
+          (snapshot: { stashSha: string | null }) => ({ snapshot, error: undefined }),
+          (error: { kind?: string; lines?: string[]; message?: string }) => ({ snapshot: undefined, error }),
+        );
+        sinon.restore();
+        return { ws, outcome, printed: errorSpy.getCalls().map(c => String(c.args[0])) };
+      };
+
+      it('runs the snapshot again after Retry at a push that saved nothing', async () => {
+        const calls: string[] = [];
+        const { resolve, seen } = scriptedResolver(['retry'], calls);
+        const { outcome, printed } = await snapshotWith(FP1_ONCE, { resolveStashFailure: resolve }, calls);
+        expect(resolve.calledOnce).to.equal(true);
+        expect(seen[0].step).to.equal('push');
+        expect(seen[0].choices).to.deep.equal(['handled', 'retry', 'abort']);
+        expect(seen[0].lines[0]).to.include('nothing was stashed and your tree is unchanged');
+        expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        expect(calls.filter(c => c.startsWith('git stash push'))).to.have.length(2);
+        expect(printed.at(-1)).to.equal(`[claude-code-cli] ${TRAILER}`);
+      });
+
+      it('throws the push error on Abort, marked, with the headless lines printed once and the trailer', async () => {
+        const script: Script = { 'git stash push': { error: indexLock() }, 'git stash list -z': { stdout: '' } };
+        const headless = await snapshotWith(script, {});
+        const { resolve } = scriptedResolver(['abort']);
+        const { ws, outcome, printed } = await snapshotWith(script, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        const err = outcome.error as { kind?: string; lines?: string[] };
+        expect(err.kind).to.equal('stash');
+        expect(err.lines).to.deep.equal(headless.outcome.error?.lines);
+        expect(ws.isOperatorAbort(err)).to.equal(true);
+        expect(ws.isOperatorAbort(headless.outcome.error)).to.equal(false);
+        expect(printed).to.deep.equal([
+          ...(err.lines ?? []).map(l => `[claude-code-cli] ${l}`),
+          `[claude-code-cli] ${TRAILER}`,
+        ]);
+        const errorSpy = sinon.stub(console, 'error');
+        ws.reportSafetyError(err, '[claude-code-cli]');
+        expect(errorSpy.called).to.equal(false);
+      });
+
+      it('puts the work back before it asks at a partial push, then runs the snapshot again on "handled"', async () => {
+        const calls: string[] = [];
+        const { resolve } = scriptedResolver(['handled'], calls);
+        const { outcome } = await snapshotWith({
+          'git status --porcelain=v1 -z --untracked-files=no': [{ stdout: ' M x.ts\0' }, { stdout: '' }],
+          [`git diff --name-only --no-renames -z ${OUR_SHA} --`]: [{ stdout: 'x.ts\0' }, { stdout: '' }],
+          // The leftover check, the lookup, the undo's drop; then the re-run's leftover check and lookup.
+          'git stash list -z': [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: OUR_ENTRY },
+          ],
+        }, { resolveStashFailure: resolve }, calls);
+        expect(resolve.calledOnce).to.equal(true);
+        const restoreAt = calls.findIndex(c => c.startsWith(`git restore --source=${OUR_SHA} --worktree`));
+        expect(restoreAt).to.be.greaterThan(-1);
+        expect(restoreAt).to.be.lessThan(calls.indexOf('RESOLVER'));
+        expect(calls.filter(c => c.startsWith('git stash push'))).to.have.length(2);
+        expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+      });
+
+      for (const [label, postPushRead] of [
+        ['a partial push', { stdout: ' M x.ts\0' }],
+        ['a failed read after the push', { error: readFailure() }],
+      ] as Array<[string, Answer]>) {
+        it(`skips our spare copy on the re-run after ${label}, tells the caller, and still refuses another leftover`, async () => {
+          const spares: string[] = [];
+          const { resolve } = scriptedResolver(['retry']);
+          const { outcome } = await snapshotWith({
+            'git status --porcelain=v1 -z --untracked-files=no': postPushRead,
+            'git stash drop': { error: new Error('fatal: cannot lock ref') },
+            // The leftover check, the lookup, the undo's drop; then the re-run's leftover check.
+            'git stash list -z': [{ stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: OURS_AND_OTHER }],
+          }, { resolveStashFailure: resolve, onSpareStash: (sha: string) => spares.push(sha) });
+          expect(resolve.calledOnce).to.equal(true);
+          expect(spares).to.deep.equal([OUR_SHA]);
+          expect(outcome.error?.kind).to.equal('precondition');
+          const text = (outcome.error?.lines ?? []).join('\n');
+          expect(text).to.include('has 1 leftover cht-agent stash(es)');
+          expect(text).to.include(OTHER_LEFTOVER);
+          expect(text).to.not.include(OUR_NAME);
+        });
+      }
+
+      it('runs the snapshot again after Retry at a failed read after the push', async () => {
+        const { resolve, seen } = scriptedResolver(['retry']);
+        const { outcome } = await snapshotWith({
+          'git status --porcelain=v1 -z --untracked-files=no': [{ error: readFailure() }, { stdout: '' }],
+          'git stash list -z': [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: OUR_ENTRY },
+          ],
+        }, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(seen[0].lines).to.deep.equal([
+          'The snapshot failed after the stash (fatal: injected read failure); cht-agent put your work back, so ' +
+            'nothing was changed.',
+        ]);
+        expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+      });
+
+      it('throws the precondition error marked on Abort at a failed read after the push', async () => {
+        const { resolve } = scriptedResolver(['abort']);
+        const { ws, outcome } = await snapshotWith({
+          'git status --porcelain=v1 -z --untracked-files=no': { error: readFailure() },
+          'git stash list -z': [{ stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }],
+        }, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(outcome.error?.kind).to.equal('precondition');
+        expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+      });
+
+      for (const [label, resolve] of [
+        ['rejects', () => sinon.stub().rejects(new Error('the terminal went away'))],
+        ["answers 'x'", () => sinon.stub().resolves('x')],
+      ] as Array<[string, () => sinon.SinonStub]>) {
+        it(`gives the push error, marked, when the resolver ${label}`, async () => {
+          const stub = resolve();
+          const script: Script = { 'git stash push': { error: indexLock() }, 'git stash list -z': { stdout: '' } };
+          const { ws, outcome } = await snapshotWith(script, { resolveStashFailure: stub });
+          expect(stub.calledOnce).to.equal(true);
+          expect(outcome.error).to.be.instanceOf(ws.WorkspaceSafetyError);
+          expect(outcome.error?.kind).to.equal('stash');
+          expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+        });
+      }
+
+      it('prints nothing and asks nothing at a failed push without a resolver', async () => {
+        const script: Script = { 'git stash push': { error: indexLock() }, 'git stash list -z': { stdout: '' } };
+        const { outcome, printed } = await snapshotWith(script, {});
+        expect(outcome.error?.kind).to.equal('stash');
+        expect(printed).to.deep.equal([]);
+      });
+
+      it('lets a later snapshot of the run skip the spare copy that an earlier one proved', async () => {
+        const accepted: string[] = [];
+        const { resolve } = scriptedResolver(['retry']);
+        const first = await snapshotWith({
+          // The longer key first: the first key that the argv starts with answers.
+          'git status --porcelain=v1 -z --untracked-files=no': { stdout: ' M x.ts\0' },
+          'git status --porcelain': [{ stdout: ' M x.ts\n' }, { stdout: '' }],
+          'git stash drop': { error: new Error('fatal: cannot lock ref') },
+          // The leftover check, the lookup, the undo's drop; then the re-run's check sees only our spare.
+          'git stash list -z': [{ stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }],
+        }, { resolveStashFailure: resolve, acceptedLeftoverShas: accepted, onSpareStash: (sha: string) => accepted.push(sha) });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(first.outcome.snapshot?.stashSha).to.equal(null);
+        const second = await snapshotWith({
+          'git status --porcelain': { stdout: '' },
+          'git stash list -z': { stdout: OUR_ENTRY },
+        }, { acceptedLeftoverShas: accepted });
+        expect(second.outcome.error).to.be.undefined;
+        expect(second.outcome.snapshot?.stashSha).to.equal(null);
+      });
+    });
+
     describe('assume-unchanged entries', () => {
       const snapshotWithFlags = async (lsFilesV: string) => {
         const calls: string[] = [];

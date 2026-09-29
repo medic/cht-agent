@@ -183,6 +183,19 @@ function readRefusal(what: string, err: unknown): WorkspaceSafetyError {
 /** The log prefix of the snapshot and rollback lines when the caller names none. */
 const DEFAULT_LOG_PREFIX = '[claude-code-cli]';
 
+/** What the operator chose at a stash failure point. */
+export type StashChoice = 'handled' | 'retry' | 'abort';
+
+/** A stash step that failed, as the screen shows it. The workspace helpers print its lines first. */
+export interface StashFailure {
+  step: 'push' | 'undo' | 'restore' | 'drop';
+  lines: readonly string[];
+  choices: readonly StashChoice[];
+}
+
+/** Asks the operator what to do at a stash failure point. Only a caller with a terminal passes one. */
+export type StashFailureResolver = (failure: StashFailure) => Promise<StashChoice>;
+
 /** How a caller of the snapshot and the rollback wants their lines printed, and what it accepts. */
 export interface WorkspaceCallOptions {
   /** The prefix of every line that these calls print (default `[claude-code-cli]`). */
@@ -192,6 +205,60 @@ export interface WorkspaceCallOptions {
    * the run. The leftover check skips them; this run never pops or drops them.
    */
   acceptedLeftoverShas?: readonly string[];
+  /** Asks the operator at a stash failure point. Absent (no terminal): the failure stops the run, as before. */
+  resolveStashFailure?: StashFailureResolver;
+  /** Called with the SHA of an entry of ours that a drop left behind after the work was proven back. */
+  onSpareStash?: (sha: string) => void;
+}
+
+/** Our own entry that a drop left behind after the work was proven back. */
+interface SpareStash {
+  sha: string;
+  name: string;
+}
+
+/** What a choice at a snapshot failure leads to: a new snapshot from the top, which skips these spares. */
+interface SnapshotRerun {
+  spares: readonly SpareStash[];
+}
+
+/** A stash failure that the operator can answer, keyed by the error that Abort throws. */
+interface RegisteredFailure {
+  step: StashFailure['step'];
+  choices: readonly StashChoice[];
+  trailer: string;
+  next: (choice: 'handled' | 'retry') => Promise<SnapshotRerun>;
+}
+
+const registeredFailures = new WeakMap<WorkspaceSafetyError, RegisteredFailure>();
+
+const operatorAborts = new WeakSet<WorkspaceSafetyError>();
+
+/** True for a safety error that the operator chose Abort for: every caller stops the run on it. */
+export function isOperatorAbort(err: unknown): boolean {
+  return err instanceof WorkspaceSafetyError && operatorAborts.has(err);
+}
+
+const PUSH_CHOICES: readonly StashChoice[] = ['handled', 'retry', 'abort'];
+
+const PUSH_TRAILER = 'Choose Retry after you fix the cause above, "I handled it myself" after you dealt with it ' +
+  'another way, or Abort to stop the run.';
+
+/**
+ * Register the choices at a failed push. The tree is unchanged or already put
+ * back there, so "I handled it myself" and Retry both run the snapshot again.
+ * Headless callers never read the registration.
+ */
+function withPushChoices(error: WorkspaceSafetyError, spares: readonly SpareStash[] = []): WorkspaceSafetyError {
+  registeredFailures.set(error, {
+    step: 'push', choices: PUSH_CHOICES, trailer: PUSH_TRAILER, next: async () => ({ spares }),
+  });
+  return error;
+}
+
+/** A proven spare copy of ours, when the drop kept our entry. */
+function spareOf(stash: TakenStash, drop: DropOutcome): SpareStash[] {
+  return drop === 'kept' ? [{ sha: stash.sha, name: stash.name }] : [];
 }
 
 /** Marker prefix baked into our stash names so we can recognize our own leaks. */
@@ -568,8 +635,9 @@ async function stashOperatorWork(
   const leftovers = await leftoversOrUndo(chtCorePath, stash, headSha, lookup.readError, logPrefix);
   if (leftovers.length > 0) {
     const trigger = partialPushTrigger(pushError, leftovers, prePush);
-    warnSpareCopy(await undoStash(chtCorePath, stash, headSha, trigger, logPrefix), name, logPrefix);
-    throw await partialStashError(chtCorePath, pushError, leftovers, prePush);
+    const drop = await undoStash(chtCorePath, stash, headSha, trigger, logPrefix);
+    warnSpareCopy(drop, name, logPrefix);
+    throw await partialStashError(chtCorePath, pushError, leftovers, prePush, spareOf(stash, drop));
   }
 
   // Print recovery up front: if the process is hard-killed before rollback, these
@@ -653,21 +721,21 @@ async function undoAfterReadFailure(
     cause: err,
     pathsInPlay: stash.prePush,
   }, logPrefix);
-  if (drop === 'kept') throw spareEntryError(stash.name, text, err);
+  if (drop === 'kept') throw spareEntryError(stash, text, err);
   const message = `The snapshot failed after the stash (${text}); cht-agent put your work back, so nothing was changed.`;
-  throw new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
+  throw withPushChoices(new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] }));
 }
 
 /** The work is back, but our entry stays in the list, where the next run's leftover check stops. */
-function spareEntryError(stashName: string, gitText: string, err: unknown): WorkspaceSafetyError {
+function spareEntryError(stash: TakenStash, gitText: string, err: unknown): WorkspaceSafetyError {
   const message = `The snapshot failed after the stash (${gitText}); cht-agent put your work back, but could not ` +
-    `remove its stash entry ${stashName}.`;
+    `remove its stash entry ${stash.name}.`;
   const lines = [
     message,
-    `Your work is restored; the stash entry ${stashName} is a spare copy.`,
+    `Your work is restored; the stash entry ${stash.name} is a spare copy.`,
     "The next run's start check shows that entry. Remove it from the stash list when you no longer need it.",
   ];
-  return new WorkspaceSafetyError('stash', message, { cause: err, lines });
+  return withPushChoices(new WorkspaceSafetyError('stash', message, { cause: err, lines }), spareOf(stash, 'kept'));
 }
 
 function warnSpareCopy(drop: DropOutcome, stashName: string, logPrefix: string): void {
@@ -982,7 +1050,7 @@ async function stashNotCreatedError(
     ...pathListLines('Changes that were not stashed:', leftovers.paths),
     ...(await permissionLines(chtCorePath, text, [...leftovers.paths, ...prePush])),
   ];
-  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError ?? listReadError });
+  return withPushChoices(new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError ?? listReadError }));
 }
 
 async function readLeftoversForReport(
@@ -1006,6 +1074,7 @@ async function partialStashError(
   pushError: unknown,
   leftovers: readonly string[],
   prePush: readonly string[],
+  spares: readonly SpareStash[],
 ): Promise<WorkspaceSafetyError> {
   const text = pushError === undefined ? 'git stash push exited 0' : gitErrorText(pushError);
   const lines = [
@@ -1013,7 +1082,7 @@ async function partialStashError(
     ...pathListLines('Paths the stash left:', leftovers).slice(1),
     ...(await permissionLines(chtCorePath, text, [...leftovers, ...prePush])),
   ];
-  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError });
+  return withPushChoices(new WorkspaceSafetyError('stash', lines[0], { lines, cause: pushError }), spares);
 }
 
 /** The step that fixes what git reported, for an error the operator runs again after. */
@@ -1409,6 +1478,105 @@ export async function snapshotChtCore(
   chtCorePath: string,
   options: WorkspaceCallOptions = {},
 ): Promise<ChtCoreSnapshot> {
+  const resolve = options.resolveStashFailure;
+  if (!resolve) return snapshotOnce(chtCorePath, options);
+  return snapshotWithChoices(chtCorePath, options, resolve);
+}
+
+/** The accepted leftovers of one snapshot call with a resolver, and the spare copies of ours among them. */
+interface ChoiceLoop {
+  accepted: string[];
+  spares: SpareStash[];
+}
+
+/**
+ * With a resolver: at a stash failure point, show the failure and act on the
+ * operator's choice. Abort throws the failure's own error, marked; "I handled
+ * it myself" and Retry run the snapshot again from the top. Any other error is
+ * thrown as it is.
+ */
+async function snapshotWithChoices(
+  chtCorePath: string,
+  options: WorkspaceCallOptions,
+  resolve: StashFailureResolver,
+): Promise<ChtCoreSnapshot> {
+  const loop: ChoiceLoop = { accepted: [...(options.acceptedLeftoverShas ?? [])], spares: [] };
+  for (;;) {
+    const attempt = await attemptSnapshot(chtCorePath, { ...options, acceptedLeftoverShas: loop.accepted });
+    if (attempt.snapshot) return attempt.snapshot;
+    const rerun = await settleSnapshotFailure(attempt.error, resolve, loop, options.logPrefix ?? DEFAULT_LOG_PREFIX);
+    acceptSpares(loop, rerun.spares, options.onSpareStash);
+  }
+}
+
+async function attemptSnapshot(
+  chtCorePath: string,
+  options: WorkspaceCallOptions,
+): Promise<{ snapshot?: ChtCoreSnapshot; error?: unknown }> {
+  try {
+    return { snapshot: await snapshotOnce(chtCorePath, options) };
+  } catch (error) {
+    return { error };
+  }
+}
+
+/** Show a registered failure and ask; Abort throws it marked. An unregistered error is thrown as it is. */
+async function settleSnapshotFailure(
+  err: unknown,
+  resolve: StashFailureResolver,
+  loop: ChoiceLoop,
+  logPrefix: string,
+): Promise<SnapshotRerun> {
+  const registered = err instanceof WorkspaceSafetyError ? registeredFailures.get(err) : undefined;
+  if (!registered) throw err;
+  const error = err as WorkspaceSafetyError;
+  showFailure(error, registered, loop.spares, logPrefix);
+  const choice = await askOperator(resolve, { step: registered.step, lines: error.lines, choices: registered.choices });
+  if (choice === 'abort') throw markAbort(error);
+  return registered.next(choice);
+}
+
+/**
+ * The screen: the failure's own lines, the same as headless and printed once,
+ * a line for each spare copy of ours that this loop accepted, then the trailer.
+ */
+function showFailure(
+  error: WorkspaceSafetyError,
+  registered: RegisteredFailure,
+  spares: readonly SpareStash[],
+  logPrefix: string,
+): void {
+  reportSafetyError(error, logPrefix);
+  for (const spare of spares) console.error(`${logPrefix} ${spareCopyLine(spare.name)}`);
+  console.error(`${logPrefix} ${registered.trailer}`);
+}
+
+function spareCopyLine(stashName: string): string {
+  return `Stash ${stashName} is a spare copy of work that cht-agent already put back. It stays in the stash list.`;
+}
+
+/** The operator's choice. A resolver that rejects, or answers a choice that is not offered, means Abort. */
+async function askOperator(resolve: StashFailureResolver, failure: StashFailure): Promise<StashChoice> {
+  const choice = await resolve(failure).catch((): StashChoice => 'abort');
+  return failure.choices.includes(choice) ? choice : 'abort';
+}
+
+function markAbort(error: WorkspaceSafetyError): WorkspaceSafetyError {
+  operatorAborts.add(error);
+  return error;
+}
+
+/** A spare copy of ours is proven: this loop's re-run skips it, and so does the rest of the run. */
+function acceptSpares(loop: ChoiceLoop, spares: readonly SpareStash[], onSpareStash?: (sha: string) => void): void {
+  for (const spare of spares) {
+    loop.accepted.push(spare.sha);
+    loop.spares.push(spare);
+    onSpareStash?.(spare.sha);
+  }
+}
+
+/** One snapshot from the top: the pre-checks, the stash of the operator's work, and the baseline. */
+async function snapshotOnce(chtCorePath: string, options: WorkspaceCallOptions): Promise<ChtCoreSnapshot> {
   const logPrefix = options.logPrefix ?? DEFAULT_LOG_PREFIX;
   await assertAtToplevel(chtCorePath);
   // A leftover stash can hold the operator's work; stashing on top of it would bury it deeper.

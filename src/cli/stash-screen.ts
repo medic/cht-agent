@@ -3,7 +3,8 @@
  *
  * At the start of a run, before any LLM call, it looks for leftover cht-agent
  * stashes. On a terminal it asks what to do. Without one it stops the run,
- * unless CHT_AGENT_IGNORE_LEAKED_STASH is true. The workspace helpers never read
+ * unless CHT_AGENT_IGNORE_LEAKED_STASH is true. During the run, on a terminal,
+ * it asks what to do at a stash failure point. The workspace helpers never read
  * the env or a terminal: this module reads both and hands the result to them
  * through the stash policy holder.
  */
@@ -13,12 +14,14 @@ import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
 import {
   LeftoverStash,
+  StashChoice,
+  StashFailureResolver,
   WorkspaceSafetyError,
   leftoverStashLines,
   listLeftoverStashes,
   reportSafetyError,
 } from '../layers/code-gen/modules/claude-code-cli/workspace';
-import { setStashPolicy } from '../utils/stash-policy';
+import { acceptSpareStash, setStashPolicy } from '../utils/stash-policy';
 
 const LOG = '[cht-agent]';
 
@@ -162,11 +165,34 @@ export async function runLeftoverCheck(chtCorePath: string, io: ScreenIo): Promi
   return io.interactive ? leftoverScreen(chtCorePath, entries, io.ask) : headlessLeftovers(chtCorePath, entries, io.env);
 }
 
+const FAILURE_LABELS: Readonly<Record<StashChoice, string>> = {
+  handled: 'I handled it myself',
+  retry: 'Retry',
+  abort: 'Abort',
+};
+
+/**
+ * The resolver for the stash failure points, or undefined without a terminal
+ * (the workspace helpers then stop the run with their lines). The helpers print
+ * the lines first; this only asks. A closed input or Ctrl-C means Abort.
+ */
+export function makeStashFailureResolver(io: Pick<ScreenIo, 'interactive' | 'ask'>): StashFailureResolver | undefined {
+  if (!io.interactive) return undefined;
+  return async failure => {
+    const index = await io.ask('What do you want to do?', failure.choices.map(c => FAILURE_LABELS[c]));
+    return index === null ? 'abort' : failure.choices[index] ?? 'abort';
+  };
+}
+
 function terminalIo(): ScreenIo {
   return { interactive: process.stdin.isTTY === true, ask: askChoice, env: process.env };
 }
 
 /** Run the leftover check, then set this run's stash policy. Call before any LLM call. */
 export async function prepareStashPolicy(chtCorePath: string, io: ScreenIo = terminalIo()): Promise<void> {
-  setStashPolicy({ acceptedLeftoverShas: await runLeftoverCheck(chtCorePath, io) });
+  setStashPolicy({
+    acceptedLeftoverShas: await runLeftoverCheck(chtCorePath, io),
+    resolveStashFailure: makeStashFailureResolver(io),
+    onSpareStash: acceptSpareStash,
+  });
 }

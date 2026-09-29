@@ -35,7 +35,7 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   // (Re)build the stubs and load the module fresh; workspace, compile-validator,
   // and node:fs are all stubbed so no real git/tsc/disk is touched. realpathSync
   // defaults to identity (no symlinks); tests override it to simulate an escape.
-  const load = () => {
+  const load = (extraWorkspace: Record<string, unknown> = {}) => {
     snapshotStub = sinon.stub().resolves({
       headSha: 'abc1234', headRef: 'refs/heads/master', repoRoot: '/tmp/fake-cht-core',
       stashSha: null, stashName: null, baselineUntracked: [],
@@ -56,7 +56,9 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
         realpathSync: realpathSyncStub,
         lstatSync: lstatSyncStub,
       },
-      '../claude-code-cli/workspace': workspaceStub({ snapshotChtCore: snapshotStub, rollbackChtCore: rollbackStub }),
+      '../claude-code-cli/workspace': workspaceStub({
+        snapshotChtCore: snapshotStub, rollbackChtCore: rollbackStub, ...extraWorkspace,
+      }),
       '../../../../agents/compile-validator': { compileCheck: compileStub },
     });
     return mod.runApiCompileGate as (
@@ -100,16 +102,50 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
   it("passes the run's stash policy, with its own prefix, to the snapshot and the rollback", async () => {
     // Loaded here, not at the top, so that this file still loads where the holder does not exist.
     const holder = await import('../../../../../src/utils/stash-policy');
-    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)] });
+    const resolveStashFailure = sinon.stub().resolves('abort');
+    const onSpareStash = sinon.stub();
+    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash });
     try {
       const run = load();
       await run(CHT, [file()]);
-      const expected = { acceptedLeftoverShas: ['a'.repeat(40)], logPrefix: '[claude-api compile-gate]' };
+      const expected = {
+        acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash, logPrefix: '[claude-api compile-gate]',
+      };
       expect(snapshotStub.firstCall.args[1]).to.deep.equal(expected);
       expect(rollbackStub.firstCall.args[2]).to.deep.equal(expected);
     } finally {
       holder.__resetStashPolicyForTests();
     }
+  });
+
+  it('halts on an operator Abort at a precondition error, and says that the generated files were not kept', async () => {
+    const run = load({ isOperatorAbort: () => true });
+    const message = 'The snapshot failed after the stash (fatal: x); cht-agent put your work back, so nothing was changed.';
+    const abort = new WorkspaceSafetyError('precondition', message, { lines: [message] });
+    snapshotStub.rejects(abort);
+    const errSpy = sinon.stub(console, 'error');
+    sinon.stub(console, 'warn');
+    const err = await run(CHT, [file()]).catch((e: unknown) => e);
+    expect(err).to.equal(abort);
+    expect(errSpy.getCalls().map(c => String(c.args[0]))).to.deep.equal([
+      `[claude-api compile-gate] ${message}`,
+      '[claude-api compile-gate] The files generated in this run were not kept.',
+    ]);
+    expect(rollbackStub.called).to.equal(false);
+  });
+
+  it('says once that the generated files were not kept on an operator Abort at the rollback', async () => {
+    const run = load({ isOperatorAbort: () => true });
+    const abort = new WorkspaceSafetyError('stash', 'Your work is restored, but the stash entry stays.', {
+      lines: ['Your work is restored, but the stash entry stays.'],
+    });
+    rollbackStub.rejects(abort);
+    const errSpy = sinon.stub(console, 'error');
+    const err = await run(CHT, [file()]).catch((e: unknown) => e);
+    expect(err).to.equal(abort);
+    expect(errSpy.getCalls().map(c => String(c.args[0])).filter(l => l.includes('were not kept'))).to.deep.equal([
+      '[claude-api compile-gate] The files generated in this run were not kept.',
+    ]);
   });
 
   it('skips when the snapshot refused before it changed anything', async () => {

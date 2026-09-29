@@ -9,7 +9,7 @@ import {
   leftoverStashLines,
   reportSafetyError,
 } from '../../src/layers/code-gen/modules/claude-code-cli/workspace';
-import { __resetStashPolicyForTests, getStashPolicy } from '../../src/utils/stash-policy';
+import { __resetStashPolicyForTests, acceptSpareStash, getStashPolicy } from '../../src/utils/stash-policy';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -162,14 +162,60 @@ describe('stash-screen', () => {
   });
 
   describe('prepareStashPolicy', () => {
-    it('sets the SHAs that the operator chose to keep', async () => {
+    it('sets the SHAs that the operator chose to keep, the resolver and the spare hook', async () => {
       const screen = loadScreen(sinon.stub().resolves([FIRST]));
       try {
         await screen.prepareStashPolicy(CHT, terminal(sinon.stub().resolves(1)));
-        expect(getStashPolicy()).to.deep.equal({ acceptedLeftoverShas: [FIRST.sha] });
+        const policy = getStashPolicy();
+        expect(policy.acceptedLeftoverShas).to.deep.equal([FIRST.sha]);
+        expect(policy.resolveStashFailure).to.be.a('function');
+        expect(policy.onSpareStash).to.equal(acceptSpareStash);
       } finally {
         __resetStashPolicyForTests();
       }
+    });
+
+    it('sets no resolver without a terminal', async () => {
+      const screen = loadScreen(sinon.stub().resolves([FIRST]));
+      try {
+        await screen.prepareStashPolicy(CHT, headless('true'));
+        const policy = getStashPolicy();
+        expect(policy.acceptedLeftoverShas).to.deep.equal([FIRST.sha]);
+        expect(Object.keys(policy)).to.deep.equal(['acceptedLeftoverShas', 'onSpareStash']);
+      } finally {
+        __resetStashPolicyForTests();
+      }
+    });
+  });
+
+  describe('makeStashFailureResolver', () => {
+    const FAILURE = { step: 'push' as const, lines: ['git stash could not save your work'], choices: ['handled', 'retry', 'abort'] as const };
+
+    it("offers the failure's choices with their labels, and gives the chosen one", async () => {
+      const ask = sinon.stub().resolves(1);
+      const screen = loadScreen(sinon.stub());
+      const resolve = screen.makeStashFailureResolver({ interactive: true, ask });
+      expect(await resolve(FAILURE)).to.equal('retry');
+      expect(ask.firstCall.args).to.deep.equal(['What do you want to do?', ['I handled it myself', 'Retry', 'Abort']]);
+    });
+
+    it('offers only the choices that the failure gives', async () => {
+      const ask = sinon.stub().resolves(1);
+      const screen = loadScreen(sinon.stub());
+      const resolve = screen.makeStashFailureResolver({ interactive: true, ask });
+      expect(await resolve({ ...FAILURE, choices: ['handled', 'abort'] })).to.equal('abort');
+      expect(ask.firstCall.args[1]).to.deep.equal(['I handled it myself', 'Abort']);
+    });
+
+    it('reads a closed input or Ctrl-C (null) as Abort', async () => {
+      const screen = loadScreen(sinon.stub());
+      const resolve = screen.makeStashFailureResolver({ interactive: true, ask: sinon.stub().resolves(null) });
+      expect(await resolve(FAILURE)).to.equal('abort');
+    });
+
+    it('gives no resolver without a terminal', () => {
+      const screen = loadScreen(sinon.stub());
+      expect(screen.makeStashFailureResolver({ interactive: false, ask: sinon.stub() })).to.equal(undefined);
     });
   });
 

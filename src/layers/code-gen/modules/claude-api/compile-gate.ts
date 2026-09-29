@@ -21,6 +21,7 @@ import {
   rollbackChtCore,
   settleRollback,
   reportSafetyError,
+  isOperatorAbort,
   ChtCoreSnapshot,
   WorkspaceSafetyError,
 } from '../claude-code-cli/workspace';
@@ -153,7 +154,8 @@ async function runCompileDefensive(chtCorePath: string): Promise<CompileValidati
  * refusal (nothing was changed) prints all its lines, which hold the way out,
  * and skips the compile gate; a plain error only skips it. A `stash`, `drift`
  * or `reset` stop halts the run, because the operator's tree needs attention:
- * the undo may have kept the stash, and its lines say how to recover.
+ * the undo may have kept the stash, and its lines say how to recover. An
+ * operator Abort halts the run too, even on a `precondition` error.
  */
 function snapshotFailure(err: unknown): CompileValidationResult {
   if (!(err instanceof WorkspaceSafetyError)) {
@@ -161,9 +163,17 @@ function snapshotFailure(err: unknown): CompileValidationResult {
     return skipped(`snapshot failed: ${msg(err)}`);
   }
   reportSafetyError(err, LOG);
-  if (err.kind !== 'precondition') throw err;
+  if (err.kind !== 'precondition' || isOperatorAbort(err)) {
+    reportOperatorAbort(err);
+    throw err;
+  }
   console.warn(`${LOG} Compile gate skipped (see the lines above).`);
   return skipped(`snapshot failed: ${err.message}`);
+}
+
+/** The gate runs after the generation, so an Abort drops the files that this run generated. */
+function reportOperatorAbort(err: unknown): void {
+  if (isOperatorAbort(err)) console.error(`${LOG} The files generated in this run were not kept.`);
 }
 
 /**
@@ -176,6 +186,7 @@ async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Pro
     return settleRollback(rollback, { logPrefix: LOG, label: 'claude-api compile gate', chtCorePath, snapshot });
   } catch (err) {
     reportSafetyError(err, LOG);
+    reportOperatorAbort(err);
     throw err;
   }
 }
