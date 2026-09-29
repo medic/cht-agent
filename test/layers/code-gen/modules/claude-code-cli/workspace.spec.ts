@@ -1188,6 +1188,73 @@ describe('workspace.ts', () => {
           });
         }
 
+        describe('when HEAD moved while the screen of an unreadable list waited', () => {
+          const HEAD_MOVED_TRAILER = 'Choose Retry after you fix the cause above, "I handled it myself" after you ' +
+            'ran the steps above, or Abort to stop the run.';
+          const MOVED: Script = {
+            'git rev-parse HEAD': [{ stdout: 'abc1234deadbeef\n' }, { stdout: 'fedcba9876543210\n' }],
+            // The check; the lookup and its re-read fail; then every read finds ours.
+            'git stash list -z': [{ stdout: '' }, { error: listFailure() }, { error: listFailure() }, { stdout: OUR_ENTRY }],
+          };
+
+          for (const choice of ['handled', 'retry']) {
+            it(`writes nothing on "${choice}", shows where the work is, and throws that screen on Abort`, async () => {
+              const calls: string[] = [];
+              const { resolve, seen } = scriptedResolver([choice, 'abort'], calls);
+              const { ws, outcome, printed } = await snapshotWith(MOVED, { resolveStashFailure: resolve }, calls);
+              expect(resolve.calledTwice).to.equal(true);
+              expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+              expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+              expect(seen[1].step).to.equal('push');
+              expect(seen[1].lines[0]).to.equal(
+                'HEAD is at fedcba9876543210 on a detached HEAD now, not abc1234deadbeef on a detached HEAD, so ' +
+                  'cht-agent did not put your work back over it.',
+              );
+              expect(seen[1].lines[1]).to.equal(seen[0].lines[0]);
+              expect(seen[1].lines[2]).to.equal(
+                `cht-agent did not restore stash ${OUR_NAME}. Unless you restored it yourself, your uncommitted work is in it.`,
+              );
+              expect(seen[1].lines.filter(l => l.startsWith('Find the stash: '))).to.have.length(1);
+              expect(seen[1].lines.filter(l => l.startsWith('Restore it: '))).to.have.length(1);
+              expect(printed.at(-1)).to.equal(`[claude-code-cli] ${HEAD_MOVED_TRAILER}`);
+              expect(outcome.error?.lines).to.deep.equal(seen[1].lines);
+              expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+            });
+          }
+
+          it('throws the screen without the undo on an Abort at once, printed once', async () => {
+            const calls: string[] = [];
+            const { resolve, seen } = scriptedResolver(['abort'], calls);
+            const { ws, outcome, printed } = await snapshotWith(MOVED, { resolveStashFailure: resolve }, calls);
+            expect(resolve.calledOnce).to.equal(true);
+            expect(outcome.error?.lines?.[0]).to.match(/^HEAD is at fedcba9876543210 /);
+            expect(outcome.error?.lines?.[1]).to.equal(seen[0].lines[0]);
+            expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+            expect(printed.filter(l => l.includes('HEAD is at fedcba9876543210'))).to.have.length(1);
+            expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+          });
+
+          it('puts the work back when HEAD is back where the stash was taken on the next choice', async () => {
+            const calls: string[] = [];
+            const { resolve } = scriptedResolver(['retry', 'retry'], calls);
+            const { outcome } = await snapshotWith({
+              'git rev-parse HEAD': [
+                { stdout: 'abc1234deadbeef\n' }, { stdout: 'fedcba9876543210\n' }, { stdout: 'abc1234deadbeef\n' },
+              ],
+              [`git diff --name-only --no-renames -z ${OUR_SHA} --`]: { stdout: 'x.ts\0' },
+              // The check; the lookup and its re-read fail; two reads find ours; the drop; the re-run's check and lookup.
+              'git stash list -z': [
+                { stdout: '' }, { error: listFailure() }, { error: listFailure() }, { stdout: OUR_ENTRY },
+                { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: OUR_ENTRY },
+              ],
+            }, { resolveStashFailure: resolve }, calls);
+            expect(resolve.calledTwice).to.equal(true);
+            const restoreAt = calls.findIndex(c => c.startsWith(`git restore --source=${OUR_SHA} --worktree`));
+            expect(restoreAt).to.be.greaterThan(calls.lastIndexOf('RESOLVER'));
+            expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+          });
+        });
+
         it('runs the snapshot again when "handled" does not find our entry after an unreadable list', async () => {
           const calls: string[] = [];
           const { resolve } = scriptedResolver(['handled'], calls);
