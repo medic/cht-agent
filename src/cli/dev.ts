@@ -44,6 +44,7 @@ import {
 import { isUsingCLIProvider } from '../llm';
 import { loadIndex } from '../utils/context-loader';
 import { logRunError, reportRunHalt } from './display-helpers';
+import { prepareStashPolicy } from './stash-screen';
 
 // Load environment variables
 dotenv.config();
@@ -184,6 +185,9 @@ const main = async (): Promise<void> => {
     // Parse ticket file
     const ticket = parseTicketFile(ticketPath);
     console.log('✅ Ticket parsed successfully!\n');
+
+    // Leftover cht-agent stashes, before any LLM call
+    await prepareStashPolicy(chtCorePath);
 
     // Display issue details
     displayIssueDetails(ticket);

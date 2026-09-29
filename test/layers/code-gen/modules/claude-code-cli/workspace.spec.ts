@@ -264,7 +264,7 @@ describe('workspace.ts', () => {
       expect(threw).to.equal(true);
     });
 
-    it('proceeds past a leaked stash when CHT_AGENT_IGNORE_LEAKED_STASH=true', async () => {
+    it('does not read CHT_AGENT_IGNORE_LEAKED_STASH', async () => {
       const prev = process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
       process.env.CHT_AGENT_IGNORE_LEAKED_STASH = 'true';
       try {
@@ -273,8 +273,13 @@ describe('workspace.ts', () => {
           'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
           'git status --porcelain': { stdout: '' },
         });
-        const snap = await ws.snapshotChtCore('/tmp/cht-core');
-        expect(snap.headSha).to.equal('abc1234deadbeef');
+        const err = await ws.snapshotChtCore('/tmp/cht-core').catch((e: unknown) => e) as {
+          kind?: string; lines?: string[];
+        };
+        expect(err.kind).to.equal('precondition');
+        expect(err.lines?.at(-1)).to.equal(
+          'Or run npm run dev:run or npm run full again: their start check lets you continue and leave the stash in place.',
+        );
       } finally {
         if (prev === undefined) delete process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
         else process.env.CHT_AGENT_IGNORE_LEAKED_STASH = prev;
@@ -446,23 +451,6 @@ describe('workspace.ts', () => {
       expect(msg).to.include('created 2023-11-14T22:13:20.000Z');
       expect(msg).to.not.include('my own wip');
       expect(msg).to.not.match(/stash@\{\d+\}/);
-    });
-
-    it('accepts the flag with stray casing and whitespace', async () => {
-      const prev = process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
-      process.env.CHT_AGENT_IGNORE_LEAKED_STASH = ' TRUE ';
-      try {
-        const ws = loadWorkspace({
-          'git stash list -z': { stdout: OUR_ENTRY },
-          'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
-          'git status --porcelain': { stdout: '' },
-        });
-        const snap = await ws.snapshotChtCore('/tmp/cht-core');
-        expect(snap.headSha).to.equal('abc1234deadbeef');
-      } finally {
-        if (prev === undefined) delete process.env.CHT_AGENT_IGNORE_LEAKED_STASH;
-        else process.env.CHT_AGENT_IGNORE_LEAKED_STASH = prev;
-      }
     });
 
     it('stops when a zero-exit stash push saved nothing, naming what it did not save', async () => {
@@ -1869,6 +1857,18 @@ describe('workspace.ts', () => {
         expect(err.lines).to.include(`Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
         expect(text).to.not.include('stash drop');
         expect(warnSpy.getCalls().filter(c => String(c.args[0]).includes('spare copy'))).to.deep.equal([]);
+      });
+
+      it("says that the next run's start check shows a spare entry", async () => {
+        sinon.stub(console, 'warn');
+        const { err } = await snapshotRejection({
+          'git status --porcelain=v1 -z --untracked-files=no': { error: readError() },
+          'git stash list -z': STASH_CREATED,
+          'git stash drop': { error: new Error('fatal: cannot lock ref') },
+        }, []);
+        expect(err.lines?.at(-1)).to.equal(
+          "The next run's start check shows that entry. Remove it from the stash list when you no longer need it.",
+        );
       });
 
       it('keeps "nothing was changed" when our entry is gone before the undo drops it', async () => {

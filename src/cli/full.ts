@@ -44,6 +44,7 @@ import {
 import { getConfiguredModel } from '../llm/types';
 import { isUsingCLIProvider } from '../llm';
 import { logRunError, reportRunHalt } from './display-helpers';
+import { prepareStashPolicy } from './stash-screen';
 
 // Load environment variables
 dotenv.config();
@@ -101,6 +102,9 @@ const main = async (): Promise<void> => {
 
     const ticket = parseTicketFile(ticketPath);
     console.log('✅ Ticket parsed successfully!\n');
+
+    // Leftover cht-agent stashes, before any LLM call
+    await prepareStashPolicy(chtCorePath);
 
     const modelName = getConfiguredModel();
     console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);

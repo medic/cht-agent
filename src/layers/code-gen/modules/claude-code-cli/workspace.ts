@@ -28,7 +28,6 @@ import * as fs from 'node:fs/promises';
 import { constants as fsConstants, Stats } from 'node:fs';
 import * as path from 'node:path';
 import { CodeGenHaltError, GeneratedFile } from '../../interface';
-import { readEnv } from '../../../../utils/env';
 
 const execFileAsync = promisify(execFile);
 
@@ -210,11 +209,6 @@ export function buildLeakedStashLine(prefix: string): RegExp {
 
 const LEAKED_STASH_LINE = buildLeakedStashLine(STASH_MARKER_PREFIX);
 
-/** Env flag read, tolerant of casing and stray whitespace. */
-function isFlagEnabled(name: string): boolean {
-  return readEnv(name)?.trim().toLowerCase() === 'true';
-}
-
 /**
  * Recovery guidance for stashed work, as two commands that each run as copied.
  * Deliberately a LOOKUP by name, not `stash pop <name>`: a stash name is not a
@@ -369,15 +363,14 @@ export function leftoverStashLines(chtCorePath: string, entries: readonly Leftov
  * accept is in the list (a hard kill between snapshot and rollback strands the
  * operator's work there, or another run is active here). Taking a second
  * stash on top would bury it further, so stop and print the recovery command.
- * Set CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed deliberately.
+ * The CLI edge decides what to accept (its start check); this never reads the env.
  */
 async function assertNoLeakedStash(chtCorePath: string, accepted: readonly string[] = []): Promise<void> {
-  if (isFlagEnabled('CHT_AGENT_IGNORE_LEAKED_STASH')) return;
   const leaked = (await listLeftoverStashes(chtCorePath)).filter(e => !accepted.includes(e.sha));
   if (leaked.length === 0) return;
   const lines = [
     ...leftoverStashLines(chtCorePath, leaked),
-    'Or re-run with CHT_AGENT_IGNORE_LEAKED_STASH=true to proceed and leave it in place.',
+    'Or run npm run dev:run or npm run full again: their start check lets you continue and leave the stash in place.',
   ];
   throw new WorkspaceSafetyError('precondition', lines[0], { lines });
 }
@@ -672,7 +665,7 @@ function spareEntryError(stashName: string, gitText: string, err: unknown): Work
   const lines = [
     message,
     `Your work is restored; the stash entry ${stashName} is a spare copy.`,
-    'The next run stops at that entry until you remove it from the stash list.',
+    "The next run's start check shows that entry. Remove it from the stash list when you no longer need it.",
   ];
   return new WorkspaceSafetyError('stash', message, { cause: err, lines });
 }
@@ -1418,8 +1411,7 @@ export async function snapshotChtCore(
 ): Promise<ChtCoreSnapshot> {
   const logPrefix = options.logPrefix ?? DEFAULT_LOG_PREFIX;
   await assertAtToplevel(chtCorePath);
-  // A leftover stash from an interrupted run holds the operator's work; stashing
-  // on top of it would bury it deeper.
+  // A leftover stash can hold the operator's work; stashing on top of it would bury it deeper.
   await assertNoLeakedStash(chtCorePath, options.acceptedLeftoverShas);
 
   const repoRoot = await readBeforeStash('the repo top level', () => readRepoRoot(chtCorePath));
