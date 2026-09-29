@@ -43,6 +43,7 @@ import {
 } from '../workflows/orchestrator';
 import { getConfiguredModel } from '../llm/types';
 import { isUsingCLIProvider } from '../llm';
+import { logRunError, reportRunHalt } from './display-helpers';
 
 // Load environment variables
 dotenv.config();
@@ -118,10 +119,8 @@ const main = async (): Promise<void> => {
     );
     displayFullWorkflowSummary(workflowResult);
   } catch (error) {
-    console.error('\n❌ Error running workflow:', error);
-    if (error instanceof Error) {
-      console.error('Message:', error.message);
-      console.error('Stack:', error.stack);
+    if (!reportRunHalt(error, 'Workflow')) {
+      logRunError('\n❌ Error running workflow:', error);
     }
     process.exit(1);
   }

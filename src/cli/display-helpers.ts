@@ -3,6 +3,8 @@ import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState } from 
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
 import { isUsingCLIProvider } from '../llm';
+import { CodeGenHaltError } from '../layers/code-gen/interface';
+import { WorkspaceSafetyError, reportSafetyError } from '../layers/code-gen/modules/claude-code-cli/workspace';
 
 /**
  * H.4 (v6): per-issueType headings for the HC2 unresolved-issues banner.
@@ -350,4 +352,26 @@ export const displayResults = (result: ResearchState, duration: string) => {
   console.log('   2. Validate research findings');
   console.log('   3. Proceed to Development Phase');
   console.log();
+};
+
+/**
+ * Print a run halt once: its lines (unless a layer printed them already), then
+ * one short line. No stack and no git argv. Returns false for any other error,
+ * which the caller prints with logRunError.
+ */
+export const reportRunHalt = (error: unknown, what: string): boolean => {
+  if (!(error instanceof CodeGenHaltError)) return false;
+  if (error instanceof WorkspaceSafetyError) reportSafetyError(error, '[cht-agent]');
+  else console.error(`[cht-agent] ${error.message}`);
+  console.error(`\n❌ ${what} stopped. See the lines above.`);
+  return true;
+};
+
+/** An error that is not a halt: the heading with the error, then its message and stack. */
+export const logRunError = (heading: string, error: unknown): void => {
+  console.error(heading, error);
+  if (error instanceof Error) {
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+  }
 };

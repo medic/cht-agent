@@ -7,7 +7,7 @@
  * layer independently without spending tokens on the research phase.
  *
  * Usage:
- *   npm run dev <ticket-file>
+ *   npm run dev:run <ticket-file>
  *
  * Environment Variables:
  *   ANTHROPIC_API_KEY - Required when CODE_GEN_MODULE=claude-api
@@ -21,8 +21,8 @@
  *                                 affect code-gen module selection (use CODE_GEN_MODULE for that).
  *
  * Examples:
- *   npm run dev tickets/10139.md
- *   npm run dev /path/to/ticket.md
+ *   npm run dev:run tickets/10944.md
+ *   npm run dev:run /path/to/ticket.md
  */
 
 import * as dotenv from 'dotenv';
@@ -43,6 +43,7 @@ import {
 } from '../types';
 import { isUsingCLIProvider } from '../llm';
 import { loadIndex } from '../utils/context-loader';
+import { logRunError, reportRunHalt } from './display-helpers';
 
 // Load environment variables
 dotenv.config();
@@ -158,10 +159,10 @@ function ensureTicketPath(): string {
   if (!process.argv[2]) {
     console.error('❌ Error: No ticket file specified\n');
     console.log('Usage:');
-    console.log('  npm run dev <ticket-file>\n');
+    console.log('  npm run dev:run <ticket-file>\n');
     console.log('Examples:');
-    console.log('  npm run dev tickets/10139.md');
-    console.log('  npm run dev /path/to/ticket.md\n');
+    console.log('  npm run dev:run tickets/10944.md');
+    console.log('  npm run dev:run /path/to/ticket.md\n');
     process.exit(1);
   }
   return path.resolve(process.argv[2]);
@@ -219,10 +220,8 @@ const main = async (): Promise<void> => {
     displayDevelopmentCompletion(workflowResult, developmentInput.options);
 
   } catch (error) {
-    console.error('\n❌ Error running development:', error);
-    if (error instanceof Error) {
-      console.error('Message:', error.message);
-      console.error('Stack:', error.stack);
+    if (!reportRunHalt(error, 'Development')) {
+      logRunError('\n❌ Error running development:', error);
     }
     process.exit(1);
   }
