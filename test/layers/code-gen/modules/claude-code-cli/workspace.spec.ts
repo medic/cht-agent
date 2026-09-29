@@ -866,14 +866,20 @@ describe('workspace.ts', () => {
       const snapshotWith = async (script: Script, options: Record<string, unknown>, calls: string[] = []) => {
         const ws = loadWorkspace(withDefaults(script, BASE), {}, calls);
         const errorSpy = sinon.stub(console, 'error');
-        sinon.stub(console, 'warn');
-        sinon.stub(console, 'log');
+        const warnSpy = sinon.stub(console, 'warn');
+        const logSpy = sinon.stub(console, 'log');
         const outcome = await ws.snapshotChtCore('/tmp/cht-core', options).then(
-          (snapshot: { stashSha: string | null }) => ({ snapshot, error: undefined }),
+          (snapshot: { stashSha: string | null; prePushUntracked?: string[] }) => ({ snapshot, error: undefined }),
           (error: { kind?: string; lines?: string[]; message?: string }) => ({ snapshot: undefined, error }),
         );
-        sinon.restore();
-        return { ws, outcome, printed: errorSpy.getCalls().map(c => String(c.args[0])) };
+        // Only these: the describe's Date.now stub must stay for a second snapshot.
+        for (const spy of [errorSpy, warnSpy, logSpy]) spy.restore();
+        return {
+          ws,
+          outcome,
+          printed: errorSpy.getCalls().map(c => String(c.args[0])),
+          warned: warnSpy.getCalls().map(c => String(c.args[0])),
+        };
       };
 
       it('runs the snapshot again after Retry at a push that saved nothing', async () => {
@@ -1019,6 +1025,132 @@ describe('workspace.ts', () => {
         }, { acceptedLeftoverShas: accepted });
         expect(second.outcome.error).to.be.undefined;
         expect(second.outcome.snapshot?.stashSha).to.equal(null);
+      });
+
+      it('gives the pre-push listing on the snapshot only when it took a stash', async () => {
+        const clean = await snapshotWith({ 'git status --porcelain': { stdout: '' } }, {});
+        expect(clean.outcome.snapshot).to.not.have.property('prePushUntracked');
+        const dirty = await snapshotWith({
+          'git stash list -z': STASH_CREATED,
+          // A nested repo: the push never takes it, so the post-push check does not look at it on disk.
+          'git ls-files --others --exclude-standard -z': [{ stdout: 'nr/\0' }, { stdout: '' }],
+        }, {});
+        expect(dirty.outcome.snapshot?.prePushUntracked).to.deep.equal(['nr/']);
+      });
+
+      describe('at a failed undo or an unreadable list', () => {
+        const RESTORE_TRAILER = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run. ' +
+          'The steps above still apply after Abort.';
+        const CACHED = `git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2`;
+        /** A partial push whose undo leaves `a.txt` differing in the index; `recheck` answers the check after "handled". */
+        const failedUndo = (recheck: string, list: Answer[], rest: Script = {}): Script => ({
+          ...rest,
+          'git status --porcelain=v1 -z --untracked-files=no': [{ stdout: ' M x.ts\0' }, { stdout: '' }],
+          [CACHED]: [{ stdout: 'a.txt\0' }, { stdout: recheck }],
+          'git stash list -z': list,
+        });
+        const listFailure = () => Object.assign(new Error('Command failed: git stash list\nfatal: bad index'), {
+          code: 128, stderr: 'fatal: bad index',
+        });
+
+        it('drops our entry and runs the snapshot again when "handled" finds the work back and the entry listed', async () => {
+          const calls: string[] = [];
+          const { resolve, seen } = scriptedResolver(['handled'], calls);
+          const { outcome, printed } = await snapshotWith(failedUndo('', [
+            // The check and lookup; the recheck (listed); the drop; then the re-run's check and lookup.
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: OUR_ENTRY },
+          ]), { resolveStashFailure: resolve }, calls);
+          expect(resolve.calledOnce).to.equal(true);
+          expect(seen[0].step).to.equal('undo');
+          expect(seen[0].choices).to.deep.equal(['handled', 'abort']);
+          expect(printed.at(-1)).to.equal(`[claude-code-cli] ${RESTORE_TRAILER}`);
+          expect(calls.filter(c => c === 'git stash drop stash@{0}')).to.have.length(1);
+          expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        });
+
+        it('shows a fresh screen with the paths that still differ, then throws that one on Abort', async () => {
+          const { resolve, seen } = scriptedResolver(['handled', 'abort']);
+          const { ws, outcome, printed } = await snapshotWith(failedUndo('b.txt\0', [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY },
+          ]), { resolveStashFailure: resolve });
+          expect(resolve.calledTwice).to.equal(true);
+          expect(seen[1].lines).to.include('  - "b.txt"');
+          expect(seen[1].lines).to.not.include('  - "a.txt"');
+          expect(outcome.error?.lines).to.deep.equal(seen[1].lines);
+          expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+          expect(printed.filter(l => l === '[claude-code-cli]   - "b.txt"')).to.have.length(1);
+        });
+
+        it('runs the snapshot again, with no drop, when "handled" finds the work back and the entry gone', async () => {
+          const calls: string[] = [];
+          const { resolve } = scriptedResolver(['handled'], calls);
+          const { outcome } = await snapshotWith(failedUndo('', [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: '' }, { stdout: OUR_ENTRY },
+          ]), { resolveStashFailure: resolve }, calls);
+          expect(resolve.calledOnce).to.equal(true);
+          expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+          expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        });
+
+        it('warns with the commit of our entry, and runs the snapshot again, when the entry is gone and the tree differs', async () => {
+          const { resolve } = scriptedResolver(['handled']);
+          const { outcome, warned } = await snapshotWith(failedUndo('a.txt\0', [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: '' }, { stdout: OUR_ENTRY },
+          ]), { resolveStashFailure: resolve });
+          expect(resolve.calledOnce).to.equal(true);
+          expect(warned).to.include(
+            `[claude-code-cli] Stash ${OUR_NAME} is no longer in the stash list, and these paths do not match it: "a.txt". ` +
+              `Its commit is ${OUR_SHA}. If you still need it: git -C '/tmp/cht-core' stash apply --index ${OUR_SHA}`,
+          );
+          expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        });
+
+        it('prints no reset step when HEAD moved while the screen waited', async () => {
+          const { resolve, seen } = scriptedResolver(['handled', 'abort']);
+          const { outcome } = await snapshotWith(failedUndo('b.txt\0', [
+            { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY },
+          ], { 'git rev-parse HEAD': [{ stdout: 'abc1234deadbeef\n' }, { stdout: 'fedcba9876543210\n' }] }),
+          { resolveStashFailure: resolve });
+          expect(resolve.calledTwice).to.equal(true);
+          expect(seen[0].lines.some(l => l.includes('reset --hard'))).to.equal(true);
+          expect(seen[1].lines[0]).to.equal(
+            'HEAD is at fedcba9876543210 on a detached HEAD now, not abc1234deadbeef on a detached HEAD, so ' +
+              'cht-agent did not put your work back over it.',
+          );
+          expect(seen[1].lines.some(l => l.includes('reset --hard'))).to.equal(false);
+          expect(seen[1].lines.some(l => l.startsWith('Restore it: '))).to.equal(true);
+          expect(outcome.error?.lines).to.deep.equal(seen[1].lines);
+        });
+
+        it('undoes from our entry, then runs the snapshot again, when "handled" finds it after an unreadable list', async () => {
+          const calls: string[] = [];
+          const { resolve, seen } = scriptedResolver(['handled'], calls);
+          const { outcome } = await snapshotWith({
+            // The check; the lookup and its re-read fail; the handled read finds ours; the drop; the re-run.
+            'git stash list -z': [
+              { stdout: '' }, { error: listFailure() }, { error: listFailure() }, { stdout: OUR_ENTRY },
+              { stdout: OUR_ENTRY }, { stdout: '' }, { stdout: OUR_ENTRY },
+            ],
+          }, { resolveStashFailure: resolve }, calls);
+          expect(resolve.calledOnce).to.equal(true);
+          expect(seen[0].step).to.equal('push');
+          expect(seen[0].choices).to.deep.equal(['handled', 'abort']);
+          expect(calls.filter(c => c === 'git stash drop stash@{0}')).to.have.length(1);
+          expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        });
+
+        it('runs the snapshot again when "handled" does not find our entry after an unreadable list', async () => {
+          const calls: string[] = [];
+          const { resolve } = scriptedResolver(['handled'], calls);
+          const { outcome } = await snapshotWith({
+            'git stash list -z': [
+              { stdout: '' }, { error: listFailure() }, { error: listFailure() }, { stdout: '' }, { stdout: '' }, { stdout: OUR_ENTRY },
+            ],
+          }, { resolveStashFailure: resolve }, calls);
+          expect(resolve.calledOnce).to.equal(true);
+          expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+          expect(outcome.snapshot?.stashSha).to.equal(OUR_SHA);
+        });
       });
     });
 
@@ -1668,6 +1800,268 @@ describe('workspace.ts', () => {
         expect(lines).to.deep.equal([
           'cht-agent could not read the repo state before rollback (fatal: not a git repository); nothing was changed.',
         ]);
+      });
+    });
+
+    describe('the choices at a failed restore or drop', () => {
+      const RESTORE_TRAILER = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run. ' +
+        'The steps above still apply after Abort.';
+      const OURS = stashListZ(['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`]);
+      const TRACKED = `git diff --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA} --`;
+      const applyFailure = () => Object.assign(new Error('Command failed: git stash apply'), {
+        stderr: 'error: Your local changes to the following files would be overwritten by merge:\n\tf.txt',
+      });
+      type Failure = { step: string; lines: readonly string[]; choices: readonly string[] };
+
+      /** A resolver that answers in order (then Abort). */
+      const answering = (answers: string[]) => {
+        const seen: Failure[] = [];
+        const resolve = sinon.stub().callsFake(async (failure: Failure) => {
+          seen.push(failure);
+          return answers.shift() ?? 'abort';
+        });
+        return { resolve, seen };
+      };
+
+      /** A snapshot that took our stash; by default with the pre-push listing that the screen needs. */
+      const restoreFixture = (script: Script, extra: Record<string, unknown> = { prePushUntracked: [] }) => {
+        const fixture = rollbackFixture(WITH_STASH, script);
+        return { snapshot: { ...fixture.snapshot, ...extra }, script: fixture.script };
+      };
+
+      /** The rollback, then settleRollback as cli calls it; console output is captured. */
+      const rollbackWith = async (
+        script: Script,
+        snapshot: typeof SNAPSHOT,
+        options: Record<string, unknown>,
+        fsStubs: Record<string, unknown> = {},
+      ) => {
+        const calls: string[] = [];
+        const ws = loadWorkspace(script, fsStubs, calls);
+        const spies = { error: sinon.stub(console, 'error'), warn: sinon.stub(console, 'warn'), log: sinon.stub(console, 'log') };
+        const result = await ws.rollbackChtCore('/tmp/cht-core', snapshot, options);
+        let halt: { kind?: string; lines?: string[] } | undefined;
+        try {
+          ws.settleRollback(result, { logPrefix: '[claude-code-cli]', label: 'claude-code-cli', chtCorePath: '/tmp/cht-core', snapshot });
+        } catch (err) {
+          halt = err as { kind?: string; lines?: string[] };
+        }
+        const lines = (spy: sinon.SinonStub) => spy.getCalls().map(c => String(c.args[0]));
+        const out = { printed: lines(spies.error), warned: lines(spies.warn), logged: lines(spies.log) };
+        for (const spy of Object.values(spies)) spy.restore();
+        return { ws, result, halt, calls, ...out };
+      };
+
+      it('drops our entry and says so when "handled" finds the work back with the entry listed', async () => {
+        const { resolve, seen } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({ 'git stash apply': { error: applyFailure() } });
+        const { result, halt, calls, printed, logged } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(seen[0].step).to.equal('restore');
+        expect(seen[0].choices).to.deep.equal(['handled', 'abort']);
+        expect(seen[0].lines[0]).to.include('Rollback could not restore your work');
+        expect(printed).to.include(`[claude-code-cli] ${RESTORE_TRAILER}`);
+        expect(result.stashPop).to.equal('ok');
+        expect(result.errors).to.deep.equal([]);
+        expect(result).to.not.have.any.keys('popResidue', 'popBlockers', 'unwritableDirs', 'unreadableFiles');
+        expect(calls).to.include('git stash drop stash@{0}');
+        expect(logged).to.include(`[claude-code-cli] Your work is restored from stash ${OUR_NAME}.`);
+        expect(halt).to.be.undefined;
+      });
+
+      it('says the restore is done, with no drop, when "handled" finds the work back and the entry gone', async () => {
+        const { resolve } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          // The pre-check, then the check after "handled".
+          'git stash list -z': [{ stdout: OURS }, { stdout: '' }],
+        });
+        const { result, halt, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(result.stashPop).to.equal('ok');
+        expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+        expect(halt).to.be.undefined;
+      });
+
+      it('shows the screen again with the paths that differ, then keeps that error for the halt on Abort', async () => {
+        const { resolve, seen } = answering(['handled', 'abort']);
+        const { snapshot, script } = restoreFixture({ 'git stash apply': { error: applyFailure() }, [TRACKED]: { stdout: 'a.txt\0' } });
+        const { ws, result, halt, printed } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledTwice).to.equal(true);
+        expect(printed).to.include(`[claude-code-cli] The working tree does not match stash ${OUR_NAME} yet. These paths differ:`);
+        expect(printed).to.include('[claude-code-cli]   - "a.txt"');
+        expect(result.stashPop).to.equal('failed');
+        expect(halt?.kind).to.equal('stash');
+        // The screen showed the reason lines first, then the checklist that Abort keeps.
+        expect(seen[1].lines.slice(0, 2)).to.deep.equal([
+          `The working tree does not match stash ${OUR_NAME} yet. These paths differ:`, '  - "a.txt"',
+        ]);
+        expect(halt?.lines).to.deep.equal(seen[1].lines.slice(2));
+        expect(ws.isOperatorAbort(halt)).to.equal(true);
+        // After the last screen, settleRollback prints only its heading and the errors.
+        const afterScreen = printed.slice(printed.lastIndexOf(`[claude-code-cli] ${RESTORE_TRAILER}`) + 1);
+        expect(afterScreen[0]).to.equal('[claude-code-cli] ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:');
+        expect(afterScreen.slice(1).every(l => l.startsWith('[claude-code-cli]   - '))).to.equal(true);
+      });
+
+      it('warns with the commit of our entry, and says the restore is done, when the entry is gone and the tree differs', async () => {
+        const { resolve } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          [TRACKED]: { stdout: 'a.txt\0' },
+          'git stash list -z': [{ stdout: OURS }, { stdout: '' }],
+        });
+        const { result, warned } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(warned).to.include(
+          `[claude-code-cli] Stash ${OUR_NAME} is no longer in the stash list, and these paths do not match it: "a.txt". ` +
+            `Its commit is ${OUR_SHA}. If you still need it: git -C '/tmp/cht-core' stash apply --index ${OUR_SHA}`,
+        );
+        expect(result.stashPop).to.equal('ok');
+      });
+
+      it('prints the checklist once and keeps it as the halt, marked, on Abort', async () => {
+        const { resolve } = answering(['abort']);
+        const { snapshot, script } = restoreFixture({ 'git stash apply': { error: applyFailure() } });
+        const { ws, result, halt, printed } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(halt?.lines).to.deep.equal(ws.buildRecoveryChecklist('/tmp/cht-core', snapshot, result));
+        expect(ws.isOperatorAbort(halt)).to.equal(true);
+        expect(printed.filter(l => l.includes('Rollback could not restore your work'))).to.have.length(1);
+      });
+
+      it('prints no reset step when HEAD moved while the restore screen waited', async () => {
+        const { resolve, seen } = answering(['handled', 'abort']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          [TRACKED]: { stdout: 'a.txt\0' },
+          'git rev-parse HEAD': [{ stdout: 'abc1234\n' }, { stdout: 'fedcba9876543210\n' }],
+        });
+        const { halt } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledTwice).to.equal(true);
+        expect(seen[0].lines.some(l => l.includes('reset --hard'))).to.equal(true);
+        expect(seen[1].lines[0]).to.equal(
+          'HEAD is at fedcba9876543210 on refs/heads/main now, not abc1234 on refs/heads/main, so cht-agent did not ' +
+            'put your work back over it.',
+        );
+        expect(seen[1].lines.some(l => l.includes('reset --hard'))).to.equal(false);
+        expect(halt?.lines).to.deep.equal(seen[1].lines);
+      });
+
+      it('lists only the stash files on disk as residue when the screen shows again, not a new operator file', async () => {
+        const { resolve, seen } = answering(['handled', 'abort']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          // The clean's delta, the failed restore's residue, then the tree after the operator added a file.
+          'git ls-files --others --exclude-standard': [{ stdout: '' }, { stdout: 'u.txt\0' }, { stdout: 'u.txt\0new-op.txt\0' }],
+          [`git ls-tree -r -z --name-only ${OUR_SHA}^3`]: { stdout: 'u.txt\0' },
+          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '' },
+        });
+        const { result, halt } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve }, { lstat: sinon.stub().resolves({}) });
+        expect(resolve.calledTwice).to.equal(true);
+        expect(seen).to.have.length(2);
+        expect(result.popResidue).to.deep.equal(['u.txt']);
+        // The checklist of the second screen, which Abort keeps: the reason above it names every differing path.
+        expect(halt?.lines).to.include('  - "u.txt"');
+        expect(halt?.lines).to.not.include('  - "new-op.txt"');
+      });
+
+      it('never asks at a failed restore when the snapshot has no pre-push listing', async () => {
+        const { resolve } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({ 'git stash apply': { error: applyFailure() } }, {});
+        const { result, halt } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.called).to.equal(false);
+        expect(result.stashPop).to.equal('failed');
+        expect(halt?.kind).to.equal('stash');
+      });
+
+      it('never asks after a failed reset', async () => {
+        const { resolve } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({
+          'git reset --hard': { error: new Error('reset blew up') },
+          'git diff --quiet abc1234': { error: new Error('tree still differs') },
+        });
+        const { result, halt } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.called).to.equal(false);
+        expect(result.reset).to.equal('failed');
+        expect(halt?.kind).to.equal('reset');
+      });
+
+      it('lets a session file that the clean could not remove pass the check, and keeps the clean failure', async () => {
+        const { resolve } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          'git ls-files --others --exclude-standard': { stdout: 'keep.txt\0' },
+        });
+        const { result, halt } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve }, { lstat: sinon.stub().resolves({}) });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(result.stashPop).to.equal('ok');
+        expect(result.clean).to.equal('failed');
+        expect(result.survivors).to.deep.equal(['keep.txt']);
+        expect(result.errors).to.have.length(1);
+        expect(result.errors[0]).to.match(/^clean: /);
+        expect(halt).to.be.undefined;
+      });
+
+      it('still stops the check at a session file that differs at a path the stash holds', async () => {
+        const { resolve, seen } = answering(['handled', 'abort']);
+        const { snapshot, script } = restoreFixture({
+          'git stash apply': { error: applyFailure() },
+          'git ls-files --others --exclude-standard': { stdout: 'keep.txt\0' },
+          [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '100644 blob 1234567890abcdef\tkeep.txt\0' },
+          'git hash-object --no-filters -- keep.txt': { stdout: 'fedcba0987654321\n' },
+        });
+        const { result, printed } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve }, {
+          lstat: sinon.stub().resolves({ isFile: () => true, isSymbolicLink: () => false }),
+        });
+        expect(resolve.calledTwice).to.equal(true);
+        expect(seen[1].step).to.equal('restore');
+        const reason = printed.indexOf(`[claude-code-cli] The working tree does not match stash ${OUR_NAME} yet. These paths differ:`);
+        expect(reason).to.be.greaterThan(-1);
+        expect(printed[reason + 1]).to.equal('[claude-code-cli]   - "keep.txt"');
+        expect(result.stashPop).to.equal('failed');
+      });
+
+      it('asks at a spare entry after a good restore, and goes on when "handled" finds it gone', async () => {
+        const spares: string[] = [];
+        const { resolve, seen } = answering(['handled']);
+        const { snapshot, script } = restoreFixture({
+          'git stash drop': { error: Object.assign(new Error('Command failed'), { stderr: 'fatal: cannot lock ref' }) },
+          // The pre-check, the drop's own read, then the read after "handled".
+          'git stash list -z': [{ stdout: OURS }, { stdout: OURS }, { stdout: '' }],
+        });
+        const { result, halt, warned } = await rollbackWith(script, snapshot, {
+          resolveStashFailure: resolve, onSpareStash: (sha: string) => spares.push(sha),
+        });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(seen[0].step).to.equal('drop');
+        expect(seen[0].lines).to.deep.equal([
+          `Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`,
+          'cht-agent could not remove it from the stash list: fatal: cannot lock ref',
+        ]);
+        expect(spares).to.deep.equal([OUR_SHA]);
+        expect(result.stashPop).to.equal('ok');
+        expect(halt).to.be.undefined;
+        expect(warned.filter(l => l.includes('spare copy'))).to.deep.equal([]);
+      });
+
+      it('keeps a marked stash error with the spare lines for the halt on Abort at a spare entry', async () => {
+        const { resolve, seen } = answering(['abort']);
+        const { snapshot, script } = restoreFixture({ 'git stash drop': { error: new Error('fatal: cannot lock ref') } });
+        const { ws, halt } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+        expect(resolve.calledOnce).to.equal(true);
+        expect(halt?.kind).to.equal('stash');
+        expect(halt?.lines).to.deep.equal(seen[0].lines);
+        expect(ws.isOperatorAbort(halt)).to.equal(true);
+      });
+
+      it('tells the caller about a spare entry without a resolver, and keeps the warning', async () => {
+        const spares: string[] = [];
+        const { snapshot, script } = restoreFixture({ 'git stash drop': { error: new Error('fatal: cannot lock ref') } });
+        const { halt, warned } = await rollbackWith(script, snapshot, { onSpareStash: (sha: string) => spares.push(sha) });
+        expect(spares).to.deep.equal([OUR_SHA]);
+        expect(warned).to.include(`[claude-code-cli] Your work is restored; the stash entry ${OUR_NAME} is a spare copy.`);
+        expect(halt).to.be.undefined;
       });
     });
   });

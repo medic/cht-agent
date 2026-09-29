@@ -217,17 +217,25 @@ interface SpareStash {
   name: string;
 }
 
-/** What a choice at a snapshot failure leads to: a new snapshot from the top, which skips these spares. */
-interface SnapshotRerun {
-  spares: readonly SpareStash[];
+/** One screen of a failure: its error (Abort throws it) and the lines that say why it shows again. */
+interface FailureScreen {
+  error: WorkspaceSafetyError;
+  reason: readonly string[];
 }
+
+/** What a choice at a snapshot failure leads to: a new snapshot from the top, or a screen again. */
+type SnapshotNext =
+  | { rerun: true; spares: readonly SpareStash[] }
+  | { rerun: false; screen: FailureScreen };
 
 /** A stash failure that the operator can answer, keyed by the error that Abort throws. */
 interface RegisteredFailure {
   step: StashFailure['step'];
   choices: readonly StashChoice[];
   trailer: string;
-  next: (choice: 'handled' | 'retry') => Promise<SnapshotRerun>;
+  next: (choice: 'handled' | 'retry') => Promise<SnapshotNext>;
+  /** Checked before an Abort: the error to throw instead (HEAD moved), printed already; or null. */
+  beforeAbort?: () => Promise<WorkspaceSafetyError | null>;
 }
 
 const registeredFailures = new WeakMap<WorkspaceSafetyError, RegisteredFailure>();
@@ -251,9 +259,26 @@ const PUSH_TRAILER = 'Choose Retry after you fix the cause above, "I handled it 
  */
 function withPushChoices(error: WorkspaceSafetyError, spares: readonly SpareStash[] = []): WorkspaceSafetyError {
   registeredFailures.set(error, {
-    step: 'push', choices: PUSH_CHOICES, trailer: PUSH_TRAILER, next: async () => ({ spares }),
+    step: 'push', choices: PUSH_CHOICES, trailer: PUSH_TRAILER, next: async () => ({ rerun: true, spares }),
   });
   return error;
+}
+
+/** At a failed undo, restore or drop, the steps above are the way out. */
+const RESTORE_CHOICES: readonly StashChoice[] = ['handled', 'abort'];
+
+const RESTORE_TRAILER = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run. ' +
+  'The steps above still apply after Abort.';
+
+/** When HEAD moved, the reset step is gone from the screen, so the last sentence would not be true. */
+const RESTORE_TRAILER_HEAD_MOVED = 'Choose "I handled it myself" after you ran the steps above, or Abort to stop the run.';
+
+function rerun(spares: readonly SpareStash[] = []): SnapshotNext {
+  return { rerun: true, spares };
+}
+
+function showAgain(error: WorkspaceSafetyError, reason: readonly string[] = []): SnapshotNext {
+  return { rerun: false, screen: { error, reason } };
 }
 
 /** A proven spare copy of ours, when the drop kept our entry. */
@@ -365,6 +390,13 @@ export interface ChtCoreSnapshot {
    * everything" would silently reintroduce the data loss this field exists to fix.
    */
   baselineUntracked: string[];
+  /**
+   * The untracked files listed just before the push, set only when a stash was
+   * taken. "I handled it myself" at a failed restore uses it to prove the work
+   * is back before the stash is dropped. Without it, a failed restore stops
+   * the run as before.
+   */
+  prePushUntracked?: string[];
 }
 
 /** A cht-agent stash that no run restored, as the leftover check lists it. */
@@ -602,6 +634,12 @@ function isAssumeUnchangedEntry(entry: string): boolean {
   return entry[1] === ' ' && /^[a-z]$/.test(entry[0]);
 }
 
+/** The HEAD a snapshot was taken on: its commit and its branch (null when detached). */
+interface SnapshotHead {
+  sha: string;
+  ref: string | null;
+}
+
 /** Our stash, as the snapshot took it, plus the untracked listing from just before the push. */
 interface TakenStash {
   sha: string;
@@ -618,7 +656,7 @@ interface TakenStash {
 async function stashOperatorWork(
   chtCorePath: string,
   statusLines: readonly string[],
-  headSha: string,
+  head: SnapshotHead,
   logPrefix: string,
 ): Promise<TakenStash> {
   const prePush = await readBeforeStash('the untracked files', () => listUntracked(chtCorePath));
@@ -629,13 +667,13 @@ async function stashOperatorWork(
   // stash, zero with nothing saved (a dirty submodule) or a partial clean.
   const pushError = await runGit(['stash', 'push', '-u', '-m', name], chtCorePath)
     .then(() => undefined, (err: unknown) => err);
-  const lookup = await lookUpPushedStash(chtCorePath, name);
+  const lookup = await lookUpPushedStash({ chtCorePath, name, prePush, head, logPrefix });
   if (!lookup.entry) throw await stashNotCreatedError(chtCorePath, pushError, prePush, lookup.readError);
   const stash: TakenStash = { sha: lookup.entry.sha, name, prePush };
-  const leftovers = await leftoversOrUndo(chtCorePath, stash, headSha, lookup.readError, logPrefix);
+  const leftovers = await leftoversOrUndo(chtCorePath, stash, head, lookup.readError, logPrefix);
   if (leftovers.length > 0) {
     const trigger = partialPushTrigger(pushError, leftovers, prePush);
-    const drop = await undoStash(chtCorePath, stash, headSha, trigger, logPrefix);
+    const drop = await undoStash(chtCorePath, stash, head, trigger, logPrefix);
     warnSpareCopy(drop, name, logPrefix);
     throw await partialStashError(chtCorePath, pushError, leftovers, prePush, spareOf(stash, drop));
   }
@@ -651,22 +689,28 @@ async function stashOperatorWork(
  * Our entry after the push. A failed read of the list is tried once more; a
  * list that stays unreadable is a stop, because the work may be in the stash.
  */
-async function lookUpPushedStash(
-  chtCorePath: string,
-  name: string,
-): Promise<{ entry?: StashEntry; readError?: unknown }> {
+async function lookUpPushedStash(push: PushAttempt): Promise<{ entry?: StashEntry; readError?: unknown }> {
   try {
-    return { entry: findStashByName(await listStashes(chtCorePath), name) };
+    return { entry: findStashByName(await listStashes(push.chtCorePath), push.name) };
   } catch (firstError) {
-    return lookUpPushedStashAgain(chtCorePath, name, firstError);
+    return lookUpPushedStashAgain(push, firstError);
   }
 }
 
+/** What the snapshot knows about its push, for a choice after it. */
+interface PushAttempt {
+  chtCorePath: string;
+  name: string;
+  prePush: readonly string[];
+  head: SnapshotHead;
+  logPrefix: string;
+}
+
 async function lookUpPushedStashAgain(
-  chtCorePath: string,
-  name: string,
+  push: PushAttempt,
   firstError: unknown,
 ): Promise<{ entry?: StashEntry; readError: unknown }> {
+  const { chtCorePath, name } = push;
   try {
     return { entry: findStashByName(await listStashes(chtCorePath), name), readError: firstError };
   } catch (err) {
@@ -675,8 +719,47 @@ async function lookUpPushedStashAgain(
         `check the result. Your uncommitted work may be in stash ${name}.`,
       ...recoveryHintLines(chtCorePath, name),
     ];
-    throw new WorkspaceSafetyError('stash', lines[0], { lines, cause: err });
+    const error = new WorkspaceSafetyError('stash', lines[0], { lines, cause: err });
+    registeredFailures.set(error, {
+      step: 'push', choices: RESTORE_CHOICES, trailer: RESTORE_TRAILER, next: () => afterUnreadableList(push, error),
+    });
+    throw error;
   }
+}
+
+/**
+ * "I handled it myself" after the stash list could not be read: read it again.
+ * Our entry listed: put the work back from it, then the snapshot runs again.
+ * Not listed: nothing of ours holds the work, so the snapshot runs again.
+ */
+async function afterUnreadableList(push: PushAttempt, error: WorkspaceSafetyError): Promise<SnapshotNext> {
+  let entry: StashEntry | undefined;
+  try {
+    entry = findStashByName(await listStashes(push.chtCorePath), push.name);
+  } catch (err) {
+    return showAgain(error, [`cht-agent still cannot read the stash list (${gitErrorText(err)}).`]);
+  }
+  if (!entry) return rerun();
+  const text = 'the stash list could not be read after the push';
+  return undoThenRerun({
+    chtCorePath: push.chtCorePath,
+    stash: { sha: entry.sha, name: push.name, prePush: push.prePush },
+    head: push.head,
+    trigger: { summary: `git stash push ran, but ${text}.`, gitText: text, pathsInPlay: push.prePush },
+    logPrefix: push.logPrefix,
+  });
+}
+
+/** Put the work back from our entry; a failed undo shows its own screen. */
+async function undoThenRerun(ctx: UndoContext): Promise<SnapshotNext> {
+  let drop: DropOutcome;
+  try {
+    drop = await undoStash(ctx.chtCorePath, ctx.stash, ctx.head, ctx.trigger, ctx.logPrefix);
+  } catch (err) {
+    return showAgain(registeredError(err));
+  }
+  warnSpareCopy(drop, ctx.stash.name, ctx.logPrefix);
+  return rerun(spareOf(ctx.stash, drop));
 }
 
 /**
@@ -687,7 +770,7 @@ async function lookUpPushedStashAgain(
 async function leftoversOrUndo(
   chtCorePath: string,
   stash: TakenStash,
-  headSha: string,
+  head: SnapshotHead,
   earlierReadError: unknown,
   logPrefix: string,
 ): Promise<string[]> {
@@ -695,10 +778,10 @@ async function leftoversOrUndo(
   try {
     leftovers = await stashLeftovers(chtCorePath, stash.prePush);
   } catch (err) {
-    return undoAfterReadFailure(chtCorePath, stash, headSha, err, logPrefix);
+    return undoAfterReadFailure(chtCorePath, stash, head, err, logPrefix);
   }
   if (earlierReadError !== undefined) {
-    return undoAfterReadFailure(chtCorePath, stash, headSha, earlierReadError, logPrefix);
+    return undoAfterReadFailure(chtCorePath, stash, head, earlierReadError, logPrefix);
   }
   return leftovers;
 }
@@ -710,12 +793,12 @@ async function leftoversOrUndo(
 async function undoAfterReadFailure(
   chtCorePath: string,
   stash: TakenStash,
-  headSha: string,
+  head: SnapshotHead,
   err: unknown,
   logPrefix: string,
 ): Promise<never> {
   const text = gitErrorText(err);
-  const drop = await undoStash(chtCorePath, stash, headSha, {
+  const drop = await undoStash(chtCorePath, stash, head, {
     summary: `The stash push completed, but a later git read failed (${text}).`,
     gitText: text,
     cause: err,
@@ -1209,23 +1292,33 @@ interface UndoTrigger {
 async function undoStash(
   chtCorePath: string,
   stash: TakenStash,
-  headSha: string,
+  head: SnapshotHead,
   trigger: UndoTrigger,
   logPrefix: string,
 ): Promise<DropOutcome> {
+  const ctx: UndoContext = { chtCorePath, stash, head, trigger, logPrefix };
   try {
     await restoreFromStash(chtCorePath, stash.sha);
   } catch (err) {
-    throw await undoFailedError(chtCorePath, stash, headSha, trigger, { restoreError: err });
+    throw await undoFailedError(ctx, { restoreError: err });
   }
   let differing: string[];
   try {
     differing = await pathsNotRestored(chtCorePath, stash);
   } catch (err) {
-    throw await undoFailedError(chtCorePath, stash, headSha, trigger, { verifyError: err });
+    throw await undoFailedError(ctx, { verifyError: err });
   }
-  if (differing.length > 0) throw await undoFailedError(chtCorePath, stash, headSha, trigger, { differing });
+  if (differing.length > 0) throw await undoFailedError(ctx, { differing });
   return dropStashBySha(chtCorePath, stash.sha, logPrefix);
+}
+
+/** Everything an undo needs, so a choice after a failed undo can check or run it again. */
+interface UndoContext {
+  chtCorePath: string;
+  stash: TakenStash;
+  head: SnapshotHead;
+  trigger: UndoTrigger;
+  logPrefix: string;
 }
 
 async function restoreFromStash(chtCorePath: string, sha: string): Promise<void> {
@@ -1252,8 +1345,14 @@ async function zPaths(chtCorePath: string, args: readonly string[]): Promise<str
  * The paths where the tree does not match what the stash holds. Submodule
  * content is ignored (a stash never records it), and every untracked file must
  * match its W^3 entry by mode: a symlink by its target text, a file by its blob.
+ * `alsoUntracked` are untracked paths that may be there besides the pre-push
+ * ones (after a rollback: the session files that the clean could not remove).
  */
-async function pathsNotRestored(chtCorePath: string, stash: TakenStash): Promise<string[]> {
+async function pathsNotRestored(
+  chtCorePath: string,
+  stash: TakenStash,
+  alsoUntracked: ReadonlySet<string> = new Set(),
+): Promise<string[]> {
   const tracked = await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', stash.sha, '--']);
   const staged = await zPaths(
     chtCorePath, ['diff', '--cached', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', `${stash.sha}^2`, '--'],
@@ -1262,7 +1361,7 @@ async function pathsNotRestored(chtCorePath: string, stash: TakenStash): Promise
   const deleted = await deletedPathsOnDisk(chtCorePath, stash.sha);
   const now = new Set(await listUntracked(chtCorePath));
   const before = new Set(stash.prePush);
-  const extra = [...now].filter(p => !before.has(p));
+  const extra = [...now].filter(p => !before.has(p) && !alsoUntracked.has(p));
   const gone = [...before].filter(p => !now.has(p));
   return [...new Set([...tracked, ...staged, ...untracked, ...deleted, ...extra, ...gone])];
 }
@@ -1333,13 +1432,8 @@ async function fileBlobIs(chtCorePath: string, relPath: string, oid: string): Pr
  * The undo could not prove the tree is back: keep the stash, and say how to
  * finish by hand. "The rest is back" only when the restore itself completed.
  */
-async function undoFailedError(
-  chtCorePath: string,
-  stash: TakenStash,
-  headSha: string,
-  trigger: UndoTrigger,
-  outcome: UndoOutcome,
-): Promise<WorkspaceSafetyError> {
+async function undoFailedError(ctx: UndoContext, outcome: UndoOutcome): Promise<WorkspaceSafetyError> {
+  const { chtCorePath, stash, trigger } = ctx;
   const differing = outcome.differing ?? [];
   const inTheWay = await untrackedInTheWay(chtCorePath, stash);
   const cause = await permissionCauseStep(
@@ -1352,10 +1446,67 @@ async function undoFailedError(
     ...pathListLines('These paths do not match what the stash holds (cht-agent did not delete any of them):', differing),
     ...(differing.length > 0 ? ['The rest of your work is already back in the working tree.'] : []),
     ...recoveryStepLines(chtCorePath, {
-      cause, headSha, remove: inTheWay.remove, moveAside: inTheWay.moveAside, stashName: stash.name,
+      cause, headSha: ctx.head.sha, remove: inTheWay.remove, moveAside: inTheWay.moveAside, stashName: stash.name,
     }),
   ];
-  return new WorkspaceSafetyError('stash', lines[0], { lines, cause: trigger.cause ?? outcome.restoreError });
+  return withUndoChoices(ctx, new WorkspaceSafetyError('stash', lines[0], { lines, cause: trigger.cause ?? outcome.restoreError }));
+}
+
+function undoHint(ctx: UndoContext): StashHint {
+  return { chtCorePath: ctx.chtCorePath, head: ctx.head, hintPath: ctx.chtCorePath, stashName: ctx.stash.name };
+}
+
+/**
+ * Register the choices at a failed undo: the printed steps put the work back;
+ * "handled" checks that. A HEAD-moved variant keeps its base error, so the
+ * next check starts from the base, and it needs no variant before an Abort.
+ */
+function withUndoChoices(ctx: UndoContext, error: WorkspaceSafetyError): WorkspaceSafetyError {
+  registeredFailures.set(error, {
+    step: 'undo',
+    choices: RESTORE_CHOICES,
+    trailer: RESTORE_TRAILER,
+    next: () => recheckUndo(ctx, error),
+    beforeAbort: () => abortVariant(undoHint(ctx), error, ctx.logPrefix),
+  });
+  return error;
+}
+
+function withMovedUndoChoices(ctx: UndoContext, variant: WorkspaceSafetyError, base: WorkspaceSafetyError): WorkspaceSafetyError {
+  registeredFailures.set(variant, {
+    step: 'undo', choices: RESTORE_CHOICES, trailer: RESTORE_TRAILER_HEAD_MOVED, next: () => recheckUndo(ctx, base),
+  });
+  return variant;
+}
+
+/**
+ * "I handled it myself" after a failed undo: check the tree against our entry.
+ * Back: drop the entry if it is still listed, then the snapshot runs again.
+ * Not back with the entry listed: show the failure again with the current paths.
+ * Not back with the entry gone: the operator took it; say so, and go on.
+ */
+async function recheckUndo(ctx: UndoContext, error: WorkspaceSafetyError): Promise<SnapshotNext> {
+  const state = await readRestoreState(ctx.chtCorePath, ctx.stash, new Set());
+  if ('readLine' in state) return undoScreenAgain(ctx, error, [state.readLine]);
+  if (state.differing.length === 0) return state.listed ? dropThenRerun(ctx) : rerun();
+  if (!state.listed) {
+    warnStashGone(ctx.chtCorePath, ctx.stash, state.differing, ctx.logPrefix);
+    return rerun();
+  }
+  return undoScreenAgain(ctx, await undoFailedError(ctx, { differing: state.differing }), []);
+}
+
+/** The failed undo again; when HEAD moved, the variant without the reset step. */
+async function undoScreenAgain(ctx: UndoContext, error: WorkspaceSafetyError, reason: readonly string[]): Promise<SnapshotNext> {
+  const variant = await headMovedVariant(undoHint(ctx), error);
+  if (!variant) return showAgain(error, reason);
+  return showAgain(withMovedUndoChoices(ctx, variant, error));
+}
+
+async function dropThenRerun(ctx: UndoContext): Promise<SnapshotNext> {
+  const drop = await dropStashBySha(ctx.chtCorePath, ctx.stash.sha, ctx.logPrefix);
+  warnSpareCopy(drop, ctx.stash.name, ctx.logPrefix);
+  return rerun(spareOf(ctx.stash, drop));
 }
 
 /** How far the undo got: a restore that threw, a check that could not run, or paths that differ. */
@@ -1504,8 +1655,8 @@ async function snapshotWithChoices(
   for (;;) {
     const attempt = await attemptSnapshot(chtCorePath, { ...options, acceptedLeftoverShas: loop.accepted });
     if (attempt.snapshot) return attempt.snapshot;
-    const rerun = await settleSnapshotFailure(attempt.error, resolve, loop, options.logPrefix ?? DEFAULT_LOG_PREFIX);
-    acceptSpares(loop, rerun.spares, options.onSpareStash);
+    const spares = await settleSnapshotFailure(attempt.error, resolve, loop, options.logPrefix ?? DEFAULT_LOG_PREFIX);
+    acceptSpares(loop, spares, options.onSpareStash);
   }
 }
 
@@ -1520,35 +1671,136 @@ async function attemptSnapshot(
   }
 }
 
-/** Show a registered failure and ask; Abort throws it marked. An unregistered error is thrown as it is. */
+/**
+ * Show a registered failure and ask, until a choice lets the snapshot run
+ * again; returns the spare copies it may skip. Abort throws the error of the
+ * screen shown last, marked. An unregistered error is thrown as it is.
+ */
 async function settleSnapshotFailure(
   err: unknown,
   resolve: StashFailureResolver,
   loop: ChoiceLoop,
   logPrefix: string,
-): Promise<SnapshotRerun> {
-  const registered = err instanceof WorkspaceSafetyError ? registeredFailures.get(err) : undefined;
-  if (!registered) throw err;
-  const error = err as WorkspaceSafetyError;
-  showFailure(error, registered, loop.spares, logPrefix);
-  const choice = await askOperator(resolve, { step: registered.step, lines: error.lines, choices: registered.choices });
-  if (choice === 'abort') throw markAbort(error);
-  return registered.next(choice);
+): Promise<readonly SpareStash[]> {
+  let screen: FailureScreen = { error: registeredError(err), reason: [] };
+  let first = true;
+  for (;;) {
+    const registered = registeredFailures.get(screen.error) as RegisteredFailure;
+    printScreen(screen, [...loop.spares.map(s => spareCopyLine(s.name)), registered.trailer], logPrefix, first);
+    first = false;
+    const choice = await askOperator(resolve, { step: registered.step, lines: shownLines(screen), choices: registered.choices });
+    if (choice === 'abort') throw markAbort(await abortErrorOf(registered, screen.error));
+    const next = await registered.next(choice);
+    if (next.rerun) return next.spares;
+    screen = next.screen;
+  }
+}
+
+/** The error that Abort throws: the HEAD-moved variant when HEAD moved, otherwise the one shown. */
+async function abortErrorOf(registered: RegisteredFailure, shown: WorkspaceSafetyError): Promise<WorkspaceSafetyError> {
+  return (await registered.beforeAbort?.()) ?? shown;
+}
+
+function registeredError(err: unknown): WorkspaceSafetyError {
+  if (err instanceof WorkspaceSafetyError && registeredFailures.has(err)) return err;
+  throw err;
 }
 
 /**
- * The screen: the failure's own lines, the same as headless and printed once,
- * a line for each spare copy of ours that this loop accepted, then the trailer.
+ * A screen prints the failure's lines, then `tail` (the trailer, and on the
+ * snapshot side a line for each spare copy of ours), with the caller's prefix.
+ * The first show goes through reportSafetyError. A re-show prints its reason
+ * lines first, then the failure's lines, straight to the console.
  */
-function showFailure(
-  error: WorkspaceSafetyError,
-  registered: RegisteredFailure,
-  spares: readonly SpareStash[],
-  logPrefix: string,
-): void {
-  reportSafetyError(error, logPrefix);
-  for (const spare of spares) console.error(`${logPrefix} ${spareCopyLine(spare.name)}`);
-  console.error(`${logPrefix} ${registered.trailer}`);
+function printScreen(screen: FailureScreen, tail: readonly string[], logPrefix: string, first: boolean): void {
+  if (first) reportSafetyError(screen.error, logPrefix);
+  else printLinesOf(screen.error, shownLines(screen), logPrefix);
+  for (const line of tail) console.error(`${logPrefix} ${line}`);
+}
+
+/** The lines that a screen shows: the reason lines of a re-show, then the failure's own lines. */
+function shownLines(screen: FailureScreen): string[] {
+  return [...screen.reason, ...screen.error.lines];
+}
+
+/** Print these lines for `error`, and mark it as reported, so that no caller prints it again. */
+function printLinesOf(error: WorkspaceSafetyError, lines: readonly string[], logPrefix: string): void {
+  reportedSafetyErrors.add(error);
+  for (const line of lines) console.error(`${logPrefix} ${line}`);
+}
+
+/**
+ * When HEAD or the branch moved off the HEAD that the stash was taken on: the
+ * line that says so, or null. A reset to the old HEAD would orphan new commits.
+ */
+async function headMovedSince(chtCorePath: string, head: SnapshotHead): Promise<string | null> {
+  let sha: string;
+  let ref: string | null;
+  try {
+    sha = await readHeadSha(chtCorePath);
+    ref = await readHeadRef(chtCorePath);
+  } catch (err) {
+    return `cht-agent could not read HEAD (${gitErrorText(err)}), so it did not put your work back over it.`;
+  }
+  if (sha === head.sha && ref === head.ref) return null;
+  return `HEAD is at ${sha} on ${refLabel(ref)} now, not ${head.sha} on ${refLabel(head.ref)}, so cht-agent did ` +
+    'not put your work back over it.';
+}
+
+/** Where the stash's work is, for a screen that must not print the reset step. */
+interface StashHint {
+  chtCorePath: string;
+  head: SnapshotHead;
+  /** The repo that the Find and Restore commands name. */
+  hintPath: string;
+  stashName: string;
+}
+
+/**
+ * The failure again, for a HEAD that moved (or null when it did not): the HEAD
+ * line first, the failure's heading and path lists, then where the work is,
+ * instead of the reset and clean steps.
+ */
+async function headMovedVariant(hint: StashHint, error: WorkspaceSafetyError): Promise<WorkspaceSafetyError | null> {
+  const moved = await headMovedSince(hint.chtCorePath, hint.head);
+  if (!moved) return null;
+  const lines = [moved, ...linesBeforeSteps(error.lines), ...stashHintLines(hint.hintPath, hint.stashName)];
+  return new WorkspaceSafetyError(error.kind, lines[0], { lines, cause: error.cause });
+}
+
+/** Before an Abort: when HEAD moved, print the variant and give it, so that Abort throws it. */
+async function abortVariant(hint: StashHint, error: WorkspaceSafetyError, logPrefix: string): Promise<WorkspaceSafetyError | null> {
+  const variant = await headMovedVariant(hint, error);
+  if (variant) printLinesOf(variant, variant.lines, logPrefix);
+  return variant;
+}
+
+function linesBeforeSteps(lines: readonly string[]): string[] {
+  const steps = lines.indexOf(RECOVERY_HEADING);
+  return steps === -1 ? [...lines] : lines.slice(0, steps);
+}
+
+/** Whether our entry is listed, and where the tree differs from it; or the line that says why that is unknown. */
+async function readRestoreState(
+  chtCorePath: string,
+  stash: TakenStash,
+  alsoUntracked: ReadonlySet<string>,
+): Promise<{ listed: boolean; differing: string[] } | { readLine: string }> {
+  try {
+    const listed = (await listStashes(chtCorePath)).some(e => e.sha === stash.sha);
+    return { listed, differing: await pathsNotRestored(chtCorePath, stash, alsoUntracked) };
+  } catch (err) {
+    return { readLine: `cht-agent could not check the working tree against stash ${stash.name} (${gitErrorText(err)}).` };
+  }
+}
+
+/** The operator took our entry and the tree differs from it: name the paths, and how to get the entry back. */
+function warnStashGone(chtCorePath: string, stash: TakenStash, differing: readonly string[], logPrefix: string): void {
+  console.warn(
+    `${logPrefix} Stash ${stash.name} is no longer in the stash list, and these paths do not match it: ` +
+      `${summarizePaths(differing)}. Its commit is ${stash.sha}. If you still need it: ` +
+      `git -C ${shellQuote(chtCorePath)} stash apply --index ${stash.sha}`,
+  );
 }
 
 function spareCopyLine(stashName: string): string {
@@ -1595,11 +1847,26 @@ async function snapshotOnce(chtCorePath: string, options: WorkspaceCallOptions):
   await assertNoAssumeUnchanged(chtCorePath);
 
   // Stash uncommitted work (if any) so the CLI sees a clean workspace.
-  const stash = lines.length > 0 ? await stashOperatorWork(chtCorePath, lines, headSha, logPrefix) : null;
-  const baselineUntracked = await readBaselineOrUndo(chtCorePath, stash, headSha, logPrefix);
+  const head: SnapshotHead = { sha: headSha, ref: headRef };
+  const stash = lines.length > 0 ? await stashOperatorWork(chtCorePath, lines, head, logPrefix) : null;
+  const baselineUntracked = await readBaselineOrUndo(chtCorePath, stash, head, logPrefix);
+  return snapshotOf(head, repoRoot, stash, baselineUntracked);
+}
 
+function snapshotOf(
+  head: SnapshotHead,
+  repoRoot: string,
+  stash: TakenStash | null,
+  baselineUntracked: string[],
+): ChtCoreSnapshot {
   return {
-    headSha, headRef, repoRoot, stashSha: stash?.sha ?? null, stashName: stash?.name ?? null, baselineUntracked,
+    headSha: head.sha,
+    headRef: head.ref,
+    repoRoot,
+    stashSha: stash?.sha ?? null,
+    stashName: stash?.name ?? null,
+    baselineUntracked,
+    ...(stash ? { prePushUntracked: [...stash.prePush] } : {}),
   };
 }
 
@@ -1614,14 +1881,14 @@ async function snapshotOnce(chtCorePath: string, options: WorkspaceCallOptions):
 async function readBaselineOrUndo(
   chtCorePath: string,
   stash: TakenStash | null,
-  headSha: string,
+  head: SnapshotHead,
   logPrefix: string,
 ): Promise<string[]> {
   try {
     return [...await listUntracked(chtCorePath), ...await listIgnored(chtCorePath)];
   } catch (err) {
     if (!stash) throw readRefusal('the untracked and ignored files', err);
-    return undoAfterReadFailure(chtCorePath, stash, headSha, err, logPrefix);
+    return undoAfterReadFailure(chtCorePath, stash, head, err, logPrefix);
   }
 }
 
@@ -2004,29 +2271,41 @@ export async function rollbackChtCore(
   snapshot: ChtCoreSnapshot,
   options: WorkspaceCallOptions = {},
 ): Promise<RollbackResult> {
-  const logPrefix = options.logPrefix ?? DEFAULT_LOG_PREFIX;
+  const call: RestoreCall = {
+    logPrefix: options.logPrefix ?? DEFAULT_LOG_PREFIX,
+    resolve: options.resolveStashFailure,
+    onSpareStash: options.onSpareStash,
+  };
   await assertRollbackAllowed(chtCorePath, snapshot);
   const result: RollbackResult = { reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] };
 
-  await resetToSnapshot(chtCorePath, snapshot, result, logPrefix);
+  await resetToSnapshot(chtCorePath, snapshot, result, call.logPrefix);
   if (result.reset === 'failed') {
     // A pop now would merge the operator's work into a half-reset tree, and a
     // later `reset --hard` would then destroy it. Leave the stash and the files.
+    // No screen here, with or without a resolver: no pop and no retry.
     await recordResetFailureState(chtCorePath, snapshot, result);
   } else {
-    await cleanAndRestore(chtCorePath, snapshot, result, logPrefix);
+    await cleanAndRestore(chtCorePath, snapshot, result, call);
   }
   return result;
+}
+
+/** How the rollback prints, who answers a failed restore or drop (absent: headless), and the spare hook. */
+interface RestoreCall {
+  logPrefix: string;
+  resolve?: StashFailureResolver;
+  onSpareStash?: (sha: string) => void;
 }
 
 async function cleanAndRestore(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
-  logPrefix: string,
+  call: RestoreCall,
 ): Promise<void> {
-  await cleanStep(chtCorePath, snapshot, result, logPrefix);
-  if (snapshot.stashSha) await popStep(chtCorePath, snapshot, result, logPrefix);
+  await cleanStep(chtCorePath, snapshot, result, call.logPrefix);
+  if (snapshot.stashSha) await popStep(chtCorePath, snapshot, result, call);
 }
 
 const rolledBackSnapshots = new WeakSet<ChtCoreSnapshot>();
@@ -2129,9 +2408,13 @@ async function stashStateLines(chtCorePath: string, snapshot: ChtCoreSnapshot): 
  */
 function stashNotRestoredLines(snapshot: ChtCoreSnapshot): string[] {
   if (!snapshot.stashSha || !snapshot.stashName) return [];
+  return stashHintLines(snapshot.repoRoot, snapshot.stashName);
+}
+
+function stashHintLines(hintPath: string, stashName: string): string[] {
   return [
-    `cht-agent did not restore stash ${snapshot.stashName}. Unless you restored it yourself, your uncommitted work is in it.`,
-    ...recoveryHintLines(snapshot.repoRoot, snapshot.stashName),
+    `cht-agent did not restore stash ${stashName}. Unless you restored it yourself, your uncommitted work is in it.`,
+    ...recoveryHintLines(hintPath, stashName),
   ];
 }
 
@@ -2340,18 +2623,210 @@ async function popStep(
   chtCorePath: string,
   snapshot: ChtCoreSnapshot,
   result: RollbackResult,
-  logPrefix: string,
+  call: RestoreCall,
 ): Promise<void> {
   const stashSha = snapshot.stashSha as string;
+  const errorsBefore = result.errors.length;
   try {
     await runGit(['stash', 'apply', '--index', stashSha], chtCorePath);
   } catch (err) {
-    await recordPopFailure(chtCorePath, snapshot, result, err, logPrefix);
+    await recordPopFailure(chtCorePath, snapshot, result, err, call.logPrefix);
+    await offerRestoreChoices({ chtCorePath, snapshot, result, call, errorsBefore });
     return;
   }
   result.stashPop = 'ok';
-  if ((await dropStashBySha(chtCorePath, stashSha, logPrefix)) === 'dropped') return;
-  console.warn(`${logPrefix} Your work is restored; the stash entry ${snapshot.stashName} is a spare copy.`);
+  await dropRestoredStash({ chtCorePath, snapshot, result, call });
+}
+
+/** A rollback that the operator ended with Abort at a screen: settleRollback throws this error. */
+const rollbackHalts = new WeakMap<RollbackResult, WorkspaceSafetyError>();
+
+/** What a screen inside the rollback works on. */
+interface RollbackContext {
+  chtCorePath: string;
+  snapshot: ChtCoreSnapshot;
+  result: RollbackResult;
+  call: RestoreCall;
+}
+
+/** Everything a choice after a failed restore needs. */
+interface RestoreContext extends RollbackContext {
+  stash: TakenStash;
+  /** The length of `result.errors` before the restore; a restore that is done after all cuts it back. */
+  errorsBefore: number;
+}
+
+/**
+ * Only with a resolver, and only with the pre-push listing, which the check
+ * before a drop needs. Otherwise the failed restore stops the run as before.
+ */
+async function offerRestoreChoices(base: Omit<RestoreContext, 'stash'>): Promise<void> {
+  const prePush = base.snapshot.prePushUntracked;
+  const resolve = base.call.resolve;
+  if (!resolve || !prePush) return;
+  const stash: TakenStash = { sha: base.snapshot.stashSha as string, name: base.snapshot.stashName as string, prePush };
+  await resolveRestoreFailure({ ...base, stash }, resolve);
+}
+
+/** A screen inside the rollback, with its own trailer; `moved` for the HEAD-moved variant. */
+interface RollbackScreen extends FailureScreen {
+  trailer: string;
+  moved?: boolean;
+}
+
+/**
+ * A failed restore with a resolver: show the pop checklist (the headless
+ * lines), then act on the choice. "I handled it myself" checks the tree
+ * against our entry. Abort keeps the error for settleRollback to throw.
+ */
+async function resolveRestoreFailure(ctx: RestoreContext, resolve: StashFailureResolver): Promise<void> {
+  let screen = restoreScreen(ctx, []);
+  let first = true;
+  for (;;) {
+    printScreen(screen, [screen.trailer], ctx.call.logPrefix, first);
+    first = false;
+    const choice = await askOperator(resolve, { step: 'restore', lines: shownLines(screen), choices: RESTORE_CHOICES });
+    if (choice === 'abort') return keepAbort(ctx, await restoreAbortError(ctx, screen));
+    const notBack = await recheckRestore(ctx);
+    if (!notBack) return;
+    screen = await restoreScreenAgain(ctx, notBack);
+  }
+}
+
+function restoreScreen(ctx: RestoreContext, reason: readonly string[]): RollbackScreen {
+  const lines = buildRecoveryChecklist(ctx.chtCorePath, ctx.snapshot, ctx.result);
+  return { error: new WorkspaceSafetyError('stash', lines[0], { lines }), reason, trailer: RESTORE_TRAILER };
+}
+
+function restoreHint(ctx: RollbackContext): StashHint {
+  const { snapshot } = ctx;
+  return {
+    chtCorePath: ctx.chtCorePath,
+    head: { sha: snapshot.headSha, ref: snapshot.headRef },
+    hintPath: snapshot.repoRoot,
+    stashName: snapshot.stashName as string,
+  };
+}
+
+/** The checklist again, for the tree as it is now; when HEAD moved, the variant without the reset step. */
+async function restoreScreenAgain(ctx: RestoreContext, reason: readonly string[]): Promise<RollbackScreen> {
+  await refreshRestoreFailure(ctx);
+  const screen = restoreScreen(ctx, reason);
+  const variant = await headMovedVariant(restoreHint(ctx), screen.error);
+  return variant ? { error: variant, reason: [], trailer: RESTORE_TRAILER_HEAD_MOVED, moved: true } : screen;
+}
+
+async function restoreAbortError(ctx: RestoreContext, screen: RollbackScreen): Promise<WorkspaceSafetyError> {
+  if (screen.moved) return screen.error;
+  return (await abortVariant(restoreHint(ctx), screen.error, ctx.call.logPrefix)) ?? screen.error;
+}
+
+function keepAbort(ctx: RollbackContext, error: WorkspaceSafetyError): void {
+  rollbackHalts.set(ctx.result, markAbort(error));
+}
+
+/**
+ * "I handled it myself" after a failed restore: the tree must match our entry.
+ * Listed and matching: done, then the drop. Gone and matching: done. Listed
+ * and differing: the lines that say so. Gone and differing: the operator took
+ * it; say so, and go on. Gives null when done.
+ */
+async function recheckRestore(ctx: RestoreContext): Promise<readonly string[] | null> {
+  const { stash, result } = ctx;
+  const state = await readRestoreState(ctx.chtCorePath, stash, new Set(result.survivors ?? []));
+  if ('readLine' in state) return [state.readLine];
+  if (state.differing.length === 0) return finishRestore(ctx, state.listed);
+  if (state.listed) {
+    return pathListLines(`The working tree does not match stash ${stash.name} yet. These paths differ:`, state.differing);
+  }
+  warnStashGone(ctx.chtCorePath, stash, state.differing, ctx.call.logPrefix);
+  return finishRestore(ctx, false);
+}
+
+/** The restore is done: the result says so, and a listed entry is dropped (it is proven back). */
+async function finishRestore(ctx: RestoreContext, listed: boolean): Promise<null> {
+  const { result } = ctx;
+  console.log(`${ctx.call.logPrefix} Your work is restored from stash ${ctx.stash.name}.`);
+  result.stashPop = 'ok';
+  result.errors.splice(ctx.errorsBefore);
+  delete result.popResidue;
+  delete result.popBlockers;
+  delete result.unwritableDirs;
+  delete result.unreadableFiles;
+  if (listed) await dropRestoredStash(ctx);
+  return null;
+}
+
+/** Before a screen shows again: what now blocks the printed restore (only W^3 files; the tree may have changed). */
+async function refreshRestoreFailure(ctx: RestoreContext): Promise<void> {
+  const { chtCorePath, result, stash } = ctx;
+  const survivors = new Set(result.survivors ?? []);
+  result.popResidue = await readPathsForReport(
+    async () => (await stashUntrackedOnDisk(chtCorePath, stash.sha)).filter(p => !survivors.has(p)),
+    'untracked files the failed restore wrote',
+    result,
+  );
+  result.popBlockers = await readPathsForReport(
+    () => stashBlockingPaths(chtCorePath, stash.sha), 'paths that block the restore', result,
+  );
+}
+
+/** The drop after a proven restore. A spare entry left behind is a warning; with a resolver, a screen. */
+async function dropRestoredStash(ctx: RollbackContext): Promise<void> {
+  const { snapshot, call } = ctx;
+  const sha = snapshot.stashSha as string;
+  const drop = await dropStashWithError(ctx.chtCorePath, sha, call.logPrefix);
+  if (drop.outcome === 'dropped') return;
+  if (drop.outcome === 'kept') call.onSpareStash?.(sha);
+  if (drop.outcome === 'kept' && call.resolve) return resolveSpareEntry(ctx, call.resolve, drop.error);
+  console.warn(`${call.logPrefix} Your work is restored; the stash entry ${snapshot.stashName} is a spare copy.`);
+}
+
+/**
+ * A spare entry after a good restore, with a resolver. "I handled it myself"
+ * reads the list again. Abort keeps a `stash` error for settleRollback to
+ * throw, with the work in the tree.
+ */
+async function resolveSpareEntry(ctx: RollbackContext, resolve: StashFailureResolver, dropError: unknown): Promise<void> {
+  const lines = spareEntryLines(ctx.snapshot, dropError);
+  let screen: FailureScreen = { error: new WorkspaceSafetyError('stash', lines[0], { lines }), reason: [] };
+  let first = true;
+  for (;;) {
+    printScreen(screen, [RESTORE_TRAILER], ctx.call.logPrefix, first);
+    first = false;
+    const choice = await askOperator(resolve, { step: 'drop', lines: shownLines(screen), choices: RESTORE_CHOICES });
+    if (choice === 'abort') return keepSpareAbort(ctx, screen.error);
+    const stillListed = await spareStillListed(ctx);
+    if (!stillListed) return;
+    screen = { error: screen.error, reason: stillListed };
+  }
+}
+
+function spareEntryLines(snapshot: ChtCoreSnapshot, dropError: unknown): string[] {
+  return [
+    `Your work is restored; the stash entry ${snapshot.stashName} is a spare copy.`,
+    ...(dropError === undefined ? [] : [`cht-agent could not remove it from the stash list: ${gitErrorText(dropError)}`]),
+  ];
+}
+
+/** Null when our entry is gone; otherwise the line that says why the screen shows again. */
+async function spareStillListed(ctx: RollbackContext): Promise<string[] | null> {
+  const { snapshot } = ctx;
+  try {
+    const listed = (await listStashes(ctx.chtCorePath)).some(e => e.sha === snapshot.stashSha);
+    return listed ? [`Stash ${snapshot.stashName} is still in the stash list.`] : null;
+  } catch (err) {
+    return [`cht-agent could not read the stash list (${gitErrorText(err)}).`];
+  }
+}
+
+/** Abort at a spare entry: the failed-clean warnings join the lines, or no one sees them after the halt. */
+function keepSpareAbort(ctx: RollbackContext, shown: WorkspaceSafetyError): void {
+  const warnings = rollbackWarnings(ctx.result);
+  const lines = [...shown.lines, ...warnings];
+  const error = new WorkspaceSafetyError('stash', lines[0], { lines });
+  printLinesOf(error, warnings, ctx.call.logPrefix);
+  keepAbort(ctx, error);
 }
 
 /** What a drop did: git confirmed it dropped our entry, our entry was not listed, or it stays. */
@@ -2359,15 +2834,25 @@ type DropOutcome = 'dropped' | 'missing' | 'kept';
 
 /** Drop the entry whose commit is `sha`. `dropped` only when git confirms it dropped that one. */
 async function dropStashBySha(chtCorePath: string, sha: string, logPrefix: string): Promise<DropOutcome> {
+  return (await dropStashWithError(chtCorePath, sha, logPrefix)).outcome;
+}
+
+/** The drop, with git's error when it threw (the entry then stays). */
+async function dropStashWithError(
+  chtCorePath: string,
+  sha: string,
+  logPrefix: string,
+): Promise<{ outcome: DropOutcome; error?: unknown }> {
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       const outcome = await dropStashOnce(chtCorePath, sha, logPrefix);
-      if (outcome !== 'retry') return outcome;
+      if (outcome !== 'retry') return { outcome };
     }
-  } catch {
-    // Fall through: the entry stays, and the caller reports it as a spare copy.
+  } catch (error) {
+    // The entry stays, and the caller reports it as a spare copy.
+    return { outcome: 'kept', error };
   }
-  return 'kept';
+  return { outcome: 'kept' };
 }
 
 async function dropStashOnce(
@@ -2514,6 +2999,9 @@ function rollbackHaltError(
   snapshot: ChtCoreSnapshot,
   rollback: RollbackResult,
 ): WorkspaceSafetyError | null {
+  // An Abort at a screen inside the rollback: its error was printed and marked there.
+  const kept = rollbackHalts.get(rollback);
+  if (kept) return kept;
   const kind = rollbackHaltKind(rollback);
   if (!kind) return null;
   return new WorkspaceSafetyError(
@@ -2634,6 +3122,8 @@ interface RecoveryPlan {
   stashName: string | null;
 }
 
+const RECOVERY_HEADING = 'To recover, run these steps in this order:';
+
 /**
  * The numbered recovery steps, in the only safe order: the reset and the
  * removal come before the restore, because the stash still holds the work.
@@ -2647,7 +3137,7 @@ function recoveryStepLines(chtCorePath: string, plan: RecoveryPlan): string[] {
     ...(plan.stashName ? recoveryHintSteps(chtCorePath, plan.stashName) : []),
   ];
   return [
-    'To recover, run these steps in this order:',
+    RECOVERY_HEADING,
     ...steps.map((step, i) => `  ${i + 1}. ${step}`),
     ...(plan.stashName ? [RESTORE_WITHOUT_INDEX_NOTE] : []),
   ];
