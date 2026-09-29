@@ -988,6 +988,63 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(shas).to.have.length(1);
       expect((await git('show', `${shas[0]}:tracked.txt`)).stdout).to.equal('operator work in progress\n');
     });
+
+    const EDIT = 'an operator edit made while the screen waited\n';
+    const OUTSIDE = 'These paths changed after cht-agent stashed your work, and stash ';
+
+    it('keeps an edit to a file outside the stash on "handled" after an unreadable list, and names the file', async () => {
+      await commitFile('x.txt', 'x committed\n');
+      await write('tracked.txt', 'operator work in progress\n');
+      const ws = loadWithUnreadableList();
+      const screens: Array<readonly string[]> = [];
+      const resolveStashFailure = async (failure: { lines: readonly string[] }) => {
+        screens.push(failure.lines);
+        if (screens.length > 1) return 'abort' as const;
+        await write('x.txt', EDIT);
+        return 'handled' as const;
+      };
+      const err = await quietly(() => rejection(() => ws.snapshotChtCore(repo, { resolveStashFailure })));
+      expect(screens).to.have.length(2);
+      expect(screens[1][0].startsWith(OUTSIDE)).to.equal(true);
+      expect(screens[1][1]).to.equal('  - "x.txt"');
+      expect(ws.isOperatorAbort(err)).to.equal(true);
+      expect(await read('x.txt')).to.equal(EDIT);
+      expect(await read('tracked.txt')).to.equal('committed content\n');
+      const shas = await ourStashShas();
+      expect(shas).to.have.length(1);
+      expect((await git('show', `${shas[0]}:tracked.txt`)).stdout).to.equal('operator work in progress\n');
+    });
+
+    it('keeps an edit to a file outside the stash on Retry at a failed restore, and names the file', async function () {
+      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
+      await commitFile('ro/f.txt', 'committed\n');
+      await commitFile('x.txt', 'x committed\n');
+      await write('ro/f.txt', 'operator work in ro\n');
+      const snapshot = await quietly(() => snapshotChtCore(repo));
+      await write('session.ts', 'export const s = 1;\n');
+      const screens: Array<readonly string[]> = [];
+      const resolveStashFailure = async (failure: { lines: readonly string[] }) => {
+        screens.push(failure.lines);
+        if (screens.length > 1) return 'abort' as const;
+        await fs.chmod(path.join(repo, 'ro'), 0o755);
+        await write('x.txt', EDIT);
+        return 'retry' as const;
+      };
+      await fs.chmod(path.join(repo, 'ro'), 0o555);
+      let rollback;
+      try {
+        rollback = await quietly(() => rollbackChtCore(repo, snapshot, { resolveStashFailure }));
+      } finally {
+        await fs.chmod(path.join(repo, 'ro'), 0o755);
+      }
+      expect(screens).to.have.length(2);
+      expect(screens[1][0].startsWith(OUTSIDE)).to.equal(true);
+      expect(screens[1][1]).to.equal('  - "x.txt"');
+      expect(rollback.stashPop).to.equal('failed');
+      expect(await read('x.txt')).to.equal(EDIT);
+      const shas = await ourStashShas();
+      expect(shas).to.deep.equal([snapshot.stashSha]);
+    });
   });
 
   it('leaves baseline files out of the residue and its clean step after a failed restore', async function () {

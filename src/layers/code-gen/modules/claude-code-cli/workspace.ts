@@ -761,7 +761,7 @@ async function afterUnreadableList(push: PushAttempt, error: WorkspaceSafetyErro
     head: push.head,
     trigger: { summary: `git stash push ran, but ${text}.`, gitText: text, pathsInPlay: push.prePush },
     logPrefix: push.logPrefix,
-  });
+  }, error);
 }
 
 /** The variant keeps the base error, so the next choice starts from the base, and it needs no variant before an Abort. */
@@ -772,8 +772,15 @@ function withMovedPushChoices(push: PushAttempt, variant: WorkspaceSafetyError, 
   return variant;
 }
 
-/** Put the work back from our entry; a failed undo shows its own screen. */
-async function undoThenRerun(ctx: UndoContext): Promise<SnapshotNext> {
+/**
+ * Put the work back from our entry, then the snapshot runs again. A path that
+ * changed while `shown` waited, and that the stash does not hold, stops it
+ * first: `shown` again, with a line that names the path. A failed undo shows
+ * its own screen.
+ */
+async function undoThenRerun(ctx: UndoContext, shown: WorkspaceSafetyError): Promise<SnapshotNext> {
+  const outside = await changedOutsideStash(ctx.chtCorePath, ctx.stash);
+  if (outside) return showAgain(shown, outside);
   let drop: DropOutcome;
   try {
     drop = await undoStash(ctx.chtCorePath, ctx.stash, ctx.head, ctx.trigger, ctx.logPrefix);
@@ -1352,6 +1359,53 @@ async function restoreFromStash(chtCorePath: string, sha: string): Promise<void>
   await restorePaths(chtCorePath, `${sha}^3`, '--worktree', missing);
 }
 
+/**
+ * Before a choice after a screen wait writes the stash back: the lines that
+ * name each path that the restore would write over although the stash does not
+ * hold it (it changed while the screen waited), or null when there is none.
+ * Like `git stash apply`, the restore never writes over such a change. A
+ * failed check writes nothing either.
+ */
+async function changedOutsideStash(chtCorePath: string, stash: TakenStash): Promise<string[] | null> {
+  let outside: string[];
+  try {
+    outside = await pathsOutsideStash(chtCorePath, stash.sha);
+  } catch (err) {
+    return [treeCheckFailedLine(stash, err)];
+  }
+  if (outside.length === 0) return null;
+  return pathListLines(
+    `These paths changed after cht-agent stashed your work, and stash ${stash.name} does not hold them. ` +
+      'cht-agent did not put your work back, because that would write over these changes:',
+    outside,
+  );
+}
+
+/**
+ * The paths where the tree or the index differs from the stash (what the
+ * restore writes), less those that the stash holds: the paths that W and W^2
+ * change against W^1, and the files in W^3. A restore never writes submodule
+ * content, so submodules do not count.
+ */
+async function pathsOutsideStash(chtCorePath: string, sha: string): Promise<string[]> {
+  const held = new Set([
+    ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '-z', `${sha}^1`, sha]),
+    ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '-z', `${sha}^1`, `${sha}^2`]),
+    ...await stashUntrackedPaths(chtCorePath, sha),
+  ]);
+  const differing = new Set([
+    ...await zPaths(chtCorePath, ['diff', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', sha, '--']),
+    ...await zPaths(
+      chtCorePath, ['diff', '--cached', '--name-only', '--no-renames', '--ignore-submodules=all', '-z', `${sha}^2`, '--'],
+    ),
+  ]);
+  return [...differing].filter(p => !held.has(p));
+}
+
+function treeCheckFailedLine(stash: TakenStash, err: unknown): string {
+  return `cht-agent could not check the working tree against stash ${stash.name} (${gitErrorText(err)}).`;
+}
+
 async function restorePaths(chtCorePath: string, source: string, where: string, relPaths: readonly string[]): Promise<void> {
   for (let i = 0; i < relPaths.length; i += CLEAN_PATHSPEC_CHUNK) {
     const chunk = relPaths.slice(i, i + CLEAN_PATHSPEC_CHUNK).map(toLiteralPathspec);
@@ -1540,7 +1594,7 @@ async function retryUndo(ctx: UndoContext, error: WorkspaceSafetyError): Promise
   if (!listed) return recheckUndo(ctx, error);
   const variant = await headMovedVariant(undoHint(ctx), error);
   if (variant) return showAgain(withMovedUndoChoices(ctx, variant, error));
-  return undoThenRerun(ctx);
+  return undoThenRerun(ctx, error);
 }
 
 /** Whether our entry is in the stash list, or the line that says the list could not be read. */
@@ -1840,7 +1894,7 @@ async function readRestoreState(
     const listed = (await listStashes(chtCorePath)).some(e => e.sha === stash.sha);
     return { listed, differing: await pathsNotRestored(chtCorePath, stash, alsoUntracked) };
   } catch (err) {
-    return { readLine: `cht-agent could not check the working tree against stash ${stash.name} (${gitErrorText(err)}).` };
+    return { readLine: treeCheckFailedLine(stash, err) };
   }
 }
 
@@ -2784,8 +2838,9 @@ const RESTORE_ACTIONS: Readonly<Record<'handled' | 'retry', (ctx: RestoreContext
 /**
  * Retry after a failed restore, inside this rollback (the snapshot is used
  * already, so a second rollbackChtCore call would refuse): our entry still
- * listed and HEAD and the branch unchanged, then the undo's restore from the
- * stash (no reset), then the same check as "handled" before the drop.
+ * listed, HEAD and the branch unchanged, and no change outside the stash, then
+ * the undo's restore from the stash (no reset), then the same check as
+ * "handled" before the drop.
  */
 async function retryRestore(ctx: RestoreContext): Promise<readonly string[] | null> {
   const listed = await entryListed(ctx.chtCorePath, ctx.stash);
@@ -2793,6 +2848,8 @@ async function retryRestore(ctx: RestoreContext): Promise<readonly string[] | nu
   if (!listed) return recheckRestore(ctx);
   // An empty reason: the screen again shows the HEAD line itself.
   if (await headMovedSince(ctx.chtCorePath, restoreHint(ctx).head)) return [];
+  const outside = await changedOutsideStash(ctx.chtCorePath, ctx.stash);
+  if (outside) return outside;
   try {
     await restoreFromStash(ctx.chtCorePath, ctx.stash.sha);
   } catch (err) {

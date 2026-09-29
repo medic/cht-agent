@@ -69,6 +69,10 @@ const stashListZ = (...entries: Array<[ref: string, sha: string, message: string
 
 const OUR_ENTRY = stashListZ(['stash@{0}', OUR_SHA, `On main: ${OUR_NAME}`]);
 
+/** The line above the paths that changed while a screen waited, which the stash does not hold. */
+const OUTSIDE_HEADING = `These paths changed after cht-agent stashed your work, and stash ${OUR_NAME} does not hold ` +
+  'them. cht-agent did not put your work back, because that would write over these changes:';
+
 /** The leftover check reads the list first (nothing of ours), then the creation check finds ours. */
 const STASH_CREATED: Answer[] = [{ stdout: '' }, { stdout: OUR_ENTRY }];
 
@@ -1255,6 +1259,63 @@ describe('workspace.ts', () => {
           });
         });
 
+        describe('when the operator changed a path outside the stash while the screen waited', () => {
+          const WORKTREE = `git diff --name-only --no-renames -z ${OUR_SHA} --`;
+          const DIFFERING = `git diff --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA} --`;
+          const HELD = `git diff --name-only --no-renames -z ${OUR_SHA}^1 ${OUR_SHA}`;
+          const UNREADABLE: Script = {
+            [WORKTREE]: { stdout: 'a.txt\0x.txt\0' },
+            [DIFFERING]: { stdout: 'a.txt\0x.txt\0' },
+            [HELD]: { stdout: 'a.txt\0' },
+            // The check; the lookup and its re-read fail; then every read finds ours.
+            'git stash list -z': [{ stdout: '' }, { error: listFailure() }, { error: listFailure() }, { stdout: OUR_ENTRY }],
+          };
+
+          for (const choice of ['handled', 'retry']) {
+            it(`writes nothing on "${choice}" after an unreadable list, and names the path`, async () => {
+              const calls: string[] = [];
+              const { resolve, seen } = scriptedResolver([choice, 'abort'], calls);
+              const { ws, outcome } = await snapshotWith(UNREADABLE, { resolveStashFailure: resolve }, calls);
+              expect(resolve.calledTwice).to.equal(true);
+              expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+              expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+              expect(seen[1].step).to.equal('push');
+              expect(seen[1].lines.slice(0, 2)).to.deep.equal([OUTSIDE_HEADING, '  - "x.txt"']);
+              expect(seen[1].lines.slice(2)).to.deep.equal(seen[0].lines);
+              expect(outcome.error?.lines).to.deep.equal(seen[0].lines);
+              expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+            });
+          }
+
+          it('names a path that the operator staged, which the stash does not hold', async () => {
+            const { resolve, seen } = scriptedResolver(['retry', 'abort']);
+            await snapshotWith({
+              ...UNREADABLE,
+              [DIFFERING]: { stdout: 'a.txt\0' },
+              [`git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2 --`]: { stdout: 'y.txt\0' },
+            }, { resolveStashFailure: resolve });
+            expect(seen[1].lines.slice(0, 2)).to.deep.equal([OUTSIDE_HEADING, '  - "y.txt"']);
+          });
+
+          it('writes nothing on Retry after a failed undo, and names the path', async () => {
+            const calls: string[] = [];
+            const { resolve, seen } = scriptedResolver(['retry', 'abort'], calls);
+            const { ws, outcome } = await snapshotWith(failedUndo('', [
+              { stdout: '' }, { stdout: OUR_ENTRY }, { stdout: OUR_ENTRY },
+            ], {
+              // The first undo, then what the Retry would restore and check.
+              [WORKTREE]: [{ stdout: '' }, { stdout: 'x.txt\0' }],
+              [DIFFERING]: [{ stdout: '' }, { stdout: 'x.txt\0' }],
+            }), { resolveStashFailure: resolve }, calls);
+            expect(resolve.calledTwice).to.equal(true);
+            expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+            expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+            expect(seen[1].step).to.equal('undo');
+            expect(seen[1].lines.slice(0, 2)).to.deep.equal([OUTSIDE_HEADING, '  - "x.txt"']);
+            expect(ws.isOperatorAbort(outcome.error)).to.equal(true);
+          });
+        });
+
         it('runs the snapshot again when "handled" does not find our entry after an unreadable list', async () => {
           const calls: string[] = [];
           const { resolve } = scriptedResolver(['handled'], calls);
@@ -2176,6 +2237,65 @@ describe('workspace.ts', () => {
         expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
         expect(seen[1].lines[0]).to.match(/^HEAD is at fedcba9876543210 /);
         expect(halt?.lines).to.deep.equal(seen[1].lines);
+      });
+
+      describe('on Retry after the operator changed the tree while the screen waited', () => {
+        const WORKTREE = `git diff --name-only --no-renames -z ${OUR_SHA} --`;
+        const CACHED = `git diff --cached --name-only --no-renames --ignore-submodules=all -z ${OUR_SHA}^2 --`;
+
+        it('writes nothing over a path outside the stash, names it, and keeps our entry', async () => {
+          const { resolve, seen } = answering(['retry', 'abort']);
+          const { snapshot, script } = restoreFixture({
+            'git stash apply': { error: applyFailure() },
+            [WORKTREE]: { stdout: 'x.txt\0' },
+            [TRACKED]: { stdout: 'x.txt\0' },
+          });
+          const { ws, result, halt, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+          expect(resolve.calledTwice).to.equal(true);
+          expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+          expect(calls.some(c => c.startsWith('git stash drop'))).to.equal(false);
+          expect(seen[1].lines.slice(0, 2)).to.deep.equal([OUTSIDE_HEADING, '  - "x.txt"']);
+          expect(result.stashPop).to.equal('failed');
+          expect(ws.isOperatorAbort(halt)).to.equal(true);
+        });
+
+        it('writes the paths that the stash holds: its worktree, index and untracked paths', async () => {
+          const { resolve } = answering(['retry']);
+          const { snapshot, script } = restoreFixture({
+            'git stash apply': { error: applyFailure() },
+            [WORKTREE]: { stdout: 'w.txt\0' },
+            // The check before the Retry's restore, then the check after it.
+            [TRACKED]: [{ stdout: 'w.txt\0' }, { stdout: '' }],
+            [CACHED]: [{ stdout: 'i.txt\0u.txt\0' }, { stdout: '' }],
+            [`git diff --name-only --no-renames -z ${OUR_SHA}^1 ${OUR_SHA}^2`]: { stdout: 'i.txt\0' },
+            [`git diff --name-only --no-renames -z ${OUR_SHA}^1 ${OUR_SHA}`]: { stdout: 'w.txt\0' },
+            [`git ls-tree -r -z --name-only ${OUR_SHA}^3`]: { stdout: 'u.txt\0' },
+            [`git ls-tree -r -z ${OUR_SHA}^3`]: { stdout: '' },
+          });
+          const { result, halt, calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+          expect(resolve.calledOnce).to.equal(true);
+          expect(calls).to.include(`git restore --source=${OUR_SHA} --worktree -- :(literal)w.txt`);
+          expect(calls).to.include('git stash drop stash@{0}');
+          expect(result.stashPop).to.equal('ok');
+          expect(halt).to.be.undefined;
+        });
+
+        it('writes nothing when it cannot check the tree, and says so', async () => {
+          const { resolve, seen } = answering(['retry', 'abort']);
+          const { snapshot, script } = restoreFixture({
+            'git stash apply': { error: applyFailure() },
+            [WORKTREE]: { stdout: 'f.txt\0' },
+            [`git diff --name-only --no-renames -z ${OUR_SHA}^1 ${OUR_SHA}`]: {
+              error: Object.assign(new Error('Command failed: git diff'), { stderr: 'fatal: bad object' }),
+            },
+          });
+          const { calls } = await rollbackWith(script, snapshot, { resolveStashFailure: resolve });
+          expect(resolve.calledTwice).to.equal(true);
+          expect(calls.some(c => c.startsWith('git restore'))).to.equal(false);
+          expect(seen[1].lines[0]).to.equal(
+            `cht-agent could not check the working tree against stash ${OUR_NAME} (fatal: bad object).`,
+          );
+        });
       });
 
       it('drops our spare entry again on Retry', async () => {
