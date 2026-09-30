@@ -100,7 +100,7 @@ export interface StepOptions<T> {
 }
 
 /** Child of the active observation (so nested steps nest automatically); a no-op span before any withTrace. */
-export async function observeStep<T>(opts: StepOptions<T>, fn: (step: TraceRoot) => Promise<T>): Promise<T> {
+export function observeStep<T>(opts: StepOptions<T>, fn: (step: TraceRoot) => Promise<T>): Promise<T> {
   const run = async (step: TraceRoot): Promise<T> => {
     if (opts.input !== undefined) step.update({ input: opts.input });
     try {
