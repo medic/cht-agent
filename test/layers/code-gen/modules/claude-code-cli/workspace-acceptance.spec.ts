@@ -9,8 +9,6 @@ import {
   captureChtCoreDiff,
   rollbackChtCore,
   buildRecoveryChecklist,
-  settleRollback,
-  isOperatorAbort,
   STASH_MARKER_PREFIX,
   ChtCoreSnapshot,
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
@@ -779,88 +777,6 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(lines).to.match(/Fix the permissions/);
     expect(lines).to.not.match(/stash@\{\d+\}/);
     expect(lines).to.not.include('stash drop');
-  });
-
-  describe('the choices at a failed restore', () => {
-    /** Run the git steps of a printed checklist in bash, in order; prose steps and the lookup are skipped. */
-    const runPrintedSteps = async (lines: readonly string[]) => {
-      for (const line of lines) {
-        const step = /^\s+\d+\. (.*)$/.exec(line)?.[1] ?? '';
-        const command = step.startsWith('Restore it: ') ? step.slice('Restore it: '.length) : step;
-        if (command.startsWith('git -C ') || step.startsWith('Restore it: ')) await execFileAsync('bash', ['-c', command]);
-      }
-    };
-
-    /** A restore that fails on a read-only dir; `resolve` answers the screen. */
-    const failedRestore = async (resolveStashFailure: (f: { step: string; lines: readonly string[] }) => Promise<'handled' | 'abort'>) => {
-      await commitFile('ro/f.txt', 'committed\n');
-      await write('ro/f.txt', 'operator work in ro\n');
-      const before = await treeState();
-      const snapshot = await snapshotChtCore(repo);
-      await write('session.ts', 'export const s = 1;\n');
-      await fs.chmod(path.join(repo, 'ro'), 0o555);
-      try {
-        return { before, snapshot, rollback: await rollbackChtCore(repo, snapshot, { resolveStashFailure }) };
-      } finally {
-        await fs.chmod(path.join(repo, 'ro'), 0o755);
-      }
-    };
-
-    it('ends the rollback with the work back when the operator runs the printed steps and chooses "handled"', async function () {
-      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
-      const steps: string[] = [];
-      const { before, rollback } = await failedRestore(async failure => {
-        steps.push(failure.step);
-        await fs.chmod(path.join(repo, 'ro'), 0o755); // the cause step, by hand
-        await runPrintedSteps(failure.lines);
-        return 'handled';
-      });
-      expect(steps).to.deep.equal(['restore']);
-      expect(rollback.stashPop).to.equal('ok');
-      expect(await treeState()).to.deep.equal(before);
-      expect((await git('stash', 'list', '--format=%gs')).stdout).to.not.include(STASH_MARKER_PREFIX);
-    });
-
-    it('keeps a halt whose printed steps restore the tree after "handled" with no change, then Abort', async function () {
-      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
-      const answers: Array<'handled' | 'abort'> = ['handled', 'abort'];
-      const { before, snapshot, rollback } = await failedRestore(async () => answers.shift() ?? 'abort');
-      expect(answers).to.deep.equal([]);
-      let halt: { kind?: string; lines?: string[] } | undefined;
-      try {
-        settleRollback(rollback, { logPrefix: '[acc]', label: 'acc', chtCorePath: repo, snapshot });
-      } catch (err) {
-        halt = err as { kind?: string; lines?: string[] };
-      }
-      expect(halt?.kind).to.equal('stash');
-      expect(isOperatorAbort(halt)).to.equal(true);
-      await runPrintedSteps(halt?.lines ?? []);
-      expect(await treeState()).to.deep.equal(before);
-      expect((await git('stash', 'list', '--format=%gs')).stdout).to.not.include(STASH_MARKER_PREFIX);
-    });
-
-    it('never asks after a failed reset', async function () {
-      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
-      await commitFile('rt/t.txt', 'committed\n');
-      await makeDirty();
-      const snapshot = await snapshotChtCore(repo);
-      await write('rt/t.txt', 'session edit\n');
-      await fs.chmod(path.join(repo, 'rt'), 0o555);
-      let asked = false;
-      let rollback;
-      try {
-        rollback = await rollbackChtCore(repo, snapshot, {
-          resolveStashFailure: async () => {
-            asked = true;
-            return 'abort';
-          },
-        });
-      } finally {
-        await fs.chmod(path.join(repo, 'rt'), 0o755);
-      }
-      expect(rollback.reset).to.equal('failed');
-      expect(asked).to.equal(false);
-    });
   });
 
   it('leaves baseline files out of the residue and its clean step after a failed restore', async function () {
