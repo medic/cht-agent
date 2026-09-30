@@ -238,8 +238,9 @@ Every generation records the model, prompt, completion, latency, and errors. Cos
 Spans are exported over OTLP/HTTP by a batching span processor with a 3-second request timeout. The
 OTLP exporter applies its own retry/backoff on transient failures within that time. Scores go through
 the client's queue, which uses the SDK default timeout of 60 seconds (`@langfuse/client` 5.11.1 ignores
-its `timeout` option). `shutdownLangfuse()` flushes both queues before `process.exit` and only logs a
-warning when Langfuse is unreachable, so tracing never changes a run's exit code.
+its `timeout` option). `shutdownLangfuse()` flushes both queues before `process.exit`; if Langfuse is
+unreachable it logs a `[Langfuse] … flush failed` warning and resolves, so tracing never changes a
+run's exit code.
 
 ---
 
