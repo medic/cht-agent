@@ -301,9 +301,6 @@ export function buildLeakedStashLine(prefix: string): RegExp {
 
 const LEAKED_STASH_LINE = buildLeakedStashLine(STASH_MARKER_PREFIX);
 
-/** The start of the Find line; a screen without the steps cuts its lines there. */
-const FIND_STEP = 'Find the stash: ';
-
 /**
  * Recovery guidance for stashed work, as two commands that each run as copied.
  * Deliberately a LOOKUP by name, not `stash pop <name>`: a stash name is not a
@@ -316,7 +313,7 @@ function recoveryHintSteps(chtCorePath: string, stashName: string): string[] {
   const pattern = shellQuote(`: ${stashName}$`);
   const notFound = shellQuote(`stash ${stashName} not found`);
   return [
-    `${FIND_STEP}git -C ${repo} stash list --format='%gd  %cr  %gs' | grep -E ${pattern}`,
+    `Find the stash: git -C ${repo} stash list --format='%gd  %cr  %gs' | grep -E ${pattern}`,
     `Restore it: ref=$(git -C ${repo} stash list --format='%gd %gs' | grep -E ${pattern} | cut -d' ' -f1); ` +
       `if [ -n "$ref" ]; then git -C ${repo} stash pop --index "$ref"; else echo ${notFound}; fi`,
   ];
@@ -724,25 +721,16 @@ async function lookUpPushedStashAgain(
     ];
     const error = new WorkspaceSafetyError('stash', lines[0], { lines, cause: err });
     registeredFailures.set(error, {
-      step: 'push',
-      choices: RESTORE_CHOICES,
-      trailer: RESTORE_TRAILER,
-      next: () => afterUnreadableList(push, error),
-      beforeAbort: () => abortVariant(pushHint(push), error, push.logPrefix),
+      step: 'push', choices: RESTORE_CHOICES, trailer: RESTORE_TRAILER, next: () => afterUnreadableList(push, error),
     });
     throw error;
   }
 }
 
-function pushHint(push: PushAttempt): StashHint {
-  return { chtCorePath: push.chtCorePath, head: push.head, hintPath: push.chtCorePath, stashName: push.name };
-}
-
 /**
- * "I handled it myself" or Retry after the stash list could not be read: read
- * it again. Our entry listed: put the work back from it, then the snapshot runs
- * again. Not listed: nothing of ours holds the work, so the snapshot runs again.
- * HEAD moved: write nothing, and show where the work is.
+ * "I handled it myself" after the stash list could not be read: read it again.
+ * Our entry listed: put the work back from it, then the snapshot runs again.
+ * Not listed: nothing of ours holds the work, so the snapshot runs again.
  */
 async function afterUnreadableList(push: PushAttempt, error: WorkspaceSafetyError): Promise<SnapshotNext> {
   let entry: StashEntry | undefined;
@@ -752,8 +740,6 @@ async function afterUnreadableList(push: PushAttempt, error: WorkspaceSafetyErro
     return showAgain(error, [`cht-agent still cannot read the stash list (${gitErrorText(err)}).`]);
   }
   if (!entry) return rerun();
-  const variant = await headMovedVariant(pushHint(push), error);
-  if (variant) return showAgain(withMovedPushChoices(push, variant, error));
   const text = 'the stash list could not be read after the push';
   return undoThenRerun({
     chtCorePath: push.chtCorePath,
@@ -762,14 +748,6 @@ async function afterUnreadableList(push: PushAttempt, error: WorkspaceSafetyErro
     trigger: { summary: `git stash push ran, but ${text}.`, gitText: text, pathsInPlay: push.prePush },
     logPrefix: push.logPrefix,
   });
-}
-
-/** The variant keeps the base error, so the next choice starts from the base, and it needs no variant before an Abort. */
-function withMovedPushChoices(push: PushAttempt, variant: WorkspaceSafetyError, base: WorkspaceSafetyError): WorkspaceSafetyError {
-  registeredFailures.set(variant, {
-    step: 'push', choices: RESTORE_CHOICES, trailer: RESTORE_TRAILER_HEAD_MOVED, next: () => afterUnreadableList(push, base),
-  });
-  return variant;
 }
 
 /** Put the work back from our entry; a failed undo shows its own screen. */
@@ -1824,9 +1802,8 @@ async function abortVariant(hint: StashHint, error: WorkspaceSafetyError, logPre
   return variant;
 }
 
-/** The lines above the numbered steps, or above the Find and Restore lines when there are no numbered steps. */
 function linesBeforeSteps(lines: readonly string[]): string[] {
-  const steps = lines.findIndex(line => line === RECOVERY_HEADING || line.startsWith(FIND_STEP));
+  const steps = lines.indexOf(RECOVERY_HEADING);
   return steps === -1 ? [...lines] : lines.slice(0, steps);
 }
 

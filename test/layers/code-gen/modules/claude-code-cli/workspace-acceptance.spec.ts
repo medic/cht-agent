@@ -4,7 +4,6 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import proxyquire from 'proxyquire';
 import {
   snapshotChtCore,
   captureChtCoreDiff,
@@ -17,8 +16,6 @@ import {
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const execFileAsync = promisify(execFile);
-
-const WORKSPACE = '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 /**
  * Integration-style coverage for the dirty-checkout scenario, against a REAL
@@ -920,73 +917,6 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       }
       expect(rollback.reset).to.equal('failed');
       expect(asked).to.equal(false);
-    });
-  });
-
-  describe('a choice after the operator changed the tree while a screen waited', () => {
-    /**
-     * workspace.ts on real git, except that the 2nd and 3rd `git stash list`
-     * reads fail: the push runs, then the list cannot be read.
-     */
-    const loadWithUnreadableList = () => {
-      const realExecFile = promisify(execFile);
-      let lists = 0;
-      const execFileStub = Object.assign(() => undefined, {
-        [promisify.custom]: (cmd: string, args: string[], opts: object) => {
-          if (args[0] === 'stash' && args[1] === 'list') {
-            lists += 1;
-            if (lists === 2 || lists === 3) {
-              return Promise.reject(Object.assign(new Error('Command failed: git stash list'), { code: 128, stderr: 'fatal: bad index' }));
-            }
-          }
-          return realExecFile(cmd, args, opts);
-        },
-      });
-      return proxyquire.noCallThru()(WORKSPACE, { 'node:child_process': { execFile: execFileStub } });
-    };
-
-    const ourStashShas = async () =>
-      (await git('stash', 'list', '--format=%H %gs')).stdout.split('\n')
-        .filter(l => l.includes(STASH_MARKER_PREFIX)).map(l => l.split(' ')[0]);
-
-    /** Run with the screens' lines captured instead of printed. */
-    const quietly = async <T>(run: () => Promise<T>): Promise<T> => {
-      const saved = { error: console.error, warn: console.warn, log: console.log };
-      console.error = console.warn = console.log = () => undefined;
-      try {
-        return await run();
-      } finally {
-        Object.assign(console, saved);
-      }
-    };
-
-    it('writes nothing over a branch that the operator checked out at an unreadable list, then "handled"', async () => {
-      await commitFile('c.txt', 'c on the first branch\n');
-      await git('checkout', '-q', '-b', 'other');
-      await commitFile('c.txt', 'c on other\n');
-      await commitFile('other-only.txt', 'only on other\n');
-      await git('checkout', '-q', '-');
-      await write('tracked.txt', 'operator work in progress\n');
-      const ws = loadWithUnreadableList();
-      const steps: string[] = [];
-      const resolveStashFailure = async (failure: { step: string }) => {
-        steps.push(failure.step);
-        if (steps.length > 1) return 'abort' as const;
-        await git('checkout', '-q', 'other');
-        await write('c.txt', 'operator edit on other\n');
-        return 'handled' as const;
-      };
-      const err = await quietly(() => rejection(() => ws.snapshotChtCore(repo, { resolveStashFailure })));
-      expect(steps).to.deep.equal(['push', 'push']);
-      expect(ws.isOperatorAbort(err)).to.equal(true);
-      expect(err?.lines?.[0]).to.match(/^HEAD is at .* on refs\/heads\/other now, not /);
-      expect((await git('symbolic-ref', '--short', 'HEAD')).stdout.trim()).to.equal('other');
-      expect(await read('c.txt')).to.equal('operator edit on other\n');
-      expect(await read('other-only.txt')).to.equal('only on other\n');
-      expect((await git('status', '--porcelain')).stdout).to.equal(' M c.txt\n');
-      const shas = await ourStashShas();
-      expect(shas).to.have.length(1);
-      expect((await git('show', `${shas[0]}:tracked.txt`)).stdout).to.equal('operator work in progress\n');
     });
   });
 
