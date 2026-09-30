@@ -90,13 +90,15 @@ describe('observability', () => {
       delete process.env.LANGFUSE_SECRET_KEY;
     });
 
-    it('exports nothing when a Langfuse key is missing', async () => {
-      delete process.env.LANGFUSE_SECRET_KEY;
-      await mod.withTrace({ name: 't' }, async (root) => mod.scoreTrace(root, { name: 'outcome', value: 1 }));
-      await mod.shutdownLangfuse();
-      expect(processorParams).to.have.length(0);
-      expect(scores).to.have.length(0);
-    });
+    for (const key of ['LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY']) {
+      it(`exports nothing when ${key} is missing`, async () => {
+        delete process.env[key];
+        await mod.withTrace({ name: 't' }, async (root) => mod.scoreTrace(root, { name: 'outcome', value: 1 }));
+        await mod.shutdownLangfuse();
+        expect(processorParams).to.have.length(0);
+        expect(scores).to.have.length(0);
+      });
+    }
 
     it('configures the span processor with a bounded request timeout', async () => {
       await mod.withTrace({ name: 't' }, async () => {});
