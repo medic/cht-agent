@@ -791,16 +791,13 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       }
     };
 
-    /** A restore that fails on a read-only dir; `resolve` answers the screen, and `session` makes the session's files. */
-    const failedRestore = async (
-      resolveStashFailure: (f: { step: string; lines: readonly string[] }) => Promise<'handled' | 'retry' | 'abort'>,
-      session: () => Promise<void> = () => write('session.ts', 'export const s = 1;\n'),
-    ) => {
+    /** A restore that fails on a read-only dir; `resolve` answers the screen. */
+    const failedRestore = async (resolveStashFailure: (f: { step: string; lines: readonly string[] }) => Promise<'handled' | 'abort'>) => {
       await commitFile('ro/f.txt', 'committed\n');
       await write('ro/f.txt', 'operator work in ro\n');
       const before = await treeState();
       const snapshot = await snapshotChtCore(repo);
-      await session();
+      await write('session.ts', 'export const s = 1;\n');
       await fs.chmod(path.join(repo, 'ro'), 0o555);
       try {
         return { before, snapshot, rollback: await rollbackChtCore(repo, snapshot, { resolveStashFailure }) };
@@ -838,60 +835,6 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       expect(halt?.kind).to.equal('stash');
       expect(isOperatorAbort(halt)).to.equal(true);
       await runPrintedSteps(halt?.lines ?? []);
-      expect(await treeState()).to.deep.equal(before);
-      expect((await git('stash', 'list', '--format=%gs')).stdout).to.not.include(STASH_MARKER_PREFIX);
-    });
-
-    it('restores byte-identically on Retry after the fix, and the used snapshot still refuses a second rollback', async function () {
-      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
-      const { before, snapshot, rollback } = await failedRestore(async () => {
-        await fs.chmod(path.join(repo, 'ro'), 0o755);
-        return 'retry';
-      });
-      expect(rollback.stashPop).to.equal('ok');
-      expect(await treeState()).to.deep.equal(before);
-      expect((await git('stash', 'list', '--format=%gs')).stdout).to.not.include(STASH_MARKER_PREFIX);
-      const again = await rejection(() => rollbackChtCore(repo, snapshot));
-      expect(again?.kind).to.equal('drift');
-      expect(again?.lines?.[0]).to.include('already rolled back');
-    });
-
-    it('says the restore failed again on Retry before the fix, then restores on Retry after it', async function () {
-      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
-      const printed: string[] = [];
-      const consoleError = console.error;
-      console.error = (...args: unknown[]) => { printed.push(args.map(String).join(' ')); };
-      let asked = 0;
-      let outcome;
-      try {
-        outcome = await failedRestore(async () => {
-          asked += 1;
-          if (asked === 2) await fs.chmod(path.join(repo, 'ro'), 0o755);
-          return 'retry';
-        });
-      } finally {
-        console.error = consoleError;
-      }
-      expect(asked).to.equal(2);
-      expect(printed.some(l => l.startsWith('[claude-code-cli] The restore failed again: '))).to.equal(true);
-      expect(outcome.rollback.stashPop).to.equal('ok');
-      expect(await treeState()).to.deep.equal(outcome.before);
-    });
-
-    it('restores on Retry next to a session repo that the clean could not remove, and keeps the clean failure', async function () {
-      if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
-      const { before, rollback } = await failedRestore(async () => {
-        await fs.chmod(path.join(repo, 'ro'), 0o755);
-        return 'retry';
-      }, async () => {
-        await fs.mkdir(path.join(repo, 'nr'));
-        await execFileAsync('git', ['init', '-q'], { cwd: path.join(repo, 'nr') });
-        await write('nr/x.txt', 'a session file in a nested repo\n');
-      });
-      expect(rollback.stashPop).to.equal('ok');
-      expect(rollback.clean).to.equal('failed');
-      expect(rollback.survivors).to.deep.equal(['nr/']);
-      await fs.rm(path.join(repo, 'nr'), { recursive: true, force: true });
       expect(await treeState()).to.deep.equal(before);
       expect((await git('stash', 'list', '--format=%gs')).stdout).to.not.include(STASH_MARKER_PREFIX);
     });
