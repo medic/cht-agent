@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { z } from 'zod';
-import type { InvokeOptions } from '../../src/llm/types';
+import { LLMCallError, type InvokeOptions } from '../../src/llm/types';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -101,5 +101,24 @@ describe('createStructuredCliChain', () => {
       expect((e as Error).message).to.not.equal('expected a zod validation error');
       expect(calls).to.have.length(1);
     }
+  });
+
+  it('should keep the paid response on the error when the response does not satisfy the schema', async () => {
+    const response = { content: '{}', model: 'claude-sonnet-4-5', costUsd: 0.0123, usage: { inputTokens: 30, outputTokens: 7 } };
+    const fakeProvider = {
+      invokeForJSON: async () => { throw new Error('should not be called'); },
+      invokeForJSONWithResponse: async () => ({ parsed: { decision: 'maybe', reason: '' }, response }),
+    };
+    const { createStructuredCliChain } = proxyquire('../../src/llm/structured-cli', {
+      './factory': { createLLMProviderFromEnv: () => fakeProvider, isUsingCLIProvider: () => true },
+    });
+
+    const caught = await createStructuredCliChain(schema, SHAPE).invoke('Classify this PR.').then(
+      () => expect.fail('expected a schema validation error'),
+      (e: LLMCallError) => e,
+    );
+
+    expect(caught).to.be.instanceOf(LLMCallError);
+    expect(caught.response).to.equal(response);
   });
 });

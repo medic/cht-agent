@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { createLLMProviderFromEnv } from './factory';
+import { LLMCallError } from './types';
 import { fromLangChain, fromLLMResponse, type GenerationResult } from '../observability';
 
 export { isUsingCLIProvider } from './factory';
@@ -77,7 +78,9 @@ ${shape}`;
         return { parsed: schema.parse(await provider.invokeForJSON<unknown>(jsonPrompt, options)) };
       }
       const { parsed, response } = await provider.invokeForJSONWithResponse<unknown>(jsonPrompt, options);
-      return fromLLMResponse(response, schema.parse(parsed));
+      const checked = schema.safeParse(parsed);
+      if (!checked.success) throw new LLMCallError(checked.error.message, response);
+      return fromLLMResponse(response, checked.data);
     },
   };
 };

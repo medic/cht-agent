@@ -364,7 +364,11 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 IMPORTANT: Respond with valid JSON only. Do not include any text before or after the JSON object.`;
 
     const response = await invoke(jsonPrompt, options);
-    return { parsed: parseJsonContent<T>(response.content), response };
+    try {
+      return { parsed: parseJsonContent<T>(response.content), response };
+    } catch (err) {
+      throw new LLMCallError((err as Error).message, response);
+    }
   };
 
   const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> =>

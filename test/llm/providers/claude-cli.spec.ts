@@ -2,7 +2,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { EventEmitter } from 'events';
-import { LLMProvider } from '../../../src/llm/types';
+import { LLMCallError, LLMProvider } from '../../../src/llm/types';
 import { DISALLOWED_TOOLS } from '../../../src/llm/providers/claude-cli';
 import { isBatchFatalError } from '../../../src/llm/rate-limit';
 
@@ -199,6 +199,7 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
       () => expect.fail('expected invoke to throw'),
       (e: { message: string; response?: unknown }) => e,
     );
+    expect(caught).to.be.instanceOf(LLMCallError);
     expect(caught.message).to.equal('Claude CLI error: Reached maximum number of turns (1)');
     expect(caught.response).to.deep.include({ model: 'claude-opus-5-5', usage: { inputTokens: 5, outputTokens: 2 }, costUsd: 0.3 });
   });
@@ -316,6 +317,19 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
     }
     expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/did not contain valid JSON/);
+  });
+
+  it('invokeForJSONWithResponse keeps the paid response on a JSON parse failure', async () => {
+    const { provider } = loadProvider([
+      { stdout: cliResultJson({ result: 'just plain prose', total_cost_usd: 0.02 }), closeCode: 0 },
+    ]);
+    const caught = await provider.invokeForJSONWithResponse!<unknown>('p').then(
+      () => expect.fail('expected invokeForJSONWithResponse to throw'),
+      (e: LLMCallError) => e,
+    );
+    expect(caught).to.be.instanceOf(LLMCallError);
+    expect(caught.message).to.match(/did not contain valid JSON/);
+    expect(caught.response).to.include({ content: 'just plain prose', costUsd: 0.02 });
   });
 
   it('invokeForJSON strips trailing commas before parsing', async () => {
