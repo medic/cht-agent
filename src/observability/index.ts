@@ -64,7 +64,7 @@ export interface TraceOptions {
 }
 
 /** Langfuse generates a new trace id per call; put entity identity in input/tags/metadata to keep it filterable. */
-export async function withTrace<T>(opts: TraceOptions, fn: (root: TraceRoot) => Promise<T>): Promise<T> {
+export function withTrace<T>(opts: TraceOptions, fn: (root: TraceRoot) => Promise<T>): Promise<T> {
   getRuntime();
   const { name, input, ...propagated } = opts;
   return propagateAttributes({ traceName: name, ...propagated }, async () => {
