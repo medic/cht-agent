@@ -17,6 +17,8 @@ import {
   GeneratedFile,
 } from '../../src/types';
 import { LLMProvider } from '../../src/llm';
+import { CodeGenHaltError } from '../../src/layers/code-gen/interface';
+import { WorkspaceSafetyError } from '../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -230,6 +232,110 @@ describe('DevelopmentSupervisor codeGenerationNode (v9b.1)', () => {
     expect(out.errors).to.be.an('array');
     expect((out.errors as string[])[0]).to.match(/Code generation failed: LLM down/);
     expect(out.currentPhase).to.equal('code-generation');
+  });
+
+  it('stops the whole run on a halt error instead of retrying code generation', async () => {
+    const halt = new CodeGenHaltError('cht-core rollback failed; the stash is kept');
+    const generate = sinon.stub().rejects(halt);
+    const supervisor = buildSupervisorWithStubAgents(generate) as unknown as {
+      develop: (input: DevelopmentInput) => Promise<DevelopmentState>;
+    };
+
+    let thrown: unknown;
+    try {
+      await supervisor.develop(baseValidInputFragment as DevelopmentInput);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).to.equal(halt);
+    expect(generate.callCount).to.equal(1);
+  });
+
+  it('keeps a rollback warning from an earlier iteration when a later one has none', async () => {
+    const warning = 'Rollback could not remove these session files: "nr/"';
+    const generate = sinon.stub().resolves(mkCodeGenResult([mkFile('src/a.ts')]));
+    const supervisor = buildSupervisorWithStubAgents(generate);
+    const earlier = { ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: [warning] };
+
+    const out = await supervisor.codeGenerationNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: earlier,
+      iterationCount: 1,
+    }));
+
+    expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal([warning]);
+  });
+
+  it('prints the warnings of an earlier iteration when a later iteration halts', async () => {
+    const warning = 'Rollback could not remove these session files. Remove them before the next run: "nr/"';
+    const halt = new CodeGenHaltError('rollback failed; the stash is kept');
+    const generate = sinon.stub();
+    generate.onFirstCall().resolves({ ...mkCodeGenResult([]), warnings: [warning] });
+    generate.onSecondCall().rejects(halt);
+    const supervisor = buildSupervisorWithStubAgents(generate) as unknown as {
+      develop: (input: DevelopmentInput) => Promise<DevelopmentState>;
+    };
+    const warnSpy = sinon.stub(console, 'warn');
+
+    let thrown: unknown;
+    try {
+      await supervisor.develop(baseValidInputFragment as DevelopmentInput);
+    } catch (err) {
+      thrown = err;
+    } finally {
+      warnSpy.restore();
+    }
+    expect(thrown).to.equal(halt);
+    expect(generate.callCount).to.equal(2);
+    const printed = warnSpy.getCalls().map(c => String(c.args[0]));
+    expect(printed.filter(l => l.includes(warning))).to.deep.equal([`[Development Supervisor] ${warning}`]);
+  });
+
+  it('stops the run on a workspace safety error, which is a halt error', async () => {
+    const stop = new WorkspaceSafetyError('reset', 'rollback failed; the stash is kept');
+    const generate = sinon.stub().rejects(stop);
+    const supervisor = buildSupervisorWithStubAgents(generate) as unknown as {
+      develop: (input: DevelopmentInput) => Promise<DevelopmentState>;
+      todos: { getAll: () => Array<{ id: string; status: string }> };
+    };
+
+    let thrown: unknown;
+    try {
+      await supervisor.develop(baseValidInputFragment as DevelopmentInput);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).to.equal(stop);
+    expect(generate.callCount).to.equal(1);
+    // The todo is failed before the halt leaves the node.
+    expect(supervisor.todos.getAll().find(t => t.id === 'development-1')?.status).to.equal('failed');
+  });
+
+  it('keeps one copy of a warning that two iterations both report', async () => {
+    const warning = 'Rollback could not remove these session files: "nr/"';
+    const generate = sinon.stub().resolves({ ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: [warning] });
+    const supervisor = buildSupervisorWithStubAgents(generate);
+
+    const out = await supervisor.codeGenerationNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: { ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: [warning] },
+      iterationCount: 1,
+    }));
+
+    expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal([warning]);
+  });
+
+  it("keeps both iterations' warnings when they differ", async () => {
+    const generate = sinon.stub().resolves({ ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: ['second'] });
+    const supervisor = buildSupervisorWithStubAgents(generate);
+
+    const out = await supervisor.codeGenerationNode(mkDevState({
+      ...baseValidInputFragment,
+      codeGeneration: { ...mkCodeGenResult([mkFile('src/a.ts')]), warnings: ['first'] },
+      iterationCount: 1,
+    }));
+
+    expect((out.codeGeneration as CodeGenerationResult).warnings).to.deep.equal(['first', 'second']);
   });
 
   it('passes validationFeedback as additionalContext on a retry iteration', async () => {

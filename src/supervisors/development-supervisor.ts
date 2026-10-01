@@ -30,6 +30,7 @@ import {
 } from '../types';
 import { CodeGenerationAgent } from '../agents/code-generation-agent';
 import { CodeGenModuleRegistry } from '../layers/code-gen/registry';
+import { CodeGenHaltError } from '../layers/code-gen/interface';
 import { LLMProvider, createLLMProviderFromEnv } from '../llm';
 import {
   createStagingDirectory,
@@ -100,6 +101,36 @@ export function resolveValidateImplEdge(state: ValidateImplEdgeState): 'generate
   return '__end__';
 }
 
+/**
+ * Each iteration replaces codeGeneration, and a session file that iteration 1
+ * could not remove is "operator" data by iteration 2. Carry the earlier
+ * warnings forward, so HC2 still names those files.
+ */
+function keepEarlierWarnings(
+  result: CodeGenerationResult,
+  previous: CodeGenerationResult | undefined,
+): CodeGenerationResult {
+  const earlier = previous?.warnings ?? [];
+  if (earlier.length === 0) return result;
+  return { ...result, warnings: [...new Set([...earlier, ...(result.warnings ?? [])])] };
+}
+
+type CodeGenerationReadyState = typeof DevelopmentStateAnnotation.State & {
+  issue: IssueTemplate;
+  orchestrationPlan: OrchestrationPlan;
+  researchFindings: ResearchFindings;
+  contextAnalysis: ContextAnalysisResult;
+  options: DevelopmentOptions;
+};
+
+function hasCodeGenerationInputs(
+  state: typeof DevelopmentStateAnnotation.State,
+): state is CodeGenerationReadyState {
+  return Boolean(
+    state.issue && state.orchestrationPlan && state.researchFindings && state.contextAnalysis && state.options,
+  );
+}
+
 function checkRequirements(issue: IssueTemplate, codeGen: CodeGenerationResult) {
   return issue.issue.requirements.map(req => {
     const isImplemented = codeGen.implementedRequirements.includes(req);
@@ -134,6 +165,17 @@ function logRefinementLoop(score: number, issues: { issueType?: string }[], iter
 interface DevelopmentSupervisorOptions {
   llmProvider?: LLMProvider;
   codeGenRegistry?: CodeGenModuleRegistry;
+}
+
+/**
+ * The state update for a failed code-generation attempt. `codeGeneration` is
+ * named as absent, so a reader of the node's result can check it on every branch.
+ */
+interface CodeGenerationFailureUpdate {
+  errors: string[];
+  currentPhase: 'code-generation';
+  iterationCount: number;
+  codeGeneration?: undefined;
 }
 
 // Define the state annotation for type safety
@@ -245,8 +287,7 @@ export class DevelopmentSupervisor {
     const todoId = 'development-1';
     this.todos.start(todoId);
 
-    if (!state.issue || !state.orchestrationPlan || !state.researchFindings ||
-        !state.contextAnalysis || !state.options) {
+    if (!hasCodeGenerationInputs(state)) {
       this.todos.fail(todoId, 'Missing required data');
       return {
         errors: ['Missing required data for code generation'],
@@ -270,7 +311,7 @@ export class DevelopmentSupervisor {
       this.todos.complete(todoId);
 
       return {
-        codeGeneration: result,
+        codeGeneration: keepEarlierWarnings(result, state.codeGeneration),
         currentPhase: 'validation' as const,
         iterationCount: iteration,
         messages: [
@@ -282,14 +323,34 @@ export class DevelopmentSupervisor {
         ],
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.todos.fail(todoId, errorMessage);
-      return {
-        errors: [`Code generation failed: ${errorMessage}`],
-        currentPhase: 'code-generation' as const,
-        iterationCount: iteration,
-      };
+      return this.handleCodeGenerationFailure(todoId, iteration, error, state.codeGeneration?.warnings);
     }
+  }
+
+  /**
+   * Fail the todo and record the error, so the refinement loop can retry. A
+   * halt error is rethrown instead: cht-core is in a state where another
+   * attempt could destroy the operator's work, so the whole run must stop.
+   */
+  private handleCodeGenerationFailure(
+    todoId: string,
+    iteration: number,
+    error: unknown,
+    earlierWarnings: readonly string[] = [],
+  ): CodeGenerationFailureUpdate {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.todos.fail(todoId, errorMessage);
+    if (error instanceof CodeGenHaltError) {
+      // The halt ends the graph, and its state (and HC2) with it: print the
+      // survivors that earlier iterations reported, or no one sees them.
+      for (const warning of earlierWarnings) console.warn(`[Development Supervisor] ${warning}`);
+      throw error;
+    }
+    return {
+      errors: [`Code generation failed: ${errorMessage}`],
+      currentPhase: 'code-generation' as const,
+      iterationCount: iteration,
+    };
   }
 
   /**

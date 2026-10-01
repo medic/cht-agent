@@ -27,6 +27,7 @@ import {
 } from '../../interface';
 import { CrossFileIssue } from '../../../../types';
 import { compileCheck, CompileValidationResult } from '../../../../agents/compile-validator';
+import { getStashPolicy } from '../../../../utils/stash-policy';
 import { PlanItem, parsePlan } from '../../lib/plan';
 import { buildPlanPrompt } from '../../lib/prompts';
 import { buildFileManifest } from '../../lib/file-manifest';
@@ -36,13 +37,16 @@ import {
   snapshotChtCore,
   captureChtCoreDiff,
   rollbackChtCore,
+  settleRollback,
+  reportSafetyError,
   ChtCoreSnapshot,
-  RollbackResult,
+  WorkspaceSafetyError,
 } from './workspace';
 import { validateClaudeCLI } from '../../../../llm';
 import { readEnv } from '../../../../utils/env';
 import { isShutdownRequested } from '../../../../utils/shutdown';
 
+const LOG = '[claude-code-cli]';
 const PLAN_PHASE_TOOLS = ['Read', 'Grep', 'Glob'];
 const EXECUTE_PHASE_TOOLS = ['Read', 'Write', 'Edit', 'Grep', 'Glob'];
 
@@ -73,17 +77,25 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before snapshot');
 
     // Snapshot pre-run state so we can roll back after capture.
-    const snapshot = await snapshotChtCore(chtCorePath);
-    console.log(`[claude-code-cli] Snapshot: HEAD=${snapshot.headSha.substring(0, 7)} stash=${snapshot.stashRef ?? 'none'}`);
+    const snapshot = await snapshotChtCore(chtCorePath, getStashPolicy()).catch((err: unknown) => {
+      reportSafetyError(err, LOG);
+      throw err;
+    });
+    console.log(`[claude-code-cli] Snapshot: HEAD=${snapshot.headSha.substring(0, 7)} stash=${snapshot.stashName ?? 'none'}`);
 
     // Explicit try/catch instead of try/finally with throw: rollback may fail
     // and need to surface its own error, but throwing from `finally` is unsafe
     // (it would mask any error from the work block). Manage both errors here.
     const work = await this.runWorkBlock(input, snapshot, chtCorePath);
-    handleRollbackOutcome(await rollbackChtCore(chtCorePath, snapshot), snapshot, chtCorePath);
+    reportSafetyError(work.error, LOG);
+    const warnings = await rollBackAfterWork(chtCorePath, snapshot, work.error);
 
-    if (work.error) throw work.error;
-    return work.result!;
+    if (work.error) {
+      // The output that would carry the warnings is lost with the error.
+      for (const warning of warnings) console.warn(`${LOG} ${warning}`);
+      throw work.error;
+    }
+    return withWarnings(work.result!, warnings);
   }
 
   private requireChtCorePath(input: CodeGenModuleInput): string {
@@ -112,7 +124,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
    */
   private async runGeneration(
     input: CodeGenModuleInput,
-    snapshot: { headSha: string },
+    snapshot: ChtCoreSnapshot,
     chtCorePath: string,
   ): Promise<CodeGenModuleOutput> {
     if (isShutdownRequested()) return emptyResult(input, 'shutdown requested before plan');
@@ -127,6 +139,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
     const executeResult = await this.runExecutePhase(input, plan, chtCorePath);
     const captureResult = await this.captureWithRelaxedRetry({
       input, plan, executeResult, snapshotSha: snapshot.headSha, chtCorePath,
+      baselineUntracked: snapshot.baselineUntracked,
     });
     const compileResult = await runCompileGate(chtCorePath);
     const moduleIssues = collectModuleIssues({
@@ -170,10 +183,11 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       executeResult: { partialCompletion: boolean; reason?: string; resultText: string };
       snapshotSha: string;
       chtCorePath: string;
+      baselineUntracked: readonly string[];
     },
   ): Promise<{ files: Awaited<ReturnType<typeof captureChtCoreDiff>>; executeNoOp: boolean }> {
-    const { input, plan, executeResult, snapshotSha, chtCorePath } = opts;
-    let files = await captureChtCoreDiff(chtCorePath, snapshotSha);
+    const { input, plan, executeResult, snapshotSha, chtCorePath, baselineUntracked } = opts;
+    let files = await captureChtCoreDiff(chtCorePath, snapshotSha, baselineUntracked);
     console.log(`[claude-code-cli] Captured ${files.length} file change(s) from CLI session`);
 
     const shouldRetry =
@@ -187,7 +201,7 @@ export class ClaudeCodeCLICodeGenModule implements CodeGenModule {
       '[claude-code-cli] Zero files captured on STRICT execute; attempting relaxed retry (R17)'
     );
     await this.runExecutePhase(input, plan, chtCorePath, buildRelaxedExecutePrompt);
-    files = await captureChtCoreDiff(chtCorePath, snapshotSha);
+    files = await captureChtCoreDiff(chtCorePath, snapshotSha, baselineUntracked);
     console.log(
       `[claude-code-cli] After relaxed retry: ${files.length} file change(s) captured`
     );
@@ -315,51 +329,48 @@ function emptyResult(input: CodeGenModuleInput, reason: string): CodeGenModuleOu
 }
 
 /**
- * Inspect the rollback result and surface failures.
- *  - reset failed → emit recovery checklist + throw (cht-core may have leftover edits).
- *  - clean / stashPop failed → log warnings; do not throw.
- *  - all ok → silent.
+ * Roll back after the work block. A rollback failure is thrown as its own
+ * error, with the work error (if any) kept as its cause. Returns the non-fatal
+ * rollback warnings: the output was built before the rollback ran.
  */
-function handleRollbackOutcome(
-  rollback: RollbackResult,
-  snapshot: ChtCoreSnapshot,
+async function rollBackAfterWork(
   chtCorePath: string,
-): void {
-  const anyFailed =
-    rollback.reset === 'failed' ||
-    rollback.clean === 'failed' ||
-    rollback.stashPop === 'failed';
-  if (!anyFailed) return;
-
-  console.error('[claude-code-cli] ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:');
-  for (const e of rollback.errors) console.error(`[claude-code-cli]   - ${e}`);
-
-  if (rollback.reset === 'failed') {
-    emitRecoveryChecklist(snapshot, chtCorePath);
-    throw new Error(
-      `claude-code-cli rollback failed: ${rollback.errors.join('; ')}. ` +
-      `Inspect cht-core working tree before retrying.`
-    );
+  snapshot: ChtCoreSnapshot,
+  workError: unknown,
+): Promise<string[]> {
+  try {
+    const rollback = await rollbackChtCore(chtCorePath, snapshot, getStashPolicy());
+    return settleRollback(rollback, { logPrefix: LOG, label: 'claude-code-cli', chtCorePath, snapshot });
+  } catch (err) {
+    reportSafetyError(err, LOG);
+    throw withCause(err, workError);
   }
 }
 
-function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): void {
-  const recoveryLines: string[] = [
-    '',
-    '[claude-code-cli] To recover manually:',
-    `[claude-code-cli]   1. cd ${chtCorePath}`,
-    '[claude-code-cli]   2. git status                            # see what is modified',
-    '[claude-code-cli]   3. git diff                              # inspect changes',
-    `[claude-code-cli]   4. git reset --hard ${snapshot.headSha}   # DESTRUCTIVE; discards working-tree changes`,
-    '[claude-code-cli]   5. git stash list                        # check for orphan stashes',
-  ];
-  if (snapshot.stashRef) {
-    recoveryLines.push(
-      `[claude-code-cli]   6. git stash pop ${snapshot.stashRef}          # restore stashed pre-run state`
-    );
+function withWarnings(output: CodeGenModuleOutput, warnings: string[]): CodeGenModuleOutput {
+  if (warnings.length === 0) return output;
+  return { ...output, warnings: [...(output.warnings ?? []), ...warnings] };
+}
+
+/**
+ * Keep the thrown error's identity; add `cause` only when it has none. When it
+ * already has one, the work error cannot join the chain, so print it once.
+ */
+function withCause(err: unknown, cause: unknown): unknown {
+  if (cause === undefined) return err;
+  if (err instanceof Error && err.cause === undefined) {
+    err.cause = cause;
+    return err;
   }
-  recoveryLines.push('[claude-code-cli]   7. Re-run the agent only after the working tree is clean.');
-  for (const line of recoveryLines) console.error(line);
+  reportUnchainedWorkError(cause);
+  return err;
+}
+
+/** A safety error has printed its own lines already. */
+function reportUnchainedWorkError(workError: unknown): void {
+  if (workError instanceof WorkspaceSafetyError) return;
+  const text = workError instanceof Error ? workError.message : String(workError);
+  console.error(`${LOG} The session failed before the rollback: ${text}`);
 }
 
 /**
@@ -399,7 +410,7 @@ function logCompileGateResult(result: CompileValidationResult): void {
 }
 
 /**
- * A.15 LLM signal extraction. The execute prompt requires the CLI to emit a
+ * LLM signal extraction. The execute prompt requires the CLI to emit a
  * JSON summary block on its final line; this function parses it and surfaces
  * two flavors of `plan-discovered-missing` cross-file issues:
  *
@@ -498,7 +509,7 @@ function buildDeclaredPathIssues(
 }
 
 /**
- * V1 (A.12) post-execute reconciliation. The CLI is told via the execute prompt
+ * V1 post-execute reconciliation. The CLI is told via the execute prompt
  * to stay within the approved plan; this function flags any drift so the user
  * sees it at HC2 instead of silently accepting a diff that doesn't match HC1.
  *

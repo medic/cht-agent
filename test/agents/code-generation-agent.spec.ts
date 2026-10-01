@@ -118,6 +118,20 @@ describe('CodeGenerationAgent', () => {
   });
 
   describe('delegation to module', () => {
+    it("passes the module's warnings on to the result", async () => {
+      const moduleOutput: CodeGenModuleOutput = {
+        files: [{ path: 'api/controllers/contacts.js', content: 'module.exports = {};', purpose: 'Controller' }],
+        explanation: 'Generated 1 file',
+        warnings: ['Rollback could not remove these session files: "nr/"'],
+      };
+      generateStub.resolves(moduleOutput);
+      const agent = new CodeGenerationAgent({ llmProvider: mockProvider, codeGenRegistry: mockRegistry });
+
+      const result = await agent.generate(createInput());
+
+      expect(result.warnings).to.deep.equal(['Rollback could not remove these session files: "nr/"']);
+    });
+
     it('should call module with correctly shaped CodeGenModuleInput', async () => {
       const moduleOutput: CodeGenModuleOutput = {
         files: [{

@@ -6,8 +6,10 @@
  * gives it the same type-check: it materializes the generated files into a git
  * snapshot of cht-core, runs the shared compile validator, and always rolls
  * back. It degrades to a skip (never a hard error) when cht-core is not a usable
- * git workspace, so the module keeps its run-anywhere property. Only a failed
- * hard reset during rollback throws (cht-core left dirty; the run must halt).
+ * git workspace, so the module keeps its run-anywhere property. It halts the
+ * run (a halt error) when the operator's tree needs attention: a snapshot
+ * `stash`, `drift` or `reset` error, a rollback drift, or a failed reset or
+ * restore. It skips only on a snapshot `precondition` refusal or a plain error.
  */
 
 import * as fs from 'node:fs';
@@ -17,9 +19,13 @@ import { compileCheck, CompileValidationResult } from '../../../../agents/compil
 import {
   snapshotChtCore,
   rollbackChtCore,
+  settleRollback,
+  reportSafetyError,
+  isOperatorAbort,
   ChtCoreSnapshot,
-  RollbackResult,
+  WorkspaceSafetyError,
 } from '../claude-code-cli/workspace';
+import { getStashPolicy } from '../../../../utils/stash-policy';
 
 const LOG = '[claude-api compile-gate]';
 
@@ -144,47 +150,45 @@ async function runCompileDefensive(chtCorePath: string): Promise<CompileValidati
 }
 
 /**
- * Act on the rollback result. Throws ONLY when the hard reset failed (cht-core
- * is left dirty and the run must halt); clean / stash-pop failures are logged
- * but not fatal. Mirrors the claude-code-cli rollback policy.
+ * A failed snapshot leaves nothing for the gate to roll back. A `precondition`
+ * refusal (nothing was changed) prints all its lines, which hold the way out,
+ * and skips the compile gate; a plain error only skips it. A `stash`, `drift`
+ * or `reset` stop halts the run, because the operator's tree needs attention:
+ * the undo may have kept the stash, and its lines say how to recover. An
+ * operator Abort halts the run too, even on a `precondition` error.
  */
-function handleApiRollbackOutcome(
-  rollback: RollbackResult,
-  snapshot: ChtCoreSnapshot,
-  chtCorePath: string,
-): void {
-  const anyFailed =
-    rollback.reset === 'failed' || rollback.clean === 'failed' || rollback.stashPop === 'failed';
-  if (!anyFailed) return;
-
-  console.error(`${LOG} ROLLBACK INCOMPLETE; cht-core may be in an unexpected state:`);
-  for (const e of rollback.errors) console.error(`${LOG}   - ${e}`);
-
-  if (rollback.reset === 'failed') {
-    emitRecoveryChecklist(snapshot, chtCorePath);
-    throw new Error(
-      `claude-api compile gate rollback failed: ${rollback.errors.join('; ')}. ` +
-        'Inspect the cht-core working tree before retrying.',
-    );
+function snapshotFailure(err: unknown): CompileValidationResult {
+  if (!(err instanceof WorkspaceSafetyError)) {
+    console.warn(`${LOG} Compile gate skipped: snapshot failed: ${msg(err)}`);
+    return skipped(`snapshot failed: ${msg(err)}`);
   }
+  reportSafetyError(err, LOG);
+  if (err.kind !== 'precondition' || isOperatorAbort(err)) {
+    reportOperatorAbort(err);
+    throw err;
+  }
+  console.warn(`${LOG} Compile gate skipped (see the lines above).`);
+  return skipped(`snapshot failed: ${err.message}`);
 }
 
-/** Log a manual-recovery checklist when rollback left cht-core dirty. */
-function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): void {
-  const lines: string[] = [
-    '',
-    `${LOG} To recover manually:`,
-    `${LOG}   1. cd ${chtCorePath}`,
-    `${LOG}   2. git status`,
-    `${LOG}   3. git diff`,
-    `${LOG}   4. git reset --hard ${snapshot.headSha}   # DESTRUCTIVE; discards working-tree changes`,
-    `${LOG}   5. git stash list`,
-  ];
-  if (snapshot.stashRef) {
-    lines.push(`${LOG}   6. git stash pop ${snapshot.stashRef}   # restore stashed pre-run state`);
+/** The gate runs after the generation, so an Abort drops the files that this run generated. */
+function reportOperatorAbort(err: unknown): void {
+  if (isOperatorAbort(err)) console.error(`${LOG} The files generated in this run were not kept.`);
+}
+
+/**
+ * Roll back after the compile check; a failure prints its checklist once, then
+ * throws. Returns the non-fatal rollback warnings.
+ */
+async function rollBackGate(chtCorePath: string, snapshot: ChtCoreSnapshot): Promise<string[]> {
+  try {
+    const rollback = await rollbackChtCore(chtCorePath, snapshot, { ...getStashPolicy(), logPrefix: LOG });
+    return settleRollback(rollback, { logPrefix: LOG, label: 'claude-api compile gate', chtCorePath, snapshot });
+  } catch (err) {
+    reportSafetyError(err, LOG);
+    reportOperatorAbort(err);
+    throw err;
   }
-  lines.push(`${LOG}   7. Re-run only after the working tree is clean.`);
-  for (const line of lines) console.error(line);
 }
 
 /**
@@ -192,8 +196,9 @@ function emitRecoveryChecklist(snapshot: ChtCoreSnapshot, chtCorePath: string): 
  * git snapshot of cht-core behind a path-traversal guard, runs the shared
  * compile validator, and always rolls back. Returns a CompileValidationResult:
  * the compile issues fold into the module output's crossFileIssues, and a skip
- * sets compileGateSkipped / compileGateSkipReason. Throws only on a failed hard
- * reset during rollback.
+ * sets compileGateSkipped / compileGateSkipReason. Throws a halt error on a
+ * snapshot `stash`/`drift`/`reset` error, on a rollback drift, and on a failed
+ * reset or restore.
  */
 export async function runApiCompileGate(
   chtCorePath: string,
@@ -210,26 +215,33 @@ export async function runApiCompileGate(
 
   let snapshot: ChtCoreSnapshot;
   try {
-    snapshot = await snapshotChtCore(chtCorePath);
+    snapshot = await snapshotChtCore(chtCorePath, { ...getStashPolicy(), logPrefix: LOG });
   } catch (err) {
-    // snapshotChtCore throws on unmerged paths / git failures; nothing staged, so no rollback.
-    return skipped(`snapshot failed: ${msg(err)}`);
+    return snapshotFailure(err);
   }
 
-  let result: CompileValidationResult;
+  const result = await compileMaterialized(chtCorePath, files);
+
+  // Always roll back (plain sequential call, no throw-from-finally). A rollback
+  // drift, or a failed reset or restore, throws from here.
+  return withWarnings(result, await rollBackGate(chtCorePath, snapshot));
+}
+
+/** Write the in-bounds files and type-check them; any failure here degrades to a skip. */
+async function compileMaterialized(
+  chtCorePath: string,
+  files: ReadonlyArray<GeneratedFile>,
+): Promise<CompileValidationResult> {
   try {
     const written = materializeGuarded(chtCorePath, files);
-    result =
-      written.length === 0
-        ? skipped('no in-bounds files to type-check')
-        : await runCompileDefensive(chtCorePath);
+    return written.length === 0
+      ? skipped('no in-bounds files to type-check')
+      : await runCompileDefensive(chtCorePath);
   } catch (err) {
-    result = skipped(`materialization failed: ${msg(err)}`);
+    return skipped(`materialization failed: ${msg(err)}`);
   }
+}
 
-  // Always roll back (plain sequential call, no throw-from-finally). Only a
-  // failed hard reset throws, via handleApiRollbackOutcome.
-  const rollback = await rollbackChtCore(chtCorePath, snapshot);
-  handleApiRollbackOutcome(rollback, snapshot, chtCorePath);
-  return result;
+function withWarnings(result: CompileValidationResult, warnings: string[]): CompileValidationResult {
+  return warnings.length > 0 ? { ...result, warnings } : result;
 }

@@ -282,6 +282,7 @@ export class ClaudeApiCodeGenModule implements CodeGenModule {
       crossFileIssues: compile.issues.length > 0 ? compile.issues : undefined,
       compileGateSkipped: compile.skipped,
       compileGateSkipReason: compile.skipReason,
+      warnings: compile.warnings,
     };
   }
 

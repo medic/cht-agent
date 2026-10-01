@@ -3,6 +3,8 @@ import { CrossFileIssue, IssueTemplate, OrchestrationPlan, ResearchState } from 
 import { parseTicketFile } from '../utils/ticket-parser';
 import { saveResearchResults } from '../utils/research-results';
 import { isUsingCLIProvider } from '../llm';
+import { CodeGenHaltError } from '../layers/code-gen/interface';
+import { WorkspaceSafetyError, reportSafetyError } from '../layers/code-gen/modules/claude-code-cli/workspace';
 
 /**
  * H.4 (v6): per-issueType headings for the HC2 unresolved-issues banner.
@@ -65,8 +67,8 @@ function appendIssueGroup(lines: string[], type: string, items: CrossFileIssue[]
 
 /**
  * Render a separate banner when the compile gate did not run (e.g., tsc
- * unavailable in cht-core's node_modules). The user sees the remediation
- * command alongside the diff so they know what to do.
+ * unavailable in cht-core's node_modules). The user sees the next step for the
+ * reason alongside the diff: the install command only when tsc is missing.
  */
 export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: string): string => {
   return [
@@ -74,10 +76,26 @@ export const renderCompileGateSkipBanner = (skipReason: string, chtCorePath: str
     '⚠️  COMPILE GATE NOT RUN',
     '─'.repeat(70),
     `Reason: ${skipReason}`,
-    `Remediation: cd ${chtCorePath} && npm install`,
+    ...compileGateSkipGuidance(skipReason, chtCorePath),
     'You may still accept the diff (compile not verified), refine, or abandon.',
     '─'.repeat(70),
   ].join('\n');
+};
+
+/** A snapshot refusal printed its own way out above the banner. */
+function compileGateSkipGuidance(skipReason: string, chtCorePath: string): string[] {
+  if (skipReason.startsWith('tsc not available')) return [`Remediation: cd ${chtCorePath} && npm install`];
+  if (skipReason.startsWith('snapshot failed:')) return ['See the lines above for the cause.'];
+  return [];
+}
+
+/**
+ * Render the non-fatal warnings of a run (for example, session files that a
+ * rollback could not remove). Returns an empty string when there are none.
+ */
+export const renderWarningsBanner = (warnings: ReadonlyArray<string> | undefined): string => {
+  if (!warnings || warnings.length === 0) return '';
+  return ['', 'WARNINGS', '─'.repeat(70), ...warnings.map(w => `- ${w}`), '─'.repeat(70)].join('\n');
 };
 
 export const validateEnvironment = () => {
@@ -334,4 +352,26 @@ export const displayResults = (result: ResearchState, duration: string) => {
   console.log('   2. Validate research findings');
   console.log('   3. Proceed to Development Phase');
   console.log();
+};
+
+/**
+ * Print a run halt once: its lines (unless a layer printed them already), then
+ * one short line. No stack and no git argv. Returns false for any other error,
+ * which the caller prints with logRunError.
+ */
+export const reportRunHalt = (error: unknown, what: string): boolean => {
+  if (!(error instanceof CodeGenHaltError)) return false;
+  if (error instanceof WorkspaceSafetyError) reportSafetyError(error, '[cht-agent]');
+  else console.error(`[cht-agent] ${error.message}`);
+  console.error(`\n❌ ${what} stopped. See the lines above.`);
+  return true;
+};
+
+/** An error that is not a halt: the heading with the error, then its message and stack. */
+export const logRunError = (heading: string, error: unknown): void => {
+  console.error(heading, error);
+  if (error instanceof Error) {
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+  }
 };

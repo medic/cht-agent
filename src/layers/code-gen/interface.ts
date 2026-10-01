@@ -75,6 +75,12 @@ export interface CodeGenModuleOutput {
   compileGateSkipped?: boolean;
   /** Human-readable reason associated with {@link compileGateSkipped}. */
   compileGateSkipReason?: string;
+  /**
+   * Non-fatal notes the operator must see at HC2, for example session files a
+   * rollback could not remove. Unlike crossFileIssues, they never start a
+   * refinement iteration and never go to the LLM.
+   */
+  warnings?: string[];
 }
 
 export interface CodeGenModule {
@@ -82,4 +88,16 @@ export interface CodeGenModule {
   version: string;
   generate(input: CodeGenModuleInput): Promise<CodeGenModuleOutput>;
   validate?(): Promise<boolean>;
+}
+
+/**
+ * A module throws this when the run must stop instead of being retried, for
+ * example when cht-core is left in a state where another attempt could destroy
+ * the operator's work. The supervisor rethrows it; other errors are retried.
+ */
+export class CodeGenHaltError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'CodeGenHaltError';
+  }
 }

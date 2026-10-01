@@ -131,6 +131,13 @@ describe('ClaudeApiCodeGenModule generate() — compile gate folding', () => {
     expect(out.compileGateSkipped).to.not.equal(true);
   });
 
+  it('passes the gate rollback warnings through to the module output', async () => {
+    gateStub.resolves({ passed: true, issues: [], warnings: ['Rollback could not remove these session files: "x"'] });
+    const out = await loadModule().generate(baseInput);
+    expect(out.warnings).to.deep.equal(['Rollback could not remove these session files: "x"']);
+    expect(out.crossFileIssues).to.be.undefined;
+  });
+
   it('does not call the gate when shutdown is requested', async () => {
     const mod = loadModule({ shutdown: true });
     await mod.generate(baseInput);

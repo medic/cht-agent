@@ -50,6 +50,8 @@ export interface CompileValidationResult {
   skipReason?: string;
   /** Relative paths of every tsconfig*.json the validator ran against. */
   tsconfigsRun?: string[];
+  /** Non-fatal notes from around the check (the claude-api gate's rollback). */
+  warnings?: string[];
 }
 
 /**
