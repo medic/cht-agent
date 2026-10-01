@@ -5,9 +5,9 @@ domain: infrastructure
 domainFit: strong
 issueNumber: 10305
 issueUrl: https://github.com/medic/cht-core/issues/10305
-title: Disable CouchDB request rate limiter in the Docker default config (10-docker-default.ini)
-lastUpdated: '2026-06-22'
-summary: CouchDB's request rate limiter was throttling CHT's database traffic; this PR disables the limiter in the CouchDB Docker default config (`couchdb/10-docker-default.ini`).
+title: Stop enforcing CouchDB's failed-authentication lockout (chttpd_auth_lockout mode = warn) in couchdb/10-docker-default.ini
+lastUpdated: '2026-10-01'
+summary: 'To protect against a DoS attack (details in a private issue), this PR sets CouchDB''s failed-authentication lockout to `mode = warn` in the CouchDB Docker default config (`couchdb/10-docker-default.ini`), so repeated authentication failures are logged instead of locking the user and client IP out with 403s; the PR calls this disabling CouchDB''s rate limiter.'
 services:
   - api
   - sentinel
@@ -20,8 +20,8 @@ tags:
   - couchdb
   - rate-limiter
   - docker
-  - performance
-  - replication
+  - auth-lockout
+  - security
 related_workflows: []
 source_pr: medic/cht-core#10512
 source_sha: 5f59e9f836009c2e6e58b67a59ac4c967935ae9b
@@ -33,7 +33,7 @@ entities:
   - couchdb/10-docker-default.ini
 concepts:
   - rate limiting
-  - request throttling
+  - failed-authentication lockout
   - CouchDB server configuration
   - Docker default configuration
 related_issues: []
@@ -42,23 +42,23 @@ stale: false
 
 ## Problem
 
-CouchDB's built-in request rate limiter was throttling CHT's CouchDB traffic, causing legitimate high-volume requests to be rejected or slowed when the limiter engaged. User-visible symptoms are tracked in a private issue (medic-projects#8243), but the practical effect is degraded/failing CouchDB requests under load.
+Issue #10305 ("Protect against DoS attack", labelled Type: Security) keeps its details in a private issue (medic-projects#8243). The CouchDB image CHT builds on (`couchdb:3.5.0` at this PR) enforces CouchDB's failed-authentication lockout by default: the `[chttpd_auth_lockout]` mode defaults to enforce, so once 5 failed authentication attempts (the default threshold) for the same user and client IP happen within the default 5-minute lockout window, CouchDB rejects further attempts with a 403 for the rest of that window (CouchDB configuration docs).
 
 ## Root Cause
 
-CouchDB's rate limiter was active in CHT deployments because the bundled CouchDB Docker default config (`couchdb/10-docker-default.ini`) did not disable it, so CHT's trusted internal request volume hit the database server's throttle.
+Before this PR, `couchdb/10-docker-default.ini` had no `[chttpd_auth_lockout]` section, so CHT's CouchDB ran with CouchDB's default lockout mode, enforce.
 
 ## Solution
 
-Edited `couchdb/10-docker-default.ini` to disable CouchDB's rate limiter so CHT traffic is no longer throttled by the database server. Single-file, config-only change applied at the Docker-image default layer.
+The existing `couchdb/10-docker-default.ini` gained a `[chttpd_auth_lockout]` section with `mode = warn`; `couchdb/Dockerfile` copies that file into `/opt/couchdb/etc/default.d/`. In `warn` mode CouchDB only logs a warning when repeated authentication failures occur for a user and client IP, instead of rejecting requests with a 403, so the lockout is no longer enforced. The PR description calls this disabling CouchDB's rate limiter. Single-file, config-only change applied at the Docker-image default layer.
 
 ## Code Patterns
 
-CHT tunes its bundled CouchDB by editing the `.ini` files under `couchdb/` (e.g. `10-docker-default.ini`) that are baked into the CouchDB Docker image; override an upstream CouchDB default (here, the rate limiter) by setting the corresponding key in that default config rather than via per-deployment overrides. Watch INI comment syntax (`;`) — a review note flagged a stray `2`.
+CHT tunes its bundled CouchDB by editing `couchdb/10-docker-default.ini`, which `couchdb/Dockerfile` bakes into the CouchDB Docker image; override an upstream CouchDB default (here, the failed-authentication lockout mode) by setting the corresponding key in that default config rather than via per-deployment overrides.
 
 ## Design Choices
 
-Applied at the shared Docker-default config layer so every CHT CouchDB deployment inherits the setting, rather than documenting a per-instance override. Disabling the limiter outright (vs. raising its threshold) reflects that CHT's CouchDB serves trusted internal/CHT traffic that should not be self-throttled.
+Applied at the shared Docker-default config layer so every deployment running the CouchDB image built from `couchdb/Dockerfile` inherits the setting. `warn` rather than `off` keeps CouchDB tracking repeated authentication failures per user and client IP and logging a warning, while no longer rejecting requests; the PR sets no other lockout options, so the threshold and lockout window stay at CouchDB's defaults.
 
 ## Related Files
 
@@ -66,14 +66,14 @@ Applied at the shared Docker-default config layer so every CHT CouchDB deploymen
 
 ## Testing
 
-Config-only change with no automated tests added. Manually verified by checking out the branch and building dev Docker images (`npm ci; npm run build-dev; npm run local-images`), running on Docker 28 (Docker 27 hit an unrelated cht-upgrade-service issue #50).
+Config-only change; the PR adds no automated tests.
 
 ## Related Issues
 
-- #10305: Update CouchDB config to disable the rate limiter (full details in private medic-projects#8243)
+- None directly referenced.
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The change is a CouchDB Docker default config file (`couchdb/10-docker-default.ini`) that tunes the database server's operational request-throttling — i.e., how the deployed system runs — which squarely fits the infrastructure (Docker/deploy lifecycle) domain. It is a server deployment-config tweak, not a CouchDB data-layer/storage-engine internal like index or ID-generation design (which would be data-sync) and not CHT app configuration like translations/app_settings (which would be configuration); the data-sync adjacency exists only because the limiter affects replication throughput.
+The change is a CouchDB Docker default config file (`couchdb/10-docker-default.ini`) that sets how the database server handles repeated authentication failures — i.e., how the deployed system runs — which squarely fits the infrastructure (Docker/deploy lifecycle) domain. It is a CouchDB server setting baked into the image; no CHT login, session or app-settings code changed, even though the setting concerns authentication.

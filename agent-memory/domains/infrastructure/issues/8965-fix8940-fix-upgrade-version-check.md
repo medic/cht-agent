@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8940
 issueUrl: https://github.com/medic/cht-core/issues/8940
 title: Fix admin upgrade page version check comparing a version to a build identifier after deploy-info API change
-lastUpdated: '2026-06-23'
-summary: After the deploy-info API change (#8790), the admin upgrade page compared a plain version (4.6.0) against a build identifier (4.6.0.432424242), so it always reported the upgrade as not completed and showed an error card even on success. The version-check logic was corrected to compare the values consistently.
+lastUpdated: '2026-10-01'
+summary: After the deploy-info change for #8790 made its `version` a plain semver (4.6.0), the admin upgrade page still compared it with the target build identifier (4.6.0.432424242), so upgrades to tagged releases were reported as not completed and showed an error card even on success. The check now compares the target build with the deploy-info `build` field.
 services:
   - admin
 techStack:
@@ -34,25 +34,26 @@ concepts:
   - build vs version identifier
   - upgrade completion detection
   - deploy-info API contract
-related_issues: []
+related_issues:
+  - cht-core-8790
 stale: false
 ---
 
 ## Problem
 
-On the admin app upgrade page, completed upgrades were incorrectly reported as not completed — an error card was shown even when the upgrade succeeded. This occurred because the page compared the target version string (e.g. 4.6.0) against a build identifier (e.g. 4.6.0.432424242), which never matched.
+On the admin app upgrade page, completed upgrades were incorrectly reported as not completed — an error card was shown even when the upgrade succeeded. This occurred because the page compared the target build identifier (`$scope.upgradeDoc.to.build`, e.g. 4.6.0.432424242) against the `version` returned by `/api/deploy-info`, which since the #8790 fix is a plain version (e.g. 4.6.0), so the two never matched for a tagged release.
 
 ## Root Cause
 
-The deploy-info API change in #8790 altered the shape of the version/build information returned to the admin app. The upgrade controller's completion check still compared a bare semantic version against a value that now carried a build-number suffix, so the equality check always failed and the upgrade was deemed incomplete.
+Since the #8790 fix (PR #8794), `/api/deploy-info` returns as `version` the first semver-valid value of `ddoc.build_info?.version` and `ddoc.deploy_info?.build` (in api/src/services/deploy-info.js at this PR; on master in shared-libs/server-info/src/index.js) — for a tag build, the bare tag — while the build identifier is returned in `build`. Before this PR, the completion check in `getExistingDeployment` (admin/src/js/controllers/upgrade.js) still compared `expectedVersion`, taken from `$scope.upgradeDoc.to.build`, with `deployInfo.version`, so the equality check failed and the page logged `instance.upgrade.error.deploy` instead of treating the upgrade as complete.
 
 ## Solution
 
-Updated the upgrade-completion comparison in admin/src/js/controllers/upgrade.js to reconcile with the new deploy-info format (normalizing/extracting the comparable version from the build identifier) so a successful upgrade is detected correctly. Unit tests were updated to cover the version-vs-build comparison.
+A one-line fix in admin/src/js/controllers/upgrade.js. Before this PR, the completion check was `expectedVersion === deployInfo.version`; it is now `expectedVersion === deployInfo.build`, comparing the target build with the deployed build so a successful upgrade is detected and `reloadPage` runs. Unit tests were updated so their deploy-info and upgrade-doc fixtures carry `build` values distinct from `version`.
 
 ## Code Patterns
 
-When comparing deploy-info values, normalize a build identifier (version + build number suffix, e.g. 4.6.0.432424242) down to its semantic version before equality-checking against a target version, rather than comparing the raw strings — see admin/src/js/controllers/upgrade.js.
+When checking whether an upgrade landed, compare like with like: the target's `build` from the upgrade doc against the deploy-info `build`, not against its `version`, which has been normalized to semver since the #8790 fix and, for tag builds, no longer carries the build-number suffix — see admin/src/js/controllers/upgrade.js.
 
 ## Design Choices
 
@@ -65,15 +66,15 @@ Adapt the admin upgrade page's comparison to the new deploy-info API contract ra
 
 ## Testing
 
-Unit tests in admin/tests/unit/controllers/upgrade.spec.js were updated to exercise the corrected version-vs-build comparison. The fix was also manually reproduced and verified by spinning up a docker-helper instance, installing the 4.6.0-beta.4 build, upgrading to 4.6.0 via the admin app, and confirming the upgrade-completion behavior of the error card.
+Unit tests in admin/tests/unit/controllers/upgrade.spec.js were updated to exercise the corrected build-to-build comparison: the upgrade-doc and deploy-info fixtures now carry build identifiers (e.g. `build: '4.2.0.134'`) alongside plain versions. The check runs in the admin app that was loaded before the upgrade (on success `reloadPage` only re-enters the `upgrade` state), so a fix to it is only visible on upgrades started from a version that already contains it.
 
 ## Related Issues
 
-- #8940: admin upgrade page always reports the upgrade as not completed
-- #8790: deploy-info API change altered the returned version/build information format
+- #8940: "Admin app shows error after successful upgrade" — upgrading to the 4.6.0 beta tags showed the installation error card even though the installation succeeded
+- #8790: "`/api/deploy-info.version` is not semver valid for final releases" — its fix (PR #8794) made the deploy-info `version` a plain semver, which broke this check
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The admin upgrade page is upgrade-lifecycle tooling (operators use it to move a deployment between CHT versions), which the domain rubric explicitly enumerates under infrastructure. The bug is in detecting whether a version upgrade completed, not in any functional application feature.
+The admin upgrade page is upgrade-lifecycle tooling (operators use it to move a deployment between CHT versions). The bug is in detecting whether a version upgrade completed — comparing the upgrade doc's target build with what `/api/deploy-info` reports once the new version is running — not in any functional application feature.

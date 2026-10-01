@@ -1,13 +1,13 @@
 ---
 id: cht-core-8038
-category: improvement
+category: bug
 domain: infrastructure
 domainFit: strong
 issueNumber: 8038
 issueUrl: https://github.com/medic/cht-core/issues/8038
-title: Read the CHT builds-server URL from an environment variable instead of hardcoding it in the API and admin upgrade controllers
-lastUpdated: '2026-06-23'
-summary: The builds-server URL used by the in-app upgrade feature to discover available CHT versions was hardcoded; this change reads it from an environment variable so the build source can be configured per deployment.
+title: Make the admin upgrade page use the builds URL that API is configured with (BUILDS_URL) instead of a hardcoded staging URL
+lastUpdated: '2026-10-01'
+summary: 'The admin upgrade page hardcoded the staging builds-server URL, so when API was started with a different BUILDS_URL the page could not list versions. API now returns its configured buildsUrl in the GET /api/v2/upgrade response and the admin controller uses it, falling back to the old default.'
 services:
   - api
   - admin
@@ -45,23 +45,23 @@ stale: false
 
 ## Problem
 
-The URL of the CHT builds server — used by the in-app upgrade feature to list and fetch available versions/builds — was hardcoded in the API and admin upgrade controllers, so the build source could not be pointed elsewhere (e.g. a test or self-hosted builds server) without changing code.
+Before this PR, the admin upgrade page in `admin/src/js/controllers/upgrade.js` listed available versions from a hardcoded builds database, `const BUILDS_DB = 'https://staging.dev.medicmobile.org/_couch/builds_4';`. API already honoured a `BUILDS_URL` environment variable (`buildsUrl: BUILDS_URL || DEFAULT_BUILDS_URL`) and put `environment.buildsUrl` in the Content-Security-Policy `connectSrc` built in `api/src/routing.js`. So when API was launched with a different `BUILDS_URL`, the admin page still queried the default staging server, the CSP blocked that request, and issue #8038 reports the page showing "Error fetching available versions".
 
 ## Root Cause
 
-The builds-server URL was embedded as a hardcoded value in api/src/controllers/upgrade.js and the corresponding admin controller rather than being sourced from an environment variable / configuration.
+The builds URL was configurable only on the server. The browser-side admin controller cannot read API's process environment, and before this PR API did not pass the configured value on, so the controller always opened `pouchDB(BUILDS_DB)` on the hardcoded constant.
 
 ## Solution
 
-Updated the upgrade controllers to read the builds URL from an environment variable instead of the hardcoded constant, so operators can override the build source per deployment while preserving the existing default behaviour.
+`upgradeInProgress` in `api/src/controllers/upgrade.js` (routed by `app.get('/api/v2/upgrade', upgrade.upgradeInProgress);` in `api/src/routing.js`) now responds with `res.json({ upgradeDoc, indexers, buildsUrl: environment.buildsUrl })`. In `admin/src/js/controllers/upgrade.js`, `getCurrentUpgrade` stores that value in `apiBuildsUrl`, the hardcoded constant is renamed `DEFAULT_BUILDS_URL`, and `loadBuilds` opens `pouchDB(apiBuildsUrl || DEFAULT_BUILDS_URL)`, so the page queries whichever builds server API is configured with.
 
 ## Code Patterns
 
-Source an external-service endpoint from process.env (with a sensible default) rather than hardcoding it — applied in api/src/controllers/upgrade.js and propagated to admin/src/js/controllers/upgrade.js so the admin UI resolves the same configured URL.
+When a browser-side admin page needs a server-side setting, return it from an API response the page already requests instead of duplicating the value in the client: `buildsUrl: environment.buildsUrl` in the GET /api/v2/upgrade response in `api/src/controllers/upgrade.js`, consumed in `admin/src/js/controllers/upgrade.js` with `apiBuildsUrl || DEFAULT_BUILDS_URL` as the fallback.
 
 ## Design Choices
 
-An environment variable was chosen so the default builds source is unchanged for existing installs while allowing operators to override it (testing, staging, or self-hosted builds) without code changes — preferable to a hardcoded constant or a new persisted setting.
+The builds URL rides on the existing upgrade-status response rather than a new endpoint or a persisted setting. The admin controller keeps `DEFAULT_BUILDS_URL`, the same URL API uses as its default, as the fallback, so installs that never set `BUILDS_URL` behave as before.
 
 ## Related Files
 
@@ -73,11 +73,11 @@ An environment variable was chosen so the default builds source is unchanged for
 
 ## Testing
 
-Unit tests were added/updated for both the API upgrade controller (api/tests/mocha/controllers/upgrade.spec.js) and the admin upgrade controller (admin/tests/unit/controllers/upgrade.spec.js), plus routing coverage in api/tests/mocha/routing.spec.js, to verify the builds URL is resolved from the environment variable.
+The existing `admin/tests/unit/controllers/upgrade.spec.js` gained a 'should load builds from configured builds url' case asserting that `pouchDB` is opened with the `buildsUrl` returned by `/api/v2/upgrade`, and the default-path case now asserts `pouchDB` is opened with the staging default. `api/tests/mocha/controllers/upgrade.spec.js` asserts the `buildsUrl` field in the upgrade-status response, and `api/tests/mocha/routing.spec.js` now reads the admin constant as `DEFAULT_BUILDS_URL` when checking that API's CSP default builds URL includes it.
 
 ## Related Issues
 
-- #8038: use builds url from env var
+- #8038: "Admin app fails to get releases when a different staging server is passed through ENV to API" — this draft's issue.
 
 ## Domain Rationale
 

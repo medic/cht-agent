@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9707
 issueUrl: https://github.com/medic/cht-core/issues/9707
 title: Add nouveau pod and service to Helm charts for Kubernetes deployment
-lastUpdated: '2026-06-22'
-summary: The Helm charts had no way to deploy the nouveau full-text search component on Kubernetes. This adds a nouveau Deployment and Service that reuse the first CouchDB node's persistent volume instead of provisioning a separate one.
+lastUpdated: '2026-10-01'
+summary: 'The Helm charts had no way to deploy the nouveau full-text search component on Kubernetes. This adds a nouveau Deployment and Service that reuse the first CouchDB node''s persistent volume instead of provisioning a separate one. On master the standalone Deployment was later removed by PR #10482, which moved Nouveau into the CouchDB pod; see the stale-as-written banner.'
 services:
   - api
 techStack:
@@ -43,24 +43,41 @@ concepts:
   - freetext search backend deployment
 related_issues:
   - cht-core-10481
-stale: false
+  - cht-core-9542
+stale: true
 ---
+
+> **Epic child.** PR #10181 was squash-merged into the feature branch `9542_freetext_tco`
+> (`f1efb12c0`, 2025-08-05), not into master. That branch reached master as PR #10201
+> (`f1bdfc07c`, 2025-08-22). Its own PR number is stamped nowhere on master, and this
+> draft's `source_sha` is not on master. To resolve it, run
+> `git fetch origin +refs/pull/10201/head:refs/verify/pr10201` — the epic PR's head ref.
+>
+> **Superseded after landing (`stale-as-written`):** both templates reached master unchanged in
+> `f1bdfc07c`, but PR #10482 (`b6fea049f`, 2025-11-26) deleted
+> scripts/build/helm/templates/nouveau/deployment.yaml and put the `cht-couchdb-nouveau` container
+> into the CouchDB pod (in a cluster, only the `couchdb-1` pod) in
+> scripts/build/helm/templates/couchdb/deployment.yaml — a separate pod attaching the CouchDB volume
+> blocked 5.x upgrades on AWS, where most EBS volume types cannot multi-attach (#10481) — and repointed the `nouveau` Service's selector at the CouchDB pod. PR #11126 (`de91ec432`) then
+> gave every CouchDB node its own sidecar and a `nouveau-{{ $nodeNumber }}` Service. So the separate single
+> Nouveau pod, its Deployment and the Service selector `cht.service: nouveau` exist only at this
+> PR; on master only scripts/build/helm/templates/nouveau/service.yaml remains, rewritten.
 
 ## Problem
 
-Nouveau, the new CouchDB full-text search backend, had no deployment definition in the Helm charts, so there was no pod or service to run it on Kubernetes clusters and freetext search could not be served by nouveau in Helm deployments.
+Before this PR, Nouveau, the new CouchDB full-text search backend, had no deployment definition in the Helm charts, so there was no pod or service to run it on Kubernetes clusters and freetext search could not be served by nouveau in Helm deployments.
 
 ## Root Cause
 
-The Helm chart templates under scripts/build/helm/templates/ contained no nouveau pod or service definitions because nouveau is a newly introduced component in the CHT stack.
+At this PR's parent, the Helm chart templates under scripts/build/helm/templates/ contained no nouveau pod or service definitions because nouveau is a newly introduced component in the CHT stack.
 
 ## Solution
 
-Adds a Kubernetes Deployment (deployment.yaml) and Service (service.yaml) for nouveau under the Helm templates. Nouveau mounts the same persistent volume as the first CouchDB node (no separate volume), runs as a single pod/instance even when CouchDB is clustered, mounts data on a hardcoded subdirectory that ignores preexisting-data settings (so indexes rebuild on new deployments), and copies tolerations from the existing couchdb template. The tests/utils harness was updated to account for the new pod/service.
+Adds a Kubernetes Deployment (scripts/build/helm/templates/nouveau/deployment.yaml: `name: cht-couchdb-nouveau`, `replicas: 1`, strategy `type: Recreate`) and Service (scripts/build/helm/templates/nouveau/service.yaml: `name: nouveau`, port 5987, selector `cht.service: nouveau`) for nouveau under the Helm templates; the Service name matches the `url = http://nouveau:5987` that couchdb/10-docker-default.ini gives CouchDB. The container runs `{{ .Values.upstream_servers.docker_registry }}/cht-couchdb-nouveau:{{ .Values.cht_image_tag }}` and mounts `/data/nouveau` from the first CouchDB node's storage — the `couchdb-1-claim0` claim when `couchdb.clusteredCouchEnabled` is true, otherwise `couchdb-claim0`, and on a `k3s-k3d` cluster the `preExistingDiskPath-1` hostPath — so there is no separate volume. It runs as a single pod/instance even when CouchDB is clustered, mounts data on the hardcoded `subPath: data` in scripts/build/helm/templates/nouveau/deployment.yaml (at this PR; #10482 deleted that file) instead of CouchDB's `couchdb_data.dataPathOnDiskForCouchDB` setting (so indexes rebuild after a fresh deployment even with preexisting data). It copies the `tolerations` block from scripts/build/helm/templates/couchdb/deployment.yaml. In tests/utils/index.js, the `SERVICES` map gained `'couchdb-nouveau': 'couchdb-nouveau'`.
 
 ## Code Patterns
 
-New Helm templates in scripts/build/helm/templates/nouveau/ (deployment.yaml + service.yaml) follow the existing couchdb template structure; the nouveau Deployment reuses the first CouchDB node's PVC for index storage and copies the couchdb template's tolerations.
+At this PR, the Helm templates scripts/build/helm/templates/nouveau/deployment.yaml and scripts/build/helm/templates/nouveau/service.yaml follow the existing couchdb template structure; the nouveau Deployment reuses the first CouchDB node's PVC (on `k3s-k3d`, its `preExistingDiskPath-1` hostPath) for index storage and copies the couchdb template's tolerations.
 
 ## Design Choices
 
@@ -68,21 +85,23 @@ Reuses CouchDB's volume rather than provisioning a separate nouveau volume becau
 
 ## Related Files
 
-- scripts/build/helm/templates/nouveau/deployment.yaml
-- scripts/build/helm/templates/nouveau/service.yaml
-- scripts/build/helm/templates/couchdb/deployment.yaml
+- scripts/build/helm/templates/nouveau/deployment.yaml (added; removed on master by PR #10482)
+- scripts/build/helm/templates/nouveau/service.yaml (added; rewritten on master by PR #10482 and PR #11126)
 - tests/utils/index.js
+- scripts/build/helm/templates/couchdb/deployment.yaml (not changed by this PR; source of the copied `tolerations` block)
 
 ## Testing
 
-Updated the tests/utils/index.js test harness to account for the new nouveau pod and service; the nouveau Helm templates pass all validation tests across all deployment scenarios.
+No test specs changed. In the tests/utils/index.js harness, the new `SERVICES` entry makes `getContainerName` (`` isDocker() ? `${project}-${service}-1` : `deployment/cht-${service}` ``) produce `deployment/cht-couchdb-nouveau` outside Docker — the new Deployment's name — so `CONTAINER_NAMES` covers Nouveau. Under Docker the same entry resolves to `<project>-couchdb-nouveau-1`, which does not match the compose service `nouveau`; PR #11162 later mapped it to `nouveau` so Nouveau's CI logs are saved.
 
 ## Related Issues
 
-- #9707: Add nouveau full-text search support to the CHT (Helm chart deployment)
+- #9707: "Helm Charts: Support Nouveau in CHT Deploy script and upgrades and docs" — this PR's issue; it asked that new Kubernetes deployments and upgrades of existing ones account for Nouveau, possibly through Helm chart additions
+- #10481: "Cannot upgrade to 5.x in AWS due to Persistent Volume settings" — the separate Nouveau pod mounting CouchDB's volume blocked 5.x upgrades on AWS, where most EBS volume types cannot multi-attach; its fix, PR #10482, replaced this PR's Deployment with a sidecar in the CouchDB pod
+- #9542: "Reduce disk space with CouchDB Nouveau (TCO v1)" — the Nouveau epic this PR was delivered under
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The PR adds Helm Deployment and Service templates to deploy the nouveau pod — pure operational/deployment lifecycle work, and Helm is canonically infrastructure. It changes how the system is shipped and run rather than touching nouveau search-index design or application behavior, so it is a strong infrastructure fit (not the data-sync bucket reserved for nouveau index internals).
+The PR adds two Helm templates, scripts/build/helm/templates/nouveau/deployment.yaml and scripts/build/helm/templates/nouveau/service.yaml, plus one test-harness mapping: it defines how the Nouveau server is scheduled on Kubernetes, which volume it mounts and how CouchDB reaches it. It changes how the system is shipped and run rather than Nouveau index definitions or application behavior.

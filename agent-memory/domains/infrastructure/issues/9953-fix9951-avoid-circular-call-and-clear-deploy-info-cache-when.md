@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9951
 issueUrl: https://github.com/medic/cht-core/issues/9951
 title: Avoid circular call and clear deploy info cache when finalizing a CHT version upgrade
-lastUpdated: '2026-06-22'
-summary: Upgrade e2e tests were failing because finalizing an upgrade hit a circular call and left stale cached deploy info. The fix breaks the circular call and clears the deploy info cache at finalization so the newly deployed version's info is re-read.
+lastUpdated: '2026-10-01'
+summary: Upgrade e2e tests were failing because finalizing an upgrade left stale cached deploy info. The fix refreshes the deploy info cache at finalization so the newly deployed version's info is re-read, and breaks a circular call between shared-libs/couch-request and shared-libs/environment by adding the user-agent only to external requests.
 services:
   - api
 techStack:
@@ -38,28 +38,35 @@ concepts:
   - circular dependency between shared libraries
   - CouchDB-backed deploy_info metadata
 related_issues: []
-stale: false
+stale: true
 ---
+
+> **Paths are as of this PR, not as of master.** On master, `getDeployInfo`, `getVersion` and
+> the `deployInfoCache` live in shared-libs/server-info/src/index.js, moved out of
+> shared-libs/environment/src/index.js by PR #9909 (`1b0ed339d`, 2025-05-22). On master,
+> `finalize` in api/src/services/setup/upgrade-steps.js calls `serverInfo.getDeployInfo(true)`,
+> and `getUserAgent` in shared-libs/couch-request/src/couch-request.js lazy-loads
+> `@medic/server-info`. The `isInternalRequest` guard added here is still on master.
 
 ## Problem
 
-Upgrade end-to-end tests (performing an upgrade from the current branch to master) were failing. When finalizing a CHT version upgrade, the finalization path triggered a circular call and the cached deploy info was never refreshed, leaving the system holding stale deploy/version information after the upgrade completed.
+Upgrade end-to-end tests (performing an upgrade from the current branch to master) were failing. Finalizing a CHT version upgrade never refreshed the cached deploy info, so the API (at this PR, api/src/services/deploy-info.js returns `environment.getDeployInfo()`) kept serving the pre-upgrade deploy/version information after the upgrade completed.
 
 ## Root Cause
 
-The deploy info cache held in shared-libs/environment was not invalidated when an upgrade was finalized, and the finalization path produced a circular call between the deploy-info lookup in shared-libs/environment and shared-libs/couch-request calling back into each other, breaking the upgrade flow.
+The deploy info cache held in shared-libs/environment was not invalidated when an upgrade was finalized. Before this PR, every outgoing request that lacked a user-agent also looked up deploy info: `setRequestOptions` in shared-libs/couch-request/src/couch-request.js set the header via `getUserAgent`, which awaits `environment.getVersion()` and so `getDeployInfo()` — and `getDeployInfo` in shared-libs/environment/src/index.js fetches the ddoc through `@medic/couch-request` itself. At this PR's parent, that circular call was kept from recursing only because `getDeployInfo` passed a hard-coded `'user-agent': 'Community Health Toolkit'` header. Both behaviours arrived with PR #9937 (`9b4546714`), which the diagnosis on #9951 names as the likely cause.
 
 ## Solution
 
-Broke the circular call in the upgrade finalization path and explicitly cleared the deploy info cache in shared-libs/environment when finalizing the upgrade so the newly deployed version's deploy info is re-read. Adjusted shared-libs/couch-request accordingly and updated the affected unit tests.
+At this PR, `getDeployInfo` in shared-libs/environment/src/index.js gained a `refresh = false` parameter that bypasses the cache (`if (deployInfoCache && !refresh)`), and `finalize` in api/src/services/setup/upgrade-steps.js ends with `await environment.getDeployInfo(true);`, so the newly deployed version's deploy info is re-read and re-cached. The circular call was broken in shared-libs/couch-request/src/couch-request.js: a new `isInternalRequest` helper compares the request URL's hostname with `environment.host`, and the user-agent is added only to external requests, so internal CouchDB requests no longer carry one and `getDeployInfo` dropped its hard-coded user-agent header. The affected unit tests were updated.
 
 ## Code Patterns
 
-Tie cache invalidation to a lifecycle event: clear the deploy info cache (shared-libs/environment) from api/src/services/setup/upgrade-steps.js at upgrade finalization rather than disabling caching. Decouple shared libs (couch-request <-> environment) to avoid circular require/call chains.
+Tie cache invalidation to a lifecycle event: refresh the deploy info cache (`getDeployInfo(true)`, shared-libs/environment at this PR) from api/src/services/setup/upgrade-steps.js at upgrade finalization rather than disabling caching. Break a circular call between shared libs by narrowing when it happens: at this PR, couch-request asks environment for the version (for the user-agent) only on external requests, so internal CouchDB requests, including `getDeployInfo`'s own ddoc fetch, never call back into environment.
 
 ## Design Choices
 
-Explicitly clearing the cache at the finalization point preserves the performance benefit of caching deploy info while guaranteeing freshness immediately after an upgrade; restructuring the call path eliminates the circular dependency at its source instead of suppressing the symptom.
+Explicitly refreshing the cache at the finalization point preserves the performance benefit of caching deploy info while guaranteeing freshness immediately after an upgrade; skipping the user-agent for internal requests removes the circular call for every CouchDB request instead of relying on each caller (as `getDeployInfo` did) to pre-set a user-agent header.
 
 ## Related Files
 
@@ -73,14 +80,16 @@ Explicitly clearing the cache at the finalization point preserves the performanc
 
 ## Testing
 
-Updated mocha unit tests for upgrade-steps, couch-request, and the environment lib to cover the cache-clearing and non-circular finalization behavior; also adjusted the rapidpro SMS e2e spec. The change targets the previously failing upgrade e2e suite (upgrade from current branch to master).
+In api/tests/mocha/services/setup/upgrade-steps.spec.js the `finalize` test asserts `environment.getDeployInfo.calledOnceWithExactly(true)`; shared-libs/environment/test/index.spec.js gained 'should clear cache when requested' (the cached value is served until `getDeployInfo(true)` re-fetches); shared-libs/couch-request/test/couch-request.js dropped the user-agent from its internal-request expectations and gained 'should add user-agent header to external requests'. The existing tests/e2e/default/sms/rapidpro.wdio-spec.js gained an assertion that outgoing RapidPro requests carry a `Community Health Toolkit/` user-agent. The change targets the previously failing upgrade e2e suite (upgrade from current branch to master).
 
 ## Related Issues
 
-- #9951: Upgrade e2e tests failing when performing an upgrade from the current branch to master
+- #9951: "Upgrade e2e tests are failing" — the upgrade-from-current-branch-to-master e2e spec timed out waiting for "Deployment complete"; the issue's diagnosis is deploy info cached right after the upgrade
+- PR #9937: "feat(#9936): add user-agent for all outgoing RapidPro requests" — added the couch-request user-agent lookup and the hard-coded header in `getDeployInfo` that this PR replaced
+- PR #9909: "feat(#9885): adds new meta audit database" — later moved `getDeployInfo` into shared-libs/server-info
 
 ## Domain Rationale
 
 **Fit:** strong
 
-This is CHT upgrade tooling — the api upgrade-steps service that finalizes a version upgrade plus the deploy-info plumbing in shared libs. Per the classification seeds, upgrade/deploy lifecycle work is canonically infrastructure, not application behavior.
+This is CHT upgrade tooling — the api upgrade-steps service that finalizes a version upgrade plus the deploy-info plumbing in shared libs. The fix lands in `finalize` (api/src/services/setup/upgrade-steps.js), the step that completes an upgrade, and in the deploy-info cache that api/src/services/deploy-info.js serves; the couch-request change only decides which requests carry a user-agent header.

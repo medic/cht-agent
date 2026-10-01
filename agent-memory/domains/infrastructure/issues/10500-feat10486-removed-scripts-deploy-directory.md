@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10486
 issueUrl: https://github.com/medic/cht-core/issues/10486
 title: Remove unused and unmaintained scripts/deploy directory (Helm-based cht-deploy tooling)
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-10-01'
 summary: The scripts/deploy directory held an unused, unmaintained Helm-based cht-deploy script that tried to launch instances from old/deleted helm charts and confused community deployers. It was deleted entirely to steer users toward official self-serve deployment paths.
 services:
   - api
@@ -42,46 +42,46 @@ concepts:
   - Helm chart deployment
   - Kubernetes orchestration
   - dead code removal
-  - monorepo workspace configuration
+  - root npm script and lint configuration cleanup
 related_issues: []
 stale: false
 ---
 
 ## Problem
 
-The scripts/deploy directory contained the cht-deploy deployment script which was unused and unmaintained. Its continued existence was confusing because it would attempt to launch CHT instances using old helm charts that are no longer maintained or have already been deleted, misleading community members trying to self-deploy.
+Before this PR, the scripts/deploy directory contained the cht-deploy deployment script, which the issue describes as unused and unmaintained. Its continued existence was confusing because it would attempt to launch CHT instances using old helm charts that the issue says are no longer maintained or have already been deleted, misleading community members trying to self-deploy. At this PR's parent, scripts/deploy/src/config.js defaulted `CHT_CHART_NAME` to `'medic/cht-chart-4x'` and `MEDIC_REPO_URL` to `'https://docs.communityhealthtoolkit.org/helm-charts'`, the chart repository that scripts/deploy/README.md identified as medic/helm-charts, although cht-core had carried its own chart in-repo under scripts/build/helm since PR #10051. On master the CHT Helm chart still lives at scripts/build/helm.
 
 ## Root Cause
 
-Legacy deployment tooling left in the repository after the project shifted to official self-serve deployment workflows and documentation on cht-docs. The script still referenced deprecated/removed helm charts, so it could no longer produce a working deployment.
+Legacy deployment tooling left in the repository after the project moved to pointing the community at official self-serve deployment paths, workflows and instructions. The script still defaulted to the external `medic/cht-chart-4x` chart, so it would launch instances from charts the issue says the project no longer maintains.
 
 ## Solution
 
-Deleted the entire scripts/deploy directory — the cht-deploy entrypoint, src modules (certificate.js, config.js, error.js, install.js, prepare.sh), helm/argument-validation tests, and the kubectl troubleshooting helpers (get-all-logs, restart-deployment, view-logs, etc.). Cleaned up the now-dangling references in the root eslint.config.js and package.json (workspace/lint configuration).
+Deleted the entire scripts/deploy directory — the scripts/deploy/cht-deploy entrypoint, the modules scripts/deploy/src/certificate.js, scripts/deploy/src/config.js, scripts/deploy/src/error.js, scripts/deploy/src/install.js and scripts/deploy/src/prepare.sh, the three mocha specs under scripts/deploy/tests/, and the seven kubectl troubleshooting helpers under scripts/deploy/troubleshooting/ (describe-deployment, get-all-logs, get-volume-binding, list-all-resources, list-deployments, restart-deployment, view-logs). Removed the now-dangling references: the `files: ['scripts/deploy/**/*']` override (setting `sourceType: 'module'`) in the root eslint.config.js, and, in the root package.json, the `unit-cht-deploy` npm script (`"cd scripts/deploy && npm test"`) together with its `npm run unit-cht-deploy` step in `ci-compile`.
 
 ## Code Patterns
 
-When decommissioning a sub-package in a monorepo, remove its workspace entry from the root package.json and any path references from eslint.config.js so lint/build no longer target the deleted tree.
+When decommissioning a sub-package that is not an npm workspace (at this PR the root package.json `workspaces` list was only `./shared-libs/*`), remove the root npm scripts that invoke it and any path-scoped override in eslint.config.js, so lint and CI no longer target the deleted tree.
 
 ## Design Choices
 
-Chose full decommissioning over updating the script to current helm charts, because the project is intentionally pushing users to official, documented self-serve deployment paths rather than maintaining an in-repo deploy script.
+Chose full decommissioning over the issue's alternative of bringing the script back to life, because the project is intentionally pushing users to official, documented self-serve deployment paths rather than maintaining an in-repo deploy script.
 
 ## Related Files
 
-- scripts/deploy/cht-deploy
-- scripts/deploy/src/install.js
-- scripts/deploy/package.json
+- scripts/deploy/cht-deploy (deleted)
+- scripts/deploy/src/install.js (deleted)
+- scripts/deploy/package.json (deleted)
 - eslint.config.js
 - package.json
 
 ## Testing
 
-No new tests were required for a removal; the directory's own tests (helm.test.js, package-json-validate.test.js, validate-arguments.test.js) were deleted along with the rest. Correctness is confirmed by the monorepo continuing to lint/build after the workspace and eslint references were removed.
+No tests were added for a removal. The directory's own specs (scripts/deploy/tests/helm.test.js, scripts/deploy/tests/package-json-validate.test.js, scripts/deploy/tests/validate-arguments.test.js) were deleted along with the rest, and with them the root `unit-cht-deploy` script that `ci-compile` used to run them.
 
 ## Related Issues
 
-- #10486: scripts/deploy (cht-deploy) is unused, unmaintained, and references deleted helm charts; requested immediate decommissioning
+- #10486: "Remove scripts/deploy" — this draft's issue; it reported scripts/deploy as unused, unmaintained and launching instances from old or deleted helm charts, and asked for immediate decommissioning (reviving the script was the alternative considered).
 
 ## Domain Rationale
 

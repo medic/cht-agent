@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 9923
 issueUrl: https://github.com/medic/cht-core/issues/9923
 title: Add environment variable to control whether CouchDB overrides the system ulimit on container startup
-lastUpdated: '2026-06-22'
-summary: CouchDB failed to start in environments that do not permit running the `ulimit` command because the Docker entrypoint unconditionally tried to override the system ulimit. The fix gates this behavior behind an environment variable (defaulting to existing behavior) and adds remediation-oriented logging.
+lastUpdated: '2026-10-01'
+summary: CouchDB failed to start in environments that do not allow setting `ulimit` because the Docker entrypoint unconditionally tried to override the system ulimit. The fix gates this behavior behind the `DEFAULT_ULIMIT` environment variable (defaulting to existing behavior) and adds remediation-oriented logging.
 services:
   - admin
 techStack:
@@ -47,23 +47,23 @@ stale: false
 
 ## Problem
 
-On hosts/systems that disallow running the `ulimit` command (e.g. locked-down or restricted environments), the CouchDB container failed to start, blocking deployment and upgrades.
+On hosts/systems that do not allow setting `ulimit` (e.g. locked-down or restricted environments), the CouchDB container failed to start, blocking deployment and upgrades. The issue reproduces it with the 4.17 CouchDB compose file on an EC2 t2.micro, where the container exits with `ulimit: error setting limit (Operation not permitted)`.
 
 ## Root Cause
 
-couchdb/docker-entrypoint.sh unconditionally invoked `ulimit` to raise the open-file-descriptor limit on startup; when the system forbade modifying ulimit, that command failed and aborted CouchDB container startup.
+Before this PR, couchdb/docker-entrypoint.sh unconditionally ran `su -c "ulimit -n 100000 && exec $@" couchdb` to raise the open-file-descriptor limit on startup; when the system forbade modifying ulimit, that command failed and aborted CouchDB container startup.
 
 ## Solution
 
-Introduced an environment variable that controls whether the entrypoint attempts to override the system ulimit. When disabled, CouchDB starts using the system-provided limits instead of failing. Added clear logging that explains the failure and how to remediate it, and updated the admin upgrade controller plus e2e upgrade test config/utilities to account for the new variable.
+Introduced the `DEFAULT_ULIMIT` environment variable in couchdb/docker-entrypoint.sh. When `"$DEFAULT_ULIMIT" = true`, the entrypoint reassigns `DEFAULT_ULIMIT=$(ulimit)`, logs `WARNING: Starting CouchDb using system default ulimit of $DEFAULT_ULIMIT` (so the message shows that `$(ulimit)` value) and starts CouchDB with `su -c "exec $*" couchdb`, keeping the system-provided limits instead of failing. Otherwise it still runs `su -c "ulimit -n 100000 && exec $*" couchdb`, and on a non-zero exit prints "CouchDb failed to start. If the reported error is 'ulimit: error setting limit (Operation not permitted)', set the DEFAULT_ULIMIT environment variable to true and restart the service." before exiting with the same code. The other three files carry upgrade-flow diagnostics unrelated to the variable: admin/src/js/controllers/upgrade.js now logs `$log.error('expected version', expectedVersion, 'does not match current version', deployInfo.build);` before reporting a deploy error, tests/e2e/upgrade/wdio.conf.js calls `await utils.saveLogs();` in `tearDownServices`, and tests/utils/index.js exports its existing `saveLogs`.
 
 ## Code Patterns
 
-Gate optional, environment-specific startup behavior behind an environment variable in docker-entrypoint.sh instead of running it unconditionally, and emit actionable operator-facing log messages describing the error and the fix (couchdb/docker-entrypoint.sh).
+Gate optional, environment-specific startup behavior behind an environment variable in couchdb/docker-entrypoint.sh instead of running it unconditionally, and emit actionable operator-facing log messages describing the error and the fix. Note that the warning prints `$(ulimit)`, the shell's default (file-size) limit, not the `ulimit -n` open-files value the other branch sets.
 
 ## Design Choices
 
-Implemented as an environment-variable toggle that preserves the existing ulimit-override behavior by default, so current deployments are unaffected while constrained environments can opt out — backwards compatible with no data/config migration required.
+Implemented as an environment-variable toggle that preserves the existing ulimit-override behavior by default, so current deployments are unaffected while constrained environments can opt out — backwards compatible with no data/config migration required. No compose template or Helm chart in the repo sets `DEFAULT_ULIMIT`, at this PR or on master; operators add it to the CouchDB container environment themselves.
 
 ## Related Files
 
@@ -74,14 +74,14 @@ Implemented as an environment-variable toggle that preserves the existing ulimit
 
 ## Testing
 
-Updated the e2e upgrade WebdriverIO config (tests/e2e/upgrade/wdio.conf.js) and shared test utilities (tests/utils/index.js) to support/exercise the new environment variable through the upgrade flow.
+No test exercises `DEFAULT_ULIMIT`. The changes to the e2e upgrade WebdriverIO config (tests/e2e/upgrade/wdio.conf.js) and shared test utilities (tests/utils/index.js) only save the services' logs (per container, or per pod under K3D) when the upgrade suite tears down its services.
 
 ## Related Issues
 
-- #9923: CouchDB fails to start when the system does not allow running the `ulimit` command
+- #9923: "CouchDb fails to start when system does not allow setting `ulimit`" — this draft's issue; the CouchDB container exits with `ulimit: error setting limit (Operation not permitted)` on hosts that forbid raising the limit.
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The change modifies the CouchDB Docker entrypoint script and the upgrade tooling/e2e upgrade tests to control container runtime behavior (whether to override the system ulimit) — pure operational/deployment lifecycle (Docker runtime + upgrade tooling), which is the canonical infrastructure domain.
+The change modifies the CouchDB Docker entrypoint script to control container runtime behavior (whether to override the system ulimit), and adds upgrade-flow diagnostics in the admin upgrade controller and the e2e upgrade teardown — operational/deployment lifecycle (Docker runtime + upgrade tooling), which is the canonical infrastructure domain.

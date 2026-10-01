@@ -6,8 +6,8 @@ domainFit: weak
 issueNumber: 10559
 issueUrl: https://github.com/medic/cht-core/issues/10559
 title: Add zizmor static analysis to GitHub Actions CI and harden all workflows (pin action SHAs, scope GITHUB_TOKEN permissions, fix script injection)
-lastUpdated: '2026-06-22'
-summary: CHT Core's GitHub Actions workflows carried supply-chain and privilege risks (unpinned actions, broad default token permissions, a script-injection vector). This PR integrates the zizmor static analyzer into CI and remediates every finding across all 9 existing workflows.
+lastUpdated: '2026-10-01'
+summary: CHT Core's GitHub Actions workflows carried supply-chain and privilege risks (unpinned actions, no explicit token permissions, a script-injection vector). This PR integrates the zizmor static analyzer into CI, fixes most findings across all 9 existing workflows and the two deploy composite actions, and records the accepted remainder as suppressions in .github/zizmor.yml.
 services:
   - api
   - webapp
@@ -52,28 +52,32 @@ concepts:
   - SARIF Code Scanning integration
   - automated dependency updates
 related_issues: []
-stale: false
+stale: true
 ---
 
 ## Problem
 
-Running zizmor against the repo surfaced systemic CI security issues: 45+ unpinned action references (mutable @vN tags vulnerable to silently-moved tags), 7 of 9 workflows with no explicit permissions block (granting GITHUB_TOKEN broad write access by default), a script-injection vulnerability in release-notes.yml where the free-text workflow_dispatch input `milestone` was interpolated directly into a `run:` shell command, an over-privileged stale-prs.yml carrying unneeded `actions: write`, and non-existent `@v6` tags on actions/checkout and actions/setup-node. There was also no automated detection to catch such issues going forward.
+Before this PR, 65 `uses:` references in the YAML under `.github/` pointed at mutable tags rather than commit SHAs; seven of the nine workflows had no `permissions:` block (only `.github/workflows/codeql.yml` and `.github/workflows/stale-prs.yml` declared one); `.github/workflows/release-notes.yml` interpolated its `workflow_dispatch` inputs, including the free-text `milestone`, straight into the shell step that runs `scripts/release-notes/index.js` (`node index.js ${{ github.event.inputs.milestone }} ${{ github.event.inputs.skip_commit_checks }}`); `.github/workflows/stale-prs.yml` requested `actions: write`; and the composite actions `.github/actions/deploy-conf/action.yml` and `.github/actions/deploy-with-medic-conf/action.yml` interpolated their `username`, `password` and `hostname` inputs into the `--url` of their `run:` commands. There was also no automated detection to catch such issues going forward.
 
 ## Root Cause
 
-GitHub Actions permits unpinned/loosely-pinned action references and grants broad default token scopes; the workflows were authored without minimum-privilege `permissions:` blocks or SHA pinning, and a free-text `workflow_dispatch` input was interpolated straight into a shell `run:` step (classic template injection).
+GitHub Actions accepts tag references for actions and, without a `permissions:` block, gives a job the repository's default `GITHUB_TOKEN` scopes; the workflows were authored without minimum-privilege `permissions:` blocks or SHA pinning, and a free-text `workflow_dispatch` input was interpolated straight into a shell `run:` step (classic template injection).
 
 ## Solution
 
-Added zizmor static analysis: new .github/workflows/zizmor.yml runs offline on every PR (to avoid API rate limits), on push to master, and weekly on Sundays, uploading results to the GitHub Security tab as SARIF; .github/zizmor.yml holds one documented suppression. Remediated all findings: fixed the release-notes.yml script injection by routing the `milestone` input through a quoted env var ("$MILESTONE") instead of raw template interpolation; removed `actions: write` from stale-prs.yml (only `pull-requests: write` is needed); added minimum-scoped `permissions:` blocks to all 9 workflows; pinned every external action to a full 40-char commit SHA with the version tag preserved as a trailing comment; fixed the @v6 typos. Added the `github-actions` ecosystem to dependabot.yml so weekly PRs keep the pinned SHAs current automatically.
+Added zizmor static analysis: the new `.github/workflows/zizmor.yml` runs `zizmorcore/zizmor-action` on every pull request with `online-audits: false` (step `Run zizmor (offline — PR)`), and with online audits on push to master and on a weekly schedule (`cron: '0 6 * * 0'`, Sundays 06:00 UTC); its job grants `security-events: write`, commented as required for uploading SARIF to GitHub Code Scanning. The new `.github/zizmor.yml` records each accepted finding with a rationale and a risk-acceptance date: `template-injection` ignored for `.github/workflows/release-notes.yml`, `cache-poisoning` for `.github/workflows/release-helm-charts.yml`, `credential-persistence` and `secrets-outside-env` for `.github/workflows/build.yml`, plus a `dependabot-cooldown` setting of `days: 7`.
+
+Remediations: `.github/workflows/release-notes.yml` now passes both inputs through `env:` (`MILESTONE: ${{ github.event.inputs.milestone }}`, `SKIP_COMMIT_CHECKS: ${{ github.event.inputs.skip_commit_checks }}`) and runs `node index.js "$MILESTONE" $SKIP_COMMIT_CHECKS`; the two composite actions pass their inputs through `DB_USER`, `DB_PASS` and `DB_HOST` env vars; `actions: write` is removed from `.github/workflows/stale-prs.yml`, leaving `pull-requests: write`; the seven workflows without one gain `permissions:` (top-level `contents: read` in five, `contents: write` in `.github/workflows/release-helm-charts.yml`, job-level blocks in `.github/workflows/build.yml`); every external action reference in the workflow YAML is pinned to a full 40-character commit SHA with the version tag kept as a trailing comment; every `actions/checkout` step gains `persist-credentials: false`; and `.github/dependabot.yml` gains a `github-actions` ecosystem entry (weekly, on Saturday, `chore` commit prefix) so the pinned SHAs are kept current. In `.github/workflows/release-notes.yml`, `actions/checkout@v6` and `actions/setup-node@v6` were replaced by v4 commit SHAs.
+
+> **Changed on master after landing (`stale-as-written`):** `.github/workflows/stale-prs.yml` requests `actions: write` again (restored by PR #11390 to allow cache updates), the pinned SHAs have since been bumped (e.g. `actions/checkout` to v6.0.2), and `.github/zizmor.yml` has gained further entries, including an `unpinned-uses` policy that allows a ref pin for `medic/cht-core/.github/actions/andrabot`.
 
 ## Code Patterns
 
-Pin actions to immutable SHAs while keeping readability: `uses: actions/checkout@<40-char-sha>  # v4` (.github/workflows/*.yml). Neutralize untrusted workflow inputs by binding them to a quoted env var rather than interpolating into the shell — `env: { MILESTONE: ${{ github.event.inputs.milestone }} }` then `run: node index.js "$MILESTONE"` (.github/workflows/release-notes.yml). Add a minimal top-level `permissions:` block per workflow scoped to only what it needs (e.g. stale-prs.yml → `pull-requests: write`). Document accepted-not-fixed findings in .github/zizmor.yml with rationale. Automate SHA freshness via the `github-actions` Dependabot ecosystem in .github/dependabot.yml.
+Pin actions to immutable SHAs while keeping readability: `uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4` at this PR (.github/workflows/*.yml). Neutralize untrusted workflow inputs by binding them to env vars rather than interpolating into the shell — `MILESTONE: ${{ github.event.inputs.milestone }}` under `env:`, then `node index.js "$MILESTONE" $SKIP_COMMIT_CHECKS` (.github/workflows/release-notes.yml). Add a minimal top-level `permissions:` block per workflow scoped to only what it needs (e.g. `contents: read` in .github/workflows/cleanup.yml). Document accepted-not-fixed findings in .github/zizmor.yml with rationale. Automate SHA freshness via the `github-actions` Dependabot ecosystem in .github/dependabot.yml.
 
 ## Design Choices
 
-zizmor runs in `--offline` mode on PRs to avoid GitHub API rate limits. Full 40-char SHA pinning was chosen over tag pinning for true immutability against tag-moving supply-chain attacks. One finding (template-injection on the `skip_commit_checks` input in release-notes.yml) was suppressed rather than fixed, with documented justification: the input is a `choice` constrained to `['', '--skip-commit-validation']` (no shell metacharacters possible) and workflow_dispatch is only triggerable by org members with Actions write — whereas the genuinely risky free-text `milestone` input was fixed, not suppressed. Dependabot was added so SHA pinning doesn't impose ongoing manual maintenance. SARIF upload surfaces findings in the Code Scanning UI.
+zizmor runs with `online-audits: false` on pull requests to avoid GitHub API rate limits. Full 40-char SHA pinning was chosen over tag pinning for true immutability against tag-moving supply-chain attacks. The `template-injection` suppression covers the whole of `.github/workflows/release-notes.yml`; its comment argues that both inputs now go through `env:` vars — `"$MILESTONE"` quoted, and `$SKIP_COMMIT_CHECKS` a constrained `choice` input ('' or '--skip-commit-validation' only) — and that workflow_dispatch is only triggerable by org members with Actions write access. The `cache-poisoning` suppression rests on `.github/workflows/release-helm-charts.yml` triggering, at this PR, only on pushes of tags matching `'v*'`. Dependabot was added so SHA pinning doesn't impose ongoing manual maintenance. SARIF upload surfaces findings in the Code Scanning UI.
 
 ## Related Files
 
@@ -89,20 +93,20 @@ zizmor runs in `--offline` mode on PRs to avoid GitHub API rate limits. Full 40-
 - .github/workflows/release-notes.yml
 - .github/workflows/scalability.yml
 - .github/workflows/stale-prs.yml
-- .github/workflows/zizmor.yml
-- .github/zizmor.yml
+- .github/workflows/zizmor.yml (added)
+- .github/zizmor.yml (added)
 
 ## Testing
 
-Validated locally pre-merge (no runtime unit tests, as this is CI configuration): ran `zizmor --offline .github/workflows/` with all findings either remediated or documented in .github/zizmor.yml; validated YAML syntax for all 12 modified/new files with no parser errors; confirmed all 19 unique action SHAs are exactly 40 hex characters (none truncated); confirmed no unpinned external action references remain. The new zizmor.yml workflow provides ongoing automated validation in CI on every PR, push to master, and weekly.
+No tests were added; the diff is CI configuration only (12 modified files under `.github/` plus the added `.github/workflows/zizmor.yml` and `.github/zizmor.yml`). The new zizmor workflow re-checks the workflows on every PR, on push to master, and weekly.
 
 ## Related Issues
 
-- #10559: GitHub CI permits unpinned/loosely-pinned action versions, creating supply-chain and audit security risks; requests adopting the zizmor static analyzer
-- medic/cht-docs#2185: parallel docs PR documenting how zizmor works and how pinned SHAs are kept current via the cron/Dependabot job
+- #10559: "Implement static analysis of github CI to check for security vulnerabilities" — this draft's issue; it proposed adopting zizmor because unpinned or loosely pinned CI versions are hard to audit.
+- PR medic/cht-docs#2185: "docs(#10559): add guidelines for zizmor static analysis" — companion docs PR adding a zizmor section to the cht-docs Static Analysis page (SHA pinning, Dependabot updates, running zizmor locally).
 
 ## Domain Rationale
 
 **Fit:** weak
 
-CI-security tooling (zizmor static analysis for GitHub Actions) lives entirely under .github/ and scripts/ci; there is no security or CI domain, so infrastructure is the least-bad home rather than a principled fit.
+Every file in the diff is GitHub Actions configuration under `.github/` (the nine workflows, two composite actions, `.github/dependabot.yml`, and the added zizmor workflow and config), with no change to API, Sentinel, webapp or admin code. The pipeline it edits is infrastructure, but the change's purpose is security hardening of that pipeline — least-privilege tokens, SHA-pinned actions, no shell interpolation of inputs, a security scanner — which is a security concern rather than build/deploy operations; with no security domain, infrastructure is the least-bad home rather than a principled fit.

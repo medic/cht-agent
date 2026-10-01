@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 10754
 issueUrl: https://github.com/medic/cht-core/issues/10754
 title: Set NODE_ENV=production in api and sentinel Docker images so Secure cookies are enabled by default in production
-lastUpdated: '2026-06-22'
-summary: The api cookie service only sets the Secure flag when NODE_ENV=production, but that variable was never set in the Docker images, so production cookies were sent without the Secure attribute. Fixed by baking ENV NODE_ENV=production into the api/sentinel Dockerfiles (and Helm templates/values), with a test override forcing NODE_ENV=development so non-SSL CI/E2E suites still run.
+lastUpdated: '2026-10-01'
+summary: The api cookie service only sets the Secure flag when NODE_ENV=production, but that variable was never set in the Docker images, so production cookies were sent without the Secure attribute. Fixed by baking ENV NODE_ENV=production into the api/sentinel Dockerfiles (and Helm templates/values), with the test compose override and k3d test values setting NODE_ENV=development for test runs.
 services:
   - api
   - sentinel
@@ -46,13 +46,14 @@ concepts:
   - Docker image environment defaults
   - test environment override layering
   - secure-by-default production hardening
-related_issues: []
+related_issues:
+  - cht-core-10357
 stale: false
 ---
 
 ## Problem
 
-Session cookies issued by the API were being sent without the `Secure` attribute even in production deployments, meaning they could be transmitted over plain HTTP — a session-security weakness affecting all deployed instances.
+Session cookies issued by the API were being sent without the `Secure` attribute even in production deployments, meaning they could be transmitted over plain HTTP — a session-security weakness affecting every deployment run from these images unless the operator set NODE_ENV separately.
 
 ## Root Cause
 
@@ -60,15 +61,15 @@ api/src/services/cookie.js gates the Secure cookie attribute on `NODE_ENV === 'p
 
 ## Solution
 
-Added `ENV NODE_ENV=production` to api/Dockerfile and sentinel/Dockerfile and propagated the setting through the Helm deployment templates and base values, so production containers default to secure cookies. To keep non-SSL integration/E2E suites working, added tests/cht-core-test.override.yml that forces NODE_ENV=development during test execution, layered onto the Docker orchestration.
+api/Dockerfile and sentinel/Dockerfile each gained `ENV NODE_ENV=production`, and the setting was propagated through the Helm deployment templates and base values, so production containers default to secure cookies. Test runs opt out: the existing tests/cht-core-test.override.yml (introduced by PR #10583) gained `NODE_ENV=development` for the api and sentinel containers, and scripts/build/helm/tests/integration-k3d-values.yaml.template gained `node_env: "development"` for both services. The PR description gives the reason as keeping the integration and E2E suites working in non-SSL environments.
 
 ## Code Patterns
 
-Bake the safe production default into the container image (`ENV NODE_ENV=production` in api/Dockerfile and sentinel/Dockerfile) and opt out per-environment with a compose override (tests/cht-core-test.override.yml) rather than weakening the default. Expose the value through Helm deployment templates (scripts/build/helm/templates/{api,sentinel}/deployment.yaml) and centralize it in scripts/build/helm/values/base.yaml so it is tunable per release.
+Bake the safe production default into the container image: api/Dockerfile and sentinel/Dockerfile each contain `ENV NODE_ENV=production`. Opt out per environment rather than weakening the default; for Docker Compose test runs the opt-out lives in tests/cht-core-test.override.yml. Expose the value through the Helm deployment templates (scripts/build/helm/templates/api/deployment.yaml and scripts/build/helm/templates/sentinel/deployment.yaml read a per-service `node_env` value with a "production" default) and set it in scripts/build/helm/values/base.yaml so each deployment can override it.
 
 ## Design Choices
 
-Made NODE_ENV=production a secure-by-default baseline in the image instead of relying on each deployment to set it; test environments explicitly opt out via an override file forcing NODE_ENV=development rather than relaxing the production default. Followed the environment-configuration pattern being established in PR #10583.
+Made NODE_ENV=production a secure-by-default baseline in the image instead of relying on each deployment to set it; test environments explicitly opt out via an override file forcing NODE_ENV=development rather than relaxing the production default. The change reuses the layout PR #10583 introduced for LOG_LEVEL: the same Helm templates, scripts/build/helm/values/base.yaml blocks, k3d test values and test override file gained a NODE_ENV / `node_env` entry beside the LOG_LEVEL / `log_level` one.
 
 ## Related Files
 
@@ -83,15 +84,15 @@ Made NODE_ENV=production a secure-by-default baseline in the image instead of re
 
 ## Testing
 
-Ran the existing unit suite api/tests/mocha/services/cookie.spec.js (18/18 passing) to verify the Secure-flag logic; confirmed the test utilities correctly layer the override file during Docker orchestration so integration/E2E suites run in non-SSL environments; linted all modified files with eslint. No dedicated automated test was added for the new env-var behavior.
+No spec file changed in this PR. The Secure-flag logic the variable drives is covered by the existing api/tests/mocha/services/cookie.spec.js, which stubs `process.env` with `NODE_ENV: 'production'` and expects `secure: true`; no test checks that the images set the variable. Test containers pick up NODE_ENV=development because tests/utils/index.js already passes tests/cht-core-test.override.yml as an extra `-f` file in `dockerComposeCmd`; that `-f` came in with PR #10583.
 
 ## Related Issues
 
-- #10754: Secure cookie attribute not applied in production because NODE_ENV was unset in the Docker images
-- #10583: PR establishing the environment-configuration pattern this change follows
+- PR #10583: "fix(#10357): prevent DEBUG logs from appearing in production" — its per-service LOG_LEVEL Helm values and test override file are what this PR extends with NODE_ENV.
+- #10357: "debug level messages printed on production instances" — the issue PR #10583 fixed; its root cause was the same unset NODE_ENV, which the shared logger used to pick the debug level before PR #10583.
 
 ## Domain Rationale
 
 **Fit:** strong
 
-All seven changed files are Docker images (api/sentinel Dockerfiles), Helm deployment templates/values, and a docker-compose test override — the canonical infrastructure (build/deploy/image-config) domain; no authentication code was touched. The motivation is session-cookie security (an authentication concern), but the change is classified by the setup/deploy nature of the files it touches.
+All seven changed files are Docker images (api/sentinel Dockerfiles), Helm deployment templates/values, and a docker-compose test override — the canonical infrastructure (build/deploy/image-config) domain; no authentication code was touched. The motivation is session-cookie security (an authentication concern), but every change is to how the images and deployments are configured.

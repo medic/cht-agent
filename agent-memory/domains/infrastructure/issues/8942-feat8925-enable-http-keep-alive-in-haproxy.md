@@ -5,9 +5,9 @@ domain: infrastructure
 domainFit: strong
 issueNumber: 8925
 issueUrl: https://github.com/medic/cht-core/issues/8925
-title: Enable HTTP keep-alive in HAProxy frontend configuration
-lastUpdated: '2026-06-23'
-summary: HAProxy was closing connections after each request, forcing a fresh handshake per request between CouchDB clients and the proxy. Enabling http-keep-alive lets connections be reused across requests, cutting connection-setup overhead.
+title: Enable HTTP keep-alive in HAProxy by replacing http-server-close in the defaults section
+lastUpdated: '2026-10-01'
+summary: "HAProxy's defaults section set `option http-server-close`, which closes the server-side (HAProxy-to-CouchDB) connection after each response while still allowing client-side keep-alive. The PR replaces it with `option http-keep-alive`, HAProxy's default mode, so connections to CouchDB are reused across requests too."
 services:
   - api
   - sentinel
@@ -42,23 +42,23 @@ stale: false
 
 ## Problem
 
-Without keep-alive, HAProxy closed each connection after a single HTTP request/response, requiring a new TCP (and TLS) handshake for every request flowing from CouchDB clients (api, sentinel, admin) through the proxy. Under high request volume this adds per-request latency and consumes connection/port resources.
+Before this PR, HAProxy ran in `http-server-close` mode: it could keep client-side connections (from api and sentinel) alive, but closed the server-side connection to CouchDB after each response, so every proxied request opened a new TCP connection from HAProxy to CouchDB. Issue #8925 notes that `http-keep-alive` is HAProxy's default and `http-server-close` turns it off, that its author could not find in git history when `http-server-close` was added (the guess is early 4.x scalability testing), and that starting with Node 19, Node adds the keep-alive header to all requests.
 
 ## Root Cause
 
-The HAProxy frontend configuration in haproxy/default_frontend.cfg did not enable http-keep-alive, so connections were torn down after each request instead of being kept open and reused.
+Before this PR, the `defaults` section of haproxy/default_frontend.cfg set `option http-server-close`, which turns off HAProxy's default keep-alive on the server side, so connections to CouchDB were torn down after each response instead of being kept open and reused.
 
 ## Solution
 
-Enabled http-keep-alive mode in haproxy/default_frontend.cfg so client- and server-side connections are kept open and reused for subsequent requests, reducing repeated connection establishment overhead for the proxy fronting CouchDB.
+Replaced `option http-server-close` with `option http-keep-alive` in the `defaults` section of haproxy/default_frontend.cfg (a one-line change), so both client- and server-side connections are kept open and reused for subsequent requests, reducing repeated connection establishment between the proxy and CouchDB. The existing `timeout http-keep-alive 5m` in the same section bounds how long an idle kept-alive connection is held.
 
 ## Code Patterns
 
-In HAProxy config, enable persistent connections with `option http-keep-alive` in the frontend/defaults section, ensuring no conflicting `option httpclose` / `option http-server-close` is set. File: haproxy/default_frontend.cfg.
+In HAProxy config, enable persistent connections with `option http-keep-alive` in the `defaults` section, replacing rather than adding alongside `option http-server-close`. Keep an explicit `timeout http-keep-alive` (here `5m`) so idle keep-alive connections are not governed by the much longer `timeout client 15000000` in the same section. File: haproxy/default_frontend.cfg.
 
 ## Design Choices
 
-Keep-alive reuses connections rather than closing them after each exchange, trading a small amount of held-open resource for fewer TCP/TLS handshakes — favored over http-server-close for the high-volume CouchDB request pattern that benefits most from connection reuse.
+Keep-alive reuses connections rather than closing them after each exchange, trading a small amount of held-open resource for fewer TCP connection setups; the PR returns HAProxy to its default mode instead of keeping the untraced `http-server-close` override.
 
 ## Related Files
 
@@ -66,14 +66,14 @@ Keep-alive reuses connections rather than closing them after each exchange, trad
 
 ## Testing
 
-Config-only change; no unit or e2e tests were added. Validation relies on the staging Build CI compose images and observing the running instance under load.
+Config-only change (one line in haproxy/default_frontend.cfg); the PR adds no unit or e2e tests.
 
 ## Related Issues
 
-- #8925: enable http keep-alive in haproxy
+- #8925: "Enable http-keep-alive in haproxy" — the issue this PR implements
 
 ## Domain Rationale
 
 **Fit:** strong
 
-The change is purely to an HAProxy frontend config file, and HAProxy is explicitly enumerated as an infrastructure concern (Docker/Helm/HAProxy) — it tunes the operational networking/proxy layer rather than any application behavior.
+The change is purely to the HAProxy config file haproxy/default_frontend.cfg — it tunes how the proxy in front of CouchDB manages connections, the operational networking/proxy layer rather than any application behavior.

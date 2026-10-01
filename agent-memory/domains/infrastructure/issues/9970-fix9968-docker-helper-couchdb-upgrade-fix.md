@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9968
 issueUrl: https://github.com/medic/cht-core/issues/9968
 title: Rename Docker Helper CouchDB compose file to cht-couchdb.yml so CouchDB image upgrades correctly
-lastUpdated: '2026-06-22'
+lastUpdated: '2026-10-01'
 summary: Docker Helper instances failed to upgrade their CouchDB image because the couchdb compose file name didn't match the expected convention. The fix renames the file to `cht-couchdb.yml` so upgrades pick up the new CouchDB image version.
 services:
   - api
@@ -39,40 +39,46 @@ concepts:
   - docker helper local-dev tooling
   - compose file naming convention
 related_issues: []
-stale: false
+stale: true
 ---
+
+> **Paths are as of this PR, not as of master.** scripts/docker-helper-4.x/cht-docker-compose.sh
+> was deleted on master by PR #10207 (`d605daa23`, 2025-08-28), which replaced the old 3.x helper
+> at scripts/docker-helper/cht-docker-compose.sh with this 4.x script. On master the helper lives
+> at scripts/docker-helper/cht-docker-compose.sh and still saves the CouchDB compose file as
+> `$homeDir/compose/cht-couchdb.yml`.
 
 ## Problem
 
-When running CHT via the 4.x Docker Helper, upgrading an existing instance did not upgrade the CouchDB image version. The docker-helper CouchDB compose file was named inconsistently with the canonical build-server convention (`cht-couchdb.yml`), so the upgrade flow did not pick up and bump the CouchDB container.
+When running CHT via the 4.x Docker Helper, upgrading an existing instance did not upgrade the CouchDB image version: after upgrading a 4.18 instance to 4.19, nginx, api, sentinel, haproxy and healthcheck ran 4.19 images while CouchDB stayed on 4.18. The docker-helper CouchDB compose file was named inconsistently with the canonical build-server convention (`cht-couchdb.yml`), so the upgrade flow did not pick up and bump the CouchDB container.
 
 ## Root Cause
 
-The docker-helper script wrote/referenced the CouchDB compose file under a non-canonical name (e.g. `couchdb.yml`) that diverged from the build/upgrade tooling's expected filename `cht-couchdb.yml`, so the CouchDB service definition was not matched during upgrade and the image stayed on the old version.
+Before this PR, scripts/docker-helper-4.x/cht-docker-compose.sh downloaded the staging build's `docker-compose/cht-couchdb.yml` but saved it as `$homeDir/compose/couchdb.yml`. On upgrade, `getUpgradeServicePayload` in api/src/services/setup/utils.js sends the upgrade service the compose files keyed by their staging attachment names with the `docker-compose/` prefix stripped (`cht-core.yml`, `cht-couchdb.yml`), and compose files are matched by name — when nothing matches, the API logs that the CHT docker-compose files you wish to be updated must "match the naming convention". The helper's `couchdb.yml` therefore never matched, and the CouchDB container stayed on the old image.
 
 ## Solution
 
-Renamed the CouchDB docker compose file in the Docker Helper to `cht-couchdb.yml` in scripts/docker-helper-4.x/cht-docker-compose.sh, aligning it with the canonical compose filenames (cht-core.yml, cht-couchdb.yml, cht-couchdb-clustered.yml) so new instances start correctly and the CouchDB image is upgraded along with the rest of the stack.
+At this PR, `create_compose_files` in scripts/docker-helper-4.x/cht-docker-compose.sh began saving the CouchDB compose file as `$homeDir/compose/cht-couchdb.yml`, and `service_has_image_downloaded` switched to `compose_path="${homeDir}/compose/cht-couchdb.yml"` for the `couchdb` service. This aligns the helper with the compose filenames scripts/build/index.js generates for each build (cht-core.yml, cht-couchdb.yml, cht-couchdb-clustered.yml), so new instances start correctly and the CouchDB image is upgraded along with the rest of the stack.
 
 ## Code Patterns
 
-Canonical Docker Helper compose filenames in scripts/docker-helper-4.x/cht-docker-compose.sh: `cht-core.yml`, `cht-couchdb.yml`, `cht-couchdb-clustered.yml`. Existing instances created from master must be migrated manually by renaming the on-disk compose file, e.g. `mv ~/.medic/cht-docker/<project>-dir/compose/couchdb.yml ~/.medic/cht-docker/<project>-dir/compose/cht-couchdb.yml`.
+Docker Helper compose filenames under `$homeDir/compose/` in scripts/docker-helper-4.x/cht-docker-compose.sh at this PR: `cht-core.yml` and `cht-couchdb.yml`, the same names as the build's compose attachments (the helper does not use `cht-couchdb-clustered.yml`). Instances created before this PR must be migrated manually by renaming the on-disk compose file, e.g. `mv ~/.medic/cht-docker/<project>-dir/compose/couchdb.yml ~/.medic/cht-docker/<project>-dir/compose/cht-couchdb.yml`.
 
 ## Design Choices
 
-Standardize on the build server's published compose filename (`cht-couchdb.yml`) rather than maintaining a divergent helper-local name; this keeps the helper in sync with upstream compose artifacts. The trade-off is that pre-existing master-created instances require a one-time manual rename of the compose file to upgrade.
+Standardize on the build server's published compose filename (`cht-couchdb.yml`) rather than maintaining a divergent helper-local name; this keeps the helper in sync with upstream compose artifacts. The trade-off is that instances created before this PR require a one-time manual rename of the compose file to upgrade.
 
 ## Related Files
 
-- scripts/docker-helper-4.x/cht-docker-compose.sh
+- scripts/docker-helper-4.x/cht-docker-compose.sh (present at this PR's anchor; moved on master to scripts/docker-helper/cht-docker-compose.sh by PR #10207)
 
 ## Testing
 
-Manual verification: (1) a new instance created on this branch starts up correctly; (2) a new instance can be upgraded and the CouchDB image version is upgraded too; (3) a CouchDB compose file from a master-created instance, after being renamed to cht-couchdb.yml, works on this branch.
+No automated tests cover the helper; the diff touches only scripts/docker-helper-4.x/cht-docker-compose.sh. To check the fix by hand: create a new instance and confirm it starts; upgrade it and confirm the CouchDB container's image version moves with the other services (the issue compared them with docker ps); and confirm that a `couchdb.yml` from an instance created before this PR, once renamed to `cht-couchdb.yml`, works.
 
 ## Related Issues
 
-- #9968: Docker Helper (4.x) CouchDB upgrade bug — compose file naming prevented the CouchDB image from being upgraded
+- #9968: "CHT running in Docker Helper doesn't upgrade CouchDB" — this draft's issue; after an upgrade from 4.18 to 4.19 in Docker Helper, CouchDB stayed on the 4.18 image while nginx, api, sentinel, haproxy and healthcheck moved to 4.19.
 
 ## Domain Rationale
 
