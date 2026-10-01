@@ -148,6 +148,15 @@ describe('CodeGenerationAgent', () => {
       expect(moduleInput).to.have.property('targetDirectory', '/tmp/cht-core');
     });
 
+    it('forwards the module model, tokens and cost onto the result', async () => {
+      generateStub.resolves({ files: [], explanation: '', modelUsed: 'claude-opus-5-5', tokensUsed: 3000, costUsd: 0.5 });
+      const agent = new CodeGenerationAgent({ llmProvider: mockProvider, codeGenRegistry: mockRegistry });
+
+      const result = await agent.generate(createInput());
+
+      expect(result).to.include({ modelUsed: 'claude-opus-5-5', tokensUsed: 3000, costUsd: 0.5 });
+    });
+
     it('should map layer GeneratedFile to agent GeneratedFile with inferred metadata', async () => {
       const moduleOutput: CodeGenModuleOutput = {
         files: [

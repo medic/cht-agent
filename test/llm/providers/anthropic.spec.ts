@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 import { expect } from 'chai';
 import sinon from 'sinon';
-import { APIProviderConfig, LLMProvider } from '../../../src/llm/types';
+import { APIProviderConfig, LLMCallError, LLMProvider } from '../../../src/llm/types';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -253,6 +253,39 @@ describe('createAnthropicProvider invokeForJSON', () => {
     try { await provider.invokeForJSON<unknown>('p'); } catch (e) { caught = e as Error; }
     expect(caught).to.not.be.null;
     expect(caught!.message).to.match(/Failed to parse LLM response as JSON/);
+  });
+
+  for (const [label, content, message] of [
+    ['is truncated mid-JSON', '{"score": 8', /did not contain valid JSON/],
+    ['holds malformed JSON', '{this is: not json}', /Failed to parse LLM response as JSON/],
+  ] as const) {
+    it(`keeps the paid usage on the error when the response ${label}`, async () => {
+      const stub = buildChatAnthropicStub();
+      stub.invokeStub.resolves({
+        content,
+        usage_metadata: { input_tokens: 120, output_tokens: 30 },
+        response_metadata: { stop_reason: 'max_tokens' },
+      } as ChatResponseShape);
+      const provider = loadProviderTyped(stub, baseConfig);
+      const caught = await provider.invokeForJSONWithResponse!<unknown>('p').then(
+        () => expect.fail('expected invokeForJSONWithResponse to throw'),
+        (e: LLMCallError) => e,
+      );
+      expect(caught).to.be.instanceOf(LLMCallError);
+      expect(caught.message).to.match(message);
+      expect(caught.response).to.deep.include({ model: 'claude-opus-4-6', usage: { inputTokens: 120, outputTokens: 30 } });
+    });
+  }
+  it('invokeForJSONWithResponse returns the parsed JSON with the token usage the model reported', async () => {
+    const stub = buildChatAnthropicStub();
+    stub.invokeStub.resolves({
+      content: '{"score": 80}',
+      usage_metadata: { input_tokens: 120, output_tokens: 30 },
+    } as ChatResponseShape);
+    const provider = loadProviderTyped(stub, baseConfig);
+    const { parsed, response } = await provider.invokeForJSONWithResponse!<{ score: number }>('p');
+    expect(parsed).to.deep.equal({ score: 80 });
+    expect(response.usage).to.deep.equal({ inputTokens: 120, outputTokens: 30 });
   });
 });
 

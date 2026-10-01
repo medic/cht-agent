@@ -12,12 +12,14 @@
 
 import { spawn, ChildProcess } from 'node:child_process';
 import { extractJsonObject } from '../json-extract';
+import { findResultEnvelope, isJson, parsePlainObject, summarizeModelUsage, type CliModelUsageEntry } from '../cli-envelope';
 import { isBatchFatalError } from '../rate-limit';
 import {
   LLMProvider,
   LLMMessage,
   LLMResponse,
   InvokeOptions,
+  LLMCallError,
 } from '../types';
 
 /**
@@ -32,7 +34,7 @@ export interface ClaudeCLIConfig {
   timeout?: number;
   /** Max agentic turns - set to 1 for simple completions (default: 1) */
   maxTurns?: number;
-  /** Model to use (passed via prompt context, CLI uses account default) */
+  /** Fallback model label; the CLI picks its model from ANTHROPIC_MODEL or account settings and the model it reports wins */
   model?: string;
   /** Default max tokens */
   maxTokens?: number;
@@ -64,6 +66,7 @@ interface CLIResponse {
   duration_ms: number;
   num_turns: number;
   is_error: boolean;
+  modelUsage?: Record<string, CliModelUsageEntry>;
 }
 
 /* istanbul ignore next -- only invoked from the 60s progress interval below */
@@ -71,24 +74,6 @@ function totalLength(chunks: string[]): number {
   let total = 0;
   for (const c of chunks) total += c.length;
   return total;
-}
-
-/**
- * Extract the CLI's JSON result envelope from stdout (which may have leading
- * non-JSON noise). Returns null if no result envelope is found. Linear scan.
- */
-function extractResultEnvelope(stdout: string): CLIResponse | null {
-  const start = stdout.indexOf('{');
-  const end = stdout.lastIndexOf('}');
-  if (start === -1 || end <= start) return null;
-  const candidate = stdout.slice(start, end + 1);
-  if (!/"type"\s*:\s*"result"/.test(candidate)) return null;
-  try {
-    return JSON.parse(candidate) as CLIResponse;
-  } catch (e) {
-    console.error('[Claude CLI] Failed to parse matched JSON:', e);
-    return null;
-  }
 }
 
 /**
@@ -264,43 +249,51 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
     }
 
     // Claude CLI can include non-JSON content before the result object.
-    const envelope = extractResultEnvelope(stdout);
+    const envelope = findResultEnvelope<CLIResponse>(stdout) ?? parsePlainObject<CLIResponse>(stdout);
     if (envelope) return envelope;
 
-    // Try parsing the entire output as JSON
-    try {
-      return JSON.parse(stdout);
-    } catch {
-      // No JSON envelope. A plain-text usage/rate-limit or auth notice (the CLI
-      // can emit these without a result envelope) must NOT be mistaken for a
-      // successful result — classify it as an error so the batch stops instead
-      // of silently flagging a PR. See isBatchFatalError / run-pipeline.
-      if (isBatchFatalError(stdout)) {
-        console.error(`[Claude CLI] Limit/auth notice in plain-text output: ${stdout.substring(0, 200)}`);
-        return {
-          type: 'result',
-          subtype: 'error',
-          result: stdout.trim(),
-          session_id: '',
-          total_cost_usd: 0,
-          duration_ms: 0,
-          num_turns: 0,
-          is_error: true,
-        };
-      }
-      // Otherwise treat stdout as the result. Log first 200 chars for debugging.
-      console.warn(`[Claude CLI] Non-JSON response (first 200 chars): ${stdout.substring(0, 200)}`);
+    if (isJson(stdout)) {
       return {
         type: 'result',
-        subtype: 'success',
+        subtype: 'error',
+        result: 'CLI output contained no result message',
+        session_id: '',
+        total_cost_usd: 0,
+        duration_ms: 0,
+        num_turns: 0,
+        is_error: true,
+      };
+    }
+
+    // No JSON envelope. A plain-text usage/rate-limit or auth notice (the CLI
+    // can emit these without a result envelope) must NOT be mistaken for a
+    // successful result — classify it as an error so the batch stops instead
+    // of silently flagging a PR. See isBatchFatalError / run-pipeline.
+    if (isBatchFatalError(stdout)) {
+      console.error(`[Claude CLI] Limit/auth notice in plain-text output: ${stdout.substring(0, 200)}`);
+      return {
+        type: 'result',
+        subtype: 'error',
         result: stdout.trim(),
         session_id: '',
         total_cost_usd: 0,
         duration_ms: 0,
-        num_turns: 1,
-        is_error: false,
+        num_turns: 0,
+        is_error: true,
       };
     }
+    // Otherwise treat stdout as the result. Log first 200 chars for debugging.
+    console.warn(`[Claude CLI] Non-JSON response (first 200 chars): ${stdout.substring(0, 200)}`);
+    return {
+      type: 'result',
+      subtype: 'success',
+      result: stdout.trim(),
+      session_id: '',
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      is_error: false,
+    };
   };
 
   /**
@@ -310,23 +303,25 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
     const stdout = await executeCLI(prompt, options);
     const parsed = parseResponse(stdout);
 
-    if (parsed.is_error) {
-      throw new Error(`Claude CLI error: ${parsed.result}`);
-    }
-
-    // Ensure result is always a string
     const result = parsed.result ?? '';
-    if (!result && !parsed.is_error) {
-      console.warn('[Claude CLI] Warning: CLI returned empty result');
-    }
-
-    return {
+    const reported = summarizeModelUsage(parsed.modelUsage);
+    const response: LLMResponse = {
       content: result,
-      model: modelName,
-      usage: undefined, // CLI doesn't provide token usage
+      model: reported.model ?? modelName,
+      usage: reported.usage,
       stopReason: parsed.subtype === 'success' ? 'end_turn' : 'error',
       costUsd: parsed.total_cost_usd,
     };
+
+    if (parsed.is_error) {
+      throw new LLMCallError(`Claude CLI error: ${parsed.result}`, response);
+    }
+
+    if (!result) {
+      console.warn('[Claude CLI] Warning: CLI returned empty result');
+    }
+
+    return response;
   };
 
   /**
@@ -369,7 +364,11 @@ export const createClaudeCLIProvider = (config: ClaudeCLIConfig = {}): LLMProvid
 IMPORTANT: Respond with valid JSON only. Do not include any text before or after the JSON object.`;
 
     const response = await invoke(jsonPrompt, options);
-    return { parsed: parseJsonContent<T>(response.content), response };
+    try {
+      return { parsed: parseJsonContent<T>(response.content), response };
+    } catch (err) {
+      throw new LLMCallError((err as Error).message, response);
+    }
   };
 
   const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> =>

@@ -2,7 +2,7 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 import { EventEmitter } from 'events';
-import { LLMProvider } from '../../../src/llm/types';
+import { LLMCallError, LLMProvider } from '../../../src/llm/types';
 import { DISALLOWED_TOOLS } from '../../../src/llm/providers/claude-cli';
 import { isBatchFatalError } from '../../../src/llm/rate-limit';
 
@@ -181,6 +181,29 @@ describe('createClaudeCLIProvider (v9a.7) — response handling', () => {
     expect(caught!.message).to.match(/Claude CLI error: auth failed/);
   });
 
+  it('attaches the reported model, usage, cost and errors text to an is_error failure', async () => {
+    const { provider } = loadProvider([
+      {
+        stdout: cliResultJson({
+          result: undefined,
+          subtype: 'error_max_turns',
+          is_error: true,
+          errors: ['Reached maximum number of turns (1)'],
+          total_cost_usd: 0.3,
+          modelUsage: { 'claude-opus-5-5': { inputTokens: 5, outputTokens: 2, costUSD: 0.3 } },
+        }),
+        closeCode: 0,
+      },
+    ]);
+    const caught = await provider.invoke('p').then(
+      () => expect.fail('expected invoke to throw'),
+      (e: { message: string; response?: unknown }) => e,
+    );
+    expect(caught).to.be.instanceOf(LLMCallError);
+    expect(caught.message).to.equal('Claude CLI error: Reached maximum number of turns (1)');
+    expect(caught.response).to.deep.include({ model: 'claude-opus-5-5', usage: { inputTokens: 5, outputTokens: 2 }, costUsd: 0.3 });
+  });
+
   it('falls back to treating non-JSON stdout as the result content', async () => {
     const { provider } = loadProvider([{ stdout: 'plain text completion', closeCode: 0 }]);
     const result = await provider.invoke('p');
@@ -296,6 +319,19 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
     expect(caught!.message).to.match(/did not contain valid JSON/);
   });
 
+  it('invokeForJSONWithResponse keeps the paid response on a JSON parse failure', async () => {
+    const { provider } = loadProvider([
+      { stdout: cliResultJson({ result: 'just plain prose', total_cost_usd: 0.02 }), closeCode: 0 },
+    ]);
+    const caught = await provider.invokeForJSONWithResponse!<unknown>('p').then(
+      () => expect.fail('expected invokeForJSONWithResponse to throw'),
+      (e: LLMCallError) => e,
+    );
+    expect(caught).to.be.instanceOf(LLMCallError);
+    expect(caught.message).to.match(/did not contain valid JSON/);
+    expect(caught.response).to.include({ content: 'just plain prose', costUsd: 0.02 });
+  });
+
   it('invokeForJSON strips trailing commas before parsing', async () => {
     const { provider } = loadProvider([
       { stdout: cliResultJson({ result: '{"a":1, "b":[1,2,],}' }), closeCode: 0 },
@@ -312,6 +348,47 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
     const { parsed, response } = await provider.invokeForJSONWithResponse!<{ answer: number }>('p');
     expect(parsed.answer).to.equal(42);
     expect(response.costUsd).to.equal(0.0123);
+  });
+});
+
+describe('createClaudeCLIProvider — array transcript output', () => {
+  const transcript = (result?: Record<string, unknown>): string =>
+    JSON.stringify([
+      { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+      { type: 'assistant', message: { content: [{ type: 'text', text: '{"a":1}' }] } },
+      ...(result ? [result] : []),
+    ]);
+
+  it('reads the result message, the model that ran, and its token usage', async () => {
+    const { provider } = loadProvider([
+      {
+        stdout: transcript(JSON.parse(cliResultJson({
+          result: '{"a":1}',
+          total_cost_usd: 0.6,
+          modelUsage: {
+            'claude-opus-5-5': { inputTokens: 2, cacheReadInputTokens: 100, cacheCreationInputTokens: 50, outputTokens: 4, costUSD: 0.59 },
+            'claude-haiku-4-5-20251001': { inputTokens: 10, outputTokens: 1, costUSD: 0.01 },
+          },
+        }))),
+        closeCode: 0,
+      },
+    ]);
+    const { parsed, response } = await provider.invokeForJSONWithResponse!<{ a: number }>('p');
+    expect(parsed.a).to.equal(1);
+    expect(response.model).to.equal('claude-opus-5-5');
+    expect(response.usage).to.deep.equal({ inputTokens: 162, outputTokens: 5 });
+    expect(response.costUsd).to.equal(0.6);
+  });
+
+  it('throws instead of returning empty content when the transcript has no result message', async () => {
+    const { provider } = loadProvider([{ stdout: transcript(), closeCode: 1 }]);
+    let caught: Error | undefined;
+    try {
+      await provider.invoke('p');
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught?.message).to.equal('Claude CLI error: CLI output contained no result message');
   });
 });
 
