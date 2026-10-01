@@ -304,6 +304,15 @@ describe('createClaudeCLIProvider (v9a.7) — invokeWithMessages / invokeForJSON
     expect(result.a).to.equal(1);
     expect(result.b).to.deep.equal([1, 2]);
   });
+
+  it('invokeForJSONWithResponse carries total_cost_usd through as response.costUsd', async () => {
+    const { provider } = loadProvider([
+      { stdout: cliResultJson({ result: '{"answer": 42}', total_cost_usd: 0.0123 }), closeCode: 0 },
+    ]);
+    const { parsed, response } = await provider.invokeForJSONWithResponse!<{ answer: number }>('p');
+    expect(parsed.answer).to.equal(42);
+    expect(response.costUsd).to.equal(0.0123);
+  });
 });
 
 describe('validateClaudeCLI (v9a.7)', () => {

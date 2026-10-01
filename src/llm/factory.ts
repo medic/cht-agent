@@ -102,7 +102,7 @@ export const getCLIConfigFromEnv = (): CLIProviderConfig => {
     maxTurns: process.env.CLAUDE_CLI_MAX_TURNS
       ? Number.parseInt(process.env.CLAUDE_CLI_MAX_TURNS, 10)
       : 20, // CLI needs multiple turns to complete (test files can need 15+ turns)
-    model: process.env.LLM_MODEL || 'claude-cli',
+    model: process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || 'claude-cli',
     maxTokens: process.env.LLM_MAX_TOKENS
       ? Number.parseInt(process.env.LLM_MAX_TOKENS, 10)
       : undefined,

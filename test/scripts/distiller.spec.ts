@@ -99,17 +99,14 @@ function tmpLogPath(): string {
  * The distillFn option is used in tests instead of the real LLM.
  */
 function loadDistiller(fakeInvoke?: (prompt: string) => Promise<unknown>) {
-  const fakeLLMClass = fakeInvoke
-    ? class FakeLLM {
-      constructor(_opts: unknown) {}
-      withStructuredOutput(_schema: unknown) { return { invoke: fakeInvoke }; }
+  const invoke = fakeInvoke ?? (async () => makeDraft());
+  class FakeLLM {
+    constructor(_opts: unknown) {}
+    withStructuredOutput(_schema: unknown, _opts: unknown) {
+      return { invoke: async (prompt: string) => ({ raw: { usage_metadata: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } }, parsed: await invoke(prompt) }) };
     }
-    : class FakeLLM {
-      constructor(_opts: unknown) {}
-      withStructuredOutput(_schema: unknown) {
-        return { invoke: async () => makeDraft() };
-      }
-    };
+  }
+  const fakeLLMClass = FakeLLM;
 
   return proxyquire('../../src/scripts/distiller', {
     '@langchain/anthropic': { ChatAnthropic: fakeLLMClass },

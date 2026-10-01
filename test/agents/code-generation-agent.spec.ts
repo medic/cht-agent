@@ -610,6 +610,8 @@ describe('CodeGenerationAgent', () => {
       envBackup = { ...process.env };
       process.env.LLM_PROVIDER = 'claude-cli';
       process.env.CLAUDE_CLI_PATH = '/bin/true';
+      delete process.env.ANTHROPIC_MODEL;
+      delete process.env.LLM_MODEL;
     });
 
     afterEach(() => {
