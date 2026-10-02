@@ -18,6 +18,9 @@ log
 # Research output files
 outputs/
 
+# Managed cht-core checkout (scripts/test-env-up.sh with no path)
+.cht-core/
+
 # Pipeline skip-audit log. Every real run appends to it, so tracking it made each
 # run produce a commit and let a stray test entry reach real pipeline data (#146).
 agent-memory/_skipped.ndjson

@@ -129,17 +129,14 @@ When the Test Environment Layer (#66) requests an environment, the agent
 *waits and polls* — you bring it up:
 
 ```bash
-# Build images from the agent's edited working copy (Model A rebuild-on-change)
-cd ~/src/cht-core && npm run local-images
-
-# Start the stack, attaching nginx to cht-agent-net via the #66 override
-docker compose -f <cht-core compose files> \
-  -f <cht-agent repo>/docker/cht-agent-net.override.yml up -d
+# From the cht-agent repo: build the agent's edited working copy into images
+# (Model A rebuild-on-change) and start it, nginx joined to cht-agent-net
+CHT_CORE_REBUILD=1 scripts/test-env-up.sh ~/src/cht-core
 ```
 
-> The override file `docker/cht-agent-net.override.yml` ships with #66.
-> Validate service/network names against your generated compose before
-> relying on it (see the comments in that file).
+> `scripts/test-env-up.sh` gives each checkout its own Compose project, internal
+> network and CouchDB data dir, and refuses to start while another stack's nginx
+> is on `cht-agent-net`. Overrides are listed in `scripts/lib/test-env.sh`.
 
 The agent detects readiness via `GET https://nginx/api/v2/monitoring` and
 continues. CouchDB-tier resets it does itself over HTTP; container restarts
@@ -161,7 +158,7 @@ git push origin cht-agent/<ticket>
 
 ```bash
 docker compose -f docker/docker-compose.cht-agent.yml down
-# CHT stack: docker compose -f <cht-core compose files> down -v
+scripts/test-env-down.sh ~/src/cht-core   # CHT stack
 # Full cleanup of the shared network (only once nothing else uses it):
 docker network rm cht-agent-net
 ```
@@ -173,5 +170,5 @@ docker network rm cht-agent-net
 | compose fails mounting `git-config.hardened` over `.git/config` | working copy is a git worktree (`.git` is a file) or missing. Run `docker/scripts/bootstrap-workspace.sh` on the host. |
 | `Sandbox verification FAILED` in `docker logs` | a hardening layer is missing — read which `[FAIL]` fired; don't bypass it. |
 | working-copy files unwritable from container | host uid ≠ 1000. Rebuild with a matching uid or chown the copy. |
-| agent can't reach `https://nginx` | CHT stack not attached to `cht-agent-net` — re-run compose with the #66 override; `docker network inspect cht-agent-net` should list nginx. |
+| agent can't reach `https://nginx` | CHT stack not attached to `cht-agent-net` — bring it up with `scripts/test-env-up.sh`; `docker network inspect cht-agent-net` should list one nginx. |
 | `fetch` fails for an `ssh://` or `git@` URL | by design (no ssh binary). Use the `https://` URL. |
