@@ -97,6 +97,10 @@ const minimalEnv = (): NodeJS.ProcessEnv => {
  * treats every bare positional as an action name and throws
  * "Unsupported action(s)" otherwise — only `cmdArgs['--']` reaches
  * environment.extraArgs (which is what args-form-filter reads).
+ *
+ * The credentialed URL is never logged, but argv is readable by every process in the
+ * same PID namespace (/proc/<pid>/cmdline) for the life of the child; cht-conf 6.x takes
+ * a remote --url only this way. Acceptable for a disposable instance.
  */
 const buildExecArgs = (options: ChtConfExecOptions): string[] => [
   `--url=${options.instanceUrl}`,
@@ -106,19 +110,24 @@ const buildExecArgs = (options: ChtConfExecOptions): string[] => [
   ...(options.extraArgs?.length ? ['--', ...options.extraArgs] : []),
 ];
 
-/**
- * Build the cht-conf argv for a bucket (no credentials are logged; the URL with
- * embedded creds lives only in the argv passed to spawn). Exported for testing.
- */
-export const buildChtConfArgs = (options: ChtConfRunOptions): string[] => {
+const bucketExecOptions = (options: ChtConfRunOptions): ChtConfExecOptions => {
+  const verbs = CONFIG_ACTION_COMMANDS[options.action];
   const formFilter = options.artifact && FORM_BUCKETS.has(options.action) ? [options.artifact] : [];
-  return buildExecArgs({
-    verbs: CONFIG_ACTION_COMMANDS[options.action],
+  return {
+    verbs,
     instanceUrl: options.instanceUrl,
     configPath: options.configPath,
     extraArgs: formFilter,
-  });
+    logLabel: `${options.action}: ${verbs.join(' ')}`,
+    cwd: options.cwd,
+    bin: options.bin,
+    timeoutMs: options.timeoutMs,
+  };
 };
+
+/** Exported for testing: exactly the argv runBucket spawns, via the same lowering. */
+export const buildChtConfArgs = (options: ChtConfRunOptions): string[] =>
+  buildExecArgs(bucketExecOptions(options));
 
 // cht-conf logs a "no changes" line per artifact when its hash matches the
 // instance. CRUCIALLY these skip lines contain the word "uploaded" (e.g.
@@ -154,32 +163,34 @@ export const classifyChtConfOutput = (output: string, exitCode: number | null): 
 };
 
 const OUTPUT_TAIL_LINES = 5;
-// cht-conf colours its log lines (test-data.ts strips the same escapes for parsing);
-// warnings are read by humans and end up in JSON, so strip them here too.
+// cht-conf's log.js prefixes every line with a colour code (\x1b[31mERROR ...); the
+// escape's trailing `m` defeats \b, so strip before matching the level tag.
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPES = /\x1b\[[0-9;]*m/g;
+const ERROR_LINE = /^ERROR\b/;
 
-/**
- * cht-conf's own account of what went wrong. Its failures end in a long stack
- * trace with the one useful `ERROR <reason>` line at the bottom, so prefer the
- * ERROR lines when there are any and fall back to the tail otherwise.
- */
-const outputTail = (output: string): string[] => {
-  const lines = output
-    .replace(ANSI_ESCAPES, '')
+const outputLines = (output: string): string[] =>
+  output
+    .replaceAll(ANSI_ESCAPES, '')
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  const errors = lines.filter((line) => /\berror\b/i.test(line));
-  return (errors.length > 0 ? errors : lines).slice(-OUTPUT_TAIL_LINES);
+
+/** cht-conf's own account of a failure: its ERROR lines, else the last few lines. */
+export const outputTail = (output: string): string[] => {
+  const lines = outputLines(output);
+  const errors = lines.filter((line) => ERROR_LINE.test(line));
+  return (errors.length > 0 ? errors : lines).slice(-OUTPUT_TAIL_LINES).map((line) => `cht-conf: ${line}`);
 };
 
+/** cht-conf logs ERROR and still exits 0 on some paths (upload-custom-translations). */
+const loggedErrorButExitedZero = (run: ChtConfExecResult): boolean =>
+  run.exitCode === 0 && outputLines(run.output).some((line) => ERROR_LINE.test(line));
+
 /**
- * Explain a bucket that produced no upload evidence, and upgrade a targeted miss
- * to `failed`: if the caller named an artifact and cht-conf matched nothing, the
- * requested upload did not happen — a failure of intent, not a no-op. A missing
- * bucket input (cht-core's config/default has no branding.json, for instance)
- * stays `skipped`.
+ * Explain a bucket that produced no upload evidence. `matchedNothing` marks an unmatched
+ * form filter or a missing bucket input, as distinct from a hash-based skip of something
+ * that exists; applyConfig decides whether a targeted apply actually happened.
  */
 const classifySkippedBucket = (
   run: ChtConfExecResult,
@@ -207,7 +218,7 @@ const classifySkippedBucket = (
  * output is redacted at this boundary — no caller (a log line, a trace span, an
  * error message) can leak the instance password by forwarding it.
  */
-export const redactUrlCreds = (text: string): string => text.replace(/(\/\/)[^/\s:@]+:[^/\s]*@/g, '$1***:***@');
+export const redactUrlCreds = (text: string): string => text.replaceAll(/(\/\/)[^/\s:@]+:[^/\s]*@/g, '$1***:***@');
 
 /**
  * Run one `cht` process for an ordered verb list. Resolves with the raw
@@ -242,7 +253,12 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
     };
 
     const timeoutId = setTimeout(() => {
+      // Signals reach only the direct child: an xls2xform grandchild spawned by a form
+      // conversion can outlive the timeout.
       proc.kill('SIGTERM');
+      const hardKill = setTimeout(() => proc.kill('SIGKILL'), 5_000);
+      hardKill.unref();
+      proc.once('close', () => clearTimeout(hardKill));
       finish({ exitCode: null, timedOut: true });
     }, timeoutMs);
 
@@ -265,23 +281,37 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
   });
 };
 
-/**
- * Map a finished bucket run onto a ConfigActionStatus, appending any failure
- * warning. A timeout or spawn error is `failed`; otherwise the status is parsed
- * from stdout (classifyChtConfOutput).
- */
+/** Failures stdout parsing cannot see: timeout, spawn error, or ERROR under exit 0. */
+const noteHardFailure = (
+  run: ChtConfExecResult,
+  options: ChtConfRunOptions,
+  warnings: string[]
+): boolean => {
+  if (run.timedOut) {
+    warnings.push(`cht-conf ${options.action} timed out after ${options.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`);
+    return true;
+  }
+  if (run.startError !== undefined) {
+    warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
+    return true;
+  }
+  if (loggedErrorButExitedZero(run)) {
+    warnings.push(
+      `cht-conf ${options.action} logged an error but exited 0 — treated as failed`,
+      ...outputTail(run.output)
+    );
+    return true;
+  }
+  return false;
+};
+
+/** Map a finished bucket run onto a ConfigActionStatus, appending any failure warning. */
 const deriveBucketStatus = (
   run: ChtConfExecResult,
   options: ChtConfRunOptions,
   warnings: string[]
 ): { status: ConfigActionStatus; matchedNothing: boolean } => {
-  if (run.timedOut) {
-    const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    warnings.push(`cht-conf ${options.action} timed out after ${timeoutMs}ms`);
-    return { status: 'failed', matchedNothing: false };
-  }
-  if (run.startError !== undefined) {
-    warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
+  if (noteHardFailure(run, options, warnings)) {
     return { status: 'failed', matchedNothing: false };
   }
   const status = classifyChtConfOutput(run.output, run.exitCode);
@@ -289,8 +319,7 @@ const deriveBucketStatus = (
     return classifySkippedBucket(run, options, warnings);
   }
   if (status === 'failed') {
-    // A non-zero exit otherwise arrives with no explanation at all.
-    warnings.push(...outputTail(run.output).map((line) => `cht-conf: ${line}`));
+    warnings.push(...outputTail(run.output));
   }
   return { status, matchedNothing: false };
 };
@@ -303,23 +332,12 @@ const deriveBucketStatus = (
 export const runBucket = async (options: ChtConfRunOptions): Promise<ConfigActionResult> => {
   const verbs = CONFIG_ACTION_COMMANDS[options.action];
   const warnings: string[] = [];
-  const isFormBucket = FORM_BUCKETS.has(options.action);
 
-  if (options.artifact && !isFormBucket) {
+  if (options.artifact && !FORM_BUCKETS.has(options.action)) {
     warnings.push(`artifact targeting ignored for the ${options.action} bucket`);
   }
-  const formFilter = options.artifact && isFormBucket ? [options.artifact] : [];
 
-  const run = await runChtConf({
-    verbs,
-    instanceUrl: options.instanceUrl,
-    configPath: options.configPath,
-    extraArgs: formFilter,
-    logLabel: `${options.action}: ${verbs.join(' ')}`,
-    cwd: options.cwd,
-    bin: options.bin,
-    timeoutMs: options.timeoutMs,
-  });
+  const run = await runChtConf(bucketExecOptions(options));
 
   const { status, matchedNothing } = deriveBucketStatus(run, options, warnings);
   return {

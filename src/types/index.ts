@@ -805,7 +805,7 @@ export type ConfigUploadAction =
 /**
  * Inputs to applyConfig. `configPath` defaults to cht-core's in-repo
  * `config/default`, resolved against the handle's chtCorePath; for cht-conf
- * tickets it points at the mounted deployment config (CHT_CONF_PATH).
+ * tickets, pass the deployment's config project.
  * `actions` narrows which cht-conf uploads run — omit to run the standard set
  * (the cht-core default-config flow).
  */
@@ -962,20 +962,28 @@ export interface ReadinessOptions {
   initialDelayMs?: number;
   /** Upper bound on the exponential backoff delay (ms). */
   maxDelayMs?: number;
-  /** Per-request timeout so a hung connection can't block past maxWaitMs (ms). */
+  /**
+   * Per-request timeout (ms). A probe near the deadline still gets min(this, 1 s), so a
+   * wait can overrun maxWaitMs by up to that.
+   */
   requestTimeoutMs?: number;
 }
 
 /**
- * Inputs to provision an environment (need a local code path OR a published version)
+ * Inputs to provision an environment. Real mode needs chtCorePath (the checkout
+ * scripts/test-env-up.sh builds); a published `version` is mock-only.
  */
 export interface ProvisionOptions {
   chtCorePath?: string;
   version?: string;
+  /** Real mode accepts only cht-agent-net, which the scripts and override hardcode. */
   network?: string;
   /** Target URL of the running instance (default: https://nginx on cht-agent-net). */
   url?: string;
-  /** Credentials for the instance (default: medic/password — cht-docker-compose.sh defaults). */
+  /**
+   * CouchDB admin credentials (default: the url's userinfo, else COUCHDB_USER /
+   * COUCHDB_PASSWORD, else medic/password — the same defaults as scripts/test-env-up.sh).
+   */
   auth?: { user: string; password: string };
   /** Readiness polling tuning (the human may take minutes to bring the env up). */
   readiness?: ReadinessOptions;
@@ -1003,12 +1011,13 @@ export interface EnvironmentHandle {
  * Result of seeding test data into the environment
  */
 export interface TestDataResult {
+  /** The counts classify what json_docs held; `succeeded` says whether the instance took it all. */
   placesCreated: number;
   peopleCreated: number;
   reportsCreated: number;
   usersCreated: number;
   warnings: string[];
-  /** True when every cht-conf seeding invocation exited cleanly. */
+  /** True when every doc uploaded and every cht-conf seeding run exited 0. */
   succeeded: boolean;
   /**
    * _ids of the docs seeded via csv-to-docs + upload-docs (evidence for the

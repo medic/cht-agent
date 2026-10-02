@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
 #
 # Human-run teardown for the Test Environment Layer.
-# Usage: scripts/test-env-down.sh [<cht-core-path>]
-# COUCHDB_* must be supplied even here: the compose files declare
-# ${COUCHDB_PASSWORD:?...}, which compose resolves for every subcommand.
+# The cht-agent NEVER runs this or any Docker command itself.
+# Usage: scripts/test-env-down.sh [<cht-core-path>]   (overrides: scripts/lib/test-env.sh)
 set -euo pipefail
+source "$(dirname "$0")/lib/test-env.sh"
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OVERRIDE="$REPO_ROOT/docker/cht-agent-net.override.yml"
-# Same resolution as test-env-up.sh, minus the clone: an env we tore up must already exist.
-TARGET="${1:-${CHT_CORE_PATH:-${CHT_CORE_CLONE_DIR:-$REPO_ROOT/.cht-core}}}"
-if [[ ! -d "$TARGET/local-build" ]]; then
-  echo "error: no cht-core build at $TARGET (pass a path or set CHT_CORE_PATH)" >&2
-  exit 1
-fi
+# Same resolution as test-env-up.sh, minus the clone: the stack must already exist.
+TARGET="$(test_env_default_target "${1:-}")"
+test_env_require_build "$TARGET"
+test_env_select "$TARGET"
+test_env_require_containers
+test_env_compose down -v
 
-cd "$TARGET/local-build"
-COUCHDB_USER="${COUCHDB_USER:-medic}" COUCHDB_PASSWORD="${COUCHDB_PASSWORD:-password}" docker compose \
-  -f cht-couchdb.yml -f cht-core.yml -f "$OVERRIDE" down -v
-
-echo "CHT environment torn down (-v removed volumes for a clean slate)."
+echo "CHT environment '$TEST_ENV_PROJECT' torn down. -v removed its named volumes; CouchDB data in the" \
+  "${COUCHDB_DATA:-local-build/srv-$TEST_ENV_PROJECT} bind mount stays."

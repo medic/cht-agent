@@ -274,7 +274,7 @@ describe('cht-conf-runner', () => {
       const proc = makeFakeProc();
       const { runChtConf } = loadRunner(proc);
 
-      const promise = runChtConf(execOpts());
+      const promise = runChtConf(execOpts({ bin: 'cht' }));
       proc.emit('error', new Error('ENOENT'));
 
       const result = await promise;
@@ -287,7 +287,7 @@ describe('cht-conf-runner', () => {
       const proc = makeFakeProc();
       const { runChtConf } = loadRunner(proc);
 
-      const promise = runChtConf(execOpts({ cwd: '/nope/missing' }));
+      const promise = runChtConf(execOpts({ cwd: '/nope/missing', bin: 'cht' }));
       proc.emit('error', new Error('spawn cht ENOENT'));
 
       const result = await promise;
@@ -501,6 +501,63 @@ describe('cht-conf-runner', () => {
       const result = await promise;
       expect(result.output).to.include('https://***:***@nginx/medic');
       expect(result.output).to.not.include('ssw0rd');
+    });
+
+    // cht-conf's log.js writes every level to STDOUT behind a colour code, e.g. \x1b[31mERROR.
+    const coloured = (colour: string, level: string, message: string) => `\x1b[${colour}m${level} ${message} \x1b[0m\n`;
+
+    it('fails a bucket that logged an ERROR even though cht-conf exited 0', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ action: 'resources' }));
+      // upload-custom-translations.js logs this and returns, so cht-conf exits 0.
+      proc.stdout.emit('data', Buffer.from(coloured('31', 'ERROR', 'Exception checking translations: bad file')));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('failed');
+      expect(result.warnings.join(' ')).to.include('logged an error but exited 0');
+      expect(result.warnings.join(' ')).to.include('Exception checking translations');
+    });
+
+    it('does not fail an upload whose form is merely named like an error', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts());
+      proc.stdout.emit('data', Buffer.from(coloured('32', 'INFO', 'Form forms/app/error-report.xml uploaded')));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('uploaded');
+    });
+
+    it("does not fail on cht-conf's benign INFO about an unreadable bookmark", async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts());
+      // warn-upload-overwrite.js logs this at INFO and carries on.
+      proc.stdout.emit('data', Buffer.from(coloured('32', 'INFO', 'Error trying to read bookmark, continuing anyway')));
+      proc.stdout.emit('data', Buffer.from(coloured('32', 'INFO', 'Form forms/app/pregnancy.xml uploaded')));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('uploaded');
+    });
+
+    it('spawns the artifact filter it advertises (same lowering as buildChtConfArgs)', async () => {
+      const proc = makeFakeProc();
+      const { runBucket, spawnLog } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts({ action: 'app-forms', artifact: 'pregnancy' }));
+      proc.stdout.emit('data', Buffer.from('Form forms/app/pregnancy.xml uploaded'));
+      proc.emit('close', 0);
+
+      await promise;
+      expect(spawnLog[0].args.slice(-2)).to.deep.equal(['--', 'pregnancy']);
+      expect(spawnLog[0].args).to.deep.equal(buildChtConfArgs(baseOpts({ action: 'app-forms', artifact: 'pregnancy' })));
     });
 
     it('passes the cwd through to the spawned bucket process', async () => {

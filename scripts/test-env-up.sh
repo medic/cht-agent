@@ -12,24 +12,18 @@
 # checkout at $CHT_CORE_CLONE_DIR (default <repo>/.cht-core), cloned from master
 # on first use. A path you pass is used as-is and is never cloned into.
 #
-# Env overrides: COUCHDB_USER (default medic), COUCHDB_PASSWORD (default password).
-# These defaults match the agent's DEFAULT_AUTH — the local-build stack would
-# otherwise default the admin user to 'admin' and every authed agent call would 401.
-# The network name is NOT overridable: docker/cht-agent-net.override.yml hardcodes
-# `cht-agent-net` as an external network, so renaming needs an edit there too.
+# Project, credential, port and cert overrides: see scripts/lib/test-env.sh.
 #
-# TLS: the stack serves a self-signed cert. The agent's cht-conf child trusts it via
-# --accept-self-signed-certs; the agent's OWN fetch (readiness/discovery/reset) needs
-# the cert trusted in Node — prefer NODE_EXTRA_CA_CERTS=<pem> on the agent process.
-# NODE_TLS_REJECT_UNAUTHORIZED=0 disables verification for ALL of the agent's traffic
-# (LLM/MCP included) and is acceptable only inside a disposable runner container.
+# TLS: the stack serves a SAN-less self-signed cert whose CN is COMMON_NAME (nginx).
+# The agent's cht-conf child accepts it via --accept-self-signed-certs; the agent's
+# own fetch (readiness/discovery/reset) needs it trusted via NODE_EXTRA_CA_CERTS
+# (copy command printed at the end). NODE_TLS_REJECT_UNAUTHORIZED=0 disables
+# verification for ALL of the agent's traffic (LLM/MCP included) and is acceptable
+# only inside a disposable runner container.
 set -euo pipefail
+source "$(dirname "$0")/lib/test-env.sh"
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OVERRIDE="$REPO_ROOT/docker/cht-agent-net.override.yml"
-# Must match the external network in docker/cht-agent-net.override.yml.
-NETWORK="cht-agent-net"
-CLONE_DIR="${CHT_CORE_CLONE_DIR:-$REPO_ROOT/.cht-core}"
+CLONE_DIR="${CHT_CORE_CLONE_DIR:-$TEST_ENV_REPO_ROOT/.cht-core}"
 CHT_CORE_UPSTREAM="${CHT_CORE_UPSTREAM:-https://github.com/medic/cht-core.git}"
 CHT_CORE_BRANCH="${CHT_CORE_BRANCH:-master}"
 
@@ -57,6 +51,22 @@ if [[ ! -d "$TARGET" ]]; then
   echo "error: cht-core path not found: $TARGET" >&2
   exit 1
 fi
+test_env_select "$TARGET"
+
+# 1. Shared network the cht-agent and CHT both join.
+docker network inspect "$TEST_ENV_NETWORK" >/dev/null 2>&1 || docker network create "$TEST_ENV_NETWORK" >/dev/null
+
+# The agent reaches CHT as https://nginx on that network; a second stack's nginx
+# there would split the name between two instances.
+nginx_projects="$(docker ps --filter "network=$TEST_ENV_NETWORK" --filter label=com.docker.compose.service=nginx \
+  --format '{{.Label "com.docker.compose.project"}}')"
+while IFS= read -r project; do
+  if [[ -n "$project" && "$project" != "$TEST_ENV_PROJECT" ]]; then
+    echo "error: Compose project '$project' already has an nginx on $TEST_ENV_NETWORK." >&2
+    echo "       Tear it down first: CHT_TEST_ENV_PROJECT='$project' scripts/test-env-down.sh <its cht-core path>" >&2
+    exit 1
+  fi
+done <<< "$nginx_projects"
 
 # `npm run local-images` builds from node_modules (bowser, uglifyjs, cleancss);
 # without them it dies on an opaque `cp: cannot stat` deep inside the build.
@@ -74,9 +84,6 @@ elif [[ ! -e "$TARGET/node_modules/bowser/bundled.js" ]] || [[ ! -x "$TARGET/nod
   exit 1
 fi
 
-# 1. Shared network the cht-agent and CHT both join (idempotent).
-docker network create "$NETWORK" 2>/dev/null || true
-
 # 2. Build the app. `npm run local-images` only PACKAGES an already-built tree:
 # build-service-images.sh copies into api/build/static/, which is created by
 # build-prepare.sh (ddocs, enketo css, admin app) and filled by build-webapp-dev.
@@ -93,8 +100,7 @@ fi
 ( cd "$TARGET" && npm run local-images )
 
 # 4. Start the stack, joined to the shared network via the override.
-cd "$TARGET/local-build"
-COUCHDB_USER="${COUCHDB_USER:-medic}" COUCHDB_PASSWORD="${COUCHDB_PASSWORD:-password}" docker compose \
-  -f cht-couchdb.yml -f cht-core.yml -f "$OVERRIDE" up -d
+test_env_compose up -d
 
-echo "CHT starting on network '$NETWORK'. The agent will poll /api/v2/monitoring until healthy."
+echo "CHT starting as Compose project '$TEST_ENV_PROJECT' on '$TEST_ENV_NETWORK'. The agent will poll /api/v2/monitoring until healthy."
+echo "To trust its cert: docker cp $TEST_ENV_PROJECT-nginx-1:/etc/nginx/private/cert.pem <file>, then NODE_EXTRA_CA_CERTS=<file> for the agent."

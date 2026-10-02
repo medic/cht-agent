@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import * as sinon from 'sinon';
-import { bulkDocs, fetchDocRevs, fetchFormRevs, fetchSettings } from '../../src/utils/cht-api';
+import { bulkDocs, fetchDocRevs, fetchFormRevs, fetchSession, fetchSettings } from '../../src/utils/cht-api';
 
 describe('cht-api', () => {
   let fetchStub: sinon.SinonStub;
@@ -66,6 +66,44 @@ describe('cht-api', () => {
         expect.fail('expected fetchSettings to reject');
       } catch (error) {
         expect((error as Error).message).to.include('non-object body');
+      }
+    });
+  });
+
+  describe('fetchSession', () => {
+    it('GETs /_session with basic auth and returns the user and roles', async () => {
+      fetchStub.resolves(jsonResponse({ ok: true, userCtx: { name: 'medic', roles: ['_admin'] } }));
+
+      const session = await fetchSession(URL_BASE, auth);
+
+      expect(session).to.deep.equal({ name: 'medic', roles: ['_admin'] });
+      expect(fetchStub.firstCall.args[0]).to.equal('https://nginx/_session');
+      expect(fetchStub.firstCall.args[1].headers.Authorization).to.equal(EXPECTED_AUTH);
+    });
+
+    it('reports an anonymous session as no name and no roles', async () => {
+      fetchStub.resolves(jsonResponse({ ok: true, userCtx: { name: null, roles: [] } }));
+
+      expect(await fetchSession(URL_BASE, auth)).to.deep.equal({ name: null, roles: [] });
+    });
+
+    it('drops non-string roles and tolerates a body without userCtx', async () => {
+      fetchStub.onFirstCall().resolves(jsonResponse({ userCtx: { name: 'medic', roles: ['_admin', 7, null] } }));
+      fetchStub.onSecondCall().resolves(jsonResponse({ ok: true }));
+
+      expect((await fetchSession(URL_BASE, auth)).roles).to.deep.equal(['_admin']);
+      expect(await fetchSession(URL_BASE, auth)).to.deep.equal({ name: null, roles: [] });
+    });
+
+    it('rejects with the status on bad credentials', async () => {
+      fetchStub.resolves(jsonResponse({ error: 'unauthorized' }, 401));
+
+      try {
+        await fetchSession(URL_BASE, auth);
+        expect.fail('expected fetchSession to reject');
+      } catch (error) {
+        expect((error as Error).message).to.include('401');
+        expect((error as Error).message).to.not.include('password');
       }
     });
   });

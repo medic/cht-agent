@@ -1,15 +1,19 @@
 import { expect } from 'chai';
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   SeededDoc,
   classifySeededDocs,
-  cleanSeededDocs,
   countCreatedUsers,
+  findForeignDocFiles,
+  hasCsvInput,
   hasUsersCsv,
+  listDocFiles,
   parseUploadDocsSummary,
   readSeededDocs,
+  recordOwnedDocFiles,
+  removeOwnedDocFiles,
 } from '../../src/utils/test-data';
 import { DiscoveredConfig } from '../../src/types';
 
@@ -57,8 +61,9 @@ describe('test-data', () => {
   describe('json_docs fixtures', () => {
     let dataPath: string;
 
-    const writeDoc = (id: string, doc: Record<string, unknown>): void => {
-      writeFileSync(join(dataPath, 'json_docs', `${id}.doc.json`), JSON.stringify({ _id: id, ...doc }));
+    const writeDoc = (id: string, doc: Record<string, unknown>, dir = ''): void => {
+      mkdirSync(join(dataPath, 'json_docs', dir), { recursive: true });
+      writeFileSync(join(dataPath, 'json_docs', dir, `${id}.doc.json`), JSON.stringify({ _id: id, ...doc }));
     };
 
     beforeEach(() => {
@@ -110,34 +115,105 @@ describe('test-data', () => {
         expect(readSeededDocs(dataPath)).to.deep.equal([]);
       });
 
-      it('throws on a malformed doc file rather than guessing the worklist', () => {
+      it('reads docs in subdirectories too, as cht-conf upload-docs does', () => {
+        writeDoc('top', { type: 'clinic' });
+        writeDoc('nested', { type: 'person' }, 'extra');
+
+        expect(readSeededDocs(dataPath).map((doc) => doc.id)).to.deep.equal(['nested', 'top']);
+      });
+
+      it('falls back to the filename when a doc has no _id', () => {
+        writeFileSync(join(dataPath, 'json_docs', 'no-id.doc.json'), JSON.stringify({ type: 'clinic' }));
+
+        expect(readSeededDocs(dataPath)).to.deep.equal([{ id: 'no-id', type: 'clinic' }]);
+      });
+
+      it('throws on a malformed doc file, naming it, rather than guessing the worklist', () => {
         writeFileSync(join(dataPath, 'json_docs', 'broken.doc.json'), '{not json');
 
-        expect(() => readSeededDocs(dataPath)).to.throw(SyntaxError);
+        expect(() => readSeededDocs(dataPath)).to.throw('json_docs/broken.doc.json is not valid JSON');
       });
     });
 
-    describe('cleanSeededDocs', () => {
-      it('removes only the .doc.json files, keeping report logs and other project files', () => {
-        writeDoc('stale-1', { type: 'clinic' });
-        writeDoc('stale-2', { type: 'person' });
+    describe('hasCsvInput', () => {
+      it('is true when the data project has a csv/ directory', () => {
+        mkdirSync(join(dataPath, 'csv'));
+
+        expect(hasCsvInput(dataPath)).to.equal(true);
+      });
+
+      it('is false without one', () => {
+        expect(hasCsvInput(dataPath)).to.equal(false);
+      });
+    });
+
+    describe('ownership of json_docs', () => {
+      it('lists doc files recursively, sorted, ignoring everything else', () => {
+        writeDoc('b', { type: 'clinic' });
+        writeDoc('a', { type: 'person' }, 'sub');
+        writeFileSync(join(dataPath, 'json_docs', 'upload-docs.1.log.json'), '{}');
+
+        expect(listDocFiles(dataPath)).to.deep.equal(['b.doc.json', 'sub/a.doc.json']);
+      });
+
+      it('treats every doc file as foreign until this layer has recorded it (fails closed)', () => {
+        writeDoc('hand-authored', { type: 'clinic' });
+
+        expect(findForeignDocFiles(dataPath)).to.deep.equal(['hand-authored.doc.json']);
+        expect(removeOwnedDocFiles(dataPath)).to.equal(0);
+        expect(listDocFiles(dataPath)).to.deep.equal(['hand-authored.doc.json']);
+      });
+
+      it('removes only the files it recorded, keeping report logs and files outside json_docs', () => {
+        writeDoc('generated-1', { type: 'clinic' });
+        writeDoc('generated-2', { type: 'person' }, 'nested');
+        recordOwnedDocFiles(dataPath);
         writeFileSync(join(dataPath, 'json_docs', 'upload-docs.1.log.json'), '{}');
         writeFileSync(join(dataPath, 'users.csv'), 'username,password,roles\n');
 
-        const removed = cleanSeededDocs(dataPath);
-
-        expect(removed).to.equal(2);
-        expect(readSeededDocs(dataPath)).to.deep.equal([]);
-        expect(hasUsersCsv(dataPath)).to.equal(true); // files outside json_docs untouched
-        expect(readdirSync(join(dataPath, 'json_docs'))).to.deep.equal(['upload-docs.1.log.json']);
+        expect(findForeignDocFiles(dataPath)).to.deep.equal([]);
+        expect(removeOwnedDocFiles(dataPath)).to.equal(2);
+        expect(listDocFiles(dataPath)).to.deep.equal([]);
+        expect(hasUsersCsv(dataPath)).to.equal(true);
+        expect(readdirSync(join(dataPath, 'json_docs'))).to.include('upload-docs.1.log.json');
       });
 
-      it('returns 0 when json_docs does not exist', () => {
-        rmSync(join(dataPath, 'json_docs'), { recursive: true });
+      it('never removes a hand-authored file added after the record, and reports it as foreign', () => {
+        writeDoc('generated', { type: 'clinic' });
+        recordOwnedDocFiles(dataPath);
+        writeDoc('hand-authored', { type: 'person' });
 
-        expect(cleanSeededDocs(dataPath)).to.equal(0);
+        expect(findForeignDocFiles(dataPath)).to.deep.equal(['hand-authored.doc.json']);
+        removeOwnedDocFiles(dataPath);
+        expect(listDocFiles(dataPath)).to.deep.equal(['hand-authored.doc.json']);
+      });
+
+      it('treats a generated file edited since the record as the operator\'s', () => {
+        writeDoc('generated', { type: 'clinic' });
+        recordOwnedDocFiles(dataPath);
+        writeDoc('generated', { type: 'clinic', name: 'edited by hand' });
+
+        expect(findForeignDocFiles(dataPath)).to.deep.equal(['generated.doc.json']);
+        expect(removeOwnedDocFiles(dataPath)).to.equal(0);
+      });
+
+      it('proves nothing from a corrupt manifest', () => {
+        writeDoc('generated', { type: 'clinic' });
+        recordOwnedDocFiles(dataPath);
+        writeFileSync(join(dataPath, '.cht-agent-seeded.json'), '{not json');
+
+        expect(findForeignDocFiles(dataPath)).to.deep.equal(['generated.doc.json']);
+      });
+
+      it('keeps the manifest beside json_docs, where upload-docs will not pick it up', () => {
+        writeDoc('generated', { type: 'clinic' });
+        recordOwnedDocFiles(dataPath);
+
+        expect(existsSync(join(dataPath, '.cht-agent-seeded.json'))).to.equal(true);
+        expect(listDocFiles(dataPath)).to.deep.equal(['generated.doc.json']);
       });
     });
+
   });
 
   describe('classifySeededDocs', () => {

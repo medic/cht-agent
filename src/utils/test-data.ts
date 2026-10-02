@@ -1,9 +1,9 @@
 /**
  * Test-data helpers for the Test Environment Layer.
  *
- * Everything prepareTestData needs around the cht-conf runner: reading the
- * json_docs directory csv-to-docs produced (the fs access is isolated here,
- * the way cht-readiness.ts isolates fetch), classifying seeded docs against
+ * Everything prepareTestData needs around the cht-conf runner: reading json_docs
+ * and tracking which of its files this layer generated (the fs access is isolated
+ * here, the way cht-readiness.ts isolates fetch), classifying seeded docs against
  * the discovered config, and parsing cht-conf's stdout (upload-docs summary,
  * create-users progress). cht-conf logs every level to STDOUT with ANSI color
  * prefixes (cht-conf's src/lib/log.js), so the parsers strip escapes first.
@@ -14,11 +14,14 @@
  * "Creating user <username>" before each POST /api/v1/users.
  */
 
-import { readdirSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { DiscoveredConfig } from '../types';
 
 const DOC_FILE_EXTENSION = '.doc.json';
+// Beside json_docs, never in it, so upload-docs cannot pick it up.
+const OWNERSHIP_MANIFEST = '.cht-agent-seeded.json';
 
 /** A doc csv-to-docs generated, reduced to what classification needs. */
 export interface SeededDoc {
@@ -39,7 +42,7 @@ export interface SeededDocCounts {
 // eslint-disable-next-line no-control-regex
 const ANSI_ESCAPES = /\x1b\[[0-9;]*m/g;
 
-const stripAnsi = (output: string): string => output.replace(ANSI_ESCAPES, '');
+const stripAnsi = (output: string): string => output.replaceAll(ANSI_ESCAPES, '');
 
 /**
  * Parse upload-docs' summary line ("Summary: 12 of 12 docs uploaded OK.").
@@ -68,52 +71,86 @@ export const countCreatedUsers = (output: string): number => {
 /** True when the data project has a users.csv for create-users to consume. */
 export const hasUsersCsv = (dataPath: string): boolean => existsSync(join(dataPath, 'users.csv'));
 
-/**
- * Remove the .doc.json files a previous csv-to-docs run left behind in
- * `<dataPath>/json_docs`. csv-to-docs never cleans the directory (it warns
- * "There are already docs in <dir>" and writes alongside), so without this a
- * superseded dataset's docs would be re-uploaded and counted as the current
- * run's data. Only *.doc.json files are removed — upload-docs report logs and
- * anything else stay. Returns how many files were removed.
- */
-export const cleanSeededDocs = (dataPath: string): number => {
-  const docDir = join(dataPath, 'json_docs');
-  if (!existsSync(docDir)) {
-    return 0;
-  }
-  const names = readdirSync(docDir).filter((name) => name.endsWith(DOC_FILE_EXTENSION));
-  for (const name of names) {
-    unlinkSync(join(docDir, name));
-  }
-  return names.length;
-};
+/** True when the data project has CSV inputs for csv-to-docs to regenerate docs from. */
+export const hasCsvInput = (dataPath: string): boolean => existsSync(join(dataPath, 'csv'));
 
-/**
- * Read the docs csv-to-docs generated at `<dataPath>/json_docs`. Returns []
- * when the directory does not exist (csv-to-docs warns-and-skips when there
- * is no csv/ input, leaving no json_docs behind — the agent turns the empty
- * list into a warning). A malformed doc file throws: the seeding evidence and
- * the reset worklist both come from this listing, so guessing is worse than
- * failing loudly.
- */
-export const readSeededDocs = (dataPath: string): SeededDoc[] => {
-  const docDir = join(dataPath, 'json_docs');
+const docDirOf = (dataPath: string): string => join(dataPath, 'json_docs');
+
+/** Every *.doc.json under json_docs, relative to it — recursive, as upload-docs reads it. */
+export const listDocFiles = (dataPath: string): string[] => {
+  const docDir = docDirOf(dataPath);
   if (!existsSync(docDir)) {
     return [];
   }
-  return readdirSync(docDir)
-    .filter((name) => name.endsWith(DOC_FILE_EXTENSION))
-    .sort()
-    .map((name) => {
-      const raw = readFileSync(join(docDir, name), 'utf-8');
-      const doc = JSON.parse(raw) as { _id?: string; type?: string; contact_type?: string };
-      return {
-        id: doc._id ?? name.slice(0, -DOC_FILE_EXTENSION.length),
-        type: doc.type ?? '',
-        ...(doc.contact_type !== undefined ? { contactType: doc.contact_type } : {}),
-      };
-    });
+  return readdirSync(docDir, { recursive: true, encoding: 'utf-8' })
+    .filter((file) => file.endsWith(DOC_FILE_EXTENSION))
+    .sort((a, b) => a.localeCompare(b));
 };
+
+const hashDocFile = (dataPath: string, file: string): string =>
+  createHash('sha256').update(readFileSync(join(docDirOf(dataPath), file))).digest('hex');
+
+/** An absent or unreadable manifest proves nothing is ours, which fails closed. */
+const readOwnershipManifest = (dataPath: string): Record<string, unknown> => {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(dataPath, OWNERSHIP_MANIFEST), 'utf-8'));
+    return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Record every doc file now in json_docs as generated by this layer. Only call it right
+ * after csv-to-docs ran into a json_docs that held nothing else (see prepareDocs).
+ */
+export const recordOwnedDocFiles = (dataPath: string): void => {
+  const manifest: Record<string, string> = {};
+  for (const file of listDocFiles(dataPath)) {
+    manifest[file] = hashDocFile(dataPath, file);
+  }
+  writeFileSync(join(dataPath, OWNERSHIP_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+};
+
+/**
+ * Doc files this layer cannot prove it generated: not in the manifest, or edited since.
+ * json_docs is also cht-conf's hand-authored upload-docs input, so these are the operator's.
+ */
+export const findForeignDocFiles = (dataPath: string): string[] => {
+  const manifest = readOwnershipManifest(dataPath);
+  return listDocFiles(dataPath).filter((file) => manifest[file] !== hashDocFile(dataPath, file));
+};
+
+/** Delete the doc files a previous csv-to-docs run generated, while unchanged. Returns the count. */
+export const removeOwnedDocFiles = (dataPath: string): number => {
+  const manifest = readOwnershipManifest(dataPath);
+  const owned = listDocFiles(dataPath).filter((file) => manifest[file] === hashDocFile(dataPath, file));
+  for (const file of owned) {
+    unlinkSync(join(docDirOf(dataPath), file));
+  }
+  return owned.length;
+};
+
+const parseSeededDoc = (dataPath: string, file: string): SeededDoc => {
+  let doc: { _id?: string; type?: string; contact_type?: string };
+  try {
+    doc = JSON.parse(readFileSync(join(docDirOf(dataPath), file), 'utf-8'));
+  } catch (error) {
+    throw new Error(`json_docs/${file} is not valid JSON: ${(error as Error).message}`);
+  }
+  return {
+    id: doc._id ?? basename(file, DOC_FILE_EXTENSION),
+    type: doc.type ?? '',
+    ...(doc.contact_type !== undefined ? { contactType: doc.contact_type } : {}),
+  };
+};
+
+/**
+ * Read every doc under `<dataPath>/json_docs` (recursively). A malformed file throws, naming
+ * it: the seeding evidence and the reset worklist both come from this listing.
+ */
+export const readSeededDocs = (dataPath: string): SeededDoc[] =>
+  listDocFiles(dataPath).map((file) => parseSeededDoc(dataPath, file));
 
 /** Which TestDataResult bucket a single seeded doc counts toward. */
 type DocBucket = 'places' | 'people' | 'reports' | 'skip';

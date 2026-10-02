@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import { resolve } from 'node:path';
 import * as sinon from 'sinon';
 import { TestEnvironmentAgent } from '../../src/agents/test-environment-agent';
 import * as chtConfRunner from '../../src/utils/cht-conf-runner';
@@ -59,13 +60,32 @@ describe('TestEnvironmentAgent', () => {
       const handle = await agent.provision({ version: '4.18.0' });
 
       expect(handle.source).to.equal('mock');
-      expect(handle.chtCorePath).to.equal(undefined);
+      expect(handle.chtCorePath).to.be.undefined;
     });
 
     it('should carry chtCorePath on the handle when built from local code', async () => {
       const handle = await agent.provision({ chtCorePath: '/workspace/cht-core' });
 
       expect(handle.chtCorePath).to.equal('/workspace/cht-core');
+    });
+
+    it('should strip embedded credentials from a mock handle, as the real path does', async () => {
+      const handle = await agent.provision({ version: '4.18.0', url: 'https://ops:secret@nginx' });
+
+      expect(handle.url).to.equal('https://nginx');
+      expect(handle.url).to.not.include('secret');
+      expect(handle.auth).to.deep.equal({ user: 'ops', password: 'secret' });
+    });
+
+    it('should reject an invalid mock URL without carrying its password on the error', async () => {
+      try {
+        await agent.provision({ version: '4.18.0', url: 'https://ops:secret@exa mple' });
+        expect.fail('expected provision to reject');
+      } catch (error) {
+        expect((error as Error).message).to.include('not a valid URL');
+        expect((error as Error).message).to.not.include('secret');
+        expect((error as { input?: string }).input).to.be.undefined;
+      }
     });
 
     it('should honor a network override', async () => {
@@ -94,8 +114,25 @@ describe('TestEnvironmentAgent', () => {
 
     describe('real mode (useMockDocker: false)', () => {
       let fetchStub: sinon.SinonStub;
+      // Readiness asks for the monitoring JSON; the credential check then reads /_session.
+      const healthyFetch = async (url: string) => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          url.endsWith('/_session')
+            ? { userCtx: { name: 'medic', roles: ['_admin'] } }
+            : { version: { app: '4.18.0', couchdb: '3.4.2' } },
+      });
+      const sessionAnswering = (status: number, userCtx: unknown) => async (url: string) =>
+        url.endsWith('/_session') ? { ok: status < 300, status, json: async () => ({ userCtx }) } : healthyFetch(url);
       // Provision reads these; isolate every test from the ambient env.
-      const PROVISION_ENV_KEYS = ['CHT_URL', 'COUCHDB_USER', 'COUCHDB_PASSWORD', 'CHT_TEST_ENV_ALLOW_EXTERNAL'];
+      const PROVISION_ENV_KEYS = [
+        'CHT_URL',
+        'COUCHDB_USER',
+        'COUCHDB_PASSWORD',
+        'CHT_TEST_ENV_ALLOW_EXTERNAL',
+        'CHT_TEST_ENV_PROJECT',
+      ];
       const priorProvisionEnv: Record<string, string | undefined> = {};
 
       beforeEach(() => {
@@ -118,7 +155,7 @@ describe('TestEnvironmentAgent', () => {
       });
 
       it('should return a docker handle once the environment is healthy', async () => {
-        fetchStub.resolves({ ok: true, status: 200 });
+        fetchStub.callsFake(healthyFetch);
         const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
         const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
@@ -131,7 +168,7 @@ describe('TestEnvironmentAgent', () => {
       });
 
       it('should print the bring-up gate with the cht-core path shell-quoted', async () => {
-        fetchStub.resolves({ ok: true, status: 200 });
+        fetchStub.callsFake(healthyFetch);
         const logSpy = sinon.spy(console, 'log');
         const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
@@ -141,17 +178,40 @@ describe('TestEnvironmentAgent', () => {
         expect(lines.some((line) => line.includes("scripts/test-env-up.sh '/workspace/cht-core'"))).to.equal(true);
       });
 
-      it('should print a runnable bring-up gate when no cht-core path is known', async () => {
-        fetchStub.resolves({ ok: true, status: 200 });
+      it('should refuse a published version: real mode brings stacks up from a working copy only', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        try {
+          await realAgent.provision({ version: '4.18.0' });
+          expect.fail('expected provision to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('no published-version bring-up');
+        }
+        expect(fetchStub.called).to.equal(false);
+      });
+
+      it('should carry an explicit CHT_TEST_ENV_PROJECT into the printed gate', async () => {
+        fetchStub.callsFake(healthyFetch);
+        process.env.CHT_TEST_ENV_PROJECT = 'my-proj';
         const logSpy = sinon.spy(console, 'log');
         const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-        await realAgent.provision({ version: '4.18.0' });
+        await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
 
         const lines = logSpy.getCalls().map((call) => String(call.args[0]));
-        const gate = lines.find((line) => line.includes('scripts/test-env-up.sh'));
-        expect(gate).to.be.a('string');
-        expect(gate).to.not.include('<cht-core>');
+        const gate = "CHT_TEST_ENV_PROJECT='my-proj' scripts/test-env-up.sh '/workspace/cht-core'";
+        expect(lines.some((line) => line.includes(gate))).to.equal(true);
+      });
+
+      it('should refuse a custom network, which the scripts and the override hardcode', async () => {
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        try {
+          await realAgent.provision({ chtCorePath: '/workspace/cht-core', network: 'other-net' });
+          expect.fail('expected provision to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('hardcode cht-agent-net');
+        }
       });
 
       it('should reject if the environment never becomes ready', async () => {
@@ -182,11 +242,11 @@ describe('TestEnvironmentAgent', () => {
 
       describe('disposable-target guard', () => {
         it('should allow http for a local disposable instance', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'http://localhost:5988';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0' });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
 
           expect(handle.url).to.equal('http://localhost:5988');
         });
@@ -196,7 +256,7 @@ describe('TestEnvironmentAgent', () => {
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           try {
-            await realAgent.provision({ version: '4.18.0', allowExternalTarget: true });
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core', allowExternalTarget: true });
             expect.fail('expected provision to reject');
           } catch (error) {
             expect((error as Error).message).to.include('https is required');
@@ -204,12 +264,66 @@ describe('TestEnvironmentAgent', () => {
           expect(fetchStub.called).to.equal(false);
         });
 
+        it('should refuse a PUBLIC address behind the dashed-IP resolver', async () => {
+          // local-ip.medicmobile.org answers for ANY address, 203.0.113.5 included.
+          process.env.CHT_URL = 'https://203-0-113-5.local-ip.medicmobile.org';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          try {
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+            expect.fail('expected provision to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('not a known disposable test instance');
+          }
+          expect(fetchStub.called).to.equal(false);
+        });
+
+        it('should fail provision when the credentials are wrong, naming the user, not on a later call', async () => {
+          fetchStub.callsFake(sessionAnswering(401, undefined));
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          try {
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+            expect.fail('expected provision to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('could not verify the credentials for medic');
+            expect((error as Error).message).to.include('401');
+          }
+        });
+
+        it('should refuse credentials that authenticate but are not a CouchDB admin', async () => {
+          fetchStub.callsFake(sessionAnswering(200, { name: 'chw', roles: ['chw'] }));
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          try {
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+            expect.fail('expected provision to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('not a CouchDB admin');
+          }
+          const sessionCall = fetchStub.getCalls().find((call) => String(call.args[0]).endsWith('/_session'));
+          expect(sessionCall?.args[0]).to.equal('https://nginx/_session');
+          expect(sessionCall?.args[1].headers.Authorization).to.equal(
+            `Basic ${Buffer.from('medic:password').toString('base64')}`
+          );
+        });
+
+        it('should default COUCHDB_USER and COUCHDB_PASSWORD independently, as the scripts do', async () => {
+          fetchStub.callsFake(healthyFetch);
+          process.env.COUCHDB_USER = 'ops';
+          const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+
+          expect(handle.auth).to.deep.equal({ user: 'ops', password: 'password' });
+        });
+
         it('should refuse an unknown host without an explicit opt-in', async () => {
           process.env.CHT_URL = 'https://staging.example';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           try {
-            await realAgent.provision({ version: '4.18.0' });
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
             expect.fail('expected provision to reject');
           } catch (error) {
             expect((error as Error).message).to.include('not a known disposable test instance');
@@ -222,7 +336,7 @@ describe('TestEnvironmentAgent', () => {
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           try {
-            await realAgent.provision({ version: '4.18.0', allowExternalTarget: true });
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core', allowExternalTarget: true });
             expect.fail('expected provision to reject');
           } catch (error) {
             expect((error as Error).message).to.include('refusing the built-in default credentials');
@@ -230,11 +344,11 @@ describe('TestEnvironmentAgent', () => {
         });
 
         it('should accept the cht-docker-helper host used by the published-version bring-up', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://192-168-1-10.local-ip.medicmobile.org';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0' });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
 
           expect(handle.url).to.equal('https://192-168-1-10.local-ip.medicmobile.org');
         });
@@ -244,7 +358,7 @@ describe('TestEnvironmentAgent', () => {
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           try {
-            await realAgent.provision({ version: '4.18.0', allowExternalTarget: true });
+            await realAgent.provision({ chtCorePath: '/workspace/cht-core', allowExternalTarget: true });
             expect.fail('expected provision to reject');
           } catch (error) {
             expect((error as Error).message).to.include('refusing the built-in default credentials');
@@ -252,13 +366,13 @@ describe('TestEnvironmentAgent', () => {
         });
 
         it('should honor the CHT_TEST_ENV_ALLOW_EXTERNAL opt-in once credentials are supplied', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://staging.example';
           process.env.CHT_TEST_ENV_ALLOW_EXTERNAL = '1';
           process.env.COUCHDB_PASSWORD = 'realpass';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0' });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
 
           expect(handle.url).to.equal('https://staging.example');
         });
@@ -268,12 +382,12 @@ describe('TestEnvironmentAgent', () => {
         // Env save/clear/restore is handled by the enclosing describe.
 
         it('should fall back to process.env.CHT_URL when no url option is given', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://cht.example';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           const handle = await realAgent.provision({
-            version: '4.18.0',
+            chtCorePath: '/workspace/cht-core',
             allowExternalTarget: true,
             auth: { user: 'ops', password: 'opspass' },
           });
@@ -283,12 +397,12 @@ describe('TestEnvironmentAgent', () => {
         });
 
         it('should prefer an explicit url option over CHT_URL', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://cht.example';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           const handle = await realAgent.provision({
-            version: '4.18.0',
+            chtCorePath: '/workspace/cht-core',
             url: 'https://explicit.example',
             allowExternalTarget: true,
             auth: { user: 'ops', password: 'opspass' },
@@ -298,22 +412,22 @@ describe('TestEnvironmentAgent', () => {
         });
 
         it('should ignore a blank CHT_URL and use the on-network default', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = '   ';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0' });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
 
           expect(handle.url).to.equal('https://nginx');
         });
 
         it('should canonicalize a trailing slash so appended paths and tracking keys stay stable', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://cht.example/';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           const handle = await realAgent.provision({
-            version: '4.18.0',
+            chtCorePath: '/workspace/cht-core',
             allowExternalTarget: true,
             auth: { user: 'ops', password: 'opspass' },
           });
@@ -323,12 +437,12 @@ describe('TestEnvironmentAgent', () => {
         });
 
         it('should strip embedded credentials out of the URL (logged + fetch()ed) into the auth fallback', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           // undici's fetch() rejects credentialed URLs, and handle.url is logged.
           process.env.CHT_URL = 'https://ops:p%40ss@cht.example';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0', allowExternalTarget: true });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core', allowExternalTarget: true });
 
           expect(handle.url).to.equal('https://cht.example');
           expect(handle.auth).to.deep.equal({ user: 'ops', password: 'p@ss' });
@@ -336,35 +450,35 @@ describe('TestEnvironmentAgent', () => {
         });
 
         it('should tolerate a raw % in embedded credentials instead of crashing provision', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://ops:p%ss@cht.example';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0', allowExternalTarget: true });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core', allowExternalTarget: true });
 
           expect(handle.auth).to.deep.equal({ user: 'ops', password: 'p%ss' });
           expect(handle.url).to.equal('https://cht.example');
         });
 
         it('should honor the COUCHDB_USER/COUCHDB_PASSWORD env seam (test-env-up.sh parity)', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.COUCHDB_USER = 'admin';
           process.env.COUCHDB_PASSWORD = 'not-the-default';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
-          const handle = await realAgent.provision({ version: '4.18.0' });
+          const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
 
           expect(handle.auth).to.deep.equal({ user: 'admin', password: 'not-the-default' });
         });
 
         it('should prefer explicit auth over URL-embedded and env credentials', async () => {
-          fetchStub.resolves({ ok: true, status: 200 });
+          fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://ops:urlpass@cht.example';
           process.env.COUCHDB_PASSWORD = 'envpass';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
 
           const handle = await realAgent.provision({
-            version: '4.18.0',
+            chtCorePath: '/workspace/cht-core',
             auth: { user: 'explicit', password: 'explicitpass' },
             allowExternalTarget: true,
           });
@@ -846,16 +960,28 @@ describe('TestEnvironmentAgent', () => {
       let runChtConfStub: sinon.SinonStub;
       let readSeededDocsStub: sinon.SinonStub;
       let hasUsersCsvStub: sinon.SinonStub;
-      let cleanSeededDocsStub: sinon.SinonStub;
+      let hasCsvInputStub: sinon.SinonStub;
+      let findForeignStub: sinon.SinonStub;
+      let removeOwnedStub: sinon.SinonStub;
+      let recordOwnedStub: sinon.SinonStub;
+      // cht-conf output per verb; a seed makes up to three separate calls.
+      let runs: Record<string, ChtConfExecResult>;
+      const verbsRun = (): string[] => runChtConfStub.getCalls().map((call) => call.args[0].verbs[0]);
 
       beforeEach(() => {
         realAgent = new TestEnvironmentAgent({ useMockDocker: false });
-        runChtConfStub = sinon.stub(chtConfRunner, 'runChtConf');
-        runChtConfStub.onCall(0).resolves(okRun(ansiInfo('Summary: 5 of 5 docs uploaded OK.')));
-        runChtConfStub.onCall(1).resolves(okRun(ansiInfo('Creating user alice')));
+        runs = {
+          'csv-to-docs': okRun(ansiInfo('Processing 5 rows')),
+          'upload-docs': okRun(ansiInfo('Summary: 5 of 5 docs uploaded OK.')),
+          'create-users': okRun(ansiInfo('Creating user alice')),
+        };
+        runChtConfStub = sinon.stub(chtConfRunner, 'runChtConf').callsFake(async (opts) => runs[opts.verbs[0]]);
         readSeededDocsStub = sinon.stub(testData, 'readSeededDocs').returns(seededDocs);
         hasUsersCsvStub = sinon.stub(testData, 'hasUsersCsv').returns(true);
-        cleanSeededDocsStub = sinon.stub(testData, 'cleanSeededDocs').returns(0);
+        hasCsvInputStub = sinon.stub(testData, 'hasCsvInput').returns(true);
+        findForeignStub = sinon.stub(testData, 'findForeignDocFiles').returns([]);
+        removeOwnedStub = sinon.stub(testData, 'removeOwnedDocFiles').returns(0);
+        recordOwnedStub = sinon.stub(testData, 'recordOwnedDocFiles');
       });
 
       afterEach(() => {
@@ -871,27 +997,87 @@ describe('TestEnvironmentAgent', () => {
         }
       });
 
-      it('should clear a previous run\'s stale json_docs before converting', async () => {
-        cleanSeededDocsStub.returns(3);
-
+      it('should run csv-to-docs, upload-docs and create-users as separate cht-conf calls', async () => {
         await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
-        expect(cleanSeededDocsStub.calledOnceWith(dataPath)).to.equal(true);
-        expect(cleanSeededDocsStub.calledBefore(runChtConfStub)).to.equal(true);
+        expect(verbsRun()).to.deep.equal(['csv-to-docs', 'upload-docs', 'create-users']);
+        const uploadCall = runChtConfStub.secondCall.args[0];
+        expect(uploadCall.instanceUrl).to.equal('https://medic:password@nginx/');
+        expect(uploadCall.configPath).to.equal(dataPath);
+        expect(uploadCall.cwd).to.equal(dataPath);
       });
 
-      it('should run csv-to-docs + upload-docs, then create-users, via the runner', async () => {
+      it('should pass an absolute path to cht-conf when given a relative dataPath', async () => {
+        await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath: 'relative/data' });
+
+        const call = runChtConfStub.firstCall.args[0];
+        expect(call.configPath).to.equal(resolve('relative/data'));
+        expect(call.cwd).to.equal(resolve('relative/data'));
+      });
+
+      it('should clear the files a previous run generated before converting', async () => {
+        removeOwnedStub.returns(3);
+
         await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
-        expect(runChtConfStub.callCount).to.equal(2);
-        const docsCall = runChtConfStub.firstCall.args[0];
-        expect(docsCall.verbs).to.deep.equal(['csv-to-docs', 'upload-docs']);
-        expect(docsCall.instanceUrl).to.equal('https://medic:password@nginx/');
-        expect(docsCall.configPath).to.equal(dataPath);
-        expect(docsCall.cwd).to.equal(dataPath);
-        const usersCall = runChtConfStub.secondCall.args[0];
-        expect(usersCall.verbs).to.deep.equal(['create-users']);
-        expect(usersCall.configPath).to.equal(dataPath);
+        expect(removeOwnedStub.calledOnceWith(dataPath)).to.equal(true);
+        expect(removeOwnedStub.calledBefore(runChtConfStub)).to.equal(true);
+      });
+
+      it('should refuse json_docs files it did not generate, naming them, before touching anything', async () => {
+        // json_docs is also cht-conf's hand-authored upload-docs input directory.
+        findForeignStub.returns(['hand-authored.doc.json']);
+
+        try {
+          await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+          expect.fail('expected prepareTestData to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('did not generate');
+          expect((error as Error).message).to.include('hand-authored.doc.json');
+        }
+        expect(removeOwnedStub.called).to.equal(false);
+        expect(runChtConfStub.called).to.equal(false);
+      });
+
+      it('should upload a hand-authored json_docs untouched when there is no csv input', async () => {
+        hasCsvInputStub.returns(false);
+
+        await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(findForeignStub.called).to.equal(false);
+        expect(removeOwnedStub.called).to.equal(false);
+        expect(recordOwnedStub.called).to.equal(false);
+        expect(verbsRun()).to.deep.equal(['upload-docs', 'create-users']);
+      });
+
+      it('should record what csv-to-docs generated as this layer\'s own', async () => {
+        await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(recordOwnedStub.calledOnceWith(dataPath)).to.equal(true);
+        expect(recordOwnedStub.firstCall.calledAfter(runChtConfStub.firstCall)).to.equal(true);
+      });
+
+      it('should record partial csv-to-docs output too, and not upload, when conversion fails', async () => {
+        runs['csv-to-docs'] = { exitCode: 1, output: '\x1b[31mERROR bad row 3 \x1b[0m', timedOut: false };
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(recordOwnedStub.calledOnce).to.equal(true);
+        expect(verbsRun()).to.not.include('upload-docs');
+        expect(result.succeeded).to.equal(false);
+        expect(result.warnings.join(' ')).to.include('ERROR bad row 3');
+      });
+
+      it('should refuse protected config ids BEFORE upload-docs can write them', async () => {
+        readSeededDocsStub.returns([{ id: 'place-1', type: 'clinic' }, { id: 'settings', type: 'clinic' }]);
+
+        try {
+          await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+          expect.fail('expected prepareTestData to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('contains protected config doc(s) settings');
+        }
+        expect(verbsRun()).to.deep.equal(['csv-to-docs']);
       });
 
       it('should classify the seeded docs against the discovered config', async () => {
@@ -907,7 +1093,7 @@ describe('TestEnvironmentAgent', () => {
       });
 
       it('should count created users from the create-users output', async () => {
-        runChtConfStub.onCall(1).resolves(okRun([ansiInfo('Creating user alice'), ansiInfo('Creating user bob')].join('\n')));
+        runs['create-users'] = okRun([ansiInfo('Creating user alice'), ansiInfo('Creating user bob')].join('\n'));
 
         const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
@@ -919,49 +1105,50 @@ describe('TestEnvironmentAgent', () => {
 
         const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
-        expect(runChtConfStub.callCount).to.equal(1);
+        expect(verbsRun()).to.deep.equal(['csv-to-docs', 'upload-docs']);
         expect(result.usersCreated).to.equal(0);
         expect(result.succeeded).to.equal(true);
       });
 
-      it('should warn on a partial upload without failing the seed', async () => {
-        runChtConfStub.onCall(0).resolves(okRun(ansiInfo('Summary: 3 of 5 docs uploaded OK.')));
+      it('should report succeeded:false on a partial upload, and say why', async () => {
+        // upload-docs exits 0 even when it rejects docs; re-seeding a static dataset conflicts.
+        runs['upload-docs'] = okRun(ansiInfo('Summary: 3 of 5 docs uploaded OK.'));
 
         const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
-        expect(result.succeeded).to.equal(true);
+        expect(result.succeeded).to.equal(false);
         expect(result.warnings.join(' ')).to.include('only 3 of 5 docs uploaded');
       });
 
-      it('should warn when nothing was uploaded (no csv inputs)', async () => {
-        runChtConfStub.onCall(0).resolves(okRun(ansiInfo('No csv directory found at /mnt/test-data/csv.')));
+      it('should warn when json_docs ends up empty (no csv inputs)', async () => {
+        runs['csv-to-docs'] = okRun(ansiInfo('No csv directory found at /mnt/test-data/csv.'));
+        runs['upload-docs'] = okRun('');
         readSeededDocsStub.returns([]);
         hasUsersCsvStub.returns(false);
 
         const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
         expect(result.seededDocIds).to.deep.equal([]);
-        expect(result.warnings.join(' ')).to.include('no docs were uploaded');
+        expect(result.warnings.join(' ')).to.include('no docs in /mnt/test-data/json_docs');
       });
 
-      it('should report succeeded:false when the docs run fails, still returning the disk evidence', async () => {
-        runChtConfStub.onCall(0).resolves({ exitCode: 1, output: 'ERROR boom', timedOut: false });
+      it('should report succeeded:false when upload-docs fails, with cht-conf\'s reason', async () => {
+        runs['upload-docs'] = { exitCode: 1, output: '\x1b[31mERROR boom \x1b[0m', timedOut: false };
 
         const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
         expect(result.succeeded).to.equal(false);
         expect(result.warnings.join(' ')).to.include('exited with code 1');
+        expect(result.warnings.join(' ')).to.include('ERROR boom');
         expect(result.seededDocIds).to.have.lengthOf(5);
       });
 
       it('should not count the create-users attempt that failed', async () => {
-        runChtConfStub
-          .onCall(1)
-          .resolves({
-            exitCode: 1,
-            output: [ansiInfo('Creating user alice'), ansiInfo('Creating user bob'), 'ERROR 400'].join('\n'),
-            timedOut: false,
-          });
+        runs['create-users'] = {
+          exitCode: 1,
+          output: [ansiInfo('Creating user alice'), ansiInfo('Creating user bob'), 'ERROR 400'].join('\n'),
+          timedOut: false,
+        };
 
         const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
 
@@ -1024,7 +1211,9 @@ describe('TestEnvironmentAgent', () => {
         await realAgent.reset(dockerHandle, 'full');
 
         const lines = logSpy.getCalls().map((call) => String(call.args[0]));
-        const expected = "scripts/test-env-down.sh '/workspace/cht-core' && scripts/test-env-up.sh '/workspace/cht-core'";
+        // A full reset is a fresh stack, so the gate rebuilds (Model A tests the code as it is now).
+        const expected =
+          "scripts/test-env-down.sh '/workspace/cht-core' && CHT_CORE_REBUILD=1 scripts/test-env-up.sh '/workspace/cht-core'";
         expect(lines.some((line) => line.includes(expected))).to.equal(true);
       });
 
@@ -1054,7 +1243,8 @@ describe('TestEnvironmentAgent', () => {
             { id: 'person-1', type: 'person' },
           ]);
           sinon.stub(testData, 'hasUsersCsv').returns(false);
-          sinon.stub(testData, 'cleanSeededDocs').returns(0);
+          // Stubbed explicitly: the real existsSync would silently decide which path runs.
+          sinon.stub(testData, 'hasCsvInput').returns(false);
           fetchDocRevsStub = sinon.stub(chtApi, 'fetchDocRevs').resolves([
             { id: 'place-1', rev: '7-live' },
             { id: 'person-1', rev: '2-live' },
@@ -1092,8 +1282,9 @@ describe('TestEnvironmentAgent', () => {
 
           await agentUnderTest.reset(dockerHandle, 'couchdb');
 
-          expect(fetchDocRevsStub.calledOnceWith('https://nginx', dockerHandle.auth, ['place-1', 'person-1']))
-            .to.equal(true);
+          // Read live revs before the wipe, then again to confirm the reseed restored them.
+          expect(fetchDocRevsStub.callCount).to.equal(2);
+          expect(fetchDocRevsStub.firstCall.args).to.deep.equal(['https://nginx', dockerHandle.auth, ['place-1', 'person-1']]);
           expect(bulkDocsStub.firstCall.args[2]).to.deep.equal([
             { _id: 'place-1', _rev: '7-live', _deleted: true },
             { _id: 'person-1', _rev: '2-live', _deleted: true },
@@ -1106,17 +1297,20 @@ describe('TestEnvironmentAgent', () => {
 
         it('should skip tombstoned and never-existed docs in the wipe', async () => {
           await seedTracking();
-          fetchDocRevsStub.resolves([
+          fetchDocRevsStub.onFirstCall().resolves([
             { id: 'place-1', rev: '7-live' },
             { id: 'person-1', rev: '2-tomb', deleted: true },
           ]);
           bulkDocsStub.resolves([{ id: 'place-1', ok: true }]);
 
-          await agentUnderTest.reset(dockerHandle, 'couchdb');
+          const result = await agentUnderTest.reset(dockerHandle, 'couchdb');
 
           expect(bulkDocsStub.firstCall.args[2]).to.deep.equal([
             { _id: 'place-1', _rev: '7-live', _deleted: true },
           ]);
+          // The doc a test deleted is recreated by the reseed and counted as restored.
+          expect(result.wiped).to.equal(1);
+          expect(result.reseeded).to.equal(2);
         });
 
         it('should throw when a deletion is rejected (half-reset must not pass as clean)', async () => {
@@ -1146,15 +1340,18 @@ describe('TestEnvironmentAgent', () => {
           }
         });
 
-        it('should throw when the reseed only partially uploads', async () => {
+        it('should throw when CouchDB shows a wiped doc did not come back', async () => {
           await seedTracking();
-          runChtConfStub.resolves(okRun(ansiInfo('Summary: 1 of 2 docs uploaded OK.')));
+          fetchDocRevsStub.onSecondCall().resolves([
+            { id: 'place-1', rev: '8-new' },
+            { id: 'person-1', rev: '3-tomb', deleted: true },
+          ]);
 
           try {
             await agentUnderTest.reset(dockerHandle, 'couchdb');
             expect.fail('expected reset to reject');
           } catch (error) {
-            expect((error as Error).message).to.include('reseed uploaded only 1 of 2');
+            expect((error as Error).message).to.include('1 doc(s) are missing after the reseed: person-1');
           }
         });
 
@@ -1166,36 +1363,39 @@ describe('TestEnvironmentAgent', () => {
             await agentUnderTest.reset(dockerHandle, 'couchdb');
             expect.fail('expected reset to reject');
           } catch (error) {
-            expect((error as Error).message).to.include('no docs to reseed from');
+            expect((error as Error).message).to.include('cannot restore 2 of the 2');
           }
           expect(fetchDocRevsStub.called).to.equal(false);
           expect(bulkDocsStub.called).to.equal(false);
         });
 
-        it('should throw when the reseed uploads nothing (upload-docs prints no summary)', async () => {
+        it('should throw when the reseed restored nothing, whatever upload-docs printed', async () => {
           await seedTracking();
           runChtConfStub.resolves(okRun(ansiInfo('No docs directory found at /mnt/test-data/json_docs.')));
+          fetchDocRevsStub.onSecondCall().resolves([
+            { id: 'place-1', rev: '8-tomb', deleted: true },
+            { id: 'person-1', rev: '3-tomb', deleted: true },
+          ]);
 
           try {
             await agentUnderTest.reset(dockerHandle, 'couchdb');
             expect.fail('expected reset to reject');
           } catch (error) {
-            expect((error as Error).message).to.include('reseed uploaded only 0 of 2');
+            expect((error as Error).message).to.include('2 doc(s) are missing after the reseed');
           }
         });
 
-        it('should refresh the tracking to the reseeded docs when the dataset shrank', async () => {
+        it('should refuse to wipe tracked docs the data project can no longer restore', async () => {
           await seedTracking();
-          readSeededDocsStub.returns([{ id: 'place-1', type: 'clinic' }]);
-          runChtConfStub.resolves(okRun(ansiInfo('Summary: 1 of 1 docs uploaded OK.')));
-          await agentUnderTest.reset(dockerHandle, 'couchdb'); // wipes 2, reseeds 1
+          readSeededDocsStub.returns([{ id: 'place-1', type: 'clinic' }]); // the dataset shrank
 
-          fetchDocRevsStub.resetHistory();
-          fetchDocRevsStub.resolves([{ id: 'place-1', rev: '9-x' }]);
-          bulkDocsStub.resolves([{ id: 'place-1', ok: true }]);
-          await agentUnderTest.reset(dockerHandle, 'couchdb');
-
-          expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1']);
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('cannot restore 1 of the 2 doc(s) it would wipe (person-1)');
+          }
+          expect(bulkDocsStub.called).to.equal(false);
         });
 
         it('should not let a failed re-seed clobber the wipe worklist', async () => {
@@ -1255,9 +1455,27 @@ describe('TestEnvironmentAgent', () => {
             docIds: ['place-1', 'person-1'],
           });
 
-          expect(fetchDocRevsStub.calledOnceWith('https://nginx', dockerHandle.auth, ['place-1', 'person-1']))
-            .to.equal(true);
+          expect(fetchDocRevsStub.firstCall.args).to.deep.equal(['https://nginx', dockerHandle.auth, ['place-1', 'person-1']]);
           expect(result.wiped).to.equal(2);
+        });
+
+        it('should reseed a SUBSET worklist against a real upload-docs summary', async () => {
+          // upload-docs re-uploads every json_docs file with no _rev: the wiped doc is
+          // recreated OK, the un-wiped one conflicts, so cht-conf reports "1 of 2".
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 1 of 2 docs uploaded OK.')));
+          fetchDocRevsStub.resolves([{ id: 'place-1', rev: '7-live' }]);
+          bulkDocsStub.resolves([{ id: 'place-1', ok: true }]);
+
+          const result = await agentUnderTest.reset(dockerHandle, 'couchdb', {
+            dataPath,
+            docIds: ['place-1'],
+          });
+
+          expect(bulkDocsStub.firstCall.args[2]).to.deep.equal([
+            { _id: 'place-1', _rev: '7-live', _deleted: true },
+          ]);
+          expect(result.wiped).to.equal(1);
+          expect(result.reseeded).to.equal(1);
         });
 
         it('should refuse to wipe protected config ids supplied in the worklist', async () => {
@@ -1287,18 +1505,25 @@ describe('TestEnvironmentAgent', () => {
           }
         });
 
-        it('should report ids the seed refused as protected, and never wipe them', async () => {
+        it('should refuse to reseed when a protected config doc was planted in json_docs after the seed', async () => {
+          // upload-docs --force filters nothing, so a planted protected id would be
+          // CREATED on the instance. Refuse before wiping anything.
+          await seedTracking();
+          fetchDocRevsStub.resetHistory();
           readSeededDocsStub.returns([
             { id: 'place-1', type: 'clinic' },
             { id: 'person-1', type: 'person' },
             { id: 'settings', type: 'clinic' },
           ]);
-          await seedTracking();
 
-          const result = await agentUnderTest.reset(dockerHandle, 'couchdb');
-
-          expect(fetchDocRevsStub.firstCall.args[2]).to.deep.equal(['place-1', 'person-1']);
-          expect(result.protectedSkipped).to.deep.equal(['settings']);
+          try {
+            await agentUnderTest.reset(dockerHandle, 'couchdb');
+            expect.fail('expected reset to reject');
+          } catch (error) {
+            expect((error as Error).message).to.include('contains protected config doc(s) settings');
+          }
+          expect(fetchDocRevsStub.called).to.equal(false);
+          expect(bulkDocsStub.called).to.equal(false);
         });
 
         it('should throw when _bulk_docs acknowledges fewer deletions than were submitted', async () => {
@@ -1323,13 +1548,24 @@ describe('TestEnvironmentAgent', () => {
           expect(fetchDocRevsStub.called).to.equal(false);
         });
 
-        it('should clear the tracking on teardown, so a later couchdb reset is a no-op', async () => {
+        it('should keep tracking across teardown: CouchDB data is a bind mount that survives down -v', async () => {
           await seedTracking();
 
           await agentUnderTest.teardown(dockerHandle);
+          const result = await agentUnderTest.reset(dockerHandle, 'couchdb');
+
+          expect(result.wiped).to.equal(2);
+        });
+
+        it('should reset against an absolute dataPath even if the process cwd changes after seeding', async () => {
+          runChtConfStub.resolves(okRun(ansiInfo('Summary: 2 of 2 docs uploaded OK.')));
+          await agentUnderTest.prepareTestData(dockerHandle, seedConfig, { dataPath: 'relative/data' });
+          runChtConfStub.resetHistory();
+
           await agentUnderTest.reset(dockerHandle, 'couchdb');
 
-          expect(fetchDocRevsStub.called).to.equal(false);
+          expect(readSeededDocsStub.lastCall.args[0]).to.equal(resolve('relative/data'));
+          expect(runChtConfStub.lastCall.args[0].configPath).to.equal(resolve('relative/data'));
         });
       });
     });
@@ -1339,7 +1575,7 @@ describe('TestEnvironmentAgent', () => {
     it('should resolve in mock mode', async () => {
       const handle = await provisionMock();
 
-      expect(await agent.teardown(handle)).to.equal(undefined);
+      expect(await agent.teardown(handle)).to.be.undefined;
     });
 
     it('should print the human teardown gate with the cht-core path shell-quoted (real mode)', async () => {

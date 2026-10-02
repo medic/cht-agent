@@ -120,6 +120,22 @@ export const fetchSettings = async (
   return settings as Record<string, unknown>;
 };
 
+/** The CouchDB session for these credentials: cht-api proxies GET /_session straight to CouchDB. */
+export const fetchSession = async (
+  url: string,
+  auth: ChtAuth,
+  options: ChtRequestOptions = {}
+): Promise<{ name: string | null; roles: string[] }> => {
+  const body = (await request(url, auth, '/_session', options)) as {
+    userCtx?: { name?: string | null; roles?: unknown };
+  };
+  const roles = body.userCtx?.roles;
+  return {
+    name: body.userCtx?.name ?? null,
+    roles: Array.isArray(roles) ? roles.filter((role): role is string => typeof role === 'string') : [],
+  };
+};
+
 // _all_docs key range covering every `form:<id>` doc. \ufff0 is the
 // conventional high-sentinel: it sorts after any real form id character.
 const FORM_RANGE_QUERY = new URLSearchParams({
