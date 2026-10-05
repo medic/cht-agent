@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10631
 issueUrl: https://github.com/medic/cht-core/issues/10631
 title: Enforce admin-only write access for ui-extension doc type in validate_doc_update
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: The medic ddoc's `validate_doc_update` did not treat `ui-extension` docs as admin-only, so non-admin users could create or edit them. The fix adds `'ui-extension'` to `ADMIN_ONLY_TYPES`, so non-admin writes of docs with `type` `ui-extension` are rejected while DB admins can still write them.
 services:
   - api
@@ -75,7 +75,7 @@ The check keys on `type`, not on the `ui-extension:` id prefix. At this PR's anc
 
 ## Testing
 
-No automated test covers the new type. The PR changed only `ddocs/medic-db/medic/validate_doc_update.js`, and `webapp/tests/mocha/unit/validate_doc_update.spec.js` has no `ui-extension` case, either at this PR or on master.
+No automated test covers the new type: the PR changed only `ddocs/medic-db/medic/validate_doc_update.js`, and `webapp/tests/mocha/unit/validate_doc_update.spec.js` has no `ui-extension` case, either at this PR or on master. The PR description records a manual check instead, run directly against CouchDB (`localhost:5984/medic`): an admin (`medic`) `POST` of `{"_id": "ui-extension:hello-world", "type": "ui-extension"}` returned `{"ok": true, ...}`, and a `POST` of `{"_id": "ui-extension:non-admin-test", "type": "ui-extension"}` as the non-admin user `testuser` returned `{"error": "forbidden", "reason": "You are not authorized to edit admin only docs"}`. This is the manual test the issue asked for in place of automated tests.
 
 ## Related Issues
 

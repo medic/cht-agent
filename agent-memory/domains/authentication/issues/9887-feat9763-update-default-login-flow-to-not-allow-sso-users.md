@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9763
 issueUrl: https://github.com/medic/cht-core/issues/9763
 title: Block SSO/OIDC users from default password login and password reset flows
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: 'Nothing in the default username/password login or the reset-password flow rejected a user flagged for SSO; the random password user-management assigns SSO users was the only barrier. This PR adds an `isOidcUser` guard to api/src/controllers/login.js so `setCookies` (the step every password-based login finishes through) answers 401 `Password Login Not Permitted For SSO Users` and `resetPassword` answers 400 before the password is changed. As written here the guard reads the user doc''s `oidc` boolean; on master it reads `oidc_username` instead, re-keyed before landing (see the banner).'
 services:
   - api
@@ -89,6 +89,7 @@ The issue, as edited, asks for the check in the `post` function of api/src/contr
 
 ## Related Files
 
+- api/src/controllers/login.js
 - api/tests/mocha/controllers/login.spec.js
 - tests/integration/api/controllers/login.spec.js
 

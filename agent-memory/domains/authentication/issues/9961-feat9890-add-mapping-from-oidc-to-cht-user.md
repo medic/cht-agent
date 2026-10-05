@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9890
 issueUrl: https://github.com/medic/cht-core/issues/9890
 title: Map OIDC/SSO identities to CHT users via oidc_username on _users doc and oidc_login flag on user-settings, hiding password update for SSO users
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: 'OIDC identities could not be mapped cleanly to CHT users: CHT usernames allow only `[a-z0-9_-]` (so no `@`) while identity providers identify users by email, and the SSO callback matched the id_token `preferred_username` claim to the CHT username. SSO users were also still offered the in-app Update password option. This PR replaces the per-user `oidc` boolean with an `oidc_username` string on the `_users` doc, matched against the id_token `email` claim through the `users_by_field` view, and mirrors a boolean `oidc_login` onto the replicated user-settings doc so the webapp can hide password update, offline included.'
 services:
   - api
@@ -123,7 +123,7 @@ Updated: the api mocha specs api/tests/mocha/controllers/login.spec.js (rewrites
 
 - #9890: "Ensure proper mapping for SSO users to Couch users" — this draft's issue; usernames cannot contain `@` while SSO providers identify users by email, scoped to an MVP for Microsoft Entra ID.
 - #9836: "Disable in-app password change functionality for SSO users" — addressed here by `oidc_login` gating `canUpdatePassword`.
-- #9938: "Require `email` to be provided for user when `oidc = true`" — referenced by this PR; superseded by making the email the `oidc_username` value and refusing id_tokens without an `email` claim.
+- #9938: "Require `email` to be provided for user when `oidc = true`" — the PR body says "Closes #9938"; superseded by making the email the `oidc_username` value and refusing id_tokens without an `email` claim.
 - #9735: "Single sign on (SSO) using identity provider" — the SSO epic this PR is a child of.
 - #9760: "Update `shared-libs/user-management` to accept an `oidc_provider` property for users" — delivered by PR #9800 as the boolean `oidc` flag that this PR replaces with `oidc_username`.
 - #9762: "Update CHT login page to have button for redirecting to OIDC provider" — delivered by PR #9877 with the `settings.hasOidcProvider()` helper that this PR removes in favour of `ssoLogin.isSsoLoginEnabled()`

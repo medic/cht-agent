@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10062
 issueUrl: https://github.com/medic/cht-core/issues/10062
 title: Fix race condition in admin user edit modal that broke Facility and Associated contact field population for SSO users
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: 'The admin app''s edit user modal intermittently left the Place (`facilitySelect`) and Associated contact (`contactSelect`) selects unpopulated, reproducibly for SSO users. The Select2 setup for both ran on `$uibModalInstance.rendered` without waiting for `determineEditUserModel()`, which for SSO users also waits on an extra `GET /api/v2/users/<name>`; the fix moves that setup into `populateFacilitynContact()`, called only after `$scope.editUserModel` is assigned.'
 services:
   - admin
@@ -69,6 +69,7 @@ The fix orders the widget setup after the model rather than masking the symptom 
 
 ## Related Files
 
+- admin/src/js/controllers/edit-user.js
 - tests/e2e/default/users/user.wdio-spec.js (renamed by this PR from tests/e2e/default/users/add-user.wdio-spec.js)
 - tests/page-objects/default/users/user.wdio.page.js
 

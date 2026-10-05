@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9547
 issueUrl: https://github.com/medic/cht-core/issues/9547
 title: Require password reset on first-time login and after admin updates a user's password
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: Admins create CHW accounts and share a single password, which then stays valid indefinitely with no forced rotation. This PR adds a password-reset flow that requires users to set a new password on first login (and whenever an admin sets or resets their password), enabled by default with a permission to skip it.
 services:
   - api
@@ -64,7 +64,7 @@ Not a bug but a missing capability: the user model and login flow had no notion 
 
 ## Solution
 
-Introduced a `password_change_required` flag on `_users` docs, set server-side in shared-libs/user-management/src/users.js: whenever an update carries a `password`, `getUserUpdates()` sets it to `data.password_change_required === false ? false : isPasswordChangeRequired(updatedUser, data, fullAccess)`. `isPasswordChangeRequired()` returns false when the caller lacks full access (a user changing their own password) or the update enables token login, and otherwise true unless the user's roles hold `can_skip_password_change`; `createUser()` and `resetPassword()` pass full access, and `updateUser()` passes its `fullAccess` argument.
+Introduced a `password_change_required` flag on `_users` docs, set server-side in shared-libs/user-management/src/users.js: whenever an update carries a `password`, `getUserUpdates()` sets it to `data.password_change_required === false ? false : isPasswordChangeRequired(updatedUser, data, fullAccess)`. `isPasswordChangeRequired()` returns false when the caller lacks full access (`can_edit` + `can_update_users`, which is the webapp self-service case for ordinary users) or the update enables token login, and otherwise true unless the user's roles hold `can_skip_password_change`; `createUser()` and `resetPassword()` pass full access, and `updateUser()` passes its `fullAccess` argument.
 
 In api/src/controllers/login.js, `setCookies()` now loads the user doc (`users.getUserDoc`) after authenticating; if the flag is set, `redirectToPasswordReset()` sets only the `userCtx` and locale cookies — not the session cookie — and returns `PASSWORD_RESET_URL` (`/medic/password-reset`). api/src/routing.js serves that page with `login.getPasswordReset` (GET, rendering the new api/src/templates/login/password-reset.html) and handles its form with `login.resetPassword` (POST), which is rate-limited, validates the new password's length and strength, checks the current password with a GET to `/_session` using the submitted credentials, rejects reusing the current password, saves the new one with `password_change_required: false`, and then creates the session and redirects into the app. api/src/services/cookie.js only gained a `clearCookie(res, name)` helper, used to clear the `login` cookie.
 
@@ -78,7 +78,7 @@ Login client logic is shared between the standard login and the new reset page t
 
 ## Design Choices
 
-Enabled by default to satisfy the issue's security-first requirement, with a permission to skip rather than a global on/off toggle so behavior can be scoped per role. The session cookie is withheld until the reset succeeds, so a flagged user cannot reach the app with the shared password; self-service password changes and updates that enable token login never set the flag. An API escape hatch (password_change_required: false for a specific user) covers exceptions. The admin app surfaces an explicit hint when changing a password so admins know the user will be prompted, rather than silently flagging the account.
+Enabled by default to satisfy the issue's security-first requirement, with a permission to skip rather than a global on/off toggle so behavior can be scoped per role. The session cookie is withheld until the reset succeeds, so a flagged user cannot reach the app with the shared password. The flag is keyed on the caller's permissions, not on self-versus-other: password changes by a caller without full access (`can_edit` + `can_update_users`, which is the webapp self-service case for ordinary users) and updates that enable token login never set the flag, while a user who holds both permissions (default config: `program_officer`) is flagged even when changing their own password unless their role has `can_skip_password_change`. An API escape hatch (password_change_required: false for a specific user) covers exceptions. The admin app surfaces an explicit hint when changing a password so admins know the user will be prompted, rather than silently flagging the account.
 
 ## Related Files
 

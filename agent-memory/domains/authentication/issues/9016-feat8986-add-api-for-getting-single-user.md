@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8986
 issueUrl: https://github.com/medic/cht-core/issues/8986
 title: Add GET /api/v2/users/:username endpoint to fetch a single user
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: The API could only list all users, with no way to retrieve one user by username. This PR adds a GET /api/v2/users/:username endpoint, open to holders of `can_view_users` or to the user fetching themselves, wired through the API controller/routing and a new single-user lookup (`getUser`) in the user-management shared library.
 services:
   - api
@@ -52,7 +52,7 @@ There was no API to retrieve data about an individual user; only the list-all-us
 
 ## Root Cause
 
-The API exposed no route or controller handler for fetching an individual user by username, and the user-management shared library had no corresponding single-user lookup function — only bulk listing was implemented.
+The API exposed no route or controller handler for fetching an individual user by username, and the user-management shared library exported no function that returned a single user in the shape `getList`/`mapUsers` produce. Its existing by-name reads did not fill that gap: the private `getUserDoc`/`getUserDocsByName` returned the raw `_users` and user-settings docs, and the exported `getUserSettings({ name })` returned a merged, facility/contact-hydrated user-settings doc that the api authorization middleware used to populate `req.userCtx`.
 
 ## Solution
 

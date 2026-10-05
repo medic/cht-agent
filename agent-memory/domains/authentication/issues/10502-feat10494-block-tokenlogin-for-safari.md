@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10494
 issueUrl: https://github.com/medic/cht-core/issues/10494
 title: Block token_login links for Safari users and show an unsupported-browser message
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: 'Token login links opened in Safari still authenticated successfully even though regular login fields are already hidden for Safari users (from #6784). This extends the Safari block to the token_login page. The login script now runs the browser check first and does not send the token-login request from Safari, and the page renders a matching unsupported-browser message. The block is client-side only.'
 services:
   - api
@@ -65,7 +65,7 @@ Run the browser check before any action that fires on page load. In api/src/publ
 
 ## Design Choices
 
-Mirror the main login page's Safari-blocking UX and messaging rather than inventing a separate token_login flow, keeping the experience consistent across all login entry points and reusing the prior #6784 detection rather than introducing new detection logic. The new `shouldBlockBrowser()` only wraps `isSafariBrowser()`, so the token gate names a policy rather than a browser. At this PR, `checkUnsupportedBrowser()` still tests `isSafari` directly when hiding elements. On master, PR #10992 extended `shouldBlockBrowser()` to also return true for Chrome below 90, and `checkUnsupportedBrowser()` now uses it too.
+Mirror the main login page's Safari-blocking UX and messaging rather than inventing a separate token_login flow, keeping the experience consistent across all login entry points and reusing the prior #6784 detection rather than introducing new detection logic. The new `shouldBlockBrowser()` only wraps `isSafariBrowser()`, so the token gate names a policy rather than a browser (the reviewer asked for "a function that will return whether the app is safe to use or not", with Safari the only case at this point). It is kept separate from `checkUnsupportedBrowser()` because that function returns early when `selectedLocale` is unset and only shows the message and hides elements; the reviewer required a block that does not depend on translations (PR #10502 review thread on script.js:207, 2026-01-12; commit c124751d34). At this PR, `checkUnsupportedBrowser()` still tests `isSafari` directly when hiding elements. On master, PR #10992 extended `shouldBlockBrowser()` to also return true for Chrome below 90, and `checkUnsupportedBrowser()` now uses it too.
 
 ## Related Files
 

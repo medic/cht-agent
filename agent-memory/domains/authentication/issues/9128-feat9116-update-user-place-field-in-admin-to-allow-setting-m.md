@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9116
 issueUrl: https://github.com/medic/cht-core/issues/9116
 title: Allow assigning multiple places to a user in the Admin app via a multiselect place field, with more than one place requiring can_have_multiple_places
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: 'The Admin app could only associate a user with a single facility despite backend support for multi-facility users (#6543). This PR makes the user place field a multiselect for every user and creates single users through /api/v3/users; on save, choosing more than one place requires a selected role holding `can_have_multiple_places` and places of the same contact type, and the user''s contact must sit under one of the chosen places.'
 services:
   - admin
@@ -53,7 +53,7 @@ concepts:
 related_issues:
   - cht-core-6543
   - cht-core-9203
-stale: false
+stale: true
 ---
 
 ## Problem
@@ -91,7 +91,7 @@ Left the multiselect on for everyone and enforced `can_have_multiple_places` at 
 
 ## Testing
 
-Updated admin unit tests: admin/tests/unit/controllers/edit-user.spec.js adds `should allow only user with permission to have multiple places` and `user is updated with multiple places`, and admin/tests/unit/services/update-user.spec.js now expects CreateUser to post to `/api/v3/users`; the shared-libs contact-types-utils tests cover `isSameContactType`. In tests/integration/api/controllers/users.spec.js the `POST/GET api/v2/users` suite was re-enabled (it had been `describe.skip`); no cases were added. E2E: the new tests/e2e/default/contacts/delete-assigned-place.wdio-spec.js logs in as a user with two places and checks that the Delete menu option is disabled on one of them; tests/e2e/default/users/add-user.wdio-spec.js adds `should add user with multiple places with permission` and `should require user to have permission for multiple places` (checks the not-allowed message); edit-person-home-place and person-under-area were re-enabled from `describe.skip`; the users page object gained multiselect place input.
+Updated admin unit tests: admin/tests/unit/controllers/edit-user.spec.js adds `should allow only user with permission to have multiple places` and `user is updated with multiple places`, and admin/tests/unit/services/update-user.spec.js now expects CreateUser to post to `/api/v3/users`; the shared-libs contact-types-utils tests cover `isSameContactType`. In tests/integration/api/controllers/users.spec.js the `POST/GET api/v2/users` suite was re-enabled (it had been `describe.skip`); no cases were added. E2E: the new tests/e2e/default/contacts/delete-assigned-place.wdio-spec.js logs in as a user with two places and checks that the Delete menu option is disabled on one of them; tests/e2e/default/users/add-user.wdio-spec.js (present at this PR's anchor; renamed on master to tests/e2e/default/users/user.wdio-spec.js by PR #10153, where both cases still exist) adds `should add user with multiple places with permission` and `should require user to have permission for multiple places` (checks the not-allowed message); tests/e2e/default/contacts/edit-person-home-place.wdio-spec.js (present at this PR's anchor; removed on master by PR #9221, which moved its only test into tests/e2e/default/contacts/edit.wdio-spec.js as `should sync and update the offline user's home place`) and tests/e2e/default/contacts/person-under-area.wdio-spec.js (still on master) were re-enabled from `describe.skip`; the users page object gained multiselect place input.
 
 ## Related Issues
 

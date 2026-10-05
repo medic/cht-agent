@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8868
 issueUrl: https://github.com/medic/cht-core/issues/8868
 title: Stop forwarding content-length header on GET /_session authentication request to prevent HAProxy request truncation under keep-alive
-lastUpdated: '2026-09-29'
-summary: Authenticating a user forwarded all original request headers (including content-length from POSTs) to a GET /_session request, which under Node 19's default keep-alive caused HAProxy to truncate the next request on the reused connection and return 400 errors. The fix stops forwarding the content-length header on the session request. It reached users in 4.6.0 through the 4.6.x backport medic/cht-core#8933 (first tagged 4.6.0-beta.3) and in 4.7.0 from master.
+lastUpdated: '2026-10-05'
+summary: Authenticating a user forwarded all original request headers (including content-length from POSTs) to a GET /_session request, which under the keep-alive default that Node 19 introduced (the api ran Node 20 from the 4.6.0 line) caused HAProxy to truncate the next request on the reused connection and return 400 errors. The fix stops forwarding the content-length header on the session request. It reached users in 4.6.0 through the 4.6.x backport medic/cht-core#8933 (first tagged 4.6.0-beta.3) and in 4.7.0 from master.
 services:
   - api
 techStack:
@@ -24,7 +24,7 @@ tags:
   - keep-alive
   - session-authentication
   - haproxy
-  - node-19
+  - node-20
   - connection-reuse
   - reverse-proxy
   - request-truncation
@@ -53,7 +53,7 @@ stale: false
 
 ## Problem
 
-When authenticating a user, the API copied all headers from the original request onto a GET /_session request sent to CouchDB. If the original request was a POST carrying a content-length header, that header was forwarded onto the bodyless GET. Under Node 19 (which enables keep-alive by default), api's connection to HAProxy was reused, and HAProxy, treating the bodyless GET as unfinished, consumed content-length characters of the following request on that connection, producing an invalid request and a 400 status code. It was observed only when hitting API directly or via the AWS load balancer, never through nginx. Issue #8868 reported it after upgrading to 4.6.0-beta.2: users could not log in to the webapp and authenticated REST API calls failed with 400.
+When authenticating a user, the API copied all headers from the original request onto a GET /_session request sent to CouchDB. If the original request was a POST carrying a content-length header, that header was forwarded onto the bodyless GET. Under Node 20 (the 4.6.0 line moved the api image from Node 16 to Node 20 in PR #8824 for #7993, and Node 19 had made outgoing HTTP keep-alive the default), api's connection to HAProxy was reused, and HAProxy, treating the bodyless GET as unfinished, consumed content-length characters of the following request on that connection, producing an invalid request and a 400 status code. It was observed only when hitting API directly or via the AWS load balancer, never through nginx. Issue #8868 reported it after upgrading to 4.6.0-beta.2: users could not log in to the webapp and authenticated REST API calls failed with 400.
 
 ## Root Cause
 
@@ -88,7 +88,7 @@ Unit tests in api/tests/mocha/auth.spec.js gained a `getUserCtx` block, includin
 
 ## Related Issues
 
-- #8868: "Session requests failing after upgrade" — the issue both PRs fix; requests truncated and returning 400 because content-length was forwarded onto the GET /_session auth request under Node 19 keep-alive
+- #8868: "Session requests failing after upgrade" — the issue both PRs fix; requests truncated and returning 400 because content-length was forwarded onto the GET /_session auth request under the keep-alive default that Node 19 introduced (the api ran Node 20 from the 4.6.0 line)
 
 ## Domain Rationale
 

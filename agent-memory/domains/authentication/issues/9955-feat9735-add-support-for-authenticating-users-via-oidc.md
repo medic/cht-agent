@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9735
 issueUrl: https://github.com/medic/cht-core/issues/9735
 title: Add OIDC single sign-on (SSO) authentication support
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: 'Deployments wanting centralized single sign-on could not authenticate CHT users against an external OIDC/OAuth2 identity provider, since CHT only supported local password and token-login accounts. This PR adds end-to-end OIDC SSO: an oidc_username user property, an ''SSO Email Address'' field in the admin app, login/oidc/authorize and login/oidc endpoints that run the authorization-code flow and set a CouchDB AuthSession cookie, a ''Login with SSO'' button, and guards that keep SSO users out of password login, password reset, token login and the webapp''s update-password option.'
 services:
   - api
@@ -75,7 +75,7 @@ related_issues:
   - cht-core-9981
   - cht-core-9983
   - cht-core-10062
-stale: false
+stale: true
 ---
 
 ## Problem
@@ -130,8 +130,8 @@ New specs: api/tests/mocha/services/sso-login.spec.js, shared-libs/user-manageme
 - #9760: "Update `shared-libs/user-management` to accept an `oidc_provider` property for users" — the issue in this squash's commit subject; delivered by PR #9800 as a boolean `oidc` flag, replaced before landing by `oidc_username` (PR #9961)
 - #9761: "Update user creation frontend to support creating SSO users" — the admin 'SSO Email Address' field (PR #9900)
 - #9762: "Update CHT login page to have button for redirecting to OIDC provider" — the 'Login with SSO' button (PR #9877)
-- #9763: "Update non-SSO login flow to not allow login if `oidc_provider` set" — password login and password reset reject SSO users (PR #9887)
-- #9764: "Update `token_login` flow to not allow login if `oidc_provider` value is set" — token login rejects SSO users (PR #9901)
+- #9763: "Update non-SSO login flow to not allow login if `oidc_provider` set for user" — password login and password reset reject SSO users (PR #9887)
+- #9764: "Update `token_login` flow to not allow login if `oidc_provider` value is set for user." — token login rejects SSO users (PR #9901)
 - #9765: "Add support to the CHT api for new endpoint for OIDC login" — the login/oidc/authorize and login/oidc endpoints (PR #9833)
 - #9907: "Handle situation where CHT user does not exist for SSO user" — redirect back to the login page with `sso_error=ssouserinvalid` (PR #9833)
 - #9890: "Ensure proper mapping for SSO users to Couch users" — the email claim to `oidc_username` mapping and the `oidc_login` user-settings flag (PR #9961)

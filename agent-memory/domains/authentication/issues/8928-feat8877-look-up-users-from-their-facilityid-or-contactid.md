@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8877
 issueUrl: https://github.com/medic/cht-core/issues/8877
 title: Extend GET /api/v2/users to look up users by facility_id and/or contact_id
-lastUpdated: '2026-09-29'
+lastUpdated: '2026-10-05'
 summary: There was no way to query the users API to find which users are linked to a given facility or contact. This PR extends `GET /api/v2/users` to accept `facility_id` and/or `contact_id` query parameters (gated behind `can_view_users`), backed by a new `_users` db view and a migration that backfills `contact_id` onto existing user docs.
 services:
   - api
@@ -72,6 +72,7 @@ Reused the existing `GET /api/v2/users` route and `can_view_users` permission in
 - api/src/controllers/users.js
 - api/src/migrations/add-contact-id-to-user-docs.js (added)
 - api/src/services/setup/databases.js
+- api/tests/integration/migrations/utils.js
 - ddocs/users-db/users/_id (added)
 - ddocs/users-db/users/views/users_by_field/map.js (added)
 - scripts/build/ddoc-compile.js
