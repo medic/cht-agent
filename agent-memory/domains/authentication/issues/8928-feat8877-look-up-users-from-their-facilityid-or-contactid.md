@@ -72,7 +72,7 @@ Reused the existing `GET /api/v2/users` route and `can_view_users` permission in
 - api/src/controllers/users.js
 - api/src/migrations/add-contact-id-to-user-docs.js (added)
 - api/src/services/setup/databases.js
-- api/tests/integration/migrations/utils.js
+- api/tests/integration/migrations/utils.js (this PR's `db.users` test-db swap was removed on master by PR #9455)
 - ddocs/users-db/users/_id (added)
 - ddocs/users-db/users/views/users_by_field/map.js (added)
 - scripts/build/ddoc-compile.js
