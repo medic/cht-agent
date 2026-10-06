@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10862
 issueUrl: https://github.com/medic/cht-core/issues/10862
 title: Skip CouchDB compaction during post-upgrade cleanup so upgrades only run cheap view and Nouveau cleanups
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: The post-upgrade cleanup step started CouchDB compaction of every database, a space- and compute-intensive operation that kept large instances busy for an hour or more after an upgrade. It now performs only viewCleanup and nouveauCleanup — simple deletions of stale data sets that require no extra space or compute.
 services:
   - api
@@ -51,7 +51,7 @@ During CHT upgrades, the post-upgrade cleanup routine (also run when an upgrade 
 
 ## Root Cause
 
-Before this PR, `cleanup` in api/src/services/setup/utils.js started a compaction of every database in `DATABASES` alongside its view cleanup, unconditionally, and both `finalize` and `abort` in api/src/services/setup/upgrade-steps.js call `cleanup` — so every upgrade compacted every database whether or not anything had changed, even though compaction provides no correctness benefit at upgrade time and only adds disk/CPU load.
+Before this PR, `cleanup` in api/src/services/setup/utils.js started a compaction of every database in `DATABASES` alongside its view cleanup, unconditionally, and both `finalize` and `abort` in api/src/services/setup/upgrade-steps.js call `cleanup` — so every upgrade compacted every database whether or not anything had changed, which for larger instances, the issue says, "adds unnecessary load for the work that may not improve anything impactful".
 
 ## Solution
 
@@ -63,7 +63,7 @@ Separate cheap cleanup operations (index/view deletions) from expensive maintena
 
 ## Design Choices
 
-The issue proposed running compaction only when it is required (it noted compaction ran regardless of database changes or fragmentation); the PR instead dropped compaction from the upgrade path entirely, because at upgrade time it yields no correctness gain and only adds load. viewCleanup and nouveauCleanup were retained because they reclaim stale index data at effectively zero additional cost.
+The issue proposed running compaction only when it is required (it noted compaction ran regardless of database changes or fragmentation); the PR instead dropped compaction from the upgrade path entirely and kept only viewCleanup and nouveauCleanup, which its description calls "just deletions of old data sets" that "require no additional space or compute to execute".
 
 ## Related Files
 

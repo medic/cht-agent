@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9707
 issueUrl: https://github.com/medic/cht-core/issues/9707
 title: Add nouveau pod and service to Helm charts for Kubernetes deployment
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: 'The Helm charts had no way to deploy the nouveau full-text search component on Kubernetes. This adds a nouveau Deployment and Service that reuse the first CouchDB node''s persistent volume instead of provisioning a separate one. On master the standalone Deployment was later removed by PR #10482, which moved Nouveau into the CouchDB pod; see the stale-as-written banner.'
 services:
   - api
@@ -73,7 +73,7 @@ At this PR's parent, the Helm chart templates under scripts/build/helm/templates
 
 ## Solution
 
-Adds a Kubernetes Deployment (scripts/build/helm/templates/nouveau/deployment.yaml: `name: cht-couchdb-nouveau`, `replicas: 1`, strategy `type: Recreate`) and Service (scripts/build/helm/templates/nouveau/service.yaml: `name: nouveau`, port 5987, selector `cht.service: nouveau`) for nouveau under the Helm templates; the Service name matches the `url = http://nouveau:5987` that couchdb/10-docker-default.ini gives CouchDB. The container runs `{{ .Values.upstream_servers.docker_registry }}/cht-couchdb-nouveau:{{ .Values.cht_image_tag }}` and mounts `/data/nouveau` from the first CouchDB node's storage — the `couchdb-1-claim0` claim when `couchdb.clusteredCouchEnabled` is true, otherwise `couchdb-claim0`, and on a `k3s-k3d` cluster the `preExistingDiskPath-1` hostPath — so there is no separate volume. It runs as a single pod/instance even when CouchDB is clustered, mounts data on the hardcoded `subPath: data` in scripts/build/helm/templates/nouveau/deployment.yaml (at this PR; #10482 deleted that file) instead of CouchDB's `couchdb_data.dataPathOnDiskForCouchDB` setting (so indexes rebuild after a fresh deployment even with preexisting data). It copies the `tolerations` block from scripts/build/helm/templates/couchdb/deployment.yaml. In tests/utils/index.js, the `SERVICES` map gained `'couchdb-nouveau': 'couchdb-nouveau'`.
+Adds a Kubernetes Deployment (scripts/build/helm/templates/nouveau/deployment.yaml: `name: cht-couchdb-nouveau`, `replicas: 1`, strategy `type: Recreate`) and Service (scripts/build/helm/templates/nouveau/service.yaml: `name: nouveau`, port 5987, selector `cht.service: nouveau`) for nouveau under the Helm templates; the Service name matches the `url = http://nouveau:5987` that couchdb/10-docker-default.ini gives CouchDB. The container runs `{{ .Values.upstream_servers.docker_registry }}/cht-couchdb-nouveau:{{ .Values.cht_image_tag }}` and mounts `/data/nouveau` from the first CouchDB node's storage — the `couchdb-1-claim0` claim when `couchdb.clusteredCouchEnabled` is true, otherwise `couchdb-claim0`, and on a `k3s-k3d` cluster the `preExistingDiskPath-1` hostPath — so there is no separate volume. It runs as a single pod/instance even when CouchDB is clustered, mounts data on the hardcoded `subPath: data` in scripts/build/helm/templates/nouveau/deployment.yaml (at this PR; PR #10482 deleted that file) instead of CouchDB's `couchdb_data.dataPathOnDiskForCouchDB` setting (so indexes rebuild after a fresh deployment even with preexisting data). It copies the `tolerations` block from scripts/build/helm/templates/couchdb/deployment.yaml. In tests/utils/index.js, the `SERVICES` map gained `'couchdb-nouveau': 'couchdb-nouveau'`.
 
 ## Code Patterns
 

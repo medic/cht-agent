@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8790
 issueUrl: https://github.com/medic/cht-core/issues/8790
 title: Force api/deploy-info version to be valid semver for tag builds
-lastUpdated: '2026-10-01'
-summary: The api/deploy-info endpoint returned an invalid semver version for tag builds (e.g. `4.5.1.4327432`) while branch builds were fine; the fix makes the deploy-info version prefer a semver-valid value, which for a tag build is the tag itself.
+lastUpdated: '2026-10-05'
+summary: The api/deploy-info endpoint returned an invalid semver version for final-release tag builds (e.g. `4.5.1.4327432`) while branch builds were fine; the fix makes the deploy-info version prefer a semver-valid value, which for a tag build is the tag itself.
 services:
   - api
 techStack:
@@ -56,11 +56,11 @@ stale: true
 
 ## Problem
 
-The `api/deploy-info` endpoint returned a valid semver string for branch builds (e.g. `4.5.1-branch-name.4324242`) but an invalid semver string for tag builds (e.g. `4.5.1.4327432`). cht-conf, which checks the instance version with semver, failed to upload documents to instances because of the invalid version (fixed on the cht-conf side by medic/cht-conf#597).
+The `api/deploy-info` endpoint returned a valid semver string for branch builds (e.g. `4.5.1-branch-name.4324242`) but an invalid semver string for final-release tag builds (e.g. `4.5.1.4327432`). cht-conf, which checks the instance version with semver, failed to upload documents to instances because of the invalid version (fixed on the cht-conf side by medic/cht-conf#597).
 
 ## Root Cause
 
-For tag builds the version was assembled by appending the build number after the patch segment with a `.` separator, producing a four-segment string that is not valid semver. Before this PR, `getTagVersion` in scripts/build/versions.js returned `${TAG}.${BUILD_NUMBER}` unless its `release` argument was set; `setDdocsVersion` in scripts/build/index.js called `versions.getVersion()` without it and wrote the result into each ddoc's `version`, and api/src/services/deploy-info.js returned `version: ddoc.version`. Branch builds put the branch name after a `-` pre-release separator (`${packageJson.version}-${BRANCH}`), which is semver-valid for branch names made of letters, digits and hyphens, so tag builds were the path that always emitted an invalid version.
+For tag builds the version was assembled by appending the build number to the tag with a `.` separator; for a final-release tag that lands after the patch segment, producing a four-segment string that is not valid semver. Before this PR, `getTagVersion` in scripts/build/versions.js returned `${TAG}.${BUILD_NUMBER}` unless its `release` argument was set; `setDdocsVersion` in scripts/build/index.js called `versions.getVersion()` without it and wrote the result into each ddoc's `version`, and api/src/services/deploy-info.js returned `version: ddoc.version`. Branch builds put the branch name after a `-` pre-release separator (`${packageJson.version}-${BRANCH}`), which is semver-valid for branch names made of letters, digits and hyphens; final-release tags (a bare major.minor.patch version) always produced an invalid four-segment version, while a pre-release tag such as `4.5.0-beta.1` produced `4.5.0-beta.1.<build>`, which is valid semver.
 
 ## Solution
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8599
 issueUrl: https://github.com/medic/cht-core/issues/8599
 title: Support special characters in the CouchDB admin password in the CouchDB entrypoint, cluster set-up script, and haproxy-healthcheck
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: "CouchDB's set-up script failed to create the system databases when the admin password contained special characters (issue #8599), because couchdb/set-up-cluster.sh (like couchdb/docker-entrypoint.sh) spliced raw credentials into curl URLs and, for `_cluster_setup`, into JSON bodies. The fix passes credentials to curl with `-u`, JSON-escapes the password, percent-encodes it in the haproxy-healthcheck `_membership` URL, and runs the reworked bats suite against a special-character password under a path-filtered CI workflow."
 services:
   - api
@@ -54,7 +54,7 @@ related_issues: []
 stale: true
 ---
 
-> **Paths are as of this PR, not as of master.** On master, PR #9963 (`4fd02e6a2`, 2025-05-28) replaced the bats suite with couchdb/tests/couch-cluster.spec.js and deleted couchdb/tests/tests.bats, couchdb/tests/tests.sh, couchdb/tests/test_helper/ and .github/workflows/test_couchdb.yml; PR #10500 (`1c3277c4e`) removed the scripts/deploy/ directory, including scripts/deploy/README.md.
+> **Paths are as of this PR, not as of master.** On master, PR #9963 (`4fd02e6a2`, 2025-05-28) replaced the bats suite with couchdb/tests/couch-cluster.spec.js and deleted couchdb/tests/tests.bats, couchdb/tests/tests.sh, couchdb/tests/test_helper/ and .github/workflows/test_couchdb.yml; PR #10500 (`1c3277c4e`) removed the scripts/deploy/ directory, including scripts/deploy/README.md. PR #9963 also rewrote couchdb/tests/Makefile and couchdb/tests/compose.yml: on master the compose file has no `sut` service, and the test password no longer contains a backtick or either quote character.
 
 ## Problem
 
@@ -80,7 +80,7 @@ The PR does not change how api and sentinel receive credentials: at this PR, scr
 
 ## Related Files
 
-- .github/workflows/test_couchdb.yml (present at this PR's anchor; removed on master by PR #9963)
+- .github/workflows/test_couchdb.yml (added; present at this PR's anchor; removed on master by PR #9963)
 - couchdb/Dockerfile
 - couchdb/README.md
 - couchdb/docker-entrypoint.sh
@@ -88,6 +88,7 @@ The PR does not change how api and sentinel receive credentials: at this PR, scr
 - couchdb/test.couchdb-cluster.yml (deleted)
 - couchdb/tests/Makefile (added)
 - couchdb/tests/compose.yml (added)
+- couchdb/tests/test_helper/ (added; present at this PR's anchor; removed on master by PR #9963)
 - couchdb/tests/tests.bats (present at this PR's anchor; removed on master by PR #9963, which replaced the bats suite with couchdb/tests/couch-cluster.spec.js)
 - couchdb/tests/tests.sh (present at this PR's anchor; removed on master by PR #9963)
 - haproxy-healthcheck/check.py

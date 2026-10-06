@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9284
 issueUrl: https://github.com/medic/cht-core/issues/9284
 title: Add DNS resolver to HAProxy in Docker so backend hostnames re-resolve after container restart
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: HAProxy resolved its CouchDB backend hostnames only once at startup and cached the IP, so when a CouchDB container restarted in Docker with a new IP, routing broke. The fix adds a `resolvers docker_resolver` section pointing at Docker's embedded DNS and attaches it to the backend server lines only when `DOCKER_DNS_RESOLVER` is set, which the Docker Compose template does, so HAProxy re-resolves backend addresses at runtime.
 services:
   - api
@@ -42,6 +42,7 @@ concepts:
   - dynamic backend resolution
 related_issues:
   - cht-core-8205
+  - cht-core-9286
 stale: false
 ---
 
@@ -81,6 +82,7 @@ The existing tests/integration/api/server.spec.js gained a `should work after re
 
 - #9284: "CouchDb restart causes all services to go down" — the issue this PR fixes
 - #8205: "Nginx can't connect to API after container restarts because of dynamic IP allocation" — the same stale-DNS problem in nginx, fixed with the same Docker DNS server
+- #9286: "Starting an upgrade that involves view indexing can cause CouchDB to crash" — named in this issue's thread as the flaky-CouchDB situation on a Docker production instance that the restart problem was believed to be affecting
 
 ## Domain Rationale
 

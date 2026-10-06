@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9873
 issueUrl: https://github.com/medic/cht-core/issues/9873
 title: Update HAProxy config to stop logging request bodies
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: HAProxy was logging request bodies only partially (capped at 65k characters and only the first chunk of a chunked body), which gave no auditing value while bloating stored and parsed logs. The HAProxy frontend config was updated to stop capturing and logging request bodies entirely, and the password-masking Lua script that scrubbed them was deleted.
 services:
   - api
@@ -34,7 +34,6 @@ reviewed_at: null
 confidence: medium
 entities:
   - haproxy/default_frontend.cfg
-  - haproxy/scripts/replace_password.lua
   - tests/e2e/default/logging/logging.wdio-spec.js
 concepts:
   - reverse proxy logging

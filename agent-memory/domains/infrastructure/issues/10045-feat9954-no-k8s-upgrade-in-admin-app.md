@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9954
 issueUrl: https://github.com/medic/cht-core/issues/9954
 title: Add API endpoint to detect the Docker upgrade service and hide the 1-click upgrade button in the admin app on Kubernetes deployments
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: Kubernetes-hosted instances use a limited upgrade-service-kubernetes that cannot perform full deployments, so offering the 1-click upgrade button there is misleading. This PR adds an API endpoint that reports whether the upgrade service is the Docker upgrade service, and the admin app hides its Install buttons when it is not, while the Stage buttons stay available.
 services:
   - api
@@ -51,7 +51,7 @@ stale: false
 
 ## Problem
 
-For instances hosted in Kubernetes, 1-click upgrades rely on the separate upgrade-service-kubernetes, which lacks critical functions (it cannot perform a fresh deployment on its own and cannot add new services/containers). Despite this, the admin app always presented the 1-click upgrade button, offering an action the k8s upgrade service cannot properly perform.
+For instances hosted in Kubernetes, 1-click upgrades rely on the separate upgrade-service-kubernetes, which lacks critical functions: it cannot perform a fresh deployment on its own, cannot add new services/containers, does not keep versions in sync with the original deployment tool, and has no clear upgrade path of its own. Issue #9954 records two failures: an instance redeployed with the original deployment tool after an upgrade, without updating the version in its values files, was downgraded to an older version, and the CouchDB Nouveau deployment that newer CHT versions require would need manual upgrades. Despite this, the admin app always presented the 1-click upgrade button, offering an action the k8s upgrade service cannot properly perform.
 
 ## Root Cause
 
@@ -90,7 +90,7 @@ The existing unit specs gained cases on both tiers: API mocha specs for the cont
 
 ## Related Issues
 
-- #9954: "Hide upgrade button in admin app for k8s deployments, while still allowing staging upgrades" — the Kubernetes upgrade service lacks critical functions (no fresh deployment, no adding new services), so 1-click upgrade should be disabled for k8s-hosted instances
+- #9954: "Hide upgrade button in admin app for k8s deployments, while still allowing staging upgrades" — the Kubernetes upgrade service lacks critical functions (no fresh deployment, no adding new services, no version sync with the original deployment tool, no upgrade path of its own), so 1-click upgrade should be disabled for k8s-hosted instances
 
 ## Domain Rationale
 

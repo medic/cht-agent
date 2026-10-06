@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10754
 issueUrl: https://github.com/medic/cht-core/issues/10754
 title: Set NODE_ENV=production in api and sentinel Docker images so Secure cookies are enabled by default in production
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: The api cookie service only sets the Secure flag when NODE_ENV=production, but that variable was never set in the Docker images, so production cookies were sent without the Secure attribute. Fixed by baking ENV NODE_ENV=production into the api/sentinel Dockerfiles (and Helm templates/values), with the test compose override and k3d test values setting NODE_ENV=development for test runs.
 services:
   - api
@@ -48,6 +48,7 @@ concepts:
   - secure-by-default production hardening
 related_issues:
   - cht-core-10357
+  - cht-core-10815
 stale: false
 ---
 
@@ -80,7 +81,6 @@ Made NODE_ENV=production a secure-by-default baseline in the image instead of re
 - scripts/build/helm/templates/sentinel/deployment.yaml
 - scripts/build/helm/tests/integration-k3d-values.yaml.template
 - scripts/build/helm/values/base.yaml
-- api/src/services/cookie.js
 
 ## Testing
 
@@ -90,6 +90,7 @@ No spec file changed in this PR. The Secure-flag logic the variable drives is co
 
 - PR #10583: "fix(#10357): prevent DEBUG logs from appearing in production" — its per-service LOG_LEVEL Helm values and test override file are what this PR extends with NODE_ENV.
 - #10357: "debug level messages printed on production instances" — the issue PR #10583 fixed; its root cause was the same unset NODE_ENV, which the shared logger used to pick the debug level before PR #10583.
+- #10815: "Existing helm chart fails after recent changes on helm chart" — the `.Values.api.node_env` and `.Values.sentinel.node_env` reads this PR added failed `helm upgrade` renders for values files without `api:` or `sentinel:` blocks; a comment on #10754 said the fix "should not be shipped to 5.2.0 without fixing #10815", and PR #10826 made those reads nil-safe.
 
 ## Domain Rationale
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9286
 issueUrl: https://github.com/medic/cht-core/issues/9286
 title: Remove ineffective request timeout property from setup view-indexer (didn't terminate requests at HAProxy level)
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: During upgrades and installs the setup view-indexer queried each staged view with a 2-second request timeout and re-sent the query after every socket timeout, but the timeout never terminated the request at the HAProxy level, so view queries could pile up while indexing ran (issue 9286 reports CouchDB becoming unreachable). The fix removes the timeout property and updates the unit test.
 services:
   - api
@@ -41,6 +41,7 @@ concepts:
 related_issues:
   - cht-core-9617
   - cht-core-8573
+  - cht-core-9284
 stale: false
 ---
 
@@ -77,6 +78,7 @@ Updated the existing mocha unit test (api/tests/mocha/services/setup/view-indexe
 
 - #9617: "Starting an upgrade that involves view indexing can become stuck after indexing is finished" — listed in this PR's description; the upgrade stalls after view indexes are built and the upgrade log has to be moved from `indexing` to `indexed` by hand.
 - #8573: "Install button doesn't appear after staging an upgrade sometimes" — listed in this PR's description; after staging, the last logged step stays at indexing views and the install button does not appear.
+- #9284: "CouchDb restart causes all services to go down" — cited in this draft's issue ("I believe this is also happening") after haproxy and CouchDB were restarted; fixed by PR #9288
 
 ## Domain Rationale
 

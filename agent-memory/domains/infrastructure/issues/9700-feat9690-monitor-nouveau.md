@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9690
 issueUrl: https://github.com/medic/cht-core/issues/9690
 title: Expose Nouveau full-text search metrics via the /api/v2/monitoring observability endpoint
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: The monitoring API exposed health metrics for components like CouchDB and Sentinel but had no visibility into the Nouveau search engine. This PR extends the monitoring service to fetch `_nouveau_info` for the medic database's two freetext indexes and report each one's name, `num_docs` and `disk_size` under `nouveau_indexes`. The design doc and output field names changed before this work reached master; see the stale-as-written banner.
 services:
   - api
@@ -83,7 +83,7 @@ Extend the metrics aggregation in api/src/services/monitoring.js by adding a ded
 
 ## Design Choices
 
-Surface Nouveau metrics through the existing unified /api/v2/monitoring endpoint rather than introducing a separate endpoint, keeping all operational observability for the instance in one scrapeable place consistent with how other components are reported.
+Surface Nouveau metrics through API's existing monitoring service and its /api/v2/monitoring endpoint, as #9690 asked ("track any existing Nouveau indexes in API's monitoring service"), so the data reaches the observability dashboard alongside the metrics already reported for other components.
 
 ## Related Files
 
@@ -99,7 +99,7 @@ The existing api/tests/mocha/services/monitoring.spec.js gained assertions that 
 ## Related Issues
 
 - #9690: "Add Nouveau indexes' info in our monitoring API" — this PR's issue; it asked for the `GET /{db}/_design/{ddoc}/_nouveau_info/{index}` data to reach the observability dashboard
-- #9691: "Plug Nouveau APIs with API lifecycle" — companion Nouveau issue, delivered on the `9542_freetext_tco` epic branch by PR #9717, which wired Nouveau index warming and cleanup into API setup
+- #9691: "Plug Nouveau APIs with API lifecycle" — companion Nouveau issue, delivered on the `9542_freetext_tco` epic branch by PR #9717, which made API setup wait for the Nouveau indexes of staged design docs and clean up stale ones
 - #9542: "Reduce disk space with CouchDB Nouveau (TCO v1)" — the Nouveau epic; #9690 cites it as the upcoming CouchDB Nouveau implementation whose indexes need monitoring
 
 ## Domain Rationale

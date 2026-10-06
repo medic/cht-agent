@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10815
 issueUrl: https://github.com/medic/cht-core/issues/10815
 title: Prevent Helm upgrade crash when api/sentinel blocks are missing from older 5.1 values.yaml files
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: 'Values files taken from 5.1 instances that lack `sentinel:` or `api:` blocks crashed `helm upgrade` of the in-repo chart at scripts/build/helm with a nil-pointer error on `.Values.sentinel.node_env` (a read added by PR #10758). Fixed by wrapping every api/sentinel value read in the api and sentinel templates in an empty-dict fallback, for example `(default (dict) .Values.sentinel).node_env`, and adding a backwards-compatibility render case.'
 services:
   - api
@@ -44,7 +44,9 @@ concepts:
   - chart backwards compatibility
   - upgrade lifecycle
   - regression test fixtures
-related_issues: []
+related_issues:
+  - cht-core-10754
+  - cht-core-10357
 stale: false
 ---
 
@@ -66,7 +68,7 @@ Nil-safe nested Helm value access: in `(default (dict) .Values.sentinel).log_lev
 
 ## Design Choices
 
-Followed the `default`-dict idiom already present in scripts/build/helm/templates/haproxy/deployment.yaml, which passes pre-filled dicts (`(default (dict "port" "5984") .Values.haproxy).port`). This PR's api and sentinel templates use an empty `(dict)` instead, since every wrapped read already ends in its own `| default` fallback. That avoids adding helper functions or forcing users to backfill the missing blocks, keeping upgrades transparent and backwards compatible. Locked in the behavior with a dedicated regression fixture rendered without scripts/build/helm/values/base.yaml, which defines both blocks and would otherwise mask the crash.
+Followed the `default`-dict idiom already present in scripts/build/helm/templates/haproxy/deployment.yaml, which passes pre-filled dicts (`(default (dict "port" "5984") .Values.haproxy).port`). This PR's api and sentinel templates use an empty `(dict)` instead, since every wrapped read already ends in its own `| default` fallback. The issue thread had proposed Helm's built-in `dig` instead (`dig "sentinel" "node_env" "production" .Values`), and a maintainer agreed to that plan; the PR description gives matching the existing haproxy convention as the reason for the `default`-dict form. Locked in the behavior with a dedicated regression fixture rendered without scripts/build/helm/values/base.yaml, which defines both blocks and would otherwise mask the crash.
 
 ## Related Files
 

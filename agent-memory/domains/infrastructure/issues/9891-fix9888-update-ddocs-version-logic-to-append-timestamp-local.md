@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9888
 issueUrl: https://github.com/medic/cht-core/issues/9888
 title: Append a timestamp to the ddocs version for non-tag builds so API auto-deploys local design doc changes in development
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: 'A regression from PR #9674 left the local ddocs build emitting a static version string, so the API stopped detecting and redeploying local design document changes. The fix appends the current timestamp to the ddocs version for every build without a TAG (local and branch builds), forcing a unique version each build so auto-deploy works again.'
 services:
   - api
@@ -61,7 +61,7 @@ Branch on the `TAG` env var to distinguish release (tag) builds from all other b
 
 ## Design Choices
 
-Appending a timestamp only when `TAG` is unset keeps release version strings deterministic and meaningful while restoring the dev auto-deploy workflow. The existing `TAG` env var was reused as the release-vs-non-release signal rather than introducing a new flag. The timestamp is appended in `setDdocsVersion` only, not in `getVersion` in `scripts/build/versions.js`, so locally built Docker image tags (`getImageTag`) keep the plain branch-name version — the image reuse that PR #9674 was after.
+Appending a timestamp only when `TAG` is unset keeps release version strings deterministic and meaningful while restoring the dev auto-deploy workflow. The issue considered and rejected making api compare ddoc contents instead of the `version`: in production a ddoc should only change during an upgrade, so that would add development-only logic to production code, and the issue proposed keeping api's version check and restoring time-stamping of locally built ddoc versions instead. The timestamp is appended in `setDdocsVersion` only, not in `getVersion` in `scripts/build/versions.js`, so locally built Docker image tags (`getImageTag`) keep the plain branch-name version — the image reuse that PR #9674 was after.
 
 ## Related Files
 

@@ -6,8 +6,8 @@ domainFit: weak
 issueNumber: 6571
 issueUrl: https://github.com/medic/cht-core/issues/6571
 title: Add secretlint-based credential scanner to CI that fails the build on credential leaks in test server logs
-lastUpdated: '2026-10-01'
-summary: 'CHT had no automated guard against passwords/credentials leaking into api and sentinel server logs during CI test runs. This PR adds a secretlint-based scanner that runs after the tests in the tests and tests-k3d CI jobs and fails the build if credentials are detected in tests/logs/*.log. On master both scanner steps are commented out (PR #11134) after false positives in CouchDB logs.'
+lastUpdated: '2026-10-05'
+summary: 'CHT had no automated guard against passwords/credentials leaking into the service logs saved during CI test runs. This PR adds a secretlint-based scanner that runs after the tests in the tests and tests-k3d CI jobs and fails the build if credentials are detected in tests/logs/*.log. On master both scanner steps are commented out (PR #11134) after false positives in CouchDB logs.'
 services:
   - api
   - sentinel
@@ -56,7 +56,7 @@ stale: true
 
 ## Problem
 
-During E2E and integration test runs, api and sentinel stderr/stdout are written to log files that could contain plaintext passwords or credentials when a regression is introduced. There was no automated check to catch such leaks, so a regression writing credentials to logs in plaintext could ship unnoticed.
+During E2E and integration test runs, the test harness saves container logs from the test deployment (api, sentinel and CouchDB among them; one log per pod under k3d) to tests/logs/*.log, and those files could contain plaintext passwords or credentials when a regression is introduced. There was no automated check to catch such leaks, so a regression writing credentials to logs in plaintext could ship unnoticed.
 
 ## Root Cause
 

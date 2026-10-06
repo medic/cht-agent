@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9968
 issueUrl: https://github.com/medic/cht-core/issues/9968
 title: Rename Docker Helper CouchDB compose file to cht-couchdb.yml so CouchDB image upgrades correctly
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: Docker Helper instances failed to upgrade their CouchDB image because the couchdb compose file name didn't match the expected convention. The fix renames the file to `cht-couchdb.yml` so upgrades pick up the new CouchDB image version.
 services:
   - api
@@ -54,7 +54,7 @@ When running CHT via the 4.x Docker Helper, upgrading an existing instance did n
 
 ## Root Cause
 
-Before this PR, scripts/docker-helper-4.x/cht-docker-compose.sh downloaded the staging build's `docker-compose/cht-couchdb.yml` but saved it as `$homeDir/compose/couchdb.yml`. On upgrade, `getUpgradeServicePayload` in api/src/services/setup/utils.js sends the upgrade service the compose files keyed by their staging attachment names with the `docker-compose/` prefix stripped (`cht-core.yml`, `cht-couchdb.yml`), and compose files are matched by name — when nothing matches, the API logs that the CHT docker-compose files you wish to be updated must "match the naming convention". The helper's `couchdb.yml` therefore never matched, and the CouchDB container stayed on the old image.
+Before this PR, scripts/docker-helper-4.x/cht-docker-compose.sh downloaded the staging build's `docker-compose/cht-couchdb.yml` but saved it as `$homeDir/compose/couchdb.yml`. On upgrade, `getUpgradeServicePayload` in api/src/services/setup/utils.js sends the upgrade service the compose files keyed by their staging attachment names with the `docker-compose/` prefix stripped (`cht-core.yml`, `cht-couchdb.yml`), and compose files are matched by name. The helper's `couchdb.yml` therefore never matched, but `cht-core.yml` did, and `upgradeResponseSuccess` counts an upgrade as successful when any compose file or container was updated: `makeUpgradeRequest` logs that the docker-compose files must "match the naming convention", and throws, only when nothing at all was updated. So the API treated the upgrade request as successful while the CouchDB container silently stayed on the old image.
 
 ## Solution
 

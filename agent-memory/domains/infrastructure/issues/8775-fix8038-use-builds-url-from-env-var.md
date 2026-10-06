@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8038
 issueUrl: https://github.com/medic/cht-core/issues/8038
 title: Make the admin upgrade page use the builds URL that API is configured with (BUILDS_URL) instead of a hardcoded staging URL
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: 'The admin upgrade page hardcoded the staging builds-server URL, so when API was started with a different BUILDS_URL the page could not list versions. API now returns its configured buildsUrl in the GET /api/v2/upgrade response and the admin controller uses it, falling back to the old default.'
 services:
   - api
@@ -40,7 +40,7 @@ concepts:
   - self-upgrade
   - configurable external service endpoint
 related_issues: []
-stale: false
+stale: true
 ---
 
 ## Problem
@@ -53,7 +53,7 @@ The builds URL was configurable only on the server. The browser-side admin contr
 
 ## Solution
 
-`upgradeInProgress` in `api/src/controllers/upgrade.js` (routed by `app.get('/api/v2/upgrade', upgrade.upgradeInProgress);` in `api/src/routing.js`) now responds with `res.json({ upgradeDoc, indexers, buildsUrl: environment.buildsUrl })`. In `admin/src/js/controllers/upgrade.js`, `getCurrentUpgrade` stores that value in `apiBuildsUrl`, the hardcoded constant is renamed `DEFAULT_BUILDS_URL`, and `loadBuilds` opens `pouchDB(apiBuildsUrl || DEFAULT_BUILDS_URL)`, so the page queries whichever builds server API is configured with.
+`upgradeInProgress` in `api/src/controllers/upgrade.js` (routed by `app.get('/api/v2/upgrade', upgrade.upgradeInProgress);` in `api/src/routing.js`) now responds with `res.json({ upgradeDoc, indexers, buildsUrl: environment.buildsUrl })`. In `admin/src/js/controllers/upgrade.js`, `getCurrentUpgrade` stores that value in `apiBuildsUrl`, the hardcoded constant is renamed `DEFAULT_BUILDS_URL`, and `loadBuilds` opens `pouchDB(apiBuildsUrl || DEFAULT_BUILDS_URL)`, so the page queries whichever builds server API is configured with. At this PR, `loadBuilds` opens that PouchDB on each load, instead of once when the controller starts, and closes it with `buildsDb.close()` in both its `.then` and `.catch` handlers; on master, PR #10557 (`c4fa13bd3`) made `buildsDb` a controller-level instance that is opened on the first load and reused, and removed both `close()` calls.
 
 ## Code Patterns
 
@@ -61,7 +61,7 @@ When a browser-side admin page needs a server-side setting, return it from an AP
 
 ## Design Choices
 
-The builds URL rides on the existing upgrade-status response rather than a new endpoint or a persisted setting. The admin controller keeps `DEFAULT_BUILDS_URL`, the same URL API uses as its default, as the fallback, so installs that never set `BUILDS_URL` behave as before.
+The builds URL rides on the existing upgrade-status response rather than a new endpoint or a persisted setting. The admin controller keeps `DEFAULT_BUILDS_URL`, the same URL API uses as its default, as the fallback, so installs that never set `BUILDS_URL` behave as before. At this PR it closes the builds database with `close()` rather than `destroy()`, because with PouchDB's http adapter `destroy()` sends a DELETE for the remote database.
 
 ## Related Files
 

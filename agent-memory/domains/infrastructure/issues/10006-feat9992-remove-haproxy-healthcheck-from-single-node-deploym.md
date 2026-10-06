@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9992
 issueUrl: https://github.com/medic/cht-core/issues/9992
 title: Remove haproxy-healthcheck service from single-node deployments, relying on CouchDB's built-in _up endpoint instead
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: "The haproxy-healthcheck container, only needed to monitor clustered CouchDB nodes, was being deployed even in single-node setups where it serves no purpose. PR #10006 moves the service into the cluster-only compose template and reconfigures HAProxy to use CouchDB's native _up endpoint for single-node health checks; follow-up PR #10267 adds `-w 0` to the `base64` call that encodes that check's credentials so long credentials no longer wrap."
 services:
   - api
@@ -78,9 +78,9 @@ Rather than keeping the healthcheck container in all deployments and conditional
 
 - haproxy/entrypoint.sh
 - haproxy/tests/Makefile
-- haproxy/tests/compose-cluster.yml
+- haproxy/tests/compose-cluster.yml (renamed from haproxy/tests/compose.yml)
 - haproxy/tests/compose-single.yml (added)
-- haproxy/tests/integration.spec.js
+- haproxy/tests/integration.spec.js (renamed from haproxy/tests/with-mock.spec.js)
 - haproxy/tests/mock-config/conf.d/mock-couchdb.conf
 - haproxy/tests/package.json
 - scripts/build/cht-core.yml.template

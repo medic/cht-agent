@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8644
 issueUrl: https://github.com/medic/cht-core/issues/8644
 title: Add concurrency support and build-time frozen dependencies to the haproxy-healthcheck service
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: "The haproxy-healthcheck service could stop answering HAProxy for good after a ConnectionResetError (issue #8644) and installed an unpinned Python dependency at startup; this PR rewrites haproxy-healthcheck/check.py on `asyncio` and `httpx` so connections are served concurrently, and bundles frozen, version-pinned dependencies into the container image at build time."
 services:
   - api
@@ -42,7 +42,6 @@ entities:
   - haproxy-healthcheck/compose.yml
   - haproxy-healthcheck/pyproject.toml
   - haproxy-healthcheck/requirements/base-freeze.txt
-  - haproxy-healthcheck/check-entrypoint.sh
 concepts:
   - load balancer health check
   - concurrent connection handling
@@ -87,7 +86,7 @@ Kept the service in Python to reuse existing code rather than rewriting in anoth
 - haproxy-healthcheck/requirements/test-freeze.txt (added)
 - haproxy-healthcheck/requirements/update.sh (added)
 - haproxy-healthcheck/test/test_check.py (added)
-- haproxy-healthcheck/mock-config/initializerJson.json (present at this PR's anchor; removed on master by PR #8870, which replaced the mockserver mock with nginx)
+- haproxy-healthcheck/mock-config/initializerJson.json (added; present at this PR's anchor; removed on master by PR #8870, which replaced the mockserver mock with nginx)
 - haproxy/tests/compose.yml (present at this PR's anchor; renamed on master to haproxy/tests/compose-cluster.yml by PR #10006)
 - package.json
 

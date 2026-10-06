@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10610
 issueUrl: https://github.com/medic/cht-core/issues/10610
 title: Add design document comparison during upgrades to show administrators which view indexing is required
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: Administrators upgrading the CHT had no visibility into whether (or which) CouchDB view indexing an upgrade would trigger. This PR adds design-document comparison to the upgrade flow and admin upgrade page, surfacing visual indicators of ddoc changes so admins can distinguish quick no-index upgrades from slow reindexing ones.
 services:
   - api
@@ -81,7 +81,7 @@ The compare call is made without a loading indicator on the Stage/Install button
 - api/src/routing.js
 - admin/src/js/controllers/upgrade.js
 - admin/src/js/controllers/upgrade-confirm.js
-- admin/src/js/filters/bytes.js
+- admin/src/js/filters/bytes.js (added)
 - admin/src/js/main.js
 - admin/src/templates/upgrade.html
 - admin/src/templates/upgrade_confirm.html

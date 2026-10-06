@@ -6,8 +6,8 @@ domainFit: strong
 issueNumber: 8551
 issueUrl: https://github.com/medic/cht-core/issues/8551
 title: Reimplement cht-deploy from Python to Node.js, plus a missing-values-file check, completion-URL output, and a get-all-logs troubleshooting command
-lastUpdated: '2026-10-01'
-summary: 'Before this PR, cht-deploy was a bash wrapper that pip-installed Invoke and ran scripts/deploy/tasks.py, so deploying needed a Python toolchain beside the Node.js one the rest of cht-core uses; a missing values file ended in a Python traceback, no instance URL was printed on completion, and there was no log-collection helper. This PR reimplemented it in Node.js (scripts/deploy/cht-deploy plus modules under scripts/deploy/src/), deleted the Python script, added mocha tests, and bundled a missing-values-file check, a completion URL message and a scripts/deploy/troubleshooting/get-all-logs script; the Route53 and /etc/hosts steps of the Python script were not ported. The whole scripts/deploy directory was removed on master by PR #10500.'
+lastUpdated: '2026-10-05'
+summary: 'Before this PR, cht-deploy was a bash wrapper that pip-installed Invoke and ran scripts/deploy/tasks.py, so deploying needed a Python toolchain beside the Node.js one the rest of cht-core uses; a missing values file ended in a Python traceback, no instance URL was printed on completion, and no helper collected the logs of all pods (scripts/deploy/troubleshooting/view-logs fetched the logs of the first pod of one deployment). This PR reimplemented it in Node.js (scripts/deploy/cht-deploy plus modules under scripts/deploy/src/), deleted the Python script, added mocha tests, and bundled a missing-values-file check, a completion URL message and a scripts/deploy/troubleshooting/get-all-logs script; the Route53 and /etc/hosts steps of the Python script were not ported. The whole scripts/deploy directory was removed on master by PR #10500.'
 services:
   - api
 techStack:
@@ -43,7 +43,6 @@ entities:
   - scripts/deploy/src/error.js
   - scripts/deploy/src/prepare.sh
   - scripts/deploy/troubleshooting/get-all-logs
-  - scripts/deploy/tasks.py
 concepts:
   - deployment tooling
   - language migration (Python to Node.js)
@@ -76,7 +75,7 @@ Before this PR, scripts/deploy/cht-deploy was a bash wrapper that required pytho
 
 ## Root Cause
 
-The deploy script lived in Python (scripts/deploy/tasks.py), diverging from cht-core's Node.js toolchain. The bash wrapper only checked that `-f` and a path were given, not that the file existed; scripts/deploy/tasks.py printed no instance URL at the end of a run; there was no bundled log-gathering tooling; and scripts/deploy/tasks.py's `check_namespace_exists` wrote a temporary manifest to `os.path.join(script_dir, "helm", "namespace.yaml")`, but the script's directory had no `helm/` subdirectory, so creating a new namespace failed (#9076).
+The deploy script lived in Python (scripts/deploy/tasks.py), diverging from cht-core's Node.js toolchain. The bash wrapper only checked that `-f` and a path were given, not that the file existed; scripts/deploy/tasks.py printed no instance URL at the end of a run; the only log helper, scripts/deploy/troubleshooting/view-logs, fetched the logs of one deployment's first pod; and scripts/deploy/tasks.py's `check_namespace_exists` wrote a temporary manifest to `os.path.join(script_dir, "helm", "namespace.yaml")`, but the script's directory had no `helm/` subdirectory, so creating a new namespace failed (#9076).
 
 ## Solution
 
@@ -112,7 +111,7 @@ Chose Node.js to align cht-deploy with the repo's coding standards and eliminate
 
 ## Testing
 
-At this PR (scripts/deploy was removed on master by #10500), three mocha specs were added, run by the `"test": "mocha 'tests/*.js'"` script in scripts/deploy/package.json: scripts/deploy/tests/helm.test.js (6 cases for `helmInstallOrUpdate` and `ensureMedicHelmRepo`, with `child_process.execSync` stubbed by sinon), scripts/deploy/tests/validate-arguments.test.js (5 cases for `validateArguments`, including 'should exit with code 1 if the specified file does not exist') and scripts/deploy/tests/package-json-validate.test.js (4 cases for `validateNodeVersion`). Each spec covers both exit paths and success paths.
+At this PR (scripts/deploy was removed on master by PR #10500), three mocha specs were added, run by the `"test": "mocha 'tests/*.js'"` script in scripts/deploy/package.json: scripts/deploy/tests/helm.test.js (6 cases for `helmInstallOrUpdate` and `ensureMedicHelmRepo`, with `child_process.execSync` stubbed by sinon), scripts/deploy/tests/validate-arguments.test.js (5 cases for `validateArguments`, including 'should exit with code 1 if the specified file does not exist') and scripts/deploy/tests/package-json-validate.test.js (4 cases for `validateNodeVersion`). Each spec covers both exit paths and success paths.
 
 ## Related Issues
 

@@ -5,9 +5,9 @@ domain: infrastructure
 domainFit: strong
 issueNumber: 9691
 issueUrl: https://github.com/medic/cht-core/issues/9691
-title: 'Plug Nouveau search APIs into the API install/upgrade lifecycle: warm Nouveau indexes alongside CouchDB views and clean up stale indexes during setup'
-lastUpdated: '2026-10-01'
-summary: Nouveau (Lucene-based) full-text search indexes were not integrated into the API install/upgrade lifecycle the way CouchDB views are, so they were neither warmed during upgrade nor cleaned up when stale. This PR makes the setup view-indexer warm the Nouveau indexes of staged design docs and makes the setup `cleanup` step call a new `nouveauCleanup` helper in api/src/db.js, so Nouveau indexes are warmed and cleaned up as part of the same lifecycle.
+title: 'Plug Nouveau search APIs into the API install/upgrade lifecycle: wait for staged Nouveau indexes alongside CouchDB views and clean up stale indexes during setup'
+lastUpdated: '2026-10-05'
+summary: Nouveau (Lucene-based) full-text search indexes were not integrated into the API install/upgrade lifecycle the way CouchDB views are. The upgrade did not wait for the Nouveau indexes of staged design docs to finish building before swapping those design docs live, and stale Nouveau indexes were not cleaned up. This PR makes the setup view-indexer query each Nouveau index of the staged design docs, a request that returns once CouchDB has built the index, and makes the setup `cleanup` step call a new `nouveauCleanup` helper in api/src/db.js, so Nouveau indexes are waited for and cleaned up as part of the same lifecycle.
 services:
   - api
 techStack:
@@ -21,7 +21,7 @@ tags:
   - nouveau
   - search
   - view-indexer
-  - index-warming
+  - index-building
   - api-lifecycle
   - setup
   - upgrade
@@ -41,7 +41,7 @@ entities:
   - api/src/services/setup/view-indexer.js
   - api/src/services/setup/utils.js
 concepts:
-  - index warming
+  - staged index building
   - API install/upgrade lifecycle
   - Nouveau full-text search
   - view indexing
@@ -62,7 +62,7 @@ stale: true
 
 ## Problem
 
-With the introduction of CouchDB Nouveau (Lucene-based full-text search), Nouveau search indexes existed but were not wired into the API's install/upgrade lifecycle. Before this PR, unlike CouchDB views — which the view-indexer warms during setup so the first queries aren't slow — Nouveau indexes were not warmed during upgrade and stale Nouveau indexes were not cleaned up.
+With the introduction of CouchDB Nouveau (Lucene-based full-text search), Nouveau search indexes existed but were not wired into the API's install/upgrade lifecycle. Before this PR, unlike CouchDB views — which the view-indexer warms during setup so the first queries aren't slow — Nouveau indexes were not waited for: CouchDB builds a Nouveau index whenever its design document is created or updated, but the upgrade did not wait for the Nouveau indexes of the staged design docs to finish building before swapping those design docs live, and stale Nouveau indexes were not cleaned up.
 
 ## Root Cause
 
@@ -74,11 +74,11 @@ Extended the API setup lifecycle to manage Nouveau indexes. api/src/db.js gained
 
 ## Code Patterns
 
-Index warming during setup reuses the existing view-indexer pattern — enumerate the staged design docs and issue a minimal query against each index (`qs: { limit: 1 }` for a view, `qs: { q: '*:*', limit: 1 }` for a Nouveau index) that returns once the index is built, retrying through `waitForRequest` on socket timeouts — now generalized to cover Nouveau search indexes in api/src/services/setup/view-indexer.js. The cleanup call lives in api/src/db.js as `nouveauCleanup`, next to server-level helpers such as `activeTasks`, and is listed in `GLOBAL_FUNCTIONS_TO_STUB` so unit tests must stub it; the warming query itself is issued directly from api/src/services/setup/view-indexer.js.
+Indexing staged design docs during setup reuses the existing view-indexer pattern — enumerate the staged design docs and issue a minimal query against each index (`qs: { limit: 1 }` for a view, `qs: { q: '*:*', limit: 1 }` for a Nouveau index) that returns once the index is built, retrying through `waitForRequest` on socket timeouts — now generalized to cover Nouveau search indexes in api/src/services/setup/view-indexer.js. The cleanup call lives in api/src/db.js as `nouveauCleanup`, next to server-level helpers such as `activeTasks`, and is listed in `GLOBAL_FUNCTIONS_TO_STUB` so unit tests must stub it; the indexing query itself is issued directly from api/src/services/setup/view-indexer.js.
 
 ## Design Choices
 
-Reused the existing view-indexer warming/cleanup lifecycle instead of building a separate Nouveau-specific path, so Nouveau indexes are warmed and pruned alongside CouchDB views within the same install/upgrade flow; the existing `cleanup` step in api/src/services/setup/utils.js took on the stale-index cleanup rather than a separate module.
+Reused the existing view-indexer indexing/cleanup lifecycle instead of building a separate Nouveau-specific path, so the upgrade waits for Nouveau indexes and prunes them alongside CouchDB views within the same install/upgrade flow; the existing `cleanup` step in api/src/services/setup/utils.js took on the stale-index cleanup rather than a separate module. The query is not what builds a staged Nouveau index, since CouchDB builds Nouveau indexes whenever a design document is created or updated, even if nothing queries them; the query makes the upgrade wait until that build is done before the staged and live design docs are swapped.
 
 ## Related Files
 
@@ -105,4 +105,4 @@ The existing mocha specs gained cases for the Nouveau lifecycle behavior: api/te
 
 **Fit:** strong
 
-Every source change is in the API's install/upgrade machinery: api/src/services/setup/view-indexer.js warms the Nouveau indexes of staged design docs before they go live, and `cleanup` in api/src/services/setup/utils.js cleans up stale Nouveau indexes through `db.nouveauCleanup()` from api/src/db.js. That is upgrade tooling for the database tier; the PR changes neither the Nouveau index definitions under `ddocs/` nor the code that serves user searches.
+Every source change is in the API's install/upgrade machinery: api/src/services/setup/view-indexer.js waits for the Nouveau indexes of staged design docs to finish building before they go live, and `cleanup` in api/src/services/setup/utils.js cleans up stale Nouveau indexes through `db.nouveauCleanup()` from api/src/db.js. That is upgrade tooling for the database tier; the PR changes neither the Nouveau index definitions under `ddocs/` nor the code that serves user searches.

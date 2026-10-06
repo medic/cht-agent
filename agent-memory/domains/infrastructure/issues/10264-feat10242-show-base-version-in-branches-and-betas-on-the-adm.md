@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10242
 issueUrl: https://github.com/medic/cht-core/issues/10242
 title: Show base version column for branches and betas on the admin upgrade page
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: The admin upgrade page showed the base (major) version of branch and beta builds only as a suffix on the build name, which was hidden for long branch names, making 4.x vs 5.x builds hard to distinguish. This PR moves it into a 'Base version' column in both the betas and branches sections.
 services:
   - admin
@@ -55,7 +55,7 @@ Missing feature: the release directive and templates had no column for the base 
 
 ## Solution
 
-Added a 'Base version' column to both the betas and branches sections of the upgrade page. admin/src/templates/upgrade.html gained an `instance.upgrade.base_version` heading in both sections and passes `show-base-version="true"` to their release rows; admin/src/js/directives/release.js gained a `showBaseVersion` binding, and admin/src/templates/release.html renders `{{ release.base_version }}` in its own column when that binding is set. The `buildVersion` filter now returns `buildInfo.version` alone; because the filter is shared, release and feature-release rows no longer show the suffix either, and neither of those lists got the new column. Every supported locale file gained the 'Base version' label key (ar, bm, en, es, fr, hi, id, ne, sw), and tests/page-objects/upgrade/upgrade.wdio.page.js now matches a branch's install button with `span*=${utils.escapeBranchName(branch)}`, without the trailing parenthesis the old suffix required.
+Added a 'Base version' column to both the betas and branches sections of the upgrade page. admin/src/templates/upgrade.html gained an `instance.upgrade.base_version` heading in both sections and passes `show-base-version="true"` to their release rows; admin/src/js/directives/release.js gained a `showBaseVersion` binding, and admin/src/templates/release.html renders `{{ release.base_version }}` in its own column when that binding is set. The `buildVersion` filter now returns `buildInfo.version` alone; because the filter is shared, feature-release rows no longer show the suffix either (release rows never did: the old filter returned the bare version when `version` equals `base_version`, as it does for a release), and neither of those lists got the new column. Every supported locale file gained the 'Base version' label key (ar, bm, en, es, fr, hi, id, ne, sw), and tests/page-objects/upgrade/upgrade.wdio.page.js now matches a branch's install button with `span*=${utils.escapeBranchName(branch)}`, without the trailing parenthesis the old suffix required.
 
 ## Code Patterns
 

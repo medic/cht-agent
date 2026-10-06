@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8841
 issueUrl: https://github.com/medic/cht-core/issues/8841
 title: Build multi-platform (linux/amd64 + linux/arm64/v8) Docker images in the CI build pipeline for internal builds
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: 'CHT Docker images were built for a single architecture, so Apple Silicon hosts ran them under qemu emulation, where the CouchDB container crashed. For internal-contributor CI builds this PR builds and pushes every service and infrastructure image for linux/amd64 and linux/arm64/v8 with docker buildx, and retags release images with regctl instead of docker pull/tag/push.'
 services:
   - api
@@ -66,11 +66,11 @@ Before this PR, `buildServiceImages` and `buildImages` in `scripts/build/index.j
 
 ## Code Patterns
 
-`BUILD_PLATFORMS` in `scripts/build/index.js` is joined into buildx's `--platform` argument, and the image is pushed by buildx itself (`'--push'`); builds without push credentials keep the single-platform docker build plus docker save path. Release retagging goes through regctl image copy in `scripts/ci/tag-docker-images.js`, so no local copy of the image is pulled.
+`BUILD_PLATFORMS` in `scripts/build/index.js` is joined into buildx's `--platform` argument, and the image is pushed by buildx itself (`'--push'`); builds without push credentials keep the single-platform docker build plus docker save path. Release retagging goes through regctl image copy in `scripts/ci/tag-docker-images.js`, so no local copy of the image is pulled: `docker pull` on the amd64 CI runner fetches only the linux/amd64 image, so the previous pull, tag and push retagging would have published release tags without arm64.
 
 ## Design Choices
 
-Multi-platform builds run only when `INTERNAL_CONTRIBUTOR` is set, the same condition that gates the Docker Hub and Amazon ECR logins earlier in the build job (`INTERNAL_CONTRIBUTOR: ${{ secrets.AUTH_MARKET_URL && 'true' }}` in `.github/workflows/build.yml`). Other builds keep single-platform images and upload `images/` as the `cht-images` artifact. The arm64 target is spelled with its variant, `linux/arm64/v8`.
+Multi-platform builds run only when `INTERNAL_CONTRIBUTOR` is set, the same condition that gates the Docker Hub and Amazon ECR logins earlier in the build job (`INTERNAL_CONTRIBUTOR: ${{ secrets.AUTH_MARKET_URL && 'true' }}` in `.github/workflows/build.yml`). Other builds keep single-platform images and upload `images/` as the `cht-images` artifact. The arm64 target is spelled with its variant, `linux/arm64/v8`. At this PR, with plain `linux/arm64`, the api and sentinel images built from the PR's branch (both on an `alpine:3.19` base) were published for amd64 only.
 
 ## Related Files
 

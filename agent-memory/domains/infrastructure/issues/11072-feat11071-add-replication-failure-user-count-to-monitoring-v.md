@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 11071
 issueUrl: https://github.com/medic/cht-core/issues/11071
 title: Add replication failure user count to monitoring v2 API
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: The monitoring v2 API exposed operational metrics but had no visibility into replication failures despite logging being added earlier. This PR surfaces a count of distinct users with at least one replication failure in the last `connected_user_interval` days (default 7) under `replication_failure.count`.
 services:
   - api
@@ -64,7 +64,7 @@ This metric uses a service-plus-view shape: a dedicated service (`api/src/servic
 
 ## Design Choices
 
-The window reuses `connected_user_interval` rather than adding a parameter, so `replication_failure.count` and `connected_users.count` follow the same `connected_user_interval` setting. Distinct users are counted (not raw failure events) to measure the breadth of impact. Per-day counts live on the existing per-user monthly log doc and are not capped, unlike the `failures` list, which keeps only the last `MAX_FAILURES` entries. The PR description says the count covers the current or previous calendar month; the merged code counts a rolling window of days instead.
+The window reuses `connected_user_interval` rather than adding a parameter, so `replication_failure.count` and `connected_users.count` follow the same `connected_user_interval` setting. Distinct users are counted (not raw failure events) to measure the breadth of impact. Per-day counts live on the existing per-user monthly log doc and are not capped, unlike the `failures` list, which keeps only the last `MAX_FAILURES` entries. The PR description says the count covers the current or previous calendar month; the merged code counts a rolling window of days instead. The rolling window replaced the calendar-month design during review, because a per-period count can change dramatically on the day a new reporting period begins and is hard to track in Watchdog, while a rolling sum is easy to monitor.
 
 ## Related Files
 
@@ -72,7 +72,7 @@ The window reuses `connected_user_interval` rather than adding a parameter, so `
 - api/src/services/monitoring.js
 - api/src/controllers/replication-failure-log.js
 - api/src/services/replication/replication-failure-log.js
-- ddocs/logs-db/logs/views/replication_failures/map.js
+- ddocs/logs-db/logs/views/replication_failures/map.js (added)
 - api/tests/mocha/services/monitoring.spec.js
 - api/tests/mocha/services/replication/replication-failure-log.spec.js
 - tests/integration/api/controllers/monitoring.spec.js

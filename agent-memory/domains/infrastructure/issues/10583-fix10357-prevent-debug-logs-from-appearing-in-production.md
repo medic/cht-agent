@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10357
 issueUrl: https://github.com/medic/cht-core/issues/10357
 title: Prevent DEBUG logs in production by defaulting LOG_LEVEL to 'info' and adding per-service Helm log_level config
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: DEBUG logs appeared in production API/sentinel pods because the shared logger chose 'debug' whenever NODE_ENV was unset or 'development', and the images and Helm templates never set NODE_ENV. Fixed by driving the level from LOG_LEVEL with an 'info' default in the shared logger, passing per-service log_level values through the Helm templates, and setting LOG_LEVEL=debug for CI, test and local dev runs.
 services:
   - api
@@ -49,6 +49,7 @@ concepts:
   - CI environment configuration
 related_issues:
   - cht-core-10754
+  - cht-core-10815
 stale: true
 ---
 
@@ -70,7 +71,7 @@ Default operational env vars at read time in the shared lib (e.g. `process.env.L
 
 ## Design Choices
 
-Hardcoding the safe default in application code guarantees production gets 'info' even if Helm/env config is incomplete. Decoupling the log level from NODE_ENV means environments that want debug output must now set LOG_LEVEL explicitly, which is why CI, the test compose override, the k3d test values and the local dev scripts all set it to debug.
+Hardcoding the safe default in application code guarantees production gets 'info' even if Helm/env config is incomplete. Decoupling the log level from NODE_ENV means environments that want debug output must now set LOG_LEVEL explicitly, which is why CI, the test compose override, the k3d test values and the local dev scripts all set it to debug. The test debug level lives in a separate tests/cht-core-test.override.yml, passed as an extra `-f` file, rather than as `LOG_LEVEL=${LOG_LEVEL:-info}` in the compose templates, because `LOG_LEVEL` is a generic variable: a docker host whose shell already sets it would pass it into a production compose deployment. The override file and the `dev-api`/`dev-sentinel` scripts also set `LOG_LEVEL=debug` outright instead of reading it from the local environment, since hardcoding it was judged less complex and less likely to cause confusion.
 
 ## Related Files
 
@@ -92,7 +93,8 @@ In shared-libs/logger/test/index.spec.js, the `uses info level in production env
 ## Related Issues
 
 - PR #10376: "fix(#10357): prevent DEBUG logs from appearing in production" — earlier, unmerged PR for the same issue that this PR's description says it is based on.
-- #10754: "Cookies not being sent with `secure: true`" — the cookie counterpart of this change. `api/src/services/cookie.js` also keys off `NODE_ENV === 'production'`, which the containers never set; this PR stopped the logger depending on NODE_ENV, and PR #10758 fixed the cookie side by setting NODE_ENV next to LOG_LEVEL in the same Helm templates, values and test override.
+- #10754: "Cookies not being sent with `secure: true`" — the cookie counterpart of this change. `api/src/services/cookie.js` also keys off `NODE_ENV === 'production'`, which the containers never set; this PR stopped the logger depending on NODE_ENV, and PR #10758 fixed the cookie side by setting NODE_ENV=production in api/Dockerfile and sentinel/Dockerfile and setting NODE_ENV next to LOG_LEVEL in the same Helm templates, base values, k3d test values template and test override.
+- #10815: "Existing helm chart fails after recent changes on helm chart" — the `.Values.api.log_level` and `.Values.sentinel.log_level` reads this PR added had the same nil-pointer exposure as PR #10758's `node_env` reads for values files without `api:` or `sentinel:` blocks (#10815's reported error was on `.Values.sentinel.node_env`); PR #10826 made them nil-safe.
 
 ## Domain Rationale
 

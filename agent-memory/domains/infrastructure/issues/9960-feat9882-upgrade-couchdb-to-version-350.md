@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9882
 issueUrl: https://github.com/medic/cht-core/issues/9882
 title: Upgrade CouchDB and CouchDB-Nouveau Docker images to version 3.5.0
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-05'
 summary: 'On the Nouveau epic branch, development had been targeting CouchDB/Nouveau 3.4.2; this PR upgrades both the couchdb and couchdb-nouveau Docker base images to the newer 3.5.0 release. The CouchDB-only bump on master was a separate same-day PR (#10014), and both images are at 3.5.2 on master since PR #11162.'
 services:
   - api
@@ -92,7 +92,7 @@ No test files changed; the diff is the first `FROM` line of each of the two Dock
 ## Related Issues
 
 - #9882: "Upgrade to latest version of Couch/Nouveau to 3.5.0" — this PR's issue (opened for 3.4.3, retargeted to 3.5.0)
-- #10027: "Upgrade CouchDB to version 3.5.0" — separate issue for the CouchDB-only bump on master (PR #10014, merged the same day); it was split off because CouchDB could be upgraded without waiting for the Nouveau epic
+- #10027: "Upgrade CouchDB to version 3.5.0" — separate issue for the CouchDB-only bump on master (PR #10014, merged the same day); #9882 had planned to upgrade both images with the Nouveau epic, but CouchDB could be upgraded without waiting for it, and since PR #10014 targeted master it needed its own stand-alone issue, unlike PR #9960, which merged into the epic branch
 - #9691: "Plug Nouveau APIs with API lifecycle" — #9882 waited for this issue's lifecycle code before upgrading
 - #9542: "Reduce disk space with CouchDB Nouveau (TCO v1)" — the epic whose `9542_freetext_tco` branch this PR targeted; #9882 waited for that branch to be stable
 
