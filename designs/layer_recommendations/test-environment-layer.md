@@ -223,7 +223,7 @@ Default: **CouchDB wipe + reseed** for config/data iterations. Under Model A, **
 
 #### Teardown
 
-`docker compose down -v` (the `-v` clears volumes for a clean slate). Always run on completion or failure to avoid orphaned containers.
+`scripts/test-env-down.sh` (`docker compose down -v`). `-v` removes the named volumes, but CouchDB data is a bind mount under `local-build/` and survives, so a clean database also means deleting that directory. Always run on completion or failure to avoid orphaned containers.
 
 ### 2. Config Discovery
 

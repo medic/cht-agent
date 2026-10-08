@@ -129,17 +129,41 @@ When the Test Environment Layer (#66) requests an environment, the agent
 *waits and polls* — you bring it up:
 
 ```bash
-# Build images from the agent's edited working copy (Model A rebuild-on-change)
-cd ~/src/cht-core && npm run local-images
-
-# Start the stack, attaching nginx to cht-agent-net via the #66 override
-docker compose -f <cht-core compose files> \
-  -f <cht-agent repo>/docker/cht-agent-net.override.yml up -d
+# From the cht-agent repo: build the agent's edited working copy into images
+# (Model A rebuild-on-change) and start it, nginx joined to cht-agent-net
+CHT_CORE_REBUILD=1 scripts/test-env-up.sh ~/src/cht-core
 ```
 
-> The override file `docker/cht-agent-net.override.yml` ships with #66.
-> Validate service/network names against your generated compose before
-> relying on it (see the comments in that file).
+> `scripts/test-env-up.sh` gives each checkout its own Compose project, internal
+> network and CouchDB data dir, and refuses to start while another stack's nginx
+> is on `cht-agent-net`. Overrides are listed in `scripts/lib/test-env.sh`.
+>
+> The stack's cert is self-signed, and the agent's readiness poll stops at the first
+> TLS verification error. So bring the stack up before the agent run starts, not
+> after the agent asks: the poll then succeeds at once. Run the `docker cp` line
+> that `test-env-up.sh` prints at its end, then copy that file into the container
+> (`docker cp <file> cht-agent:/tmp/cht-cert.pem`). Start the run with
+> `docker exec -e NODE_EXTRA_CA_CERTS=/tmp/cht-cert.pem ...`. After
+> `test-env-down.sh`, the next bring-up makes a new cert. If the bring-up used
+> non-default `COUCHDB_USER` or `COUCHDB_PASSWORD`, pass the same values with `docker exec -e`.
+
+Settings the layer reads from the environment:
+
+| Variable | Read by | Effect (default) |
+|---|---|---|
+| `CHT_URL` | agent | Instance `provision` dials when the call passes no `url` (`https://nginx`). |
+| `COUCHDB_USER` / `COUCHDB_PASSWORD` | agent, scripts | Stack admin; each defaults on its own (`medic` / `password`). The agent refuses the default password against a host it does not treat as disposable. |
+| `CHT_TEST_ENV_ALLOW_EXTERNAL=1` | agent | Allows a host it does not treat as disposable, like `allowExternalTarget`. |
+| `CHT_CONF_BIN` | agent | cht-conf binary to spawn (`cht`). |
+| `CHT_CORE_HOST_PATH` | agent | Host path of the working copy, printed in the gates. The agent's compose file sets it to `$CHT_CORE_PATH`. |
+| `CHT_TEST_ENV_PROJECT` | scripts, agent | Compose project (`cht-agent-<dir>-<path hash>`). The agent repeats it in the gates it prints. |
+| `CHT_CORE_PATH` | scripts | Working copy, when no path argument is given. |
+| `CHT_CORE_CLONE_DIR` | scripts | Managed checkout when neither is given (`<repo>/.cht-core`), cloned from `CHT_CORE_UPSTREAM` at `CHT_CORE_BRANCH` (medic/cht-core, master). |
+| `CHT_CORE_REBUILD=1` | scripts | Runs `npm run build-dev` even when a build exists. |
+| `COUCHDB_DATA` | scripts | CouchDB bind mount (`local-build/srv-<project>`). It survives `test-env-down.sh`. |
+| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | scripts | Host binds (`127.0.0.1:80` / `127.0.0.1:443`). Opening them to the LAN needs a non-default `COUCHDB_PASSWORD`. |
+| `COMMON_NAME` | scripts | Cert CN (`nginx`, the host the agent dials). |
+| `NODE_EXTRA_CA_CERTS` | Node | The stack's `cert.pem`, read once per process (see above). |
 
 The agent detects readiness via `GET https://nginx/api/v2/monitoring` and
 continues. CouchDB-tier resets it does itself over HTTP; container restarts
@@ -161,7 +185,7 @@ git push origin cht-agent/<ticket>
 
 ```bash
 docker compose -f docker/docker-compose.cht-agent.yml down
-# CHT stack: docker compose -f <cht-core compose files> down -v
+scripts/test-env-down.sh ~/src/cht-core   # CHT stack
 # Full cleanup of the shared network (only once nothing else uses it):
 docker network rm cht-agent-net
 ```
@@ -173,5 +197,5 @@ docker network rm cht-agent-net
 | compose fails mounting `git-config.hardened` over `.git/config` | working copy is a git worktree (`.git` is a file) or missing. Run `docker/scripts/bootstrap-workspace.sh` on the host. |
 | `Sandbox verification FAILED` in `docker logs` | a hardening layer is missing — read which `[FAIL]` fired; don't bypass it. |
 | working-copy files unwritable from container | host uid ≠ 1000. Rebuild with a matching uid or chown the copy. |
-| agent can't reach `https://nginx` | CHT stack not attached to `cht-agent-net` — re-run compose with the #66 override; `docker network inspect cht-agent-net` should list nginx. |
+| agent can't reach `https://nginx` | CHT stack not attached to `cht-agent-net` — bring it up with `scripts/test-env-up.sh`; `docker network inspect cht-agent-net` should list one nginx. |
 | `fetch` fails for an `ssh://` or `git@` URL | by design (no ssh binary). Use the `https://` URL. |
