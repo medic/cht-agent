@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10305
 issueUrl: https://github.com/medic/cht-core/issues/10305
 title: Stop enforcing CouchDB's failed-authentication lockout (chttpd_auth_lockout mode = warn) in couchdb/10-docker-default.ini
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: 'To protect against a DoS attack (details in a private issue), this PR sets CouchDB''s failed-authentication lockout to `mode = warn` in the CouchDB Docker default config (`couchdb/10-docker-default.ini`), so repeated authentication failures are logged instead of locking the user and client IP out with 403s; the PR calls this disabling CouchDB''s rate limiter.'
 services:
   - api

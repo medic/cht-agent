@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9691
 issueUrl: https://github.com/medic/cht-core/issues/9691
 title: 'Plug Nouveau search APIs into the API install/upgrade lifecycle: wait for staged Nouveau indexes alongside CouchDB views and clean up stale indexes during setup'
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: Nouveau (Lucene-based) full-text search indexes were not integrated into the API install/upgrade lifecycle the way CouchDB views are. The upgrade did not wait for the Nouveau indexes of staged design docs to finish building before swapping those design docs live, and stale Nouveau indexes were not cleaned up. This PR makes the setup view-indexer query each Nouveau index of the staged design docs, a request that returns once CouchDB has built the index, and makes the setup `cleanup` step call a new `nouveauCleanup` helper in api/src/db.js, so Nouveau indexes are waited for and cleaned up as part of the same lifecycle.
 services:
   - api

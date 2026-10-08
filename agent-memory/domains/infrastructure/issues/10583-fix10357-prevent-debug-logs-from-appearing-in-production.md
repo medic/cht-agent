@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10357
 issueUrl: https://github.com/medic/cht-core/issues/10357
 title: Prevent DEBUG logs in production by defaulting LOG_LEVEL to 'info' and adding per-service Helm log_level config
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: DEBUG logs appeared in production API/sentinel pods because the shared logger chose 'debug' whenever NODE_ENV was unset or 'development', and the images and Helm templates never set NODE_ENV. Fixed by driving the level from LOG_LEVEL with an 'info' default in the shared logger, passing per-service log_level values through the Helm templates, and setting LOG_LEVEL=debug for CI, test and local dev runs.
 services:
   - api

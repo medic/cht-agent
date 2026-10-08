@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8925
 issueUrl: https://github.com/medic/cht-core/issues/8925
 title: Enable HTTP keep-alive in HAProxy by replacing http-server-close in the defaults section
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: "HAProxy's defaults section set `option http-server-close`, which closes the server-side (HAProxy-to-CouchDB) connection after each response while still allowing client-side keep-alive. The PR replaces it with `option http-keep-alive`, HAProxy's default mode, so connections to CouchDB are reused across requests too."
 services:
   - api

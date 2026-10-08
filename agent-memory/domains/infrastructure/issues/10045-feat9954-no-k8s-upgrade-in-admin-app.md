@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9954
 issueUrl: https://github.com/medic/cht-core/issues/9954
 title: Add API endpoint to detect the Docker upgrade service and hide the 1-click upgrade button in the admin app on Kubernetes deployments
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: Kubernetes-hosted instances use a limited upgrade-service-kubernetes that cannot perform full deployments, so offering the 1-click upgrade button there is misleading. This PR adds an API endpoint that reports whether the upgrade service is the Docker upgrade service, and the admin app hides its Install buttons when it is not, while the Stage buttons stay available.
 services:
   - api

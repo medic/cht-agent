@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 5936
 issueUrl: https://github.com/medic/cht-core/issues/5936
 title: Add code-coverage thresholds (alerts) for API, Sentinel and shared-libs, tighten cht-form's, and backfill missing shared-libs unit tests
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: API, Sentinel and shared-libs ran their unit tests under nyc without coverage thresholds, and many shared-libs had coverage gaps, so coverage in those packages could drop without failing CI. This PR sets nyc coverage thresholds for API and Sentinel (from their current coverage) and a blanket 95% for shared-libs, gives cht-form its own, stricter Karma thresholds, and backfills unit tests across shared-libs to satisfy them.
 services:
   - api

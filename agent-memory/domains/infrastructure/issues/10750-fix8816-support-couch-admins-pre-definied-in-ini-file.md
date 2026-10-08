@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8816
 issueUrl: https://github.com/medic/cht-core/issues/8816
 title: Fix fragile CouchDB docker-entrypoint admin check by parsing the [admins] block in cluster-credentials.ini to avoid duplicate admin blocks on restart
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: "couchdb/docker-entrypoint.sh used a brittle multiline grep that only matched the admin user if it sat on the exact line after the [admins] header, so when another admin was listed first it silently failed and appended a second [admins] block, which issue #8816 reports invalidated the existing one. It was replaced with a section-aware check that finds the username anywhere in the [admins] block and, if it is missing, inserts it into the existing section instead of adding a new header; the secret, uuid, log-level and synced-admin writes were also moved to header-anchored inserts."
 services:
   - api

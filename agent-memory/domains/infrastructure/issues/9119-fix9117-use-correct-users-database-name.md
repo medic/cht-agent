@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9117
 issueUrl: https://github.com/medic/cht-core/issues/9117
 title: Use correct _users database name in API setup service to fix CHT upgrade failures
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: The setup/upgrade service referenced an incorrect name for CouchDB's `_users` system database, breaking the upgrade process. The fix corrects the database name in the central database definitions so view indexing of the staged `_users` design documents during upgrade targets the right database.
 services:
   - api

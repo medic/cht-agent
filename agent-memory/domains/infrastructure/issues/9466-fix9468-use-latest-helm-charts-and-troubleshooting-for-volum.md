@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9468
 issueUrl: https://github.com/medic/cht-core/issues/9468
 title: Use latest helm-charts in deploy script and add get-volume-binding Kubernetes troubleshooting tool
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: 'Mounting pre-existing CouchDB data into a Helm-deployed CHT came up as a fresh instance, and operators had no easy way to discover the PV/PVC/subPath needed to bind that data. This PR raised the default chart version that scripts/deploy/src/install.js requests from 1.0.* to 1.1.* of the medic/helm-charts cht-chart-4x chart, the release carrying the pre-existing-data fixes, and added a scripts/deploy/troubleshooting/get-volume-binding script that prints the volume bindings of a deployment as JSON. Both were removed on master with the rest of scripts/deploy by PR #10500, and PR #10576 then restored the script as scripts/medic-eks-get-volume-binding.sh; the Helm chart on master lives in-repo at scripts/build/helm.'
 services:
   - api

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8909
 issueUrl: https://github.com/medic/cht-core/issues/8909
 title: Add CI jobs that run the integration test suite against a CHT instance deployed in a K3D (Kubernetes) cluster via Helm charts
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: 'CHT integration tests previously only ran against the Docker Compose deployment. With this PR, .github/workflows/build.yml gained a `tests-k3d` job whose matrix runs two commands that deploy CHT into a K3D Kubernetes cluster from a test-only Helm chart under tests/helm/ (with local-path persistent storage) and run the existing integration specs against it, skipping tests tagged `@docker`. On master the job still runs, but tests/helm/ is gone (deleted by PR #10051) and the suite installs the in-repo chart at scripts/build/helm instead.'
 services:
   - api

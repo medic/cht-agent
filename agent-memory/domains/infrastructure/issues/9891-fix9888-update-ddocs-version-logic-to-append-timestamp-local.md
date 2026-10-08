@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9888
 issueUrl: https://github.com/medic/cht-core/issues/9888
 title: Append a timestamp to the ddocs version for non-tag builds so API auto-deploys local design doc changes in development
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: 'A regression from PR #9674 left the local ddocs build emitting a static version string, so the API stopped detecting and redeploying local design document changes. The fix appends the current timestamp to the ddocs version for every build without a TAG (local and branch builds), forcing a unique version each build so auto-deploy works again.'
 services:
   - api

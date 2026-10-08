@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 11080
 issueUrl: https://github.com/medic/cht-core/issues/11080
 title: Update CouchDB to 3.5.2 for Nouveau fixes/perf, set the Nouveau request_timeout to 1h, and map the test harness's couchdb-nouveau name to the nouveau container so CI logs are saved
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: 'CHT was on CouchDB 3.5.0 and had skipped 3.5.1 due to performance issues, missing wanted 3.5.x Nouveau fixes, Nouveau performance improvements, and _purge optimizations. This PR upgrades CouchDB to 3.5.2 across the Docker images, sets the `[nouveau]` `request_timeout` to 1h (the fix for Nouveau requests timing out after 30 seconds, #11153), and makes the test harness map its `couchdb-nouveau` name to the actual `nouveau` container so CI saves Nouveau''s logs.'
 services:
   - api

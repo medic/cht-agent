@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8841
 issueUrl: https://github.com/medic/cht-core/issues/8841
 title: Build multi-platform (linux/amd64 + linux/arm64/v8) Docker images in the CI build pipeline for internal builds
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: 'CHT Docker images were built for a single architecture, so Apple Silicon hosts ran them under qemu emulation, where the CouchDB container crashed. For internal-contributor CI builds this PR builds and pushes every service and infrastructure image for linux/amd64 and linux/arm64/v8 with docker buildx, and retags release images with regctl instead of docker pull/tag/push.'
 services:
   - api

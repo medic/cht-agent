@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9690
 issueUrl: https://github.com/medic/cht-core/issues/9690
 title: Expose Nouveau full-text search metrics via the /api/v2/monitoring observability endpoint
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: The monitoring API exposed health metrics for components like CouchDB and Sentinel but had no visibility into the Nouveau search engine. This PR extends the monitoring service to fetch `_nouveau_info` for the medic database's two freetext indexes and report each one's name, `num_docs` and `disk_size` under `nouveau_indexes`. The design doc and output field names changed before this work reached master; see the stale-as-written banner.
 services:
   - api

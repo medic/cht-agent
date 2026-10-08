@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9882
 issueUrl: https://github.com/medic/cht-core/issues/9882
 title: Upgrade CouchDB and CouchDB-Nouveau Docker images to version 3.5.0
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: 'On the Nouveau epic branch, development had been targeting CouchDB/Nouveau 3.4.2; this PR upgrades both the couchdb and couchdb-nouveau Docker base images to the newer 3.5.0 release. The CouchDB-only bump on master was a separate same-day PR (#10014), and both images are at 3.5.2 on master since PR #11162.'
 services:
   - api
@@ -87,7 +87,7 @@ CouchDB and Nouveau versions are kept in lockstep (both Dockerfiles bumped in th
 
 ## Testing
 
-No test files changed; the diff is the first `FROM` line of each of the two Dockerfiles.
+No test files changed; the diff is the first `FROM` line of each of the two Dockerfiles. A reviewer also tested it locally by upgrading an instance of the epic branch holding 500,000 contacts/reports to this PR's branch, and everything worked as expected.
 
 ## Related Issues
 

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 9707
 issueUrl: https://github.com/medic/cht-core/issues/9707
 title: Add nouveau pod and service to Helm charts for Kubernetes deployment
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: 'The Helm charts had no way to deploy the nouveau full-text search component on Kubernetes. This adds a nouveau Deployment and Service that reuse the first CouchDB node''s persistent volume instead of provisioning a separate one. On master the standalone Deployment was later removed by PR #10482, which moved Nouveau into the CouchDB pod; see the stale-as-written banner.'
 services:
   - api

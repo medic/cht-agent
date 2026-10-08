@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10754
 issueUrl: https://github.com/medic/cht-core/issues/10754
 title: Set NODE_ENV=production in api and sentinel Docker images so Secure cookies are enabled by default in production
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: The api cookie service only sets the Secure flag when NODE_ENV=production, but that variable was never set in the Docker images, so production cookies were sent without the Secure attribute. Fixed by baking ENV NODE_ENV=production into the api/sentinel Dockerfiles (and Helm templates/values), with the test compose override and k3d test values setting NODE_ENV=development for test runs.
 services:
   - api

@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8038
 issueUrl: https://github.com/medic/cht-core/issues/8038
 title: Make the admin upgrade page use the builds URL that API is configured with (BUILDS_URL) instead of a hardcoded staging URL
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: 'The admin upgrade page hardcoded the staging builds-server URL, so when API was started with a different BUILDS_URL the page could not list versions. API now returns its configured buildsUrl in the GET /api/v2/upgrade response and the admin controller uses it, falling back to the old default.'
 services:
   - api

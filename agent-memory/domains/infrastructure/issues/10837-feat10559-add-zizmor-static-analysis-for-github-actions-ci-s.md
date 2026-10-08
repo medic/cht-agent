@@ -6,7 +6,7 @@ domainFit: weak
 issueNumber: 10559
 issueUrl: https://github.com/medic/cht-core/issues/10559
 title: Add zizmor static analysis to GitHub Actions CI and harden all workflows (pin action SHAs, scope GITHUB_TOKEN permissions, fix script injection)
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: CHT Core's GitHub Actions workflows carried supply-chain and privilege risks (unpinned actions, no explicit token permissions, a script-injection vector). This PR integrates the zizmor static analyzer into CI, fixes most findings across all 9 existing workflows and the two deploy composite actions, and lists the findings it accepts in .github/zizmor.yml, but names each workflow there by path while zizmor matches ignore entries only against a file's basename, so those entries suppress nothing (on master at the merge commit zizmor still reported 27 findings, 16 of them secrets-outside-env findings in .github/workflows/build.yml, the file the secrets-outside-env entry names).
 services:
   - api

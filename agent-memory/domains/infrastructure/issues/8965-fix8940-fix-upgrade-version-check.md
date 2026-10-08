@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8940
 issueUrl: https://github.com/medic/cht-core/issues/8940
 title: Fix admin upgrade page version check comparing a version to a build identifier after deploy-info API change
-lastUpdated: '2026-10-01'
+lastUpdated: '2026-10-08'
 summary: After the deploy-info change for #8790 made its `version` a plain semver (4.6.0), the admin upgrade page still compared it with the target build identifier (4.6.0.432424242), so upgrades to tagged releases were reported as not completed and showed an error card even on success. The check now compares the target build with the deploy-info `build` field.
 services:
   - admin

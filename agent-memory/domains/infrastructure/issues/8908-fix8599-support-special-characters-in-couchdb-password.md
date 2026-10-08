@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 8599
 issueUrl: https://github.com/medic/cht-core/issues/8599
 title: Support special characters in the CouchDB admin password in the CouchDB entrypoint, cluster set-up script, and haproxy-healthcheck
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: "CouchDB's set-up script failed to create the system databases when the admin password contained special characters (issue #8599), because couchdb/set-up-cluster.sh (like couchdb/docker-entrypoint.sh) spliced raw credentials into curl URLs and, for `_cluster_setup`, into JSON bodies. The fix passes credentials to curl with `-u`, JSON-escapes the password, percent-encodes it in the haproxy-healthcheck `_membership` URL, and runs the reworked bats suite against a special-character password under a path-filtered CI workflow."
 services:
   - api

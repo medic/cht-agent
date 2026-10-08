@@ -6,7 +6,7 @@ domainFit: strong
 issueNumber: 10481
 issueUrl: https://github.com/medic/cht-core/issues/10481
 title: Run Nouveau as a sidecar container in the CouchDB pod and switch Helm deployment strategy to Recreate
-lastUpdated: '2026-10-05'
+lastUpdated: '2026-10-08'
 summary: 'Upgrading the demo-cht instance to 5.x was blocked by the Helm chart configuration, which had CouchDB and a separate Nouveau pod attach the same persistent volume — something most AWS EBS volume types cannot do. The fix co-locates Nouveau as a sidecar container in the CouchDB pod (sharing storage) and changes the deployment strategy to Recreate across the affected deployments; the same Helm change was cherry-picked to 5.0.x as PR #10488 and released in 5.0.1.'
 services:
   - api
