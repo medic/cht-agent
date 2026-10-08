@@ -270,6 +270,42 @@ describe('cht-conf-runner', () => {
       expect(result.exitCode).to.be.null;
     });
 
+    it('escalates to SIGKILL 5s after SIGTERM when the child does not exit', async () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const proc = makeFakeProc();
+        const { runChtConf } = loadRunner(proc);
+
+        const promise = runChtConf(execOpts({ timeoutMs: 5 }));
+        await clock.tickAsync(5);
+        expect((await promise).timedOut).to.equal(true);
+        expect(proc.kill.calledWith('SIGKILL')).to.equal(false);
+
+        await clock.tickAsync(5_000);
+        expect(proc.kill.calledWith('SIGKILL')).to.equal(true);
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it('does not SIGKILL a child that exited after SIGTERM', async () => {
+      const clock = sinon.useFakeTimers();
+      try {
+        const proc = makeFakeProc();
+        const { runChtConf } = loadRunner(proc);
+
+        const promise = runChtConf(execOpts({ timeoutMs: 5 }));
+        await clock.tickAsync(5);
+        await promise;
+        proc.emit('close', null);
+
+        await clock.tickAsync(5_000);
+        expect(proc.kill.calledWith('SIGKILL')).to.equal(false);
+      } finally {
+        clock.restore();
+      }
+    });
+
     it('folds a spawn failure into startError instead of rejecting, naming the binary', async () => {
       const proc = makeFakeProc();
       const { runChtConf } = loadRunner(proc);
@@ -506,19 +542,21 @@ describe('cht-conf-runner', () => {
     // cht-conf's log.js writes every level to STDOUT behind a colour code, e.g. \x1b[31mERROR.
     const coloured = (colour: string, level: string, message: string) => `\x1b[${colour}m${level} ${message} \x1b[0m\n`;
 
-    it('fails a bucket that logged an ERROR even though cht-conf exited 0', async () => {
+    it('keeps the status but reports an ERROR line that cht-conf logged before it exited 0', async () => {
       const proc = makeFakeProc();
       const { runBucket } = loadRunner(proc);
 
       const promise = runBucket(baseOpts({ action: 'resources' }));
-      // upload-custom-translations.js logs this and returns, so cht-conf exits 0.
-      proc.stdout.emit('data', Buffer.from(coloured('31', 'ERROR', 'Exception checking translations: bad file')));
+      // upload-custom-translations.js logs a wrong-file-name ERROR, then still uploads every changed file.
+      const wrongName = 'The following file/s have wrong ISO 639 language code: messages-luo.properties';
+      proc.stdout.emit('data', Buffer.from(coloured('31', 'ERROR', wrongName)));
+      proc.stdout.emit('data', Buffer.from(coloured('32', 'INFO', 'Translation translations/messages-luo.properties uploaded')));
       proc.emit('close', 0);
 
       const result = await promise;
-      expect(result.status).to.equal('failed');
-      expect(result.warnings.join(' ')).to.include('logged an error but exited 0');
-      expect(result.warnings.join(' ')).to.include('Exception checking translations');
+      expect(result.status).to.equal('uploaded');
+      expect(result.warnings.join(' ')).to.include('exited 0 but logged errors');
+      expect(result.warnings.join(' ')).to.include('wrong ISO 639 language code');
     });
 
     it('does not fail an upload whose form is merely named like an error', async () => {
@@ -531,6 +569,21 @@ describe('cht-conf-runner', () => {
 
       const result = await promise;
       expect(result.status).to.equal('uploaded');
+      expect(result.warnings).to.deep.equal([]);
+    });
+
+    it('matches the level tag case-sensitively: a line that starts with "Error" is not an ERROR line', async () => {
+      const proc = makeFakeProc();
+      const { runBucket } = loadRunner(proc);
+
+      const promise = runBucket(baseOpts());
+      proc.stdout.emit('data', Buffer.from(coloured('32', 'INFO', 'Form forms/app/pregnancy.xml uploaded')));
+      proc.stderr.emit('data', Buffer.from('Error: something a child printed to stderr\n'));
+      proc.emit('close', 0);
+
+      const result = await promise;
+      expect(result.status).to.equal('uploaded');
+      expect(result.warnings).to.deep.equal([]);
     });
 
     it("does not fail on cht-conf's benign INFO about an unreadable bookmark", async () => {
@@ -545,6 +598,7 @@ describe('cht-conf-runner', () => {
 
       const result = await promise;
       expect(result.status).to.equal('uploaded');
+      expect(result.warnings).to.deep.equal([]);
     });
 
     it('spawns the artifact filter it advertises (same lowering as buildChtConfArgs)', async () => {

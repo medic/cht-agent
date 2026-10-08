@@ -41,11 +41,14 @@ const describeProbeFailure = (error: unknown): NotReady => {
   }
   const cause = causeOf(error);
   const detail = cause?.message || cause?.code;
-  return {
-    ready: false,
-    reason: detail ? `${error.message} (${detail})` : error.message,
-    terminal: cause?.code !== undefined && TLS_VERIFY_CODES.has(cause.code),
-  };
+  const untrusted = cause?.code !== undefined && TLS_VERIFY_CODES.has(cause.code);
+  const reason = detail ? `${error.message} (${detail})` : error.message;
+  // Node loads NODE_EXTRA_CA_CERTS once, no later than its first TLS connection attempt; each new
+  // cht-ssl volume has a new cert.
+  const hint =
+    '; start the agent trusting the current stack cert.pem (NODE_EXTRA_CA_CERTS) and dial the host it ' +
+    'names (an expired cert needs a new cht-ssl volume)';
+  return { ready: false, reason: untrusted ? `${reason}${hint}` : reason, terminal: untrusted };
 };
 
 /** Monitoring reports '' for a version it cannot read, i.e. while the app or CouchDB is down. */
@@ -62,7 +65,8 @@ const classifyResponse = async (response: FetchResponse): Promise<ProbeOutcome> 
     return { ready: false, reason, terminal: true };
   }
   if (!response.ok) {
-    return { ready: false, reason: `HTTP ${response.status}`, terminal: false };
+    const retryable = response.status >= 500 || response.status === 408 || response.status === 429;
+    return { ready: false, reason: `HTTP ${response.status}`, terminal: !retryable };
   }
   const body: unknown = await response.json().catch(() => null);
   return isHealthy(body) ? READY : { ready: false, reason: 'the app or CouchDB is not up yet', terminal: false };

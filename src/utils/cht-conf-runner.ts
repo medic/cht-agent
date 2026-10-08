@@ -281,7 +281,7 @@ export const runChtConf = (options: ChtConfExecOptions): Promise<ChtConfExecResu
   });
 };
 
-/** Failures stdout parsing cannot see: timeout, spawn error, or ERROR under exit 0. */
+/** Failures stdout parsing cannot see: a timeout or a spawn error. */
 const noteHardFailure = (
   run: ChtConfExecResult,
   options: ChtConfRunOptions,
@@ -293,13 +293,6 @@ const noteHardFailure = (
   }
   if (run.startError !== undefined) {
     warnings.push(`cht-conf ${options.action} failed to start: ${run.startError}`);
-    return true;
-  }
-  if (loggedErrorButExitedZero(run)) {
-    warnings.push(
-      `cht-conf ${options.action} logged an error but exited 0 — treated as failed`,
-      ...outputTail(run.output)
-    );
     return true;
   }
   return false;
@@ -315,13 +308,17 @@ const deriveBucketStatus = (
     return { status: 'failed', matchedNothing: false };
   }
   const status = classifyChtConfOutput(run.output, run.exitCode);
-  if (status === 'skipped') {
-    return classifySkippedBucket(run, options, warnings);
-  }
   if (status === 'failed') {
     warnings.push(...outputTail(run.output));
+    return { status, matchedNothing: false };
   }
-  return { status, matchedNothing: false };
+  // For some problems, cht-conf logs ERROR and continues: for example a translation
+  // file named messages-luo.properties, or a failed couch-config read. Report those
+  // lines, but keep the status.
+  if (loggedErrorButExitedZero(run)) {
+    warnings.push(`cht-conf ${options.action} exited 0 but logged errors`, ...outputTail(run.output));
+  }
+  return status === 'skipped' ? classifySkippedBucket(run, options, warnings) : { status, matchedNothing: false };
 };
 
 /**

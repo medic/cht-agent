@@ -8,8 +8,14 @@
 #
 # HUMAN-run only (the cht-agent never runs Docker). scripts/test-env-up.sh applies
 # it with a per-checkout project, internal network and data dir (scripts/lib/test-env.sh);
-# by hand, always pass a project name:
-#   docker compose -p <project> -f cht-couchdb.yml -f cht-core.yml -f cht-agent-net.override.yml up -d
+# by hand, pass the same values that test_env_compose passes, not only -p. Without
+# CHT_NETWORK, the stack shares the default `cht-net` network and the couchdb/haproxy/api
+# names with any other CHT stack that also uses `cht-net`. Without COUCHDB_PASSWORD,
+# Compose stops. Use this command:
+#   COUCHDB_USER=medic COUCHDB_PASSWORD=password COMMON_NAME=nginx \
+#   NGINX_HTTP_PORT=127.0.0.1:80 NGINX_HTTPS_PORT=127.0.0.1:443 \
+#   CHT_NETWORK=<project>-net COUCHDB_DATA=./srv-<project> \
+#     docker compose -p <project> -f cht-couchdb.yml -f cht-core.yml -f cht-agent-net.override.yml up -d
 # Only one stack's nginx can be on cht-agent-net at a time: `nginx` would resolve to both.
 #
 # VALIDATE before relying on this: the service name (`nginx`) and the key of the

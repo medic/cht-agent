@@ -58,12 +58,18 @@ describe('cht-readiness', () => {
     });
 
     it('treats an empty app or CouchDB version as not ready', async () => {
-      fetchStub.onCall(0).resolves({ ok: true, status: 200, json: async () => ({ version: { app: '', couchdb: '' } }) });
-      fetchStub.onCall(1).resolves(healthy());
+      const versions = (app: string, couchdb: string) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ version: { app, couchdb } }),
+      });
+      fetchStub.onCall(0).resolves(versions('4.18.0', ''));
+      fetchStub.onCall(1).resolves(versions('', '3.4.2'));
+      fetchStub.onCall(2).resolves(healthy());
 
       await waitForReady('https://nginx', fast);
 
-      expect(fetchStub.callCount).to.equal(2);
+      expect(fetchStub.callCount).to.equal(3);
     });
 
     it('fails fast on a redirect instead of waiting out the budget', async () => {
@@ -95,6 +101,15 @@ describe('cht-readiness', () => {
       const error = await expectRejection(waitForReady('https://nginx', { ...fast, maxWaitMs: 5 }));
 
       expect(error.message).to.include('ECONNREFUSED');
+    });
+
+    it('names the cause code when its message is empty (an AggregateError for localhost)', async () => {
+      const cause = Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' });
+      fetchStub.rejects(Object.assign(new TypeError('fetch failed'), { cause }));
+
+      const error = await expectRejection(waitForReady('https://localhost', { ...fast, maxWaitMs: 5 }));
+
+      expect(error.message).to.include('fetch failed (ECONNREFUSED)');
     });
 
     it('retries until healthy (503, 503, then 200)', async () => {

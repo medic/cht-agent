@@ -1120,6 +1120,15 @@ describe('TestEnvironmentAgent', () => {
         expect(result.warnings.join(' ')).to.include('only 3 of 5 docs uploaded');
       });
 
+      it('should report succeeded:false when upload-docs exits 0 without a summary for docs it was given', async () => {
+        runs['upload-docs'] = okRun(ansiInfo('Uploading docs'));
+
+        const result = await realAgent.prepareTestData(dockerHandle, sampleConfig, { dataPath });
+
+        expect(result.succeeded).to.equal(false);
+        expect(result.warnings.join(' ')).to.include('upload-docs printed no summary for 5 doc(s)');
+      });
+
       it('should warn when json_docs ends up empty (no csv inputs)', async () => {
         runs['csv-to-docs'] = okRun(ansiInfo('No csv directory found at /mnt/test-data/csv.'));
         runs['upload-docs'] = okRun('');
@@ -1185,12 +1194,40 @@ describe('TestEnvironmentAgent', () => {
         source: 'docker',
       };
 
+      // The printed gates carry CHT_TEST_ENV_PROJECT; isolate them from the ambient shell.
+      let priorProject: string | undefined;
+
       beforeEach(() => {
         realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+        priorProject = process.env.CHT_TEST_ENV_PROJECT;
+        delete process.env.CHT_TEST_ENV_PROJECT;
       });
 
       afterEach(() => {
         sinon.restore();
+        if (priorProject === undefined) {
+          delete process.env.CHT_TEST_ENV_PROJECT;
+        } else {
+          process.env.CHT_TEST_ENV_PROJECT = priorProject;
+        }
+      });
+
+      it('should carry an explicit CHT_TEST_ENV_PROJECT into the restart, full and teardown gates', async () => {
+        process.env.CHT_TEST_ENV_PROJECT = 'my-proj';
+        const logSpy = sinon.spy(console, 'log');
+
+        await realAgent.reset(dockerHandle, 'restart');
+        await realAgent.reset(dockerHandle, 'full');
+        await realAgent.teardown(dockerHandle);
+
+        const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+        const env = "CHT_TEST_ENV_PROJECT='my-proj' ";
+        const path = "'/workspace/cht-core'";
+        expect(lines).to.include(`    ${env}scripts/test-env-restart.sh ${path}`);
+        expect(lines).to.include(
+          `    ${env}scripts/test-env-down.sh ${path} && ${env}CHT_CORE_REBUILD=1 scripts/test-env-up.sh ${path}`
+        );
+        expect(lines.some((line) => line.startsWith(`    ${env}scripts/test-env-down.sh ${path}   #`))).to.equal(true);
       });
 
       it('should print a runnable restart gate quoting the cht-core path (human-gated, agent runs no Docker)', async () => {
@@ -1293,6 +1330,7 @@ describe('TestEnvironmentAgent', () => {
           expect(reseedCall.verbs).to.deep.equal(['upload-docs']);
           expect(reseedCall.configPath).to.equal(dataPath);
           expect(reseedCall.cwd).to.equal(dataPath);
+          expect(fetchDocRevsStub.secondCall.calledAfter(runChtConfStub.firstCall)).to.equal(true);
         });
 
         it('should skip tombstoned and never-existed docs in the wipe', async () => {
@@ -1400,8 +1438,8 @@ describe('TestEnvironmentAgent', () => {
 
         it('should not let a failed re-seed clobber the wipe worklist', async () => {
           await seedTracking();
-          // A later seeding attempt fails after its json_docs were cleaned.
-          readSeededDocsStub.returns([]);
+          // A later seed has docs on disk, but its upload-docs run fails.
+          readSeededDocsStub.returns([{ id: 'other-1', type: 'clinic' }]);
           runChtConfStub.resolves({ exitCode: 1, output: 'ERROR boom', timedOut: false });
           await agentUnderTest.prepareTestData(dockerHandle, seedConfig, { dataPath: '/mnt/other-data' });
 

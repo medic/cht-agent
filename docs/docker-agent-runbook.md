@@ -137,6 +137,15 @@ CHT_CORE_REBUILD=1 scripts/test-env-up.sh ~/src/cht-core
 > `scripts/test-env-up.sh` gives each checkout its own Compose project, internal
 > network and CouchDB data dir, and refuses to start while another stack's nginx
 > is on `cht-agent-net`. Overrides are listed in `scripts/lib/test-env.sh`.
+>
+> The stack's cert is self-signed, and the agent's readiness poll stops at the first
+> TLS verification error. So bring the stack up before the agent run starts, not
+> after the agent asks: the poll then succeeds at once. Run the `docker cp` line
+> that `test-env-up.sh` prints at its end, then copy that file into the container
+> (`docker cp <file> cht-agent:/tmp/cht-cert.pem`). Start the run with
+> `docker exec -e NODE_EXTRA_CA_CERTS=/tmp/cht-cert.pem ...`. After
+> `test-env-down.sh`, the next bring-up makes a new cert. If the bring-up used
+> non-default `COUCHDB_USER` or `COUCHDB_PASSWORD`, pass the same values with `docker exec -e`.
 
 The agent detects readiness via `GET https://nginx/api/v2/monitoring` and
 continues. CouchDB-tier resets it does itself over HTTP; container restarts

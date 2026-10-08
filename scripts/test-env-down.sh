@@ -14,4 +14,4 @@ test_env_require_containers
 test_env_compose down -v
 
 echo "CHT environment '$TEST_ENV_PROJECT' torn down. -v removed its named volumes; CouchDB data in the" \
-  "${COUCHDB_DATA:-local-build/srv-$TEST_ENV_PROJECT} bind mount stays."
+  "${COUCHDB_DATA:-$TEST_ENV_TARGET/local-build/srv-$TEST_ENV_PROJECT} bind mount stays."

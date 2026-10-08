@@ -122,10 +122,16 @@ describe('test-data', () => {
         expect(readSeededDocs(dataPath).map((doc) => doc.id)).to.deep.equal(['nested', 'top']);
       });
 
-      it('falls back to the filename when a doc has no _id', () => {
+      it('refuses a doc whose _id is missing, as upload-docs would', () => {
         writeFileSync(join(dataPath, 'json_docs', 'no-id.doc.json'), JSON.stringify({ type: 'clinic' }));
 
-        expect(readSeededDocs(dataPath)).to.deep.equal([{ id: 'no-id', type: 'clinic' }]);
+        expect(() => readSeededDocs(dataPath)).to.throw('json_docs/no-id.doc.json must set _id "no-id"');
+      });
+
+      it('refuses a deletion doc, which can disable accounts through upload-docs', () => {
+        writeDoc('place-1', { type: 'clinic', _deleted: true, cht_disable_linked_users: true });
+
+        expect(() => readSeededDocs(dataPath)).to.throw('json_docs/place-1.doc.json is a deletion (_deleted)');
       });
 
       it('throws on a malformed doc file, naming it, rather than guessing the worklist', () => {
@@ -165,8 +171,8 @@ describe('test-data', () => {
       });
 
       it('removes only the files it recorded, keeping report logs and files outside json_docs', () => {
-        writeDoc('generated-1', { type: 'clinic' });
-        writeDoc('generated-2', { type: 'person' }, 'nested');
+        writeDoc('a3bb189e-8bf9-5888-9912-ace4e6543002', { type: 'clinic' });
+        writeDoc('b7c1d2e3-4f50-5a61-8b72-c9d0e1f2a3b4', { type: 'person' });
         recordOwnedDocFiles(dataPath);
         writeFileSync(join(dataPath, 'json_docs', 'upload-docs.1.log.json'), '{}');
         writeFileSync(join(dataPath, 'users.csv'), 'username,password,roles\n');
@@ -179,7 +185,7 @@ describe('test-data', () => {
       });
 
       it('never removes a hand-authored file added after the record, and reports it as foreign', () => {
-        writeDoc('generated', { type: 'clinic' });
+        writeDoc('c0ffee00-1234-5678-9abc-def012345678', { type: 'clinic' });
         recordOwnedDocFiles(dataPath);
         writeDoc('hand-authored', { type: 'person' });
 
@@ -189,20 +195,29 @@ describe('test-data', () => {
       });
 
       it('treats a generated file edited since the record as the operator\'s', () => {
-        writeDoc('generated', { type: 'clinic' });
+        writeDoc('c0ffee00-1234-5678-9abc-def012345678', { type: 'clinic' });
         recordOwnedDocFiles(dataPath);
-        writeDoc('generated', { type: 'clinic', name: 'edited by hand' });
+        writeDoc('c0ffee00-1234-5678-9abc-def012345678', { type: 'clinic', name: 'edited by hand' });
 
-        expect(findForeignDocFiles(dataPath)).to.deep.equal(['generated.doc.json']);
+        expect(findForeignDocFiles(dataPath)).to.deep.equal(['c0ffee00-1234-5678-9abc-def012345678.doc.json']);
         expect(removeOwnedDocFiles(dataPath)).to.equal(0);
       });
 
       it('proves nothing from a corrupt manifest', () => {
-        writeDoc('generated', { type: 'clinic' });
+        writeDoc('c0ffee00-1234-5678-9abc-def012345678', { type: 'clinic' });
         recordOwnedDocFiles(dataPath);
         writeFileSync(join(dataPath, '.cht-agent-seeded.json'), '{not json');
 
-        expect(findForeignDocFiles(dataPath)).to.deep.equal(['generated.doc.json']);
+        expect(findForeignDocFiles(dataPath)).to.deep.equal(['c0ffee00-1234-5678-9abc-def012345678.doc.json']);
+      });
+
+      it('records only the files csv-to-docs can write: top-level uuid names', () => {
+        writeDoc('hand-copied', { type: 'clinic' });
+        writeDoc('d4e5f6a7-b8c9-5d0e-8f1a-2b3c4d5e6f70', { type: 'person' }, 'nested');
+        recordOwnedDocFiles(dataPath);
+
+        expect(findForeignDocFiles(dataPath)).to.have.members(['hand-copied.doc.json', `nested/d4e5f6a7-b8c9-5d0e-8f1a-2b3c4d5e6f70.doc.json`]);
+        expect(removeOwnedDocFiles(dataPath)).to.equal(0);
       });
 
       it('keeps the manifest beside json_docs, where upload-docs will not pick it up', () => {

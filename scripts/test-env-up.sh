@@ -52,13 +52,15 @@ if [[ ! -d "$TARGET" ]]; then
   exit 1
 fi
 test_env_select "$TARGET"
+test_env_require_owner
 
 # 1. Shared network the cht-agent and CHT both join.
 docker network inspect "$TEST_ENV_NETWORK" >/dev/null 2>&1 || docker network create "$TEST_ENV_NETWORK" >/dev/null
 
 # The agent reaches CHT as https://nginx on that network; a second stack's nginx
-# there would split the name between two instances.
-nginx_projects="$(docker ps --filter "network=$TEST_ENV_NETWORK" --filter label=com.docker.compose.service=nginx \
+# there would split the name between two instances. -a: a stopped nginx comes back
+# when the Docker daemon restarts (restart: always).
+nginx_projects="$(docker ps -a --filter "network=$TEST_ENV_NETWORK" --filter label=com.docker.compose.service=nginx \
   --format '{{.Label "com.docker.compose.project"}}')"
 while IFS= read -r project; do
   if [[ -n "$project" && "$project" != "$TEST_ENV_PROJECT" ]]; then

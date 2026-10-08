@@ -63,9 +63,13 @@ import {
 // Real-path defaults: scripts/test-env-up.sh brings CHT up on cht-agent-net with these
 // same credentials and with COMMON_NAME=nginx, so the stack's SAN-less self-signed cert
 // names the host the agent dials. The cht-conf child gets --accept-self-signed-certs; the
-// agent's own fetch trusts the cert via NODE_EXTRA_CA_CERTS=<the stack's cert.pem>.
+// agent's own fetch trusts the cert via NODE_EXTRA_CA_CERTS=<the stack's cert.pem>. Node
+// loads that file once, no later than the process's first TLS connection attempt (even a
+// failed one). The nginx container makes a new key for each new cht-ssl volume (the first
+// up, and every up after down -v). So start the agent after the cert exists, and restart it
+// after a full reset.
 // NODE_TLS_REJECT_UNAUTHORIZED=0 disables verification for ALL agent traffic (LLM/MCP
-// included) — disposable runner containers only.
+// included): disposable runner containers only.
 const DEFAULT_ENV_URL = 'https://nginx';
 const DEFAULT_NETWORK = 'cht-agent-net';
 const DEFAULT_AUTH = { user: 'medic', password: 'password' };
@@ -120,10 +124,18 @@ const shellQuote = (value: string): string => `'${value.replaceAll("'", SINGLE_Q
  * Argument for a printed gate command: a quoted path, or nothing when we don't
  * know one — the scripts resolve CHT_CORE_PATH (or their managed checkout)
  * themselves, so a bare command is runnable while a `'<cht-core>'` placeholder
- * would not be.
+ * would not be. The human runs the gate on the host: a dockerized agent sees its
+ * working copy at the mount target, so CHT_CORE_HOST_PATH (the mount source) wins.
  */
-const gateArg = (chtCorePath: string | undefined): string =>
-  chtCorePath === undefined ? '' : ` ${shellQuote(chtCorePath)}`;
+const gateArg = (chtCorePath: string | undefined): string => {
+  const hostPath = process.env.CHT_CORE_HOST_PATH?.trim();
+  // Printed into the human-gate command lines, like chtCorePath (validateProvisionOptions).
+  if (hostPath && hasControlChars(hostPath)) {
+    throw new Error('CHT_CORE_HOST_PATH contains control characters: it must be a plain filesystem path');
+  }
+  const gatePath = hostPath || chtCorePath;
+  return gatePath === undefined ? '' : ` ${shellQuote(gatePath)}`;
+};
 
 /** Carry an explicit Compose project into the printed gates, so down/restart address the same stack. */
 const gateEnv = (): string => {
@@ -230,8 +242,8 @@ const assertDisposableTarget = (target: URL, options: ProvisionOptions, defaultC
   }
   if (defaultCreds) {
     throw new Error(
-      `provision: refusing the built-in default credentials against ${target.host} — pass auth ` +
-        'explicitly or set COUCHDB_USER/COUCHDB_PASSWORD.'
+      `provision: refusing the built-in default credentials against ${target.host}: nobody supplied a ` +
+        'password. Pass auth explicitly or set COUCHDB_PASSWORD.'
     );
   }
 };
@@ -265,15 +277,19 @@ const validateProvisionOptions = (options: ProvisionOptions): void => {
   if (options.chtCorePath && hasControlChars(options.chtCorePath)) {
     throw new Error('provision: chtCorePath contains control characters — must be a plain filesystem path');
   }
+  // The gates single-quote the path, so a shell never expands a leading ~; cht-conf gets it literally too.
+  if (options.chtCorePath?.startsWith('~')) {
+    throw new Error('provision: chtCorePath starts with ~, which nothing expands; pass an absolute path');
+  }
 };
 
 /**
  * Real mode brings a stack up from a cht-core working copy only. A published version comes
- * up through cht-docker-helper at a URL this layer can neither print a gate for nor poll,
- * so it is refused; checking the release tag out in a working copy reaches the same code.
+ * up through cht-docker-helper, which this layer prints no gate for, so real mode refuses it.
+ * Checking the release tag out in a working copy reaches the same code.
  */
 const assertRealModeSupported = (options: ProvisionOptions, network: string): void => {
-  if (options.version !== undefined) {
+  if (!options.chtCorePath) {
     throw new Error(
       `provision: real mode has no published-version bring-up — check ${options.version} out in a ` +
         'cht-core working copy and pass chtCorePath'
@@ -308,7 +324,7 @@ const provisionReal = async (options: ProvisionOptions, network: string): Promis
   const { url, auth } = resolveRealTarget(options);
 
   console.log('[Test Environment Agent] HUMAN GATE — bring the env up (agent runs no Docker):');
-  console.log(`    ${gateEnv()}scripts/test-env-up.sh${gateArg(options.chtCorePath)}   # build + start on ${network}`);
+  console.log(`    CHT_CORE_REBUILD=1 ${gateEnv()}scripts/test-env-up.sh${gateArg(options.chtCorePath)}   # build + start on ${network}`);
   console.log(`[Test Environment Agent] Polling ${url}/api/v2/monitoring until healthy...`);
 
   const readiness = {
@@ -579,9 +595,10 @@ const uploadShortfall = (run: ChtConfExecResult, docCount: number): string | und
     return docCount > 0 ? `upload-docs printed no summary for ${docCount} doc(s)` : undefined;
   }
   if (summary.uploaded < summary.total) {
+    // reset('couchdb') wipes AND reseeds, so a second seed of the same docs after it still conflicts.
     return (
       `only ${summary.uploaded} of ${summary.total} docs uploaded — the rest were rejected or already ` +
-      "exist; reset('couchdb') before re-seeding the same data"
+      "exist. Seeding data the instance already holds conflicts; reset('couchdb') restores it instead"
     );
   }
   return undefined;
@@ -727,7 +744,11 @@ const wipeTrackedDocs = async (handle: EnvironmentHandle, docIds: string[]): Pro
   const failed = outcomes.filter((row) => row.error !== undefined || row.ok !== true);
   if (failed.length > 0) {
     const failedIds = failed.map((row) => row.id ?? 'unknown').slice(0, 5).join(', ');
-    throw new Error(`couchdb reset failed to delete ${failed.length} doc(s): ${failedIds}`);
+    // _bulk_docs is not atomic: the other deletions were applied, and nothing reseeds them.
+    throw new Error(
+      `couchdb reset failed to delete ${failed.length} doc(s): ${failedIds}. The other ` +
+        `${deletions.length - failed.length} doc(s) were deleted and not reseeded: run the reset again`
+    );
   }
   return deletions.length;
 };
@@ -777,8 +798,15 @@ const printResetGate = (handle: EnvironmentHandle, tier: ResetTier): void => {
   if (tier === 'restart') {
     console.log(`    ${env}scripts/test-env-restart.sh${target}`);
   } else {
-    // A full reset is a fresh stack, so rebuild: Model A tests the code as it is now.
+    // A full reset recreates the containers from rebuilt images (Model A tests the code as it is now).
+    // It is not a clean database: the CouchDB bind mount survives down -v (see reset()).
     console.log(`    ${env}scripts/test-env-down.sh${target} && ${env}CHT_CORE_REBUILD=1 scripts/test-env-up.sh${target}`);
+    // down -v deletes the cht-ssl volume, so nginx comes back with a new self-signed cert.
+    // Node loads NODE_EXTRA_CA_CERTS once per process, so this process still trusts the old one.
+    console.log(
+      '[Test Environment Agent] down -v deletes the nginx cert, and up makes a new one. If NODE_EXTRA_CA_CERTS ' +
+        'trusts the old one, copy the new cert.pem and restart the agent before re-confirming health.'
+    );
   }
   console.log('[Test Environment Agent] Re-confirm health with provision()/waitForReady after.');
 };
@@ -988,9 +1016,10 @@ export class TestEnvironmentAgent {
    * performs itself (CouchDB HTTP API — no Docker): it wipes the docs the last
    * prepareTestData seeded, re-uploads pristine copies, and checks they are back.
    * restart/full stay human-gated: they print the command and return
-   * `performedBy: 'human-gate'` with zero counts WITHOUT waiting for the human, so the
-   * caller re-confirms health itself. CouchDB data is a bind mount (COUCHDB_DATA), so it
-   * survives `down -v`; only the named volumes go.
+   * `performedBy: 'human-gate'` with zero counts WITHOUT waiting for the human. The old stack
+   * keeps answering healthy until the operator acts, so health alone cannot show the reset
+   * ran. Get the operator's approval first, then re-confirm health. CouchDB data is a bind
+   * mount (COUCHDB_DATA), so it survives `down -v`; only the named volumes go.
    */
   async reset(
     handle: EnvironmentHandle,

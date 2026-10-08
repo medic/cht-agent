@@ -937,14 +937,18 @@ export interface ChtConfExecResult {
 
 /**
  * Inputs to prepareTestData's real path. The data project is a cht-conf
- * project folder: docs come from `<dataPath>/csv/*.csv` (csv-to-docs naming:
- * place.<type>.csv, person.csv, report.<form>.csv, contact.csv, users.csv),
- * and user accounts from `<dataPath>/users.csv` (hand-written, or generated
- * by csv-to-docs from users.*.csv inputs). create-users only runs when that
- * file exists — cht-conf throws on a missing users.csv.
+ * project folder. With a csv/ directory, csv-to-docs regenerates json_docs from
+ * `<dataPath>/csv/*.csv` (naming: place.<type>.csv, person.csv, report.<form>.csv,
+ * contact.csv, users.csv). The layer records the files it generated in
+ * `<dataPath>/.cht-agent-seeded.json` and refuses to seed while json_docs holds any
+ * other doc file. Without csv/, the layer uploads the hand-authored json_docs as it is.
+ * User accounts come from `<dataPath>/users.csv`. The operator writes that file by hand,
+ * or csv-to-docs writes it from csv/users.csv or csv/users.<name>.csv and replaces any
+ * existing file. create-users only runs when that file exists: cht-conf throws on a
+ * missing users.csv.
  */
 export interface PrepareTestDataOptions {
-  /** cht-conf project folder holding csv/ (required by the real path). */
+  /** cht-conf project folder with csv/ or a hand-authored json_docs/ (required in real mode). */
   dataPath?: string;
   /** Override the cht-conf binary (default: `cht`); lets tests stub a fake script. */
   bin?: string;
