@@ -57,7 +57,7 @@ Before this PR, CHT ran CouchDB 3.5.0 and had deliberately skipped 3.5.1 because
 
 ## Root Cause
 
-At this PR's parent, the CouchDB base image version pinned in couchdb/Dockerfile and couchdb-nouveau/Dockerfile was 3.5.0; `getContainerName` in tests/utils/index.js built the Docker container name straight from the `SERVICES` value (`${project}-${service}-1`), and the Nouveau entry, `'couchdb-nouveau': 'couchdb-nouveau'`, does not match the compose service `nouveau`; and the `[nouveau]` section of couchdb/10-docker-default.ini set no `request_timeout`, so the default Nouveau request timeout was too low for long-running requests.
+At this PR's parent, the CouchDB base image version pinned in couchdb/Dockerfile and couchdb-nouveau/Dockerfile was 3.5.0; `getContainerName` in tests/utils/index.js built the Docker container name straight from the `SERVICES` value (`${project}-${service}-1`), and the Nouveau entry, `'couchdb-nouveau': 'couchdb-nouveau'`, does not match the compose service `nouveau`; and CouchDB 3.5.0 sent Nouveau requests through `ibrowse` with ibrowse's 30-second default timeout, so long-running Nouveau requests failed with `req_timedout`; 3.5.0 read no `[nouveau]` `request_timeout` setting at all (CouchDB added one in 3.5.1, defaulting to 30000 ms), so adding one to the `[nouveau]` section of couchdb/10-docker-default.ini, which set none, would have changed nothing before the upgrade.
 
 ## Solution
 
@@ -81,12 +81,12 @@ Skipped CouchDB 3.5.1 because of its performance issues and went from 3.5.0 stra
 
 ## Testing
 
-No test assertions cover the upgrade, the timeout or the container-name mapping. The existing tests/integration/api/controllers/replication-failure-log.spec.js gained a `utils.clearReplicationFailureLogs()` call in its `before` hook (its `afterEach` cleanup is unchanged, only moved), and the tests/utils/index.js change restores Nouveau log capture in CI, improving test-run observability.
+No test assertions cover the upgrade, the timeout or the container-name mapping. The existing tests/integration/api/controllers/replication-failure-log.spec.js gained a `utils.clearReplicationFailureLogs()` call in its `before` hook (its `afterEach` cleanup is unchanged, only moved), and the tests/utils/index.js change makes Docker test runs save Nouveau's logs, which they had never captured, improving test-run observability.
 
 ## Related Issues
 
 - #11080: "Upgrade to CouchDB 3.5.2" — this PR's issue; it wanted 3.5.1's Nouveau fixes, Nouveau performance improvements and _purge optimizations (3.5.1 itself was skipped for its performance issues) plus 3.5.2's own changes
-- #11153: "Nouveau requests timeout after 30 seconds" — also closed by this PR; it reports that CouchDB 3.5.0 talks to Nouveau through `ibrowse`, whose default timeout is 30 seconds; the new `request_timeout=3600000` under `[nouveau]` is this PR's fix for it
+- #11153: "Nouveau requests timeout after 30 seconds" — also closed by this PR; it reports that CouchDB 3.5.0 talks to Nouveau through `ibrowse`, whose default timeout is 30 seconds; the new `request_timeout=3600000` under `[nouveau]` is this PR's fix for it, and it only takes effect because the PR also upgrades CouchDB, since 3.5.0's `ibrowse` client read no `request_timeout` setting (CouchDB added it in 3.5.1)
 - #6615: "Consider moving outdated documents to "cold storage" (Hosting TCO)" — #11080 cites it as the kind of historical-data cleanup that 3.5.x _purge optimizations could make practical
 
 ## Domain Rationale

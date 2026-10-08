@@ -52,7 +52,7 @@ Before this PR, in api/src/services/setup/databases.js the `DATABASES` entry for
 
 ## Solution
 
-Corrected the database entry to use the literal `_users` name in api/src/services/setup/databases.js so the setup service indexes the staged design documents against the correct CouchDB system database, allowing upgrades to complete. Updated the corresponding mocha spec to assert the correct name.
+Corrected the database entry to use the literal `_users` name in api/src/services/setup/databases.js so the setup service indexes the staged design documents against the correct CouchDB system database, so upgrades that start from fixed code (4.7.1 or later) no longer fail. Staging and view warming run in the api of the installed version (api/src/services/setup/upgrade.js), so an upgrade that starts from 4.7.0 still requests the staged `_users` view under the wrong name (e.g. medic-users) and fails. Updated the corresponding mocha spec to assert the correct name.
 
 ## Code Patterns
 
@@ -69,7 +69,7 @@ Fix the name centrally in the setup service's database definitions rather than s
 
 ## Testing
 
-Updated the mocha unit spec (api/tests/mocha/services/setup/databases.spec.js) to assert the correct `_users` database name.
+Updated the mocha unit spec (api/tests/mocha/services/setup/databases.spec.js) to assert the correct `_users` database name. That spec has one test, a deep-equal of the exported `DATABASES` array, so it does not exercise view warming. A reviewer tested the upgrade path manually with the cht docker helper: the bug reproduced on an instance running 4.7.0, and a separate instance running this branch upgraded successfully.
 
 ## Related Issues
 

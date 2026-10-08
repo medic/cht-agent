@@ -60,7 +60,7 @@ stale: true
 > scripts/build/helm/templates/couchdb/deployment.yaml — a separate pod attaching the CouchDB volume
 > blocked 5.x upgrades on AWS, where most EBS volume types cannot multi-attach (#10481) — and repointed the `nouveau` Service's selector at the CouchDB pod. PR #11126 (`de91ec432`) then
 > gave every CouchDB node its own sidecar and a `nouveau-{{ $nodeNumber }}` Service. So the separate single
-> Nouveau pod, its Deployment and the Service selector `cht.service: nouveau` exist only at this
+> Nouveau pod, its Deployment and the Service selector `cht.service: nouveau` shipped in release 5.0.0 and were removed from master by PR #10482 and from the 5.0.x line, as of 5.0.1, by its backport
 > PR; on master only scripts/build/helm/templates/nouveau/service.yaml remains, rewritten.
 
 ## Problem
@@ -73,11 +73,11 @@ At this PR's parent, the Helm chart templates under scripts/build/helm/templates
 
 ## Solution
 
-Adds a Kubernetes Deployment (scripts/build/helm/templates/nouveau/deployment.yaml: `name: cht-couchdb-nouveau`, `replicas: 1`, strategy `type: Recreate`) and Service (scripts/build/helm/templates/nouveau/service.yaml: `name: nouveau`, port 5987, selector `cht.service: nouveau`) for nouveau under the Helm templates; the Service name matches the `url = http://nouveau:5987` that couchdb/10-docker-default.ini gives CouchDB. The container runs `{{ .Values.upstream_servers.docker_registry }}/cht-couchdb-nouveau:{{ .Values.cht_image_tag }}` and mounts `/data/nouveau` from the first CouchDB node's storage — the `couchdb-1-claim0` claim when `couchdb.clusteredCouchEnabled` is true, otherwise `couchdb-claim0`, and on a `k3s-k3d` cluster the `preExistingDiskPath-1` hostPath — so there is no separate volume. It runs as a single pod/instance even when CouchDB is clustered, mounts data on the hardcoded `subPath: data` in scripts/build/helm/templates/nouveau/deployment.yaml (at this PR; PR #10482 deleted that file) instead of CouchDB's `couchdb_data.dataPathOnDiskForCouchDB` setting (so indexes rebuild after a fresh deployment even with preexisting data). It copies the `tolerations` block from scripts/build/helm/templates/couchdb/deployment.yaml. In tests/utils/index.js, the `SERVICES` map gained `'couchdb-nouveau': 'couchdb-nouveau'`.
+Adds a Kubernetes Deployment (scripts/build/helm/templates/nouveau/deployment.yaml: `name: cht-couchdb-nouveau`, `replicas: 1`, strategy `type: Recreate`) and Service (scripts/build/helm/templates/nouveau/service.yaml: `name: nouveau`, port 5987, selector `cht.service: nouveau`) for nouveau under the Helm templates; the Service name matches the `url = http://nouveau:5987` that couchdb/10-docker-default.ini gives CouchDB. The container runs `{{ .Values.upstream_servers.docker_registry }}/cht-couchdb-nouveau:{{ .Values.cht_image_tag }}` and mounts `/data/nouveau` from the first CouchDB node's claim, `couchdb-1-claim0` when `couchdb.clusteredCouchEnabled` is true and otherwise `couchdb-claim0`, and adds no PVC of its own. On a `k3s-k3d` cluster it instead mounts the `preExistingDiskPath-1` hostPath directly. The chart binds that path to the first CouchDB node's claim only when `couchdb_data.preExistingDataAvailable` is true; the k3d CI values (scripts/build/helm/tests/integration-k3d-values.yaml.template) set it to `false`, so there CouchDB's claim gets a `local-path` volume and Nouveau's index data is not on CouchDB's volume. It runs as a single pod/instance even when CouchDB is clustered, mounts data on the hardcoded `subPath: data` in scripts/build/helm/templates/nouveau/deployment.yaml (at this PR; PR #10482 deleted that file) instead of CouchDB's `couchdb_data.dataPathOnDiskForCouchDB` setting (so indexes rebuild after a fresh deployment even with preexisting data). It copies the `tolerations` block from scripts/build/helm/templates/couchdb/deployment.yaml. In tests/utils/index.js, the `SERVICES` map gained `'couchdb-nouveau': 'couchdb-nouveau'`.
 
 ## Code Patterns
 
-At this PR, the Helm templates scripts/build/helm/templates/nouveau/deployment.yaml and scripts/build/helm/templates/nouveau/service.yaml follow the existing couchdb template structure; the nouveau Deployment reuses the first CouchDB node's PVC (on `k3s-k3d`, its `preExistingDiskPath-1` hostPath) for index storage and copies the couchdb template's tolerations.
+At this PR, the Helm templates scripts/build/helm/templates/nouveau/deployment.yaml and scripts/build/helm/templates/nouveau/service.yaml follow the existing couchdb template structure; the nouveau Deployment reuses the first CouchDB node's PVC (on `k3s-k3d` it mounts the `preExistingDiskPath-1` hostPath directly, which backs that PVC only when `couchdb_data.preExistingDataAvailable` is true) for index storage and copies the couchdb template's tolerations.
 
 ## Design Choices
 
@@ -88,11 +88,11 @@ Reuses CouchDB's volume rather than provisioning a separate nouveau volume becau
 - scripts/build/helm/templates/nouveau/deployment.yaml (added; removed on master by PR #10482)
 - scripts/build/helm/templates/nouveau/service.yaml (added; rewritten on master by PR #10482 and PR #11126)
 - tests/utils/index.js
-- scripts/build/helm/templates/couchdb/deployment.yaml (not changed by this PR; source of the copied `tolerations` block)
+- scripts/build/helm/templates/couchdb/deployment.yaml (not changed by this PR; source of the copied `tolerations` block; on master PR #10743 moved that block into the `couchdb.securityContextAndTolerations` helper in scripts/build/helm/templates/_helpers.tpl)
 
 ## Testing
 
-No test specs changed. In the tests/utils/index.js harness, the new `SERVICES` entry makes `getContainerName` (`` isDocker() ? `${project}-${service}-1` : `deployment/cht-${service}` ``) produce `deployment/cht-couchdb-nouveau` outside Docker — the new Deployment's name — so `CONTAINER_NAMES` covers Nouveau. Under Docker the same entry resolves to `<project>-couchdb-nouveau-1`, which does not match the compose service `nouveau`; PR #11162 later mapped it to `nouveau` so Nouveau's CI logs are saved.
+No test specs changed. In the tests/utils/index.js harness, the new `SERVICES` key makes the k3d setup's `importImages` push `cht-couchdb-nouveau:<tag>` to the k3d registry that the Helm install pulls from, so the new Deployment's image is present in k3d runs. Outside Docker `getContainerName` (`` isDocker() ? `${project}-${service}-1` : `deployment/cht-${service}` ``) would give `deployment/cht-couchdb-nouveau`, the new Deployment's name, but only Docker runs call `updateContainerNames`, so only they fill `CONTAINER_NAMES`. Under Docker the same entry resolves to `<project>-couchdb-nouveau-1`, which does not match the compose service `nouveau`; PR #11162 later mapped it to `nouveau` so Nouveau's CI logs are saved. The approving review reported that the nouveau Helm templates pass all validation tests across all deployment scenarios.
 
 ## Related Issues
 

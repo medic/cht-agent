@@ -61,7 +61,7 @@ When a browser-side admin page needs a server-side setting, return it from an AP
 
 ## Design Choices
 
-The builds URL rides on the existing upgrade-status response rather than a new endpoint or a persisted setting. The admin controller keeps `DEFAULT_BUILDS_URL`, the same URL API uses as its default, as the fallback, so installs that never set `BUILDS_URL` behave as before. At this PR it closes the builds database with `close()` rather than `destroy()`, because with PouchDB's http adapter `destroy()` sends a DELETE for the remote database.
+The builds URL rides on the existing upgrade-status response rather than a new endpoint or a persisted setting. The admin controller keeps `DEFAULT_BUILDS_URL`, the same URL API uses as its default, as the fallback for when API has not supplied a `buildsUrl` (for example when the upgrade-status request failed). Installs that never set `BUILDS_URL` behave as before because API returns that same default URL as `buildsUrl`. At this PR the admin controller closes the builds database with `close()` rather than `destroy()`, because with PouchDB's http adapter `destroy()` sends a DELETE for the remote database.
 
 ## Related Files
 
@@ -73,7 +73,7 @@ The builds URL rides on the existing upgrade-status response rather than a new e
 
 ## Testing
 
-The existing `admin/tests/unit/controllers/upgrade.spec.js` gained a 'should load builds from configured builds url' case asserting that `pouchDB` is opened with the `buildsUrl` returned by `/api/v2/upgrade`, and the default-path case now asserts `pouchDB` is opened with the staging default. `api/tests/mocha/controllers/upgrade.spec.js` asserts the `buildsUrl` field in the upgrade-status response, and `api/tests/mocha/routing.spec.js` now reads the admin constant as `DEFAULT_BUILDS_URL` when checking that API's CSP default builds URL includes it.
+The existing `admin/tests/unit/controllers/upgrade.spec.js` gained a 'should load builds from configured builds url' case asserting that `pouchDB` is opened with the `buildsUrl` returned by `/api/v2/upgrade`, and the default-path case now asserts `pouchDB` is opened with the staging default. `api/tests/mocha/controllers/upgrade.spec.js` asserted the `buildsUrl` field in the upgrade-status response (PR #10045 later deleted that spec's `upgradeInProgress` tests, so no API test on master asserts it), and `api/tests/mocha/routing.spec.js` now reads the admin constant as `DEFAULT_BUILDS_URL` when checking that API's CSP default builds URL includes it.
 
 ## Related Issues
 

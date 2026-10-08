@@ -7,7 +7,7 @@ issueNumber: 9468
 issueUrl: https://github.com/medic/cht-core/issues/9468
 title: Use latest helm-charts in deploy script and add get-volume-binding Kubernetes troubleshooting tool
 lastUpdated: '2026-10-01'
-summary: 'Mounting pre-existing CouchDB data into a Helm-deployed CHT came up as a fresh instance, and operators had no easy way to discover the PV/PVC/subPath needed to bind that data. This PR raised the default chart version that scripts/deploy/src/install.js requests from 1.0.* to 1.1.* of the medic/helm-charts cht-chart-4x chart, the release carrying the pre-existing-data fixes, and added a scripts/deploy/troubleshooting/get-volume-binding script that prints the volume bindings of a deployment as JSON. Both were removed on master with the rest of scripts/deploy by PR #10500; the Helm chart on master lives in-repo at scripts/build/helm.'
+summary: 'Mounting pre-existing CouchDB data into a Helm-deployed CHT came up as a fresh instance, and operators had no easy way to discover the PV/PVC/subPath needed to bind that data. This PR raised the default chart version that scripts/deploy/src/install.js requests from 1.0.* to 1.1.* of the medic/helm-charts cht-chart-4x chart, the release carrying the pre-existing-data fixes, and added a scripts/deploy/troubleshooting/get-volume-binding script that prints the volume bindings of a deployment as JSON. Both were removed on master with the rest of scripts/deploy by PR #10500, and PR #10576 then restored the script as scripts/medic-eks-get-volume-binding.sh; the Helm chart on master lives in-repo at scripts/build/helm.'
 services:
   - api
 techStack:
@@ -48,7 +48,7 @@ stale: true
 ---
 
 > **Paths are as of this PR, not as of master.** Both files below were deleted on master,
-> with the rest of scripts/deploy, by PR #10500 (`1c3277c4e`, 2026-01-12). Before that,
+> with the rest of scripts/deploy, by PR #10500 (`1c3277c4e`, 2026-01-12), and PR #10576 (`322d3c166`, 2026-01-20) then restored get-volume-binding on master, nearly unchanged, as scripts/medic-eks-get-volume-binding.sh. Before the deletion,
 > PR #9615 switched scripts/deploy/src/install.js to read its chart constants from
 > scripts/deploy/src/config.js, whose default it widened to 1.*.*. The chart this tool
 > installed, `cht-chart-4x` from the medic/helm-charts repository, is not what master ships:
@@ -79,11 +79,11 @@ Shipped a standalone JSON-emitting troubleshooting script rather than embedding 
 ## Related Files
 
 - scripts/deploy/src/install.js (present at this PR's anchor; removed on master by PR #10500, which deleted scripts/deploy)
-- scripts/deploy/troubleshooting/get-volume-binding (added; removed on master by PR #10500)
+- scripts/deploy/troubleshooting/get-volume-binding (added; removed on master by PR #10500; restored on master as scripts/medic-eks-get-volume-binding.sh by PR #10576)
 
 ## Testing
 
-The diff touches only scripts/deploy/src/install.js and scripts/deploy/troubleshooting/get-volume-binding; it contains no tests.
+The diff touches only scripts/deploy/src/install.js and scripts/deploy/troubleshooting/get-volume-binding; it contains no tests. The new get-volume-binding script was run manually against a production cluster, where it showed the expected differences in `subPath`.
 
 ## Related Issues
 

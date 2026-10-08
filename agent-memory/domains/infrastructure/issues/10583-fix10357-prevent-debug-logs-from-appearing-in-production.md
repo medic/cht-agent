@@ -100,4 +100,4 @@ In shared-libs/logger/test/index.spec.js, the `uses info level in production env
 
 **Fit:** strong
 
-Log-level control is a hosting/deploy operational concern, and the fix is predominantly in Helm deployment templates, Helm values defaults, and the CI workflow env (operational lifecycle). The supporting default in the shared logger lib backstops this operational behavior rather than changing a functional feature.
+Log-level control is a hosting/deploy operational concern, and most of the changed files are Helm deployment templates, Helm values, the CI workflow env and test or dev run config (operational lifecycle). The behavior change itself is the shared logger now reading LOG_LEVEL with an 'info' default: the Helm LOG_LEVEL entries only take effect through it, and it alone fixes Docker Compose deployments, since scripts/build/cht-core.yml.template passes no LOG_LEVEL. It changes no functional feature.

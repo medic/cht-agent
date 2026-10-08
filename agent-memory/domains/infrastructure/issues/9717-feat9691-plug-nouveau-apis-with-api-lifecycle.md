@@ -78,7 +78,7 @@ Indexing staged design docs during setup reuses the existing view-indexer patter
 
 ## Design Choices
 
-Reused the existing view-indexer indexing/cleanup lifecycle instead of building a separate Nouveau-specific path, so the upgrade waits for Nouveau indexes and prunes them alongside CouchDB views within the same install/upgrade flow; the existing `cleanup` step in api/src/services/setup/utils.js took on the stale-index cleanup rather than a separate module. The query is not what builds a staged Nouveau index, since CouchDB builds Nouveau indexes whenever a design document is created or updated, even if nothing queries them; the query makes the upgrade wait until that build is done before the staged and live design docs are swapped.
+Reused the existing view-indexer indexing/cleanup lifecycle instead of building a separate Nouveau-specific path, so the upgrade waits for Nouveau indexes and prunes them alongside CouchDB views within the same install/upgrade flow; the existing `cleanup` step in api/src/services/setup/utils.js took on the stale-index cleanup rather than a separate module. CouchDB builds Nouveau indexes, as it does view indexes, whenever a design document is created or updated, even if nothing queries them. The query leaves CouchDB's `update` parameter at its default of true, so it starts the index build if none is running or waits on the running one, and it makes the upgrade wait until that build is done before the staged and live design docs are swapped.
 
 ## Related Files
 

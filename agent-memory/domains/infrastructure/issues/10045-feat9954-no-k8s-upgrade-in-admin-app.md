@@ -86,7 +86,7 @@ Detection is performed server-side by querying the actual upgrade service rather
 
 ## Testing
 
-The existing unit specs gained cases on both tiers: API mocha specs for the controller (api/tests/mocha/controllers/upgrade.spec.js, `canUpgrade` including the auth error) and setup services (api/tests/mocha/services/setup/upgrade.spec.js and api/tests/mocha/services/setup/utils.spec.js, where `isDockerUpgradeServiceRunning` returns false for a `{ message: 'ok' }` response from another upgrade service and for a failed connection), and the admin app unit spec (admin/tests/unit/controllers/upgrade.spec.js) covering how `canUpgrade` is set from the endpoint response and a failing can-upgrade request.
+The existing unit specs gained cases on both tiers: API mocha specs for the controller (api/tests/mocha/controllers/upgrade.spec.js, `canUpgrade` including the auth error; the PR also rewrote this spec's remaining cases from `should` promise chains to async/await with `expect` and deleted its `upgradeInProgress` and `abortUpgrade` describe blocks, although the controller still exports the `upgradeInProgress` and `abort` handlers they tested) and setup services (api/tests/mocha/services/setup/upgrade.spec.js and api/tests/mocha/services/setup/utils.spec.js, where `isDockerUpgradeServiceRunning` returns false for a `{ message: 'ok' }` response from another upgrade service and for a failed connection), and the admin app unit spec (admin/tests/unit/controllers/upgrade.spec.js) covering how `canUpgrade` is set from the endpoint response and a failing can-upgrade request.
 
 ## Related Issues
 

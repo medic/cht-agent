@@ -42,7 +42,7 @@ related_issues:
   - cht-core-9617
   - cht-core-8573
   - cht-core-9284
-stale: false
+stale: true
 ---
 
 ## Problem
@@ -59,11 +59,11 @@ Removed the request timeout property (`timeout: 2000`) from the view indexing re
 
 ## Code Patterns
 
-When a client-side request timeout cannot actually terminate a long-running server operation proxied through HAProxy, do not pass it — it provides a false sense of control without stopping the work, and paired with retry-on-timeout it multiplies in-flight requests. View warming sends one `qs: { limit: 1 }` query per view and lets it wait for the index, re-sending only after a socket-timeout error. See api/src/services/setup/view-indexer.js.
+When a client-side request timeout cannot actually terminate a long-running server operation proxied through HAProxy, do not pass it — it provides a false sense of control without stopping the work, and paired with retry-on-timeout it multiplies in-flight requests. View warming sends one `qs: { limit: 1 }` query per view and lets it wait for the index, re-sending only after a socket-timeout error (as of this PR; on master that retry no longer fires, see Design Choices). See api/src/services/setup/view-indexer.js.
 
 ## Design Choices
 
-The PR drops the client timeout outright rather than raising its value, and lets view indexing run to completion. The retry on `ESOCKETTIMEDOUT` or `ETIMEDOUT` stays, so a socket timeout raised elsewhere still re-sends the query until it succeeds or `stopIndexing` sets `continueIndexing` to false.
+The PR drops the client timeout outright rather than raising its value, and lets view indexing run to completion. The retry on `ESOCKETTIMEDOUT` or `ETIMEDOUT` stays, so a socket timeout raised elsewhere still re-sends the query until it succeeds or `stopIndexing` sets `continueIndexing` to false. On master the retry sits in a `waitForRequest` helper that `indexView` shares with `indexNouveauIndex` (PR #10201, `f1bdfc07c`), and `@medic/couch-request` now calls `fetch` (PR #9746, `2c5a640c5`), which reports a socket failure as `TypeError: fetch failed` with the code on `cause`; the `requestError?.error?.code` check never matches that, so while `continueIndexing` is true the error is thrown rather than re-sent.
 
 ## Related Files
 

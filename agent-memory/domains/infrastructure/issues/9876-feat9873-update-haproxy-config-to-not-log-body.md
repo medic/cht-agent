@@ -51,7 +51,7 @@ Before this PR, HAProxy logged request bodies, but the capture was inherently in
 
 ## Root Cause
 
-Before this PR, the `frontend http-in` section of haproxy/default_frontend.cfg captured the request body (`http-request capture req.body id 0 # capture.req.hdr(0)`) and wrote it into every log line through the `'%[capture.req.hdr(0),lua.replacePassword]'` field of its `log-format`, after masking passwords with the `replacePassword` converter from haproxy/scripts/replace_password.lua. The issue notes that HAProxy cannot log full bodies (65k cap, first-chunk-only for chunked transfers), so the captured data was always truncated and of no auditing value.
+Before this PR, the `frontend http-in` section of haproxy/default_frontend.cfg captured the request body (`http-request capture req.body id 0 # capture.req.hdr(0)`) and wrote it into every log line through the `'%[capture.req.hdr(0),lua.replacePassword]'` field of its `log-format`, after masking passwords with the `replacePassword` converter from haproxy/scripts/replace_password.lua. The issue notes that HAProxy cannot log full bodies (65k cap, first-chunk-only for chunked transfers), so bodies over that cap, and chunked bodies sent in more than one chunk, were logged only partially, which the issue says gives no benefit for auditing.
 
 ## Solution
 

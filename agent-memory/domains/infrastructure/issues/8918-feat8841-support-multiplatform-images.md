@@ -70,7 +70,7 @@ Before this PR, `buildServiceImages` and `buildImages` in `scripts/build/index.j
 
 ## Design Choices
 
-Multi-platform builds run only when `INTERNAL_CONTRIBUTOR` is set, the same condition that gates the Docker Hub and Amazon ECR logins earlier in the build job (`INTERNAL_CONTRIBUTOR: ${{ secrets.AUTH_MARKET_URL && 'true' }}` in `.github/workflows/build.yml`). Other builds keep single-platform images and upload `images/` as the `cht-images` artifact. The arm64 target is spelled with its variant, `linux/arm64/v8`. At this PR, with plain `linux/arm64`, the api and sentinel images built from the PR's branch (both on an `alpine:3.19` base) were published for amd64 only.
+Multi-platform builds run only when `INTERNAL_CONTRIBUTOR` is set, the same condition that gates the Docker Hub and Amazon ECR logins earlier in the build job (`INTERNAL_CONTRIBUTOR: ${{ secrets.AUTH_MARKET_URL && 'true' }}` in `.github/workflows/build.yml`). Other builds keep single-platform images and upload `images/` as the `cht-images` artifact. The arm64 target is spelled with its variant, `linux/arm64/v8`, at a reviewer's request in the PR review. Before the switch to `linux/arm64/v8`, a reviewer's check of the images published from the PR's branch found cht-api and cht-sentinel listed for linux/amd64 only. The same check listed linux/arm64 for cht-couchdb, cht-nginx, cht-haproxy and cht-haproxy-healthcheck, which were built with the same plain `linux/arm64` spelling, and until commit 5352e5fb5b the PR built api and sentinel with a single-platform docker build, so the record does not show that the spelling caused the api and sentinel result.
 
 ## Related Files
 
@@ -81,7 +81,7 @@ Multi-platform builds run only when `INTERNAL_CONTRIBUTOR` is set, the same cond
 
 ## Testing
 
-The diff touches only `.github/workflows/build.yml`, `scripts/build/build-service-images.sh`, `scripts/build/index.js` and `scripts/ci/tag-docker-images.js`; it contains no unit or e2e tests.
+The diff touches only `.github/workflows/build.yml`, `scripts/build/build-service-images.sh`, `scripts/build/index.js` and `scripts/ci/tag-docker-images.js`; it contains no unit or e2e tests. The PR thread records the checks instead: the author linked two demo CI runs, one for the external-contributor path and one for the internal-contributor path, and after the switch to `linux/arm64/v8` reported that all six images (cht-api, cht-sentinel, cht-couchdb, cht-haproxy, cht-haproxy-healthcheck, cht-nginx) support linux/amd64 and linux/arm64. A reviewer reported no regressions in local tests on Linux.
 
 ## Related Issues
 

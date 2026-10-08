@@ -7,7 +7,7 @@ issueNumber: 10486
 issueUrl: https://github.com/medic/cht-core/issues/10486
 title: Remove unused and unmaintained scripts/deploy directory (Helm-based cht-deploy tooling)
 lastUpdated: '2026-10-01'
-summary: The scripts/deploy directory held an unused, unmaintained Helm-based cht-deploy script that tried to launch instances from old/deleted helm charts and confused community deployers. It was deleted entirely to steer users toward official self-serve deployment paths.
+summary: The scripts/deploy directory held an unused, unmaintained Helm-based cht-deploy script that by default deployed the external medic/cht-chart-4x chart; the issue called the script confusing and said it would launch instances from old Helm charts that the project no longer maintains or has deleted. It was deleted entirely to steer users toward official self-serve deployment paths.
 services:
   - api
 techStack:

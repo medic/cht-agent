@@ -61,7 +61,7 @@ stale: true
 > scripts/build/helm (four of the old templates moved into it) and switched tests/utils/index.js to install it (layering
 > scripts/build/helm/values/base.yaml, scripts/build/helm/values/deployment-multi.yaml and
 > scripts/build/helm/values/platform-k3s-k3d.yaml under a generated test values file). The CI job,
-> mocha configs and hooks this PR added are still on master.
+> mocha configs and hooks this PR added are still on master, but PR #10837 pinned the job's actions by commit SHA and PR #11032 moved `azure/setup-helm` to v5.0.0 and `azure/setup-kubectl` to v5.1.0.
 
 ## Problem
 
@@ -73,7 +73,7 @@ Not a bug but a coverage gap: existing CI (.github/workflows/build.yml) and the 
 
 ## Solution
 
-The existing .github/workflows/build.yml gained a `tests-k3d` job with a matrix of `'ci-integration-all-k3d'` and `'ci-integration-sentinel-k3d'`; it sets up K3D, Helm and kubectl (`nolar/setup-k3d-k3s@v1`, `azure/setup-helm@v4.1.0`, `azure/setup-kubectl@v4`) and runs the root package.json scripts `ci-integration-all-k3d` (`mocha --config tests/integration/.mocharc-k3d.js`) and `ci-integration-sentinel-k3d` (`mocha --config tests/integration/.mocharc-sentinel-k3d.js`). At this PR, the test run deployed the full CHT stack (api, couchdb, sentinel, nginx, haproxy, healthcheck, credentials) into a K3D cluster via a test-only Helm chart under tests/helm/, whose CouchDB volumes used `storageClassName: local-path`. New K3D-specific mocha configs (tests/integration/.mocharc-k3d.js, tests/integration/.mocharc-sentinel-k3d.js) and hooks (tests/integration/hooks-k3d.js, whose `beforeAll` calls `utils.prepK3DServices(true)`) run the existing spec globs, now shared through tests/integration/specs.js, against the cluster. Tests that only work under Docker Compose were tagged `@docker` and are skipped there by `grep: '@docker'` with `invert: true`; other specs were adapted for both environments (for example the CouchDB node names in tests/integration/couchdb/couch_chttpd.spec.js switch on `utils.isK3D()`, nginx and CouchDB URLs use `constants.API_HOST`, and sentinel specs await `utils.getSentinelDate()`), alongside changes to tests/utils/index.js and tests/constants.js.
+The existing .github/workflows/build.yml gained a `tests-k3d` job with a matrix of `'ci-integration-all-k3d'` and `'ci-integration-sentinel-k3d'`; it sets up K3D, Helm and kubectl (`nolar/setup-k3d-k3s@v1`, `azure/setup-helm@v4.1.0`, `azure/setup-kubectl@v4`) and runs the root package.json scripts `ci-integration-all-k3d` (`mocha --config tests/integration/.mocharc-k3d.js`) and `ci-integration-sentinel-k3d` (`mocha --config tests/integration/.mocharc-sentinel-k3d.js`). At this PR, the test run deployed api, three CouchDB nodes, sentinel, haproxy and the haproxy healthcheck (plus a credentials Secret, a CouchDB servers ConfigMap and an `api-ingress` Ingress that routes to api; there was no CHT nginx container, since tests/helm/templates/nginx.yaml defined only a Service) into a K3D cluster via a test-only Helm chart under tests/helm/, whose CouchDB volumes used `storageClassName: local-path`. New K3D-specific mocha configs (tests/integration/.mocharc-k3d.js, tests/integration/.mocharc-sentinel-k3d.js) and hooks (tests/integration/hooks-k3d.js, whose `beforeAll` calls `utils.prepK3DServices(true)`) run the existing spec globs, now shared through tests/integration/specs.js, against the cluster. Tests that only work under Docker Compose were tagged `@docker` and are skipped there by `grep: '@docker'` with `invert: true`; other specs were adapted for both environments (for example the CouchDB node names in tests/integration/couchdb/couch_chttpd.spec.js switch on `utils.isK3D()`, nginx and CouchDB URLs use `constants.API_HOST`, and sentinel specs await `utils.getSentinelDate()`), alongside changes to tests/utils/index.js and tests/constants.js.
 
 ## Code Patterns
 
@@ -81,7 +81,7 @@ At this PR, the test-only Helm chart in tests/helm/ (tests/helm/Chart.yaml, test
 
 ## Design Choices
 
-Chose K3D (K3s-in-Docker) for a lightweight, disposable in-CI Kubernetes cluster and the local-path provisioner for simple node-local persistent volumes suited to ephemeral CI. Reused the existing integration specs via parallel mocharc configs instead of forking the test code. The integration suites were picked because they cover most of the server-side complexity (scaling containers, following logs), which is where Kubernetes-specific bottlenecks would surface.
+Chose K3D (K3s-in-Docker) for a lightweight, disposable in-CI Kubernetes cluster and, for CouchDB data, hostPath PersistentVolumes with `storageClassName: local-path` that the chart created itself and named in each claim's `volumeName`, on a host temp directory that k3d mounts at /data, suited to ephemeral CI (on master, since PR #10051, the suite sets `preExistingDataAvailable: false`, so the chart creates no PersistentVolumes and k3s's local-path provisioner backs the claims). Reused the existing integration specs via parallel mocharc configs instead of forking the test code. The integration suites were picked because they cover most of the server-side complexity (scaling containers, following logs), which is where Kubernetes-specific bottlenecks would surface.
 
 ## Related Files
 

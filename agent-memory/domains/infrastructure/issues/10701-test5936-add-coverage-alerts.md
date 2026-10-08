@@ -55,7 +55,7 @@ Issue #5936 described having no easy way to tell which code was well tested or w
 
 ## Root Cause
 
-Before this PR, none of the three nyc configs set `checkCoverage`, so nyc reported API, Sentinel and shared-libs coverage without enforcing it, and some shared-libs modules had no test file at all. The tasks orderBy logic also lived in shared-libs/task-utils (moved there from the webapp tasks reducer by PR #10362), which is intended for report-attached SMS tasks (tasks and scheduled-tasks properties) rather than rules-engine tasks.
+Before this PR, none of the three nyc configs set `checkCoverage`, so nyc reported API, Sentinel and shared-libs coverage without enforcing it, and some shared-libs modules had no test file at all. The tasks orderBy logic also lived in shared-libs/task-utils (moved there from the webapp tasks reducer by PR #10362), which is intended for report-attached SMS tasks (the `tasks` and `scheduled_tasks` properties) rather than rules-engine tasks.
 
 ## Solution
 

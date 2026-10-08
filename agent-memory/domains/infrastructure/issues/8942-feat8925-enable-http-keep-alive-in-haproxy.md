@@ -50,7 +50,7 @@ Before this PR, the `defaults` section of haproxy/default_frontend.cfg set `opti
 
 ## Solution
 
-Replaced `option http-server-close` with `option http-keep-alive` in the `defaults` section of haproxy/default_frontend.cfg (a one-line change), so both client- and server-side connections are kept open and reused for subsequent requests, reducing repeated connection establishment between the proxy and CouchDB. The existing `timeout http-keep-alive 5m` in the same section bounds how long an idle kept-alive connection is held.
+Replaced `option http-server-close` with `option http-keep-alive` in the `defaults` section of haproxy/default_frontend.cfg (a one-line change), so both client- and server-side connections are kept open and reused for subsequent requests, reducing repeated connection establishment between the proxy and CouchDB. The existing `timeout http-keep-alive 5m` in the same section bounds how long HAProxy waits for the next request on an idle client-side connection before closing it; it does not time out the idle server-side connections to CouchDB.
 
 ## Code Patterns
 
@@ -66,7 +66,7 @@ Keep-alive reuses connections rather than closing them after each exchange, trad
 
 ## Testing
 
-Config-only change (one line in haproxy/default_frontend.cfg); the PR adds no unit or e2e tests.
+Config-only change (one line in haproxy/default_frontend.cfg); the PR adds no unit or e2e tests. The PR author ran scalability tests locally with 300 concurrent users against this setup and reported no errors and no concerning spikes in CPU or memory in any of the services.
 
 ## Related Issues
 

@@ -43,7 +43,7 @@ concepts:
 related_issues:
   - cht-core-8205
   - cht-core-9286
-stale: false
+stale: true
 ---
 
 ## Problem

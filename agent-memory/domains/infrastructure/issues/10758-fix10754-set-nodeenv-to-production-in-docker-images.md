@@ -49,7 +49,7 @@ concepts:
 related_issues:
   - cht-core-10357
   - cht-core-10815
-stale: false
+stale: true
 ---
 
 ## Problem

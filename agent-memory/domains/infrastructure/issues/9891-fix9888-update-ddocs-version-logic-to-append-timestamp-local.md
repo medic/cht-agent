@@ -61,7 +61,7 @@ Branch on the `TAG` env var to distinguish release (tag) builds from all other b
 
 ## Design Choices
 
-Appending a timestamp only when `TAG` is unset keeps release version strings deterministic and meaningful while restoring the dev auto-deploy workflow. The issue considered and rejected making api compare ddoc contents instead of the `version`: in production a ddoc should only change during an upgrade, so that would add development-only logic to production code, and the issue proposed keeping api's version check and restoring time-stamping of locally built ddoc versions instead. The timestamp is appended in `setDdocsVersion` only, not in `getVersion` in `scripts/build/versions.js`, so locally built Docker image tags (`getImageTag`) keep the plain branch-name version — the image reuse that PR #9674 was after.
+Appending a timestamp only when `TAG` is unset keeps release version strings deterministic and meaningful while restoring the dev auto-deploy workflow. The issue considered and rejected making api compare ddoc contents instead of the `version`: in production a ddoc should only change during an upgrade, so that would add development-only logic to production code, and the issue proposed keeping api's version check and restoring time-stamping of locally built ddoc versions instead. The timestamp is appended in `setDdocsVersion` only, not in `getVersion` in `scripts/build/versions.js`, so locally built Docker image tags (`getImageTag`) keep the plain branch-name version (on master, since PR #10130, `getVersion` passes that branch name through `escapeBranchName`) — the image reuse that PR #9674 was after.
 
 ## Related Files
 
@@ -69,7 +69,7 @@ Appending a timestamp only when `TAG` is unset keeps release version strings det
 
 ## Testing
 
-The diff touches only `scripts/build/index.js`; it contains no automated tests.
+The diff touches only `scripts/build/index.js`; it contains no automated tests. The test strategy was the manual test the issue prescribes: with `npm run dev-api` running, edit a design document (the issue's example adds `console.log('hello world');` to the `contacts_by_depth` map function in `ddocs/medic-db/medic`), run `npm run build-ddocs`, then check in Fauxton that `_design/medic` in the `medic` database contains the edit. The PR author reported checking that `_design/medic` contained the edit, and a reviewer confirmed the fix by following the issue's test steps.
 
 ## Related Issues
 

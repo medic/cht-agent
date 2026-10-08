@@ -72,7 +72,7 @@ Split a service across deployment modes by declaring cluster-only services (the 
 
 ## Design Choices
 
-Rather than keeping the healthcheck container in all deployments and conditionally disabling it, the service was moved entirely into the cluster template so single-node deployments never instantiate it. CouchDB's built-in _up endpoint is sufficient to confirm single-node health, removing the need for a redundant external polling container. Single-node mode is inferred from the number of entries in `COUCHDB_SERVERS`, so it needs no extra environment variable.
+Rather than keeping the healthcheck container in all deployments and conditionally disabling it, the service was moved entirely into the cluster template so single-node Docker Compose deployments never instantiate it. The PR left the in-repo Helm chart unchanged: scripts/build/helm/templates/healthcheck/deployment.yaml and scripts/build/helm/templates/healthcheck/service.yaml have no topology guard, so at this PR and on master the chart still deploys the healthcheck pod when CouchDB is single-node, although HAProxy there gets one server in `COUCHDB_SERVERS`, checks `_up` and never consults the pod. CouchDB's built-in _up endpoint is sufficient to confirm single-node health, removing the need for a redundant external polling container. Single-node mode is inferred from the number of entries in `COUCHDB_SERVERS`, so it needs no extra environment variable.
 
 ## Related Files
 

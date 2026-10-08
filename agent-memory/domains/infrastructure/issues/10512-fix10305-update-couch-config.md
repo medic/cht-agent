@@ -66,7 +66,7 @@ Applied at the shared Docker-default config layer so every deployment running th
 
 ## Testing
 
-Config-only change; the PR adds no automated tests.
+Config-only change; the PR adds no automated tests. A reviewer tested it manually with images built from the branch (`npm ci; npm run build-dev; npm run local-images`): after 10 failed logins as `medic`, the login page showed no `Unexpected error`, the correct password still worked, and Fauxton showed `chttpd_auth_lockout` as `warn`.
 
 ## Related Issues
 

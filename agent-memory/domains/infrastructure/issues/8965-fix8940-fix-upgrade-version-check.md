@@ -66,7 +66,7 @@ Adapt the admin upgrade page's comparison to the new deploy-info API contract ra
 
 ## Testing
 
-Unit tests in admin/tests/unit/controllers/upgrade.spec.js were updated to exercise the corrected build-to-build comparison: the upgrade-doc and deploy-info fixtures now carry build identifiers (e.g. `build: '4.2.0.134'`) alongside plain versions. The check runs in the admin app that was loaded before the upgrade (on success `reloadPage` only re-enters the `upgrade` state), so a fix to it is only visible on upgrades started from a version that already contains it.
+Unit tests in admin/tests/unit/controllers/upgrade.spec.js were updated to exercise the corrected build-to-build comparison: the upgrade-doc and deploy-info fixtures now carry build identifiers (e.g. `build: '4.2.0.134'`) alongside plain versions. The check runs in the admin app that was loaded before the upgrade (on success `reloadPage` only re-enters the `upgrade` state), so a fix to it is only visible on upgrades started from a version that already contains it. The PR author published 4.7.0 and 4.8.0 builds to a local staging server: starting from 4.6.0, the upgrade to 4.7.0 still showed the error, and the next upgrade, to 4.8.0, did not. A reviewer saw the error card after upgrading a docker-helper instance from 4.6.0-beta.4 to 4.6.0 in the admin app. The reviewer then disabled the image pull in a local build of the upgrade service, retagged this PR's branch images as 4.6.0-beta.4, re-created the instance, and saw the same upgrade complete without the error card.
 
 ## Related Issues
 

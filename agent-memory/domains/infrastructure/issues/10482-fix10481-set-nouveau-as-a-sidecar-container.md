@@ -96,7 +96,7 @@ Of the three fixes #10481 weighed — a sidecar sharing the CouchDB pod's storag
 
 ## Testing
 
-No test files changed; all seven files in this PR are Helm templates under scripts/build/helm/templates/.
+No test files changed; all seven files in this PR are Helm templates under scripts/build/helm/templates/. When asking for review, the PR author reported having already verified the fix by upgrading https://demo-cht.dev.medicmobile.org.
 
 ## Related Issues
 
