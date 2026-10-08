@@ -66,6 +66,7 @@ while IFS= read -r project; do
   if [[ -n "$project" && "$project" != "$TEST_ENV_PROJECT" ]]; then
     echo "error: Compose project '$project' already has an nginx on $TEST_ENV_NETWORK." >&2
     echo "       Tear it down first: CHT_TEST_ENV_PROJECT='$project' scripts/test-env-down.sh <its cht-core path>" >&2
+    echo "       If that checkout is gone: docker rm -f \$(docker ps -aq --filter label=com.docker.compose.project=$project)" >&2
     exit 1
   fi
 done <<< "$nginx_projects"
@@ -106,3 +107,4 @@ test_env_compose up -d
 
 echo "CHT starting as Compose project '$TEST_ENV_PROJECT' on '$TEST_ENV_NETWORK'. The agent will poll /api/v2/monitoring until healthy."
 echo "To trust its cert: docker cp $TEST_ENV_PROJECT-nginx-1:/etc/nginx/private/cert.pem <file>, then NODE_EXTRA_CA_CERTS=<file> for the agent."
+echo "Node reads that file once per process: start the agent after this cert exists, and restart it after test-env-down.sh (the next up makes a new cert)."

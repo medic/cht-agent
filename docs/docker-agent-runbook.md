@@ -147,6 +147,24 @@ CHT_CORE_REBUILD=1 scripts/test-env-up.sh ~/src/cht-core
 > `test-env-down.sh`, the next bring-up makes a new cert. If the bring-up used
 > non-default `COUCHDB_USER` or `COUCHDB_PASSWORD`, pass the same values with `docker exec -e`.
 
+Settings the layer reads from the environment:
+
+| Variable | Read by | Effect (default) |
+|---|---|---|
+| `CHT_URL` | agent | Instance `provision` dials when the call passes no `url` (`https://nginx`). |
+| `COUCHDB_USER` / `COUCHDB_PASSWORD` | agent, scripts | Stack admin; each defaults on its own (`medic` / `password`). The agent refuses the default password against a host it does not treat as disposable. |
+| `CHT_TEST_ENV_ALLOW_EXTERNAL=1` | agent | Allows a host it does not treat as disposable, like `allowExternalTarget`. |
+| `CHT_CONF_BIN` | agent | cht-conf binary to spawn (`cht`). |
+| `CHT_CORE_HOST_PATH` | agent | Host path of the working copy, printed in the gates. The agent's compose file sets it to `$CHT_CORE_PATH`. |
+| `CHT_TEST_ENV_PROJECT` | scripts, agent | Compose project (`cht-agent-<dir>-<path hash>`). The agent repeats it in the gates it prints. |
+| `CHT_CORE_PATH` | scripts | Working copy, when no path argument is given. |
+| `CHT_CORE_CLONE_DIR` | scripts | Managed checkout when neither is given (`<repo>/.cht-core`), cloned from `CHT_CORE_UPSTREAM` at `CHT_CORE_BRANCH` (medic/cht-core, master). |
+| `CHT_CORE_REBUILD=1` | scripts | Runs `npm run build-dev` even when a build exists. |
+| `COUCHDB_DATA` | scripts | CouchDB bind mount (`local-build/srv-<project>`). It survives `test-env-down.sh`. |
+| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | scripts | Host binds (`127.0.0.1:80` / `127.0.0.1:443`). Opening them to the LAN needs a non-default `COUCHDB_PASSWORD`. |
+| `COMMON_NAME` | scripts | Cert CN (`nginx`, the host the agent dials). |
+| `NODE_EXTRA_CA_CERTS` | Node | The stack's `cert.pem`, read once per process (see above). |
+
 The agent detects readiness via `GET https://nginx/api/v2/monitoring` and
 continues. CouchDB-tier resets it does itself over HTTP; container restarts
 and rebuilds come back to you.

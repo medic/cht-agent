@@ -19,6 +19,7 @@
 TEST_ENV_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEST_ENV_OVERRIDE="$TEST_ENV_REPO_ROOT/docker/cht-agent-net.override.yml"
 # Must match the external network in docker/cht-agent-net.override.yml.
+# shellcheck disable=SC2034 # used by test-env-up.sh
 TEST_ENV_NETWORK="cht-agent-net"
 
 test_env_default_target() {

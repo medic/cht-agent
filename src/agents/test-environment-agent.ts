@@ -808,7 +808,10 @@ const printResetGate = (handle: EnvironmentHandle, tier: ResetTier): void => {
         'trusts the old one, copy the new cert.pem and restart the agent before re-confirming health.'
     );
   }
-  console.log('[Test Environment Agent] Re-confirm health with provision()/waitForReady after.');
+  console.log(
+    '[Test Environment Agent] The old stack answers healthy until the operator acts: get their go-ahead, ' +
+      'then re-confirm health with provision()/waitForReady.'
+  );
 };
 
 export class TestEnvironmentAgent {
@@ -980,7 +983,7 @@ export class TestEnvironmentAgent {
     options: PrepareTestDataOptions
   ): Promise<TestDataResult> {
     if (!options.dataPath) {
-      throw new Error('prepareTestData requires options.dataPath (a cht-conf project folder with csv/)');
+      throw new Error('prepareTestData requires options.dataPath (a cht-conf project folder with csv/ or json_docs/)');
     }
     const source: SeedSource = {
       dataPath: resolve(options.dataPath),

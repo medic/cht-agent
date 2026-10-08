@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -162,6 +162,15 @@ describe('test-data', () => {
         expect(listDocFiles(dataPath)).to.deep.equal(['b.doc.json', 'sub/a.doc.json']);
       });
 
+      it('skips dot-prefixed files and directories and dangling symlinks, as upload-docs does', () => {
+        writeDoc('kept', { type: 'clinic' });
+        writeDoc('.draft', { type: 'clinic' });
+        writeDoc('hidden', { type: 'clinic' }, '.drafts');
+        symlinkSync(join(dataPath, 'missing.doc.json'), join(dataPath, 'json_docs', 'dangling.doc.json'));
+
+        expect(listDocFiles(dataPath)).to.deep.equal(['kept.doc.json']);
+      });
+
       it('treats every doc file as foreign until this layer has recorded it (fails closed)', () => {
         writeDoc('hand-authored', { type: 'clinic' });
 
@@ -221,11 +230,11 @@ describe('test-data', () => {
       });
 
       it('keeps the manifest beside json_docs, where upload-docs will not pick it up', () => {
-        writeDoc('generated', { type: 'clinic' });
+        writeDoc('c0ffee00-1234-5678-9abc-def012345678', { type: 'clinic' });
         recordOwnedDocFiles(dataPath);
 
         expect(existsSync(join(dataPath, '.cht-agent-seeded.json'))).to.equal(true);
-        expect(listDocFiles(dataPath)).to.deep.equal(['generated.doc.json']);
+        expect(listDocFiles(dataPath)).to.deep.equal(['c0ffee00-1234-5678-9abc-def012345678.doc.json']);
       });
     });
 

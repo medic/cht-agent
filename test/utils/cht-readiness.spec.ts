@@ -82,6 +82,25 @@ describe('cht-readiness', () => {
       expect(fetchStub.callCount).to.equal(1);
     });
 
+    it('fails fast on a 4xx, which no bring-up step answers (497: http sent to the https port)', async () => {
+      fetchStub.resolves({ ok: false, status: 497 });
+
+      const error = await expectRejection(waitForReady('https://nginx', fast));
+
+      expect(error.message).to.include('cannot become ready as configured: HTTP 497');
+      expect(fetchStub.callCount).to.equal(1);
+    });
+
+    it('keeps polling on 408 and 429, which can clear by themselves', async () => {
+      fetchStub.onCall(0).resolves({ ok: false, status: 408 });
+      fetchStub.onCall(1).resolves({ ok: false, status: 429 });
+      fetchStub.onCall(2).resolves(healthy());
+
+      await waitForReady('https://nginx', fast);
+
+      expect(fetchStub.callCount).to.equal(3);
+    });
+
     it('fails fast when the runtime does not trust the certificate', async () => {
       const cause = Object.assign(new Error('self-signed certificate'), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
       fetchStub.rejects(Object.assign(new TypeError('fetch failed'), { cause }));
@@ -89,6 +108,7 @@ describe('cht-readiness', () => {
       const error = await expectRejection(waitForReady('https://nginx', fast));
 
       expect(error.message).to.include('self-signed certificate');
+      expect(error.message).to.include('NODE_EXTRA_CA_CERTS');
       expect(fetchStub.callCount).to.equal(1);
     });
 
