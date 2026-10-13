@@ -1512,7 +1512,7 @@ async function assertNoOperationInProgress(chtCorePath: string): Promise<void> {
     chtCorePath,
   ));
   const found: string[] = [];
-  for (const markerPath of stdout.split('\n').filter(Boolean)) {
+  for (const markerPath of markerPaths(stdout)) {
     if (!(await pathIsRemoved(markerPath))) found.push(path.basename(markerPath));
   }
   if (found.length === 0) return;
@@ -1520,6 +1520,20 @@ async function assertNoOperationInProgress(chtCorePath: string): Promise<void> {
     `cht-core at ${chtCorePath} is in the middle of a git operation (${found.join(', ')}); refuse to ` +
     'run cht-agent. Finish or abort that operation, then run again.';
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
+}
+
+/**
+ * The marker paths, each one absolute, or a refusal. git 2.30 echoes
+ * `--path-format=absolute` and prints relative paths with exit 0, and a
+ * relative path is checked against node's cwd, not against cht-core.
+ */
+function markerPaths(stdout: string): string[] {
+  const lines = stdout.split('\n').filter(Boolean);
+  const relative = lines.find(line => !path.isAbsolute(line));
+  if (relative !== undefined) {
+    throw readRefusal('the in-progress operation markers', new Error(`git printed ${JSON.stringify(relative)}, not an absolute path`));
+  }
+  return lines;
 }
 
 async function readHeadSha(chtCorePath: string): Promise<string> {

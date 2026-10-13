@@ -527,6 +527,32 @@ describe('workspace.ts', () => {
       expect(markerCall).to.not.include('AUTO_MERGE');
     });
 
+    it('refuses, and never stashes, when git echoes the option and prints relative marker paths (git 2.30)', async () => {
+      const markers = ['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'rebase-merge', 'rebase-apply', 'sequencer'];
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        // git 2.30.2's exact output, with exit 0.
+        'git rev-parse --path-format=absolute': { stdout: ['--path-format=absolute', ...markers.map(m => `.git/${m}`)].join('\n') + '\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
+        'git status --porcelain': { stdout: ' M file.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -z': STASH_CREATED,
+      }, { lstat: sinon.stub().rejects(errno('ENOENT')) }, calls);
+      sinon.stub(console, 'log');
+      const outcome = await ws.snapshotChtCore('/tmp/cht-core').then(
+        () => ({ kind: undefined, message: undefined }),
+        (err: { kind?: string; message?: string }) => err,
+      );
+      expect(calls.some(c => c.startsWith('git stash push')), 'stashed').to.equal(false);
+      expect(outcome.kind).to.equal('precondition');
+      expect(outcome.message).to.equal(
+        'cht-agent could not read the in-progress operation markers (git printed "--path-format=absolute", ' +
+          'not an absolute path); nothing was changed.',
+      );
+    });
+
     it('warns when the stashed work includes a .gitignore edit', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
