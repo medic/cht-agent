@@ -16,6 +16,7 @@ import {
   InvokeOptions,
   LLMToolDefinition,
   DEFAULT_CONFIG,
+  LLMCallError,
   capMaxTokens,
 } from '../types';
 
@@ -243,7 +244,7 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     };
   };
 
-  const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> => {
+  const invokeForJSONWithResponse = async <T>(prompt: string, options?: InvokeOptions): Promise<{ parsed: T; response: LLMResponse }> => {
     // Increase maxTokens for JSON responses to avoid truncation
     const jsonOptions = {
       ...options,
@@ -261,7 +262,7 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     // Strip any ```json fence and extract the outermost JSON object.
     const extracted = extractJsonObject(content);
     if (!extracted) {
-      throw new Error('LLM response did not contain valid JSON object');
+      throw new LLMCallError('LLM response did not contain valid JSON object', response);
     }
 
     let jsonStr = extracted;
@@ -271,15 +272,18 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     jsonStr = jsonStr.replace(/,(\s*[}\]])/g, '$1');
 
     try {
-      return JSON.parse(jsonStr) as T;
+      return { parsed: JSON.parse(jsonStr) as T, response };
     } catch (error) {
       // Log a snippet of the problematic JSON for debugging
       const snippet = jsonStr.substring(0, 500);
       console.error(`[LLM] JSON parse error. First 500 chars: ${snippet}...`);
       console.error(`[LLM] Stop reason: ${response.stopReason}`);
-      throw new Error(`Failed to parse LLM response as JSON: ${error}`);
+      throw new LLMCallError(`Failed to parse LLM response as JSON: ${error}`, response);
     }
   };
+
+  const invokeForJSON = async <T>(prompt: string, options?: InvokeOptions): Promise<T> =>
+    (await invokeForJSONWithResponse<T>(prompt, options)).parsed;
 
   return {
     providerType: 'anthropic',
@@ -288,5 +292,6 @@ export const createAnthropicProvider = (config: APIProviderConfig): LLMProvider 
     invoke,
     invokeWithMessages,
     invokeForJSON,
+    invokeForJSONWithResponse,
   };
 };

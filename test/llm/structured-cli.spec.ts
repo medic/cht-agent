@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { z } from 'zod';
-import type { InvokeOptions } from '../../src/llm/types';
+import { LLMCallError, type InvokeOptions } from '../../src/llm/types';
 
 const proxyquire = require('proxyquire').noCallThru();
 
@@ -44,7 +44,7 @@ describe('createStructuredCliChain', () => {
     const chain = createStructuredCliChain(schema, SHAPE);
     const result = await chain.invoke('Classify this PR.');
 
-    expect(result).to.deep.equal({ decision: 'distill', reason: 'looks substantive' });
+    expect(result.parsed).to.deep.equal({ decision: 'distill', reason: 'looks substantive' });
     expect(calls).to.have.length(1);
   });
 
@@ -68,6 +68,28 @@ describe('createStructuredCliChain', () => {
     expect(calls[0].options?.maxTurns).to.equal(1);
   });
 
+  it('should carry model, usage and cost from invokeForJSONWithResponse when the provider offers it', async () => {
+    const fakeProvider = {
+      invokeForJSON: async () => { throw new Error('should not be called'); },
+      invokeForJSONWithResponse: async () => ({
+        parsed: { decision: 'skip', reason: 'trivial' },
+        response: { content: '{}', model: 'claude-sonnet-4-5', costUsd: 0.0123, usage: { inputTokens: 30, outputTokens: 7 } },
+      }),
+    };
+    const { createStructuredCliChain } = proxyquire('../../src/llm/structured-cli', {
+      './factory': { createLLMProviderFromEnv: () => fakeProvider, isUsingCLIProvider: () => true },
+    });
+
+    const result = await createStructuredCliChain(schema, SHAPE).invoke('Classify this PR.');
+
+    expect(result).to.deep.equal({
+      parsed: { decision: 'skip', reason: 'trivial' },
+      model: 'claude-sonnet-4-5',
+      costUsd: 0.0123,
+      usage: { input: 30, output: 7, total: 37 },
+    });
+  });
+
   it('should throw when the response does not satisfy the schema', async () => {
     const calls: RecordedCall[] = [];
     const { createStructuredCliChain } = loadAdapter({ decision: 'maybe', reason: '' }, calls);
@@ -79,5 +101,24 @@ describe('createStructuredCliChain', () => {
       expect((e as Error).message).to.not.equal('expected a zod validation error');
       expect(calls).to.have.length(1);
     }
+  });
+
+  it('should keep the paid response on the error when the response does not satisfy the schema', async () => {
+    const response = { content: '{}', model: 'claude-sonnet-4-5', costUsd: 0.0123, usage: { inputTokens: 30, outputTokens: 7 } };
+    const fakeProvider = {
+      invokeForJSON: async () => { throw new Error('should not be called'); },
+      invokeForJSONWithResponse: async () => ({ parsed: { decision: 'maybe', reason: '' }, response }),
+    };
+    const { createStructuredCliChain } = proxyquire('../../src/llm/structured-cli', {
+      './factory': { createLLMProviderFromEnv: () => fakeProvider, isUsingCLIProvider: () => true },
+    });
+
+    const caught = await createStructuredCliChain(schema, SHAPE).invoke('Classify this PR.').then(
+      () => expect.fail('expected a schema validation error'),
+      (e: LLMCallError) => e,
+    );
+
+    expect(caught).to.be.instanceOf(LLMCallError);
+    expect(caught.response).to.equal(response);
   });
 });

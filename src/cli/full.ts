@@ -32,6 +32,7 @@
 
 import * as dotenv from 'dotenv';
 import * as path from 'node:path';
+import { withTrace, shutdownLangfuse, type TraceRoot } from '../observability';
 import { ResearchSupervisor } from '../supervisors/research-supervisor';
 import { DevelopmentSupervisor } from '../supervisors/development-supervisor';
 import { parseTicketFile } from '../utils/ticket-parser';
@@ -88,7 +89,7 @@ function ensureTicketPath(): string {
   return path.resolve(process.argv[2]);
 }
 
-const main = async (): Promise<void> => {
+const main = async (root: TraceRoot): Promise<void> => {
   console.log('╔════════════════════════════════════════════════════════════════╗');
   console.log('║        CHT Multi-Agent System - Full Workflow CLI              ║');
   console.log('╚════════════════════════════════════════════════════════════════╝\n');
@@ -122,13 +123,25 @@ const main = async (): Promise<void> => {
       developmentOptions
     );
     displayFullWorkflowSummary(workflowResult);
+    root.update({ output: {
+      researchApproved: workflowResult.research.approved,
+      researchIterations: workflowResult.research.iterationCount,
+      developmentApproved: workflowResult.development?.approved,
+      developmentIterations: workflowResult.development?.iterationCount,
+      filesWritten: workflowResult.development?.filesWritten,
+    } });
   } catch (error) {
     if (!reportRunHalt(error, 'Workflow')) {
       logRunError('\n❌ Error running workflow:', error);
     }
-    process.exit(1);
+    throw error;
   }
 };
 
 // Run the CLI
-main();
+withTrace({ name: 'cht-agent-full', tags: ['cht-agent', 'full'], input: { ticket: process.argv[2] } }, main)
+  .then(shutdownLangfuse)
+  .catch(async () => {
+    await shutdownLangfuse();
+    process.exit(1);
+  });

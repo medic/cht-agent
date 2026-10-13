@@ -23,6 +23,7 @@ const loadFactory = (overrides: {
 const ENV_KEYS = [
   'LLM_PROVIDER',
   'LLM_MODEL',
+  'ANTHROPIC_MODEL',
   'LLM_MAX_TOKENS',
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
@@ -157,6 +158,18 @@ describe('llm/factory env-driven config readers', () => {
       expect(config.timeout).to.equal(600000);
       expect(config.maxTurns).to.equal(20);
       expect(config.skipPermissions).to.equal(true);
+      expect(config.model).to.equal('claude-cli');
+    });
+
+    it('derives model as ANTHROPIC_MODEL ?? LLM_MODEL ?? claude-cli, since ANTHROPIC_MODEL is what the CLI subprocess actually reads', () => {
+      const { getCLIConfigFromEnv } = loadFactory();
+      expect(getCLIConfigFromEnv().model).to.equal('claude-cli');
+
+      process.env.LLM_MODEL = 'claude-haiku-4-5';
+      expect(getCLIConfigFromEnv().model).to.equal('claude-haiku-4-5');
+
+      process.env.ANTHROPIC_MODEL = 'claude-sonnet-4-5';
+      expect(getCLIConfigFromEnv().model).to.equal('claude-sonnet-4-5');
     });
 
     it('honors CLAUDE_CLI_PATH override', () => {

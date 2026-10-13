@@ -7,6 +7,7 @@ import { CrossFileIssue } from '../../../../../src/types';
 import { extractLlmDiscoveryIssues } from '../../../../../src/layers/code-gen/modules/claude-code-cli/index';
 import * as realWorkspace from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 import { WorkspaceSafetyError, STASH_MARKER_PREFIX } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
+import { generationRecorder } from '../../../../helpers/generation-recorder';
 
 // Helper: proxyquire the orchestrator with cli-driver + workspace stubbed.
 const proxyquire = require('proxyquire').noCallThru();
@@ -126,6 +127,75 @@ describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
     expect(result.files[0].path).to.equal('src/a.ts');
     // The snapshot's own baseline, or capture would claim the operator's files.
     expect(captureStub.firstCall.args).to.deep.equal(['/tmp/cht-core-test', 'abc1234', baseline]);
+  });
+
+  it('reports summed tokens and cost across CLI calls, attributed to the costliest model', async () => {
+    const spawnStub = sinon.stub()
+      .onFirstCall().resolves(planResultText)
+      .onSecondCall().resolves('execute ok');
+    const parse = (s: string) => (s === planResultText
+      ? { result: s, isError: false, numTurns: 1, model: 'claude-sonnet-5', cost: 0.1, usage: { inputTokens: 900, outputTokens: 100 } }
+      : { result: s, isError: false, numTurns: 3, model: 'claude-opus-5-5', cost: 0.4, usage: { inputTokens: 1800, outputTokens: 200 } });
+    const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+      './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: parse, ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+      './workspace': workspaceStub({
+        snapshotChtCore: sinon.stub().resolves({ headSha: 'abc1234', stashRef: null }),
+        captureChtCoreDiff: sinon.stub().resolves([{ path: 'src/a.ts', content: 'x', purpose: 'p' }]),
+        rollbackChtCore: sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] }),
+      }),
+    });
+
+    const result = await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+
+    expect(result.modelUsed).to.equal('claude-opus-5-5');
+    expect(result.tokensUsed).to.equal(3000);
+    expect(result.costUsd).to.be.closeTo(0.5, 1e-9);
+  });
+
+  it('traces plan and execute generations with model and cost, and marks a CLI is_error as a failure', async () => {
+    const { records, observability } = generationRecorder();
+    const spawnStub = sinon.stub()
+      .onFirstCall().resolves(planResultText)
+      .onSecondCall().resolves('max turns');
+    const parse = (s: string) => (s === planResultText
+      ? { result: s, isError: false, numTurns: 1, model: 'claude-sonnet-5', cost: 0.1 }
+      : { result: 'Reached maximum number of turns (150)', isError: true, numTurns: 150, model: 'claude-opus-5-5', cost: 0.4 });
+    const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+      './cli-driver': { spawnClaudeCli: spawnStub, parseCliResult: parse, ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' } },
+      './workspace': workspaceStub({
+        snapshotChtCore: sinon.stub().resolves({ headSha: 'abc1234', stashRef: null }),
+        captureChtCoreDiff: sinon.stub().resolves([{ path: 'src/a.ts', content: 'x', purpose: 'p' }]),
+        rollbackChtCore: sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] }),
+      }),
+      '../../../../observability': observability,
+    });
+
+    await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+
+    expect(records).to.deep.equal([
+      { name: 'code-gen-plan', model: 'claude-sonnet-5', costUsd: 0.1, failure: undefined },
+      { name: 'code-gen-execute', model: 'claude-opus-5-5', costUsd: 0.4, failure: 'Reached maximum number of turns (150)' },
+    ]);
+  });
+
+  it('still reports the plan call spend when the plan is empty', async () => {
+    const emptyPlan = '=== PLAN ===\n=== END PLAN ===\n';
+    const { ClaudeCodeCLICodeGenModule } = proxyquire('../../../../../src/layers/code-gen/modules/claude-code-cli/index', {
+      './cli-driver': {
+        spawnClaudeCli: sinon.stub().resolves(emptyPlan),
+        parseCliResult: (s: string) => ({ result: s, isError: false, numTurns: 1, model: 'claude-opus-5-5', cost: 0.2, usage: { inputTokens: 40, outputTokens: 2 } }),
+        ClaudeCliPhase: { Plan: 'plan', Execute: 'execute' },
+      },
+      './workspace': workspaceStub({
+        snapshotChtCore: sinon.stub().resolves({ headSha: 'abc1234', stashRef: null }),
+        captureChtCoreDiff: sinon.stub(),
+        rollbackChtCore: sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] }),
+      }),
+    });
+
+    const result = await new ClaudeCodeCLICodeGenModule().generate(baseInput());
+
+    expect(result).to.include({ modelUsed: 'claude-opus-5-5', tokensUsed: 42, costUsd: 0.2 });
   });
 
   it('returns empty result and rolls back when shutdown is requested after snapshot but before plan', async () => {

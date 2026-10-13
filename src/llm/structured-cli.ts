@@ -16,6 +16,8 @@
 
 import { z } from 'zod';
 import { createLLMProviderFromEnv } from './factory';
+import { LLMCallError } from './types';
+import { fromLangChain, fromLLMResponse, type GenerationResult } from '../observability';
 
 export { isUsingCLIProvider } from './factory';
 
@@ -23,8 +25,23 @@ export { isUsingCLIProvider } from './factory';
  * The chain surface the pipeline scripts consume.
  */
 export interface StructuredChain<T> {
-  invoke(prompt: string): Promise<T>;
+  invoke(prompt: string): Promise<GenerationResult<T>>;
 }
+
+/**
+ * Wrap a LangChain chat model as a StructuredChain that reports token usage.
+ *
+ * @example
+ * ```typescript
+ * const chain = createLangChainStructuredChain(new ChatAnthropic({ ... }), triageSchema);
+ * const { parsed, usage } = await chain.invoke(prompt);
+ * ```
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const createLangChainStructuredChain = <T>(llm: any, schema: z.ZodType<T>): StructuredChain<T> => {
+  const structured = llm.withStructuredOutput(schema, { includeRaw: true });
+  return { invoke: async (prompt: string) => fromLangChain<T>(await structured.invoke(prompt)) };
+};
 
 /**
  * Create a structured-output chain backed by the Claude CLI provider.
@@ -38,7 +55,7 @@ export interface StructuredChain<T> {
  * ```typescript
  * const chain = createStructuredCliChain(triageSchema,
  *   '{"decision": "distill" | "skip" | "flag-for-human", "reason": "<short explanation>"}');
- * const result = await chain.invoke(prompt); // validated TriageOutput
+ * const { parsed, costUsd } = await chain.invoke(prompt); // parsed: validated TriageOutput
  * ```
  */
 export const createStructuredCliChain = <T>(
@@ -48,7 +65,7 @@ export const createStructuredCliChain = <T>(
   const provider = createLLMProviderFromEnv();
 
   return {
-    invoke: async (prompt: string): Promise<T> => {
+    invoke: async (prompt: string): Promise<GenerationResult<T>> => {
       const jsonPrompt = `${prompt}
 
 Return a single JSON object with exactly this shape (no extra keys):
@@ -56,12 +73,14 @@ ${shape}`;
 
       // One-shot classification/extraction: no agentic turns, no tools —
       // the CLI provider's defaults (20 turns, tools on) are code-gen oriented.
-      const raw = await provider.invokeForJSON<unknown>(jsonPrompt, {
-        disableTools: true,
-        maxTurns: 1,
-      });
-
-      return schema.parse(raw);
+      const options = { disableTools: true, maxTurns: 1 };
+      if (!provider.invokeForJSONWithResponse) {
+        return { parsed: schema.parse(await provider.invokeForJSON<unknown>(jsonPrompt, options)) };
+      }
+      const { parsed, response } = await provider.invokeForJSONWithResponse<unknown>(jsonPrompt, options);
+      const checked = schema.safeParse(parsed);
+      if (!checked.success) throw new LLMCallError(checked.error.message, response);
+      return fromLLMResponse(response, checked.data);
     },
   };
 };

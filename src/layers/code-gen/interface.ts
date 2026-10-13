@@ -51,6 +51,7 @@ export interface CodeGenModuleOutput {
   explanation: string;
   tokensUsed?: number;
   modelUsed?: string;
+  costUsd?: number;
   /**
    * True when the module knows its output is incomplete (e.g., CLI hit
    * is_error or saturated max-turns). The agent surfaces this as a

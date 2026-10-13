@@ -149,6 +149,38 @@ describe('cli-driver (A.2a)', () => {
       expect(parsed.isError).to.equal(false);
     });
 
+    it('reads the result message from an array transcript', () => {
+      const driver = loadDriver();
+      const stdout = JSON.stringify([
+        { type: 'system', subtype: 'init' },
+        { type: 'result', result: 'done', is_error: false, num_turns: 7, total_cost_usd: 1.5 },
+      ]);
+      const parsed = driver.parseCliResult(stdout);
+      expect(parsed.result).to.equal('done');
+      expect(parsed.numTurns).to.equal(7);
+      expect(parsed.cost).to.equal(1.5);
+    });
+
+    it('reports the costliest model and summed usage from modelUsage', () => {
+      const driver = loadDriver();
+      const stdout = JSON.stringify([
+        { type: 'system', subtype: 'init', model: 'claude-opus-5-5' },
+        { type: 'result', result: 'done', num_turns: 3, total_cost_usd: 2.1, modelUsage: {
+          'claude-haiku-4-5-20251001': { inputTokens: 100, outputTokens: 10, costUSD: 0.1 },
+          'claude-opus-5-5': { inputTokens: 5, cacheReadInputTokens: 900, cacheCreationInputTokens: 95, outputTokens: 40, costUSD: 2 },
+        } },
+      ]);
+      const parsed = driver.parseCliResult(stdout);
+      expect(parsed.model).to.equal('claude-opus-5-5');
+      expect(parsed.usage).to.deep.equal({ inputTokens: 1100, outputTokens: 50 });
+    });
+
+    it('returns isError=true for an array transcript with no result message', () => {
+      const driver = loadDriver();
+      const parsed = driver.parseCliResult(JSON.stringify([{ type: 'system', subtype: 'init' }]));
+      expect(parsed.isError).to.equal(true);
+    });
+
     it('handles plain non-result JSON via the fallback parser', () => {
       const driver = loadDriver();
       const json = JSON.stringify({ result: 'plain', is_error: false, num_turns: 2 });

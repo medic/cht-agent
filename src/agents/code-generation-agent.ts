@@ -356,10 +356,15 @@ export class CodeGenerationAgent {
       warnings: llmResult.warnings,
       compileGateSkipped: llmResult.compileGateSkipped,
       compileGateSkipReason: llmResult.compileGateSkipReason,
+      tokensUsed: llmResult.tokensUsed,
+      modelUsed: llmResult.modelUsed,
+      costUsd: llmResult.costUsd,
     };
 
     console.log(`[Code Generation Agent] Generated ${result.files.length} files`);
     console.log(`[Code Generation Agent] Confidence: ${(result.confidence * 100).toFixed(0)}%`);
+    const cost = result.costUsd === undefined ? 'n/a' : '$' + result.costUsd.toFixed(4);
+    console.log(`[Code Generation Agent] Model: ${result.modelUsed ?? 'unknown'}, tokens: ${result.tokensUsed ?? 'n/a'}, cost: ${cost}`);
     this.todos.printSummary();
     return result;
   }
@@ -694,6 +699,9 @@ export class CodeGenerationAgent {
     warnings?: string[];
     compileGateSkipped?: boolean;
     compileGateSkipReason?: string;
+    tokensUsed?: number;
+    modelUsed?: string;
+    costUsd?: number;
   }> {
     const moduleInput = this.buildModuleInput(input, context);
     const session = await this.initBeadsSession(input);
@@ -714,6 +722,9 @@ export class CodeGenerationAgent {
       warnings: moduleOutput.warnings,
       compileGateSkipped: moduleOutput.compileGateSkipped,
       compileGateSkipReason: moduleOutput.compileGateSkipReason,
+      tokensUsed: moduleOutput.tokensUsed,
+      modelUsed: moduleOutput.modelUsed,
+      costUsd: moduleOutput.costUsd,
     };
   }
 
