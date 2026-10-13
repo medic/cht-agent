@@ -116,15 +116,17 @@ const STRIPPED_GIT_ENV = [
 ];
 
 /**
- * Config that stops a repo-local `core.fsmonitor` or hook from running a program
- * inside our git calls. One builder hardens every call, through the env, not
- * `-c`. Both forms reach the git programs that git runs. The env form keeps our
- * argv, so every node 'Command failed: git <argv>' message shows the command as
- * the operator would type it. The env form needs git 2.31 or later; cht-agent
- * needs MIN_GIT_VERSION (2.34).
+ * Config that stops a repo-local `core.fsmonitor` program, and the hook programs
+ * in the hooks dir, from running inside our git calls. One builder hardens every
+ * call, through the env, not `-c`. Both forms reach the git programs that git
+ * runs. The env form keeps our argv, so every node 'Command failed: git <argv>'
+ * message shows the command as the operator would type it. The env form needs
+ * git 2.31 or later; cht-agent needs MIN_GIT_VERSION (2.34).
  *
  * An empty `core.fsmonitor` turns fsmonitor off on every supported git; the
- * string 'false' is a program name before git 2.36.
+ * string 'false' is a program name before git 2.36. `core.hooksPath=/dev/null`
+ * stops only the hook programs in the hooks dir: from git 2.54, a hook that
+ * config defines (`hook.<name>.command`) still runs (#172).
  */
 const HARDENED_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
   ['core.fsmonitor', ''],
