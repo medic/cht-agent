@@ -40,6 +40,24 @@ describe('stash-policy', () => {
     expect(Object.isFrozen(policy)).to.equal(true);
   });
 
+  it('keeps allowOldGit when it is true, also after acceptSpareStash', () => {
+    setStashPolicy({ acceptedLeftoverShas: [], onSpareStash: acceptSpareStash, allowOldGit: true });
+    expect(getStashPolicy().allowOldGit).to.equal(true);
+    acceptSpareStash('b'.repeat(40));
+    const policy = getStashPolicy();
+    expect(policy).to.deep.equal({ acceptedLeftoverShas: ['b'.repeat(40)], onSpareStash: acceptSpareStash, allowOldGit: true });
+    expect(Object.isFrozen(policy)).to.equal(true);
+  });
+
+  it('keeps an allowOldGit key only for true, never for false or absent', () => {
+    setStashPolicy({ acceptedLeftoverShas: [], allowOldGit: true });
+    expect(Object.keys(getStashPolicy())).to.deep.equal(['acceptedLeftoverShas', 'allowOldGit']);
+    for (const allowOldGit of [false, undefined]) {
+      setStashPolicy({ acceptedLeftoverShas: [], allowOldGit });
+      expect(Object.keys(getStashPolicy()), String(allowOldGit)).to.deep.equal(['acceptedLeftoverShas']);
+    }
+  });
+
   it('goes back to the default on the test reset', () => {
     setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)] });
     __resetStashPolicyForTests();

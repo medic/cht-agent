@@ -187,7 +187,7 @@ const main = async (root: TraceRoot): Promise<void> => {
     const ticket = parseTicketFile(ticketPath);
     console.log('✅ Ticket parsed successfully!\n');
 
-    // Leftover cht-agent stashes, before any LLM call
+    // The git version and leftover cht-agent stashes, before any LLM call
     await prepareStashPolicy(chtCorePath);
 
     // Display issue details

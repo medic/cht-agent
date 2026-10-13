@@ -18,12 +18,23 @@ const FIRST: LeftoverStash = { name: 'cht-agent-claude-code-cli-1', sha: 'a'.rep
 const SECOND: LeftoverStash = { name: 'cht-agent-claude-code-cli-2', sha: 'b'.repeat(40), createdAt: 1700000000, age: '2 days ago' };
 const NO_TERMINAL_LINE =
   'No terminal to ask on, so the run stops. To continue and leave the stash in place, set CHT_AGENT_IGNORE_LEAKED_STASH=true.';
+const SUPPORTED_GIT: realWorkspace.GitVersion = { major: 2, minor: 55, text: '2.55.0' };
 
-/** The screen module with the leftover list, the `.git` check and (optionally) readline replaced. */
-const loadScreen = (list: sinon.SinonStub, opts: { git?: boolean; readline?: unknown } = {}) =>
+/**
+ * The screen module with the leftover list, the `.git` check, the git version
+ * read (default: 2.55.0, so no test runs a real git) and (optionally) readline replaced.
+ */
+const loadScreen = (
+  list: sinon.SinonStub,
+  opts: { git?: boolean; readline?: unknown; version?: sinon.SinonStub } = {},
+) =>
   proxyquire('../../src/cli/stash-screen', {
     'node:fs': { existsSync: sinon.stub().returns(opts.git ?? true) },
-    '../layers/code-gen/modules/claude-code-cli/workspace': { ...realWorkspace, listLeftoverStashes: list },
+    '../layers/code-gen/modules/claude-code-cli/workspace': {
+      ...realWorkspace,
+      listLeftoverStashes: list,
+      readGitVersion: opts.version ?? sinon.stub().resolves(SUPPORTED_GIT),
+    },
     ...(opts.readline ? { 'node:readline/promises': opts.readline } : {}),
   });
 
@@ -185,6 +196,127 @@ describe('stash-screen', () => {
       } finally {
         __resetStashPolicyForTests();
       }
+    });
+  });
+
+  describe('the git version check in prepareStashPolicy', () => {
+    afterEach(() => __resetStashPolicyForTests());
+
+    const OLD_GIT: realWorkspace.GitVersion = { major: 2, minor: 33, text: '2.33.1' };
+    const FLOOR_LINES = [
+      'git 2.33.1 is older than 2.34, the oldest git that cht-agent supports; refuse to run cht-agent. Nothing was changed.',
+      'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
+        'and the capture can add them to the generated files.',
+      'Install git 2.34 or later, then run again. To run anyway at your own risk, set CHT_AGENT_ALLOW_OLD_GIT=true ' +
+        '(npm run dev:run and npm run full read it).',
+    ];
+    const WARNING_LINES = [
+      '[cht-agent] git 2.33.1 is older than 2.34. CHT_AGENT_ALLOW_OLD_GIT=true: the run goes on at your own risk.',
+      `[cht-agent] ${FLOOR_LINES[1]}`,
+    ];
+    const allowEnv = (value: string | undefined, interactive = false) => ({
+      interactive, ask: sinon.stub(), env: { CHT_AGENT_ALLOW_OLD_GIT: value },
+    });
+    /** The error that stopped the run, or a failed assert when nothing stopped it. */
+    const rejection = (p: Promise<unknown>): Promise<unknown> =>
+      p.then(() => expect.fail('the check did not stop the run'), (e: unknown) => e);
+
+    for (const value of [undefined, 'false', '1', 'yes', '']) {
+      it(`stops below 2.34, before the leftover check, when CHT_AGENT_ALLOW_OLD_GIT is ${JSON.stringify(value)}`, async () => {
+        const list = sinon.stub().resolves([]);
+        const io = allowEnv(value);
+        const screen = loadScreen(list, { version: sinon.stub().resolves(OLD_GIT) });
+        const err = await rejection(screen.prepareStashPolicy(CHT, io)) as WorkspaceSafetyError;
+        expect(err).to.be.instanceOf(WorkspaceSafetyError);
+        expect(err.kind).to.equal('precondition');
+        expect(err.message).to.equal(FLOOR_LINES[0]);
+        expect(err.lines).to.deep.equal(FLOOR_LINES);
+        expect(list.called).to.equal(false);
+        expect(io.ask.called).to.equal(false);
+        // The CLI prints the lines once, through reportRunHalt.
+        expect(printed(errorSpy)).to.deep.equal([]);
+        expect(printed(warnSpy)).to.deep.equal([]);
+        expect(getStashPolicy()).to.deep.equal({ acceptedLeftoverShas: [] });
+      });
+    }
+
+    for (const value of ['true', ' TRUE ', 'True']) {
+      it(`goes on below 2.34 with two warning lines when CHT_AGENT_ALLOW_OLD_GIT is ${JSON.stringify(value)}`, async () => {
+        const list = sinon.stub().resolves([]);
+        const io = allowEnv(value);
+        const screen = loadScreen(list, { version: sinon.stub().resolves(OLD_GIT) });
+        await noThrow(screen.prepareStashPolicy(CHT, io));
+        expect(printed(warnSpy)).to.deep.equal(WARNING_LINES);
+        expect(printed(errorSpy)).to.deep.equal([]);
+        expect(getStashPolicy().allowOldGit).to.equal(true);
+        expect(list.calledOnce).to.equal(true);
+        expect(io.ask.called).to.equal(false);
+      });
+    }
+
+    it('works the same on a terminal, and never asks about the git version', async () => {
+      const list = sinon.stub().resolves([]);
+      const screen = loadScreen(list, { version: sinon.stub().resolves(OLD_GIT) });
+      const stopped = allowEnv(undefined, true);
+      const err = await rejection(screen.prepareStashPolicy(CHT, stopped)) as WorkspaceSafetyError;
+      expect(err.kind).to.equal('precondition');
+      expect(err.lines).to.deep.equal(FLOOR_LINES);
+      const allowed = allowEnv('true', true);
+      await noThrow(screen.prepareStashPolicy(CHT, allowed));
+      expect(getStashPolicy().allowOldGit).to.equal(true);
+      expect(printed(warnSpy)).to.deep.equal(WARNING_LINES);
+      expect(stopped.ask.called).to.equal(false);
+      expect(allowed.ask.called).to.equal(false);
+    });
+
+    it('reads no git version when the path is not a git checkout', async () => {
+      const version = sinon.stub().resolves(OLD_GIT);
+      const screen = loadScreen(sinon.stub().resolves([]), { git: false, version });
+      expect(await screen.runGitFloorCheck(CHT, {})).to.equal(false);
+      await noThrow(screen.prepareStashPolicy(CHT, allowEnv(undefined)));
+      expect(version.called).to.equal(false);
+      expect(getStashPolicy()).to.not.have.property('allowOldGit');
+    });
+
+    it('warns once and goes on with no allowOldGit when the git version cannot be read', async () => {
+      const message = 'cht-agent could not read the git version (spawn git ENOENT); nothing was changed.';
+      const version = sinon.stub().rejects(new WorkspaceSafetyError('precondition', message, { lines: [message] }));
+      const list = sinon.stub().resolves([]);
+      const screen = loadScreen(list, { version });
+      // Even with the override: the snapshot reads the version again and decides there.
+      await noThrow(screen.prepareStashPolicy(CHT, allowEnv('true')));
+      expect(printed(warnSpy)).to.deep.equal([
+        `[cht-agent] ${message} The run goes on: cht-agent reads the git version again before it stashes anything.`,
+      ]);
+      expect(printed(errorSpy)).to.deep.equal([]);
+      expect(getStashPolicy()).to.not.have.property('allowOldGit');
+      expect(list.calledOnce).to.equal(true);
+    });
+
+    it('prints nothing and sets no allowOldGit at or above 2.34', async () => {
+      const supported: realWorkspace.GitVersion[] = [
+        { major: 2, minor: 34, text: '2.34.0' },
+        { major: 2, minor: 39, text: '2.39.5 (Apple Git-154)' },
+        { major: 2, minor: 45, text: '2.45.1.windows.1' },
+        { major: 3, minor: 0, text: '3.0.0' },
+      ];
+      for (const v of supported) {
+        const screen = loadScreen(sinon.stub().resolves([]), { version: sinon.stub().resolves(v) });
+        expect(await screen.runGitFloorCheck(CHT, { CHT_AGENT_ALLOW_OLD_GIT: 'true' }), v.text).to.equal(false);
+        await noThrow(screen.prepareStashPolicy(CHT, allowEnv('true')));
+        expect(Object.keys(getStashPolicy()), v.text).to.deep.equal(['acceptedLeftoverShas', 'onSpareStash']);
+      }
+      expect(printed(warnSpy)).to.deep.equal([]);
+      expect(printed(errorSpy)).to.deep.equal([]);
+    });
+
+    it('throws any other error from the version read as it is, before the leftover check', async () => {
+      const boom = new Error('boom');
+      const list = sinon.stub().resolves([]);
+      const screen = loadScreen(list, { version: sinon.stub().rejects(boom) });
+      expect(await rejection(screen.prepareStashPolicy(CHT, allowEnv('true')))).to.equal(boom);
+      expect(list.called).to.equal(false);
+      expect(printed(warnSpy)).to.deep.equal([]);
     });
   });
 

@@ -1,24 +1,32 @@
 /**
  * The stash screen at the CLI edge (dev.ts, full.ts).
  *
- * At the start of a run, before any LLM call, it looks for leftover cht-agent
- * stashes. On a terminal it asks what to do. Without one it stops the run,
- * unless CHT_AGENT_IGNORE_LEAKED_STASH is true. During the run, on a terminal,
- * it asks what to do at a stash failure point. The workspace helpers never read
- * the env or a terminal: this module reads both and hands the result to them
- * through the stash policy holder.
+ * At the start of a run, before any LLM call, it checks the git version, then
+ * looks for leftover cht-agent stashes. Below the oldest supported git it stops
+ * the run, unless CHT_AGENT_ALLOW_OLD_GIT is true. For a leftover, on a terminal
+ * it asks what to do. Without one it stops the run, unless
+ * CHT_AGENT_IGNORE_LEAKED_STASH is true. During the run, on a terminal, it asks
+ * what to do at a stash failure point. The workspace helpers never read the env
+ * or a terminal: this module reads both and hands the result to them through
+ * the stash policy holder.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline/promises';
 import {
+  ALLOW_OLD_GIT_ENV,
+  GitVersion,
   LeftoverStash,
+  MIN_GIT_VERSION,
   StashChoice,
   StashFailureResolver,
   WorkspaceSafetyError,
+  gitFloorLines,
+  isBelowGitFloor,
   leftoverStashLines,
   listLeftoverStashes,
+  readGitVersion,
   reportSafetyError,
 } from '../layers/code-gen/modules/claude-code-cli/workspace';
 import { acceptSpareStash, setStashPolicy } from '../utils/stash-policy';
@@ -91,6 +99,39 @@ function isTrue(value: string | undefined): boolean {
 /** The claude-api gate skips a path that is not a git checkout, so the check does too. */
 function isGitCheckout(chtCorePath: string): boolean {
   return fs.existsSync(path.join(chtCorePath, '.git'));
+}
+
+/**
+ * A failed read does not stop the run: the snapshot reads the version again
+ * before it stashes anything, and refuses there.
+ */
+async function readGitVersionOrWarn(chtCorePath: string): Promise<GitVersion | null> {
+  try {
+    return await readGitVersion(chtCorePath);
+  } catch (err) {
+    if (!(err instanceof WorkspaceSafetyError)) throw err;
+    console.warn(`${LOG} ${err.message} The run goes on: cht-agent reads the git version again before it stashes anything.`);
+    return null;
+  }
+}
+
+/**
+ * The git version check at the start of a run. Gives true when the git is below
+ * MIN_GIT_VERSION and CHT_AGENT_ALLOW_OLD_GIT is true (it printed the warning).
+ * It never asks, so a terminal changes nothing. Throws a `precondition`
+ * WorkspaceSafetyError to stop the run.
+ */
+export async function runGitFloorCheck(chtCorePath: string, env: ScreenIo['env']): Promise<boolean> {
+  if (!isGitCheckout(chtCorePath)) return false;
+  const version = await readGitVersionOrWarn(chtCorePath);
+  if (!version || !isBelowGitFloor(version)) return false;
+  const lines = gitFloorLines(version);
+  if (!isTrue(env[ALLOW_OLD_GIT_ENV])) throw new WorkspaceSafetyError('precondition', lines[0], { lines });
+  console.warn(
+    `${LOG} git ${version.text} is older than ${MIN_GIT_VERSION}. ${ALLOW_OLD_GIT_ENV}=true: the run goes on at your own risk.`,
+  );
+  console.warn(`${LOG} ${lines[1]}`);
+  return true;
 }
 
 /**
@@ -188,11 +229,13 @@ function terminalIo(): ScreenIo {
   return { interactive: process.stdin.isTTY === true, ask: askChoice, env: process.env };
 }
 
-/** Run the leftover check, then set this run's stash policy. Call before any LLM call. */
+/** Run the git version check and the leftover check, then set this run's stash policy. Call before any LLM call. */
 export async function prepareStashPolicy(chtCorePath: string, io: ScreenIo = terminalIo()): Promise<void> {
+  const allowOldGit = await runGitFloorCheck(chtCorePath, io.env);
   setStashPolicy({
     acceptedLeftoverShas: await runLeftoverCheck(chtCorePath, io),
     resolveStashFailure: makeStashFailureResolver(io),
     onSpareStash: acceptSpareStash,
+    allowOldGit,
   });
 }

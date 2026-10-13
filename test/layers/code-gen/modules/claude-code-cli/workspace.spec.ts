@@ -43,6 +43,9 @@ const scriptedExecFile = (script: Script, calls: string[] = [], options: Array<{
   return fn;
 };
 
+/** Every snapshot reads `git version`: a supported git, unless the test sets the key. */
+const SUPPORTED_GIT: Script = { 'git version': { stdout: 'git version 2.55.0\n' } };
+
 const loadWorkspace = (
   script: Script,
   fsStubs: Record<string, unknown> = {},
@@ -50,7 +53,7 @@ const loadWorkspace = (
   options: Array<{ env?: NodeJS.ProcessEnv }> = [],
 ) => {
   return proxyquire(WORKSPACE, {
-    'node:child_process': { execFile: scriptedExecFile(script, calls, options) },
+    'node:child_process': { execFile: scriptedExecFile(withDefaults(script, SUPPORTED_GIT), calls, options) },
     'node:fs/promises': {
       readFile: sinon.stub().resolves('file contents'),
       ...fsStubs,
@@ -2384,6 +2387,116 @@ describe('workspace.ts', () => {
       expect(result.reset).to.equal('failed');
       expect(result.errors).to.have.length(1);
       expect(result.errors[0]).to.match(/^reset: /);
+    });
+  });
+
+  describe('the git version floor', () => {
+    beforeEach(() => sinon.stub(Date, 'now').returns(NOW));
+    afterEach(() => sinon.restore());
+
+    /** The first two git calls of every snapshot: the toplevel check, then the version. */
+    const FIRST_CALLS = ['git rev-parse --show-prefix', 'git version'];
+
+    /** A dirty tree, which the snapshot stashes unless it refuses first. */
+    const DIRTY_TREE: Script = {
+      'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+      // The post-push check: the stash left no tracked change.
+      'git status --porcelain=v1': { stdout: '' },
+      'git status --porcelain': { stdout: ' M file.ts\n' },
+      'git stash push': { stdout: 'Saved\n' },
+      'git stash list -z': STASH_CREATED,
+    };
+
+    type Outcome = { stashSha?: string; headSha?: string; kind?: string; message?: string; lines?: string[]; cause?: unknown };
+
+    /** The snapshot under this `git version` answer: its result or refusal, every git call, and every printed line. */
+    const snapshotUnder = async (version: Answer, options: Record<string, unknown> = {}, tree: Script = DIRTY_TREE) => {
+      const calls: string[] = [];
+      const ws = loadWorkspace({ 'git version': version, ...tree }, {}, calls);
+      const spies = [sinon.stub(console, 'log'), sinon.stub(console, 'warn'), sinon.stub(console, 'error')];
+      const outcome = await ws.snapshotChtCore('/tmp/cht-core', options).catch((err: unknown) => err);
+      const printed = spies.flatMap(spy => spy.getCalls().map(c => String(c.args[0])));
+      return { ws, outcome: outcome as Outcome, calls, printed };
+    };
+
+    const floorLines = (text: string) => [
+      `git ${text} is older than 2.34, the oldest git that cht-agent supports; refuse to run cht-agent. ` +
+        'Nothing was changed.',
+      'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
+        'and the capture can add them to the generated files.',
+      'Install git 2.34 or later, then run again. To run anyway at your own risk, set ' +
+        'CHT_AGENT_ALLOW_OLD_GIT=true (npm run dev:run and npm run full read it).',
+    ];
+
+    const versionReadLine = (gitText: string) => `cht-agent could not read the git version (${gitText}); nothing was changed.`;
+
+    const versionFailure = () => Object.assign(new Error('Command failed: git version\nfatal: injected'), {
+      code: 128, stderr: 'fatal: injected',
+    });
+
+    for (const text of ['2.31.8', '2.33.1', '2.4.0']) {
+      it(`refuses git ${text} right after the toplevel check, and never stashes`, async () => {
+        const { ws, outcome, calls } = await snapshotUnder({ stdout: `git version ${text}\n` });
+        expect(calls).to.deep.equal(FIRST_CALLS);
+        expect(outcome).to.be.instanceOf(ws.WorkspaceSafetyError);
+        expect(outcome.kind).to.equal('precondition');
+        expect(outcome.lines).to.deep.equal(floorLines(text));
+        expect(outcome.message).to.equal(floorLines(text)[0]);
+      });
+    }
+
+    for (const text of ['2.34.0', '2.39.5 (Apple Git-154)', '2.45.1.windows.1', '3.0.0']) {
+      it(`reads git ${text} right after the toplevel check, then stashes as before`, async () => {
+        const { outcome, calls } = await snapshotUnder({ stdout: `git version ${text}\n` });
+        expect(calls.slice(0, 2)).to.deep.equal(FIRST_CALLS);
+        expect(outcome.stashSha).to.equal(OUR_SHA);
+      });
+    }
+
+    it('goes on below the floor when the caller allows old git, and prints nothing about it', async () => {
+      const { outcome, calls, printed } = await snapshotUnder(
+        { stdout: 'git version 2.31.8\n' },
+        { allowOldGit: true },
+        { 'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' }, 'git status --porcelain': { stdout: '' } },
+      );
+      expect(calls.slice(0, 2)).to.deep.equal(FIRST_CALLS);
+      expect(outcome.headSha).to.equal('abc1234deadbeef');
+      expect(printed).to.deep.equal([]);
+    });
+
+    for (const [label, answer, gitText] of [
+      ['prints "hello"', { stdout: 'hello\n' }, 'git printed "hello", not a git version'],
+      ['prints nothing', { stdout: '' }, 'git printed "", not a git version'],
+      ['fails', { error: versionFailure() }, 'fatal: injected'],
+    ] as Array<[string, Answer, string]>) {
+      it(`refuses as precondition, and never stashes, when git version ${label}`, async () => {
+        const { outcome, calls } = await snapshotUnder(answer);
+        expect(calls).to.deep.equal(FIRST_CALLS);
+        expect(outcome.kind).to.equal('precondition');
+        expect(outcome.message).to.equal(versionReadLine(gitText));
+        expect(outcome.lines).to.deep.equal([versionReadLine(gitText)]);
+      });
+    }
+
+    it('refuses a git version that cannot be read even when the caller allows old git', async () => {
+      const failure = versionFailure();
+      const { outcome, calls } = await snapshotUnder({ error: failure }, { allowOldGit: true });
+      expect(calls).to.deep.equal(FIRST_CALLS);
+      expect(outcome.kind).to.equal('precondition');
+      expect(outcome.message).to.equal(versionReadLine('fatal: injected'));
+      expect(outcome.cause).to.equal(failure);
+    });
+
+    it('reads the major and minor numbers, and keeps a vendor suffix in the text', async () => {
+      const ws = loadWorkspace({ 'git version': { stdout: 'git version 2.39.5 (Apple Git-154)\n' } });
+      expect(await ws.readGitVersion('/tmp/cht-core')).to.deep.equal({ major: 2, minor: 39, text: '2.39.5 (Apple Git-154)' });
+      expect(ws.MIN_GIT_VERSION).to.equal('2.34');
+      expect(ws.ALLOW_OLD_GIT_ENV).to.equal('CHT_AGENT_ALLOW_OLD_GIT');
+      expect(ws.isBelowGitFloor({ major: 1, minor: 99, text: '1.99.0' })).to.equal(true);
+      expect(ws.isBelowGitFloor({ major: 2, minor: 33, text: '2.33.9' })).to.equal(true);
+      expect(ws.isBelowGitFloor({ major: 2, minor: 34, text: '2.34.0' })).to.equal(false);
+      expect(ws.isBelowGitFloor({ major: 3, minor: 0, text: '3.0.0' })).to.equal(false);
+      expect(ws.gitFloorLines({ major: 2, minor: 33, text: '2.33.1' })).to.deep.equal(floorLines('2.33.1'));
     });
   });
 

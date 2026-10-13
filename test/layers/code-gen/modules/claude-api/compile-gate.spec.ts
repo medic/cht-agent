@@ -394,6 +394,17 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     let repo: string;
     const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
 
+    before(async () => {
+      // Fail, never skip: these tests run the real snapshot, which refuses below the floor.
+      const version = await realWorkspace.readGitVersion(os.tmpdir());
+      if (realWorkspace.isBelowGitFloor(version)) {
+        throw new Error(
+          `git ${version.text} is older than ${realWorkspace.MIN_GIT_VERSION}, the oldest git that cht-agent ` +
+            `supports. Run this spec with git ${realWorkspace.MIN_GIT_VERSION} or later.`,
+        );
+      }
+    });
+
     beforeEach(() => {
       repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-prefix-'));
       git('init', '-q');

@@ -120,7 +120,8 @@ const STRIPPED_GIT_ENV = [
  * inside our git calls. One builder hardens every call, through the env, not
  * `-c`. Both forms reach the git programs that git runs. The env form keeps our
  * argv, so every node 'Command failed: git <argv>' message shows the command as
- * the operator would type it. The env form needs git 2.31 or later.
+ * the operator would type it. The env form needs git 2.31 or later; cht-agent
+ * needs MIN_GIT_VERSION (2.34).
  */
 const HARDENED_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
   ['core.fsmonitor', 'false'],
@@ -180,6 +181,75 @@ function readRefusal(what: string, err: unknown): WorkspaceSafetyError {
   return new WorkspaceSafetyError('precondition', message, { cause: err, lines: [message] });
 }
 
+/**
+ * The oldest git that cht-agent supports, the oldest on which the real-git
+ * acceptance spec passes in full. Older git can miss an ignored file inside an
+ * untracked dir: the capture can then claim it, and the rollback can delete it.
+ */
+export const MIN_GIT_VERSION = '2.34';
+
+/**
+ * The env var that lets a run go on below MIN_GIT_VERSION. Only the CLI edge
+ * reads it; the refusal below names it.
+ */
+export const ALLOW_OLD_GIT_ENV = 'CHT_AGENT_ALLOW_OLD_GIT';
+
+const [FLOOR_MAJOR, FLOOR_MINOR] = MIN_GIT_VERSION.split('.').map(Number);
+
+/** What `git version` printed. */
+export interface GitVersion {
+  major: number;
+  minor: number;
+  /** The text after "git version ", for example "2.39.5 (Apple Git-154)" or "2.45.1.windows.1". */
+  text: string;
+}
+
+const GIT_VERSION_LINE = /^git version (\d+)\.(\d+)/;
+
+/**
+ * The git version that runs in `cwd`. Vendor suffixes are kept in `text`. A
+ * failed call, or a first line without a version, is a `precondition` refusal.
+ */
+export async function readGitVersion(cwd: string): Promise<GitVersion> {
+  const { stdout } = await readBeforeStash('the git version', () => runGit(['version'], cwd));
+  const line = stdout.trim().split('\n')[0];
+  const match = GIT_VERSION_LINE.exec(line);
+  if (!match) {
+    throw readRefusal('the git version', new Error(`git printed ${JSON.stringify(line)}, not a git version`));
+  }
+  return { major: Number(match[1]), minor: Number(match[2]), text: line.slice('git version '.length).trim() };
+}
+
+/** Major and minor compared as numbers: a string compare would accept 2.4, a minor-only one refuse 3.0. */
+export function isBelowGitFloor(v: GitVersion): boolean {
+  return v.major < FLOOR_MAJOR || (v.major === FLOOR_MAJOR && v.minor < FLOOR_MINOR);
+}
+
+/** The refusal below the floor: the found version, the risk, and the two ways on. */
+export function gitFloorLines(v: GitVersion): string[] {
+  return [
+    `git ${v.text} is older than ${MIN_GIT_VERSION}, the oldest git that cht-agent supports; refuse to run ` +
+      'cht-agent. Nothing was changed.',
+    'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
+      'and the capture can add them to the generated files.',
+    `Install git ${MIN_GIT_VERSION} or later, then run again. To run anyway at your own risk, set ` +
+      `${ALLOW_OLD_GIT_ENV}=true (npm run dev:run and npm run full read it).`,
+  ];
+}
+
+/**
+ * Refuse below the floor unless the caller allows old git. That caller is the
+ * CLI edge, which read the override and printed the warning, so this prints
+ * nothing. A version that cannot be read refuses even then: the override
+ * covers only a version below the floor.
+ */
+async function assertGitFloor(chtCorePath: string, allowOldGit: boolean): Promise<void> {
+  const version = await readGitVersion(chtCorePath);
+  if (!isBelowGitFloor(version) || allowOldGit) return;
+  const lines = gitFloorLines(version);
+  throw new WorkspaceSafetyError('precondition', lines[0], { lines });
+}
+
 /** The log prefix of the snapshot and rollback lines when the caller names none. */
 const DEFAULT_LOG_PREFIX = '[claude-code-cli]';
 
@@ -209,6 +279,8 @@ export interface WorkspaceCallOptions {
   resolveStashFailure?: StashFailureResolver;
   /** Called with the SHA of an entry of ours that a drop left behind after the work was proven back. */
   onSpareStash?: (sha: string) => void;
+  /** Run below MIN_GIT_VERSION. Set only by the CLI edge, which read the override and printed the warning. */
+  allowOldGit?: boolean;
 }
 
 /** Our own entry that a drop left behind after the work was proven back. */
@@ -1579,6 +1651,8 @@ function acceptSpares(loop: ChoiceLoop, spares: readonly SpareStash[], onSpareSt
 async function snapshotOnce(chtCorePath: string, options: WorkspaceCallOptions): Promise<ChtCoreSnapshot> {
   const logPrefix = options.logPrefix ?? DEFAULT_LOG_PREFIX;
   await assertAtToplevel(chtCorePath);
+  // After the toplevel check, so a path that is not a git repo gets its own refusal.
+  await assertGitFloor(chtCorePath, options.allowOldGit === true);
   // A leftover stash can hold the operator's work; stashing on top of it would bury it deeper.
   await assertNoLeakedStash(chtCorePath, options.acceptedLeftoverShas);
 

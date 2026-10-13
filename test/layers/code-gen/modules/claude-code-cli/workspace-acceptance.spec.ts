@@ -11,6 +11,9 @@ import {
   buildRecoveryChecklist,
   STASH_MARKER_PREFIX,
   ChtCoreSnapshot,
+  MIN_GIT_VERSION,
+  readGitVersion,
+  isBelowGitFloor,
 } from '../../../../../src/layers/code-gen/modules/claude-code-cli/workspace';
 
 const execFileAsync = promisify(execFile);
@@ -36,6 +39,17 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
       return false;
     }
   };
+
+  before(async () => {
+    // Fail, never skip: below the floor, these tests fail with the loss that the floor exists for.
+    const version = await readGitVersion(os.tmpdir());
+    if (isBelowGitFloor(version)) {
+      throw new Error(
+        `git ${version.text} is older than ${MIN_GIT_VERSION}, the oldest git that cht-agent supports. ` +
+          `Run this spec with git ${MIN_GIT_VERSION} or later.`,
+      );
+    }
+  });
 
   beforeEach(async () => {
     repo = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-accept-'));
