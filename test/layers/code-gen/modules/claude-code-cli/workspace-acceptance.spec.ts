@@ -120,6 +120,40 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(stashes).to.not.include(STASH_MARKER_PREFIX);
   });
 
+  it('captures and cleans a session file at the path of a stashed operator file, then restores the operator copy', async () => {
+    await write('operator-notes.md', 'my notes\n');            // untracked, so the push stashes it
+    await write('tracked.txt', 'operator work in progress\n');
+    const snapshot = await snapshotChtCore(repo);
+    expect(await exists('operator-notes.md'), 'the push took the operator file').to.equal(false);
+
+    await write('operator-notes.md', 'session notes\n');       // the session writes at the stashed path
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    expect(captured.find(f => f.path === 'operator-notes.md')?.content).to.equal('session notes\n');
+
+    const rollback = await rollbackChtCore(repo, snapshot);
+    expect([rollback.reset, rollback.clean, rollback.stashPop]).to.deep.equal(['ok', 'ok', 'ok']);
+    expect(await read('operator-notes.md')).to.equal('my notes\n');
+    expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+    expect((await git('stash', 'list')).stdout).to.not.include(STASH_MARKER_PREFIX);
+  });
+
+  it('captures and cleans a session file in a dir that only the stashed .gitignore edit ignored', async () => {
+    await write('.gitignore', 'node_modules/\nbuild/\n');         // uncommitted edit: the push stashes it
+    await fs.mkdir(path.join(repo, 'build'));
+    await write('build/out.js', 'operator build output\n');       // ignored only by that edit
+    const snapshot = await snapshotChtCore(repo);
+
+    await write('build/session.js', 'export const s = 1;\n');     // a session file inside that dir
+    const captured = await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+    expect(captured.map(f => f.path)).to.deep.equal(['build/session.js']);
+
+    const rollback = await rollbackChtCore(repo, snapshot);
+    expect([rollback.reset, rollback.clean, rollback.stashPop]).to.deep.equal(['ok', 'ok', 'ok']);
+    expect(await exists('build/session.js')).to.equal(false);
+    expect(await read('build/out.js')).to.equal('operator build output\n');
+    expect(await read('.gitignore')).to.equal('node_modules/\nbuild/\n');
+  });
+
   it('residual: a session overwrite of a file untracked at snapshot is neither captured nor undone', async () => {
     await makeDirty(); // .aider.chat is unmasked by the stashed .gitignore edit: baseline-untracked
     const snapshot = await snapshotChtCore(repo);
