@@ -122,9 +122,12 @@ const STRIPPED_GIT_ENV = [
  * argv, so every node 'Command failed: git <argv>' message shows the command as
  * the operator would type it. The env form needs git 2.31 or later; cht-agent
  * needs MIN_GIT_VERSION (2.34).
+ *
+ * An empty `core.fsmonitor` turns fsmonitor off on every supported git; the
+ * string 'false' is a program name before git 2.36.
  */
 const HARDENED_GIT_CONFIG: ReadonlyArray<readonly [string, string]> = [
-  ['core.fsmonitor', 'false'],
+  ['core.fsmonitor', ''],
   ['core.hooksPath', '/dev/null'],
 ];
 

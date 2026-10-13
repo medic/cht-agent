@@ -286,6 +286,25 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     }
   });
 
+  it('never runs a program named false from PATH (core.fsmonitor=false runs one on git 2.34 and 2.35)', async () => {
+    const binDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-false-'));
+    const ran = path.join(binDir, 'ran.log');
+    try {
+      await fs.writeFile(path.join(binDir, 'false'), `#!/bin/sh\necho "$0 $*" >> '${ran}'\nexit 1\n`, { mode: 0o755 });
+      await withEnv('PATH', `${binDir}${path.delimiter}${process.env.PATH ?? ''}`, async () => {
+        await makeDirty();
+        const snapshot = await snapshotChtCore(repo);
+        await write('session.ts', 'export const s = 1;\n');
+        await captureChtCoreDiff(repo, snapshot.headSha, snapshot.baselineUntracked);
+        await rollbackChtCore(repo, snapshot);
+      });
+      expect(await fs.readFile(ran, 'utf-8').catch(() => ''), 'runs of the false on PATH').to.equal('');
+      expect(await read('tracked.txt')).to.equal('operator work in progress\n');
+    } finally {
+      await fs.rm(binDir, { recursive: true, force: true });
+    }
+  });
+
   it('cleans the session file even when GIT_LITERAL_PATHSPECS is inherited', async () => {
     const snapshot = await snapshotChtCore(repo);
     await write('session.txt', 'session scratch\n');

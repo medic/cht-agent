@@ -2558,5 +2558,19 @@ describe('workspace.ts', () => {
         expect(opts.env?.GIT_CONFIG_KEY_1).to.equal('core.hooksPath');
       }
     });
+
+    it('turns fsmonitor off with an empty value, which no git runs as a program', async () => {
+      const options: Array<{ env?: NodeJS.ProcessEnv }> = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234\n' },
+        'git status --porcelain': { stdout: '' },
+      }, {}, [], options);
+      await ws.snapshotChtCore('/tmp/cht-core');
+      expect(options.length).to.be.greaterThan(3);
+      for (const opts of options) {
+        expect(opts.env?.GIT_CONFIG_VALUE_0).to.equal('');
+        expect(opts.env?.GIT_CONFIG_VALUE_1).to.equal('/dev/null');
+      }
+    });
   });
 });
