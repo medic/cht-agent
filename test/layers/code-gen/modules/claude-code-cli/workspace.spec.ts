@@ -2140,9 +2140,10 @@ describe('workspace.ts', () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard abc1234': { error: new Error('warning during reset') },
         // verify (tree diff vs the snapshot) says the reset landed
-        'git diff --quiet abc1234': { stdout: '' },
+        'git diff-index --quiet abc1234': { stdout: '' },
       });
-      const ws = loadWorkspace(script);
+      const calls: string[] = [];
+      const ws = loadWorkspace(script, {}, calls);
 
       // Should not throw and should not log a "during rollback failed" warning.
       const warnSpy = sinon.spy(console, 'warn');
@@ -2153,6 +2154,9 @@ describe('workspace.ts', () => {
       }
       const failureWarn = warnSpy.getCalls().find(c => /reset --hard during rollback failed/.test(String(c.args[0])));
       expect(failureWarn).to.be.undefined;
+      // The check is plumbing, which runs no diff helper: never porcelain `git diff --quiet`.
+      expect(calls).to.include('git diff-index --quiet abc1234 --');
+      expect(calls.some(c => c.startsWith('git diff --quiet'))).to.equal(false);
     });
 
     it('reset failure is reported when the tree does NOT match the snapshot', async () => {
@@ -2161,7 +2165,7 @@ describe('workspace.ts', () => {
       // Only a tree diff against the snapshot shows the edits that stayed.
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard': { error: new Error('fatal: Unable to create index.lock') },
-        'git diff --quiet abc1234': { error: new Error('tree still differs') },
+        'git diff-index --quiet abc1234': { error: new Error('tree still differs') },
       });
       const ws = loadWorkspace(script);
 
@@ -2176,7 +2180,7 @@ describe('workspace.ts', () => {
         'git reset --hard': { error: Object.assign(new Error('Command failed: git reset --hard abc1234'), {
           stderr: "error: unable to unlink old 'rt/t.txt': Permission denied\n",
         }) },
-        'git diff --quiet abc1234': { error: new Error('tree still differs') },
+        'git diff-index --quiet abc1234': { error: new Error('tree still differs') },
         'git diff --name-only -z abc1234': { stdout: 'rt/t.txt\0' },
         'git ls-files --others --exclude-standard': { stdout: 'session-new.ts\0' },
       });
@@ -2405,7 +2409,7 @@ describe('workspace.ts', () => {
       const { snapshot, script } = rollbackFixture({}, {
         'git reset --hard': { error: new Error('reset blew up') },
         // Verify says the tree still differs from the snapshot, so reset is judged failed.
-        'git diff --quiet abc1234': { error: new Error('tree still differs') },
+        'git diff-index --quiet abc1234': { error: new Error('tree still differs') },
       });
       const ws = loadWorkspace(script);
 

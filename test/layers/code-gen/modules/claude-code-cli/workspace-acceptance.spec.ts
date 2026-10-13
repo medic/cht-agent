@@ -396,6 +396,43 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
     expect(lines).to.not.include('stash drop');
   });
 
+  it('keeps the stash when the reset fails, even when a diff helper in the config would say "no change"', async function () {
+    if (process.getuid?.() === 0) this.skip(); // root ignores the read-only dir
+    const helperDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ws-diff-helper-'));
+    const ran = path.join(helperDir, 'ran.log');
+    try {
+      // From git 2.46, porcelain `git diff --quiet` runs this helper and trusts its exit 0.
+      const helper = path.join(helperDir, 'helper.sh');
+      await fs.writeFile(helper, `#!/bin/sh\necho "$*" >> '${ran}'\nexit 0\n`, { mode: 0o755 });
+      await fs.mkdir(path.join(repo, 'rt'));
+      await write('rt/t.txt', 'committed\n');
+      await git('add', 'rt');
+      await git('commit', '-m', 'rt');
+      // In the temp repo's own config, never in the user's.
+      await git('config', 'diff.external', helper);
+      await git('config', 'diff.trustExitCode', 'true');
+      await makeDirty();
+      const snapshot = await snapshotChtCore(repo);
+
+      await write('rt/t.txt', 'session edit\n');
+      await fs.chmod(path.join(repo, 'rt'), 0o555);
+      let rollback;
+      try {
+        rollback = await rollbackChtCore(repo, snapshot);
+      } finally {
+        await fs.chmod(path.join(repo, 'rt'), 0o755);
+      }
+
+      expect(rollback.reset).to.equal('failed');
+      expect(rollback.stashPop).to.equal('skipped');
+      const { stdout: stashes } = await git('stash', 'list');
+      expect(stashes, 'no restore over a failed reset').to.include(String(snapshot.stashName));
+      expect(await fs.readFile(ran, 'utf-8').catch(() => ''), 'diff helper runs').to.equal('');
+    } finally {
+      await fs.rm(helperDir, { recursive: true, force: true });
+    }
+  });
+
   it('never deletes an ignored operator file that a session rule unmasked when the reset fails', async () => {
     await write('.gitignore', 'node_modules/\n.env\n');
     await git('commit', '-am', 'ignore .env');

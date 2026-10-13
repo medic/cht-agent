@@ -2305,10 +2305,13 @@ async function resetToSnapshot(
       chtCorePath,
       // Verify RESTORATION, not HEAD identity: the pre-checks already proved
       // that HEAD is the snapshot's, so HEAD says nothing about a reset that
-      // failed (a stale index.lock, say). `diff --quiet <sha> --` exits 0 only
-      // when tracked content matches the snapshot; untracked files are the
-      // clean step's job.
-      () => gitSucceeds(['diff', '--quiet', snapshot.headSha, '--'], chtCorePath),
+      // failed (a stale index.lock, say). `diff-index --quiet <sha> --` exits 0
+      // only when tracked content matches the snapshot; untracked files are the
+      // clean step's job. diff-index is plumbing: it runs no diff helper and no
+      // textconv. From git 2.46, porcelain `git diff --quiet` runs a helper that
+      // the config or the env trusts, and its exit 0 hid a failed reset. A stale
+      // index can only make diff-index say "differs", which keeps the stash.
+      () => gitSucceeds(['diff-index', '--quiet', snapshot.headSha, '--'], chtCorePath),
       `working tree matches ${snapshot.headSha}`,
       logPrefix,
     );
