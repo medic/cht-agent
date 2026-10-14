@@ -2337,7 +2337,9 @@ async function resetToSnapshot(
       // clean step's job. diff-index is plumbing: it runs no diff helper and no
       // textconv. From git 2.46, porcelain `git diff --quiet` runs a helper that
       // the config or the env trusts, and its exit 0 hid a failed reset. A stale
-      // index can only make diff-index say "differs", which keeps the stash.
+      // stat can only make diff-index say "differs", which keeps the stash. Like
+      // porcelain `git diff`, it does not see an edit under an assume-unchanged
+      // or skip-worktree entry.
       () => gitSucceeds(['diff-index', '--quiet', snapshot.headSha, '--'], chtCorePath),
       `working tree matches ${snapshot.headSha}`,
       logPrefix,
