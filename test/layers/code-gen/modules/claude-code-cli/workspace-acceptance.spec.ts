@@ -41,7 +41,7 @@ describe('workspace.ts dirty-checkout acceptance (#140)', () => {
   };
 
   before(async () => {
-    // Fail, never skip: below the floor, these tests fail with the loss that the floor exists for.
+    // Fail, never skip: below the floor every snapshot refuses, so this hook names the version once.
     const version = await readGitVersion(os.tmpdir());
     if (isBelowGitFloor(version)) {
       throw new Error(
