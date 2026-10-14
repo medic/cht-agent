@@ -203,13 +203,14 @@ describe('stash-screen', () => {
     afterEach(() => __resetStashPolicyForTests());
 
     const OLD_GIT: realWorkspace.GitVersion = { major: 2, minor: 33, text: '2.33.1' };
-    const FLOOR_LINES = [
-      'git 2.33.1 is older than 2.34, the oldest git that cht-agent supports; refuse to run cht-agent. Nothing was changed.',
+    const floorLines = (text: string) => [
+      `git ${text} is older than 2.34, the oldest git that cht-agent supports; refuse to run cht-agent. Nothing was changed.`,
       'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
         'and the capture can add them to the generated files.',
-      'Install git 2.34 or later, then run again. To run anyway at your own risk, set CHT_AGENT_ALLOW_OLD_GIT=true ' +
-        '(npm run dev:run and npm run full read it).',
+      'Install git 2.34 or later, then run again. To run anyway at your own risk on git 2.31 to 2.33, set ' +
+        'CHT_AGENT_ALLOW_OLD_GIT=true (npm run dev:run and npm run full read it).',
     ];
+    const FLOOR_LINES = floorLines(OLD_GIT.text);
     const WARNING_LINES = [
       '[cht-agent] git 2.33.1 is older than 2.34. CHT_AGENT_ALLOW_OLD_GIT=true: the run goes on at your own risk.',
       `[cht-agent] ${FLOOR_LINES[1]}`,
@@ -253,6 +254,24 @@ describe('stash-screen', () => {
         expect(io.ask.called).to.equal(false);
       });
     }
+
+    it('stops git 2.30.2 even when CHT_AGENT_ALLOW_OLD_GIT is true: the override works only from 2.31', async () => {
+      const list = sinon.stub().resolves([]);
+      const io = allowEnv('true', true);
+      const screen = loadScreen(list, { version: sinon.stub().resolves({ major: 2, minor: 30, text: '2.30.2' }) });
+      const err = await rejection(screen.prepareStashPolicy(CHT, io)) as WorkspaceSafetyError;
+      expect(err).to.be.instanceOf(WorkspaceSafetyError);
+      expect(err.kind).to.equal('precondition');
+      expect(err.message).to.equal(floorLines('2.30.2')[0]);
+      expect(err.lines).to.deep.equal(floorLines('2.30.2'));
+      expect(list.called).to.equal(false);
+      expect(io.ask.called).to.equal(false);
+      expect(printed(warnSpy)).to.deep.equal([]);
+      expect(printed(errorSpy)).to.deep.equal([]);
+      expect(getStashPolicy()).to.deep.equal({ acceptedLeftoverShas: [] });
+      const lowest = loadScreen(sinon.stub().resolves([]), { version: sinon.stub().resolves({ major: 2, minor: 31, text: '2.31.0' }) });
+      expect(await noThrow(lowest.runGitFloorCheck(CHT, { CHT_AGENT_ALLOW_OLD_GIT: 'true' })), '2.31.0').to.equal(true);
+    });
 
     it('works the same on a terminal, and never asks about the git version', async () => {
       const list = sinon.stub().resolves([]);

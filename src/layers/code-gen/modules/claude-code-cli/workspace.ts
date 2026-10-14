@@ -194,12 +194,20 @@ function readRefusal(what: string, err: unknown): WorkspaceSafetyError {
 export const MIN_GIT_VERSION = '2.34';
 
 /**
- * The env var that lets a run go on below MIN_GIT_VERSION. Only the CLI edge
- * reads it; the refusal below names it.
+ * The env var that lets a run go on below MIN_GIT_VERSION, from
+ * MIN_OVERRIDE_GIT_VERSION. Only the CLI edge reads it; the refusal below names it.
  */
 export const ALLOW_OLD_GIT_ENV = 'CHT_AGENT_ALLOW_OLD_GIT';
 
+/**
+ * The oldest git on which ALLOW_OLD_GIT_ENV works. Older git ignores the
+ * hardened config in the env, and it prints the in-progress markers as
+ * relative paths, so every snapshot refuses there.
+ */
+export const MIN_OVERRIDE_GIT_VERSION = '2.31';
+
 const [FLOOR_MAJOR, FLOOR_MINOR] = MIN_GIT_VERSION.split('.').map(Number);
+const [OVERRIDE_MAJOR, OVERRIDE_MINOR] = MIN_OVERRIDE_GIT_VERSION.split('.').map(Number);
 
 /** What `git version` printed. */
 export interface GitVersion {
@@ -226,8 +234,17 @@ export async function readGitVersion(cwd: string): Promise<GitVersion> {
 }
 
 /** Major and minor compared as numbers: a string compare would accept 2.4, a minor-only one refuse 3.0. */
+function isBelow(v: GitVersion, major: number, minor: number): boolean {
+  return v.major < major || (v.major === major && v.minor < minor);
+}
+
 export function isBelowGitFloor(v: GitVersion): boolean {
-  return v.major < FLOOR_MAJOR || (v.major === FLOOR_MAJOR && v.minor < FLOOR_MINOR);
+  return isBelow(v, FLOOR_MAJOR, FLOOR_MINOR);
+}
+
+/** True from MIN_OVERRIDE_GIT_VERSION: below it, ALLOW_OLD_GIT_ENV has no effect. */
+export function canOverrideGitFloor(v: GitVersion): boolean {
+  return !isBelow(v, OVERRIDE_MAJOR, OVERRIDE_MINOR);
 }
 
 /** The refusal below the floor: the found version, the risk, and the two ways on. */
@@ -237,20 +254,22 @@ export function gitFloorLines(v: GitVersion): string[] {
       'cht-agent. Nothing was changed.',
     'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
       'and the capture can add them to the generated files.',
-    `Install git ${MIN_GIT_VERSION} or later, then run again. To run anyway at your own risk, set ` +
-      `${ALLOW_OLD_GIT_ENV}=true (npm run dev:run and npm run full read it).`,
+    `Install git ${MIN_GIT_VERSION} or later, then run again. To run anyway at your own risk on git ` +
+      `${MIN_OVERRIDE_GIT_VERSION} to ${FLOOR_MAJOR}.${FLOOR_MINOR - 1}, set ${ALLOW_OLD_GIT_ENV}=true ` +
+      '(npm run dev:run and npm run full read it).',
   ];
 }
 
 /**
  * Refuse below the floor unless the caller allows old git. That caller is the
  * CLI edge, which read the override and printed the warning, so this prints
- * nothing. A version that cannot be read refuses even then: the override
- * covers only a version below the floor.
+ * nothing. A version that cannot be read refuses even then, and so does a
+ * version below MIN_OVERRIDE_GIT_VERSION: the override covers only git from
+ * MIN_OVERRIDE_GIT_VERSION up to the floor.
  */
 async function assertGitFloor(chtCorePath: string, allowOldGit: boolean): Promise<void> {
   const version = await readGitVersion(chtCorePath);
-  if (!isBelowGitFloor(version) || allowOldGit) return;
+  if (!isBelowGitFloor(version) || (allowOldGit && canOverrideGitFloor(version))) return;
   const lines = gitFloorLines(version);
   throw new WorkspaceSafetyError('precondition', lines[0], { lines });
 }
@@ -284,7 +303,10 @@ export interface WorkspaceCallOptions {
   resolveStashFailure?: StashFailureResolver;
   /** Called with the SHA of an entry of ours that a drop left behind after the work was proven back. */
   onSpareStash?: (sha: string) => void;
-  /** Run below MIN_GIT_VERSION. Set only by the CLI edge, which read the override and printed the warning. */
+  /**
+   * Run below MIN_GIT_VERSION, from MIN_OVERRIDE_GIT_VERSION. Set only by the
+   * CLI edge, which read the override and printed the warning.
+   */
   allowOldGit?: boolean;
 }
 

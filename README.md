@@ -44,7 +44,7 @@ For details on how to structure new issue tickets, see the [Ticket Format Guide]
 ### Prerequisites
 
 - Node.js >= 20.0.0
-- git 2.34 or later. Older git can miss your ignored files inside a new folder, and the rollback can then delete them. Below 2.34, `npm run dev:run` and `npm run full` stop at the start unless `CHT_AGENT_ALLOW_OLD_GIT=true`.
+- git 2.34 or later. Older git can miss your ignored files inside a new folder, and the rollback can then delete them. Below 2.34, `npm run dev:run` and `npm run full` stop at the start. On git 2.31 to 2.33, `CHT_AGENT_ALLOW_OLD_GIT=true` lets them run anyway. Below 2.31 it has no effect.
 - Anthropic API key or Claude Code CLI (`claude`) installed
 - (Optional) [Beads](https://github.com/beads-project/beads-cli) — session tracking for code generation. The Code Generation Agent uses Beads to record plans, track per-file generation progress, and log successes/failures. To enable, install the Beads CLI and initialize a `.beads` directory in the project root. Set `BEADS_CODEGEN_ENABLED=false` in `.env` to disable even when `.beads` exists. When disabled, all tracking is silently skipped.
 

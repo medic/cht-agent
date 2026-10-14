@@ -3,12 +3,12 @@
  *
  * At the start of a run, before any LLM call, it checks the git version, then
  * looks for leftover cht-agent stashes. Below the oldest supported git it stops
- * the run, unless CHT_AGENT_ALLOW_OLD_GIT is true. For a leftover, on a terminal
- * it asks what to do. Without one it stops the run, unless
- * CHT_AGENT_IGNORE_LEAKED_STASH is true. During the run, on a terminal, it asks
- * what to do at a stash failure point. The workspace helpers never read the env
- * or a terminal: this module reads both and hands the result to them through
- * the stash policy holder.
+ * the run, unless CHT_AGENT_ALLOW_OLD_GIT is true and the git is 2.31 or later.
+ * For a leftover, on a terminal it asks what to do. Without one it stops the
+ * run, unless CHT_AGENT_IGNORE_LEAKED_STASH is true. During the run, on a
+ * terminal, it asks what to do at a stash failure point. The workspace helpers
+ * never read the env or a terminal: this module reads both and hands the result
+ * to them through the stash policy holder.
  */
 
 import * as fs from 'node:fs';
@@ -22,6 +22,7 @@ import {
   StashChoice,
   StashFailureResolver,
   WorkspaceSafetyError,
+  canOverrideGitFloor,
   gitFloorLines,
   isBelowGitFloor,
   leftoverStashLines,
@@ -118,15 +119,19 @@ async function readGitVersionOrWarn(chtCorePath: string): Promise<GitVersion | n
 /**
  * The git version check at the start of a run. Gives true when the git is below
  * MIN_GIT_VERSION and CHT_AGENT_ALLOW_OLD_GIT is true (it printed the warning).
- * It never asks, so a terminal changes nothing. Throws a `precondition`
- * WorkspaceSafetyError to stop the run.
+ * Below MIN_OVERRIDE_GIT_VERSION the env var has no effect: every snapshot
+ * refuses there, so the run stops here, before any LLM call. It never asks, so
+ * a terminal changes nothing. Throws a `precondition` WorkspaceSafetyError to
+ * stop the run.
  */
 export async function runGitFloorCheck(chtCorePath: string, env: ScreenIo['env']): Promise<boolean> {
   if (!isGitCheckout(chtCorePath)) return false;
   const version = await readGitVersionOrWarn(chtCorePath);
   if (!version || !isBelowGitFloor(version)) return false;
   const lines = gitFloorLines(version);
-  if (!isTrue(env[ALLOW_OLD_GIT_ENV])) throw new WorkspaceSafetyError('precondition', lines[0], { lines });
+  if (!isTrue(env[ALLOW_OLD_GIT_ENV]) || !canOverrideGitFloor(version)) {
+    throw new WorkspaceSafetyError('precondition', lines[0], { lines });
+  }
   console.warn(
     `${LOG} git ${version.text} is older than ${MIN_GIT_VERSION}. ${ALLOW_OLD_GIT_ENV}=true: the run goes on at your own risk.`,
   );

@@ -2454,7 +2454,7 @@ describe('workspace.ts', () => {
         'Nothing was changed.',
       'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
         'and the capture can add them to the generated files.',
-      'Install git 2.34 or later, then run again. To run anyway at your own risk, set ' +
+      'Install git 2.34 or later, then run again. To run anyway at your own risk on git 2.31 to 2.33, set ' +
         'CHT_AGENT_ALLOW_OLD_GIT=true (npm run dev:run and npm run full read it).',
     ];
 
@@ -2492,6 +2492,15 @@ describe('workspace.ts', () => {
       expect(calls.slice(0, 2)).to.deep.equal(FIRST_CALLS);
       expect(outcome.headSha).to.equal('abc1234deadbeef');
       expect(printed).to.deep.equal([]);
+    });
+
+    it('refuses git 2.30.2 even when the caller allows old git, right after the toplevel check, and never stashes', async () => {
+      const { ws, outcome, calls } = await snapshotUnder({ stdout: 'git version 2.30.2\n' }, { allowOldGit: true });
+      expect(calls).to.deep.equal(FIRST_CALLS);
+      expect(outcome).to.be.instanceOf(ws.WorkspaceSafetyError);
+      expect(outcome.kind).to.equal('precondition');
+      expect(outcome.lines).to.deep.equal(floorLines('2.30.2'));
+      expect(outcome.message).to.equal(floorLines('2.30.2')[0]);
     });
 
     for (const [label, answer, gitText] of [
