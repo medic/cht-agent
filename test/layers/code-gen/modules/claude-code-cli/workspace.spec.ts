@@ -1184,7 +1184,7 @@ describe('workspace.ts', () => {
         messages.push(((await ws.snapshotChtCore('/tmp/cht-core').catch((err: unknown) => err)) as Error).message);
       }
       expect(messages).to.have.length(3);
-      for (const message of messages) expect(message).to.include('refuse to run cht-agent.');
+      for (const message of messages) expect(message).to.include('. cht-agent refuses to run. ');
     });
 
     it('refuses to run if cht-core has unmerged paths', async () => {
@@ -2474,7 +2474,7 @@ describe('workspace.ts', () => {
     };
 
     const floorLines = (text: string) => [
-      `git ${text} is older than 2.34, the oldest git that cht-agent supports; refuse to run cht-agent. ` +
+      `git ${text} is older than 2.34, the oldest git that cht-agent supports. cht-agent refuses to run. ` +
         'Nothing was changed.',
       'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
         'and the capture can add them to the generated files.',

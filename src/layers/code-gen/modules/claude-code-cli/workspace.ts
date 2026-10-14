@@ -250,8 +250,8 @@ export function canOverrideGitFloor(v: GitVersion): boolean {
 /** The refusal below the floor: the found version, the risk, and the two ways on. */
 export function gitFloorLines(v: GitVersion): string[] {
   return [
-    `git ${v.text} is older than ${MIN_GIT_VERSION}, the oldest git that cht-agent supports; refuse to run ` +
-      'cht-agent. Nothing was changed.',
+    `git ${v.text} is older than ${MIN_GIT_VERSION}, the oldest git that cht-agent supports. cht-agent refuses ` +
+      'to run. Nothing was changed.',
     'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
       'and the capture can add them to the generated files.',
     `Install git ${MIN_GIT_VERSION} or later, then run again. To run anyway at your own risk on git ` +
@@ -669,7 +669,7 @@ const UNMERGED_CODES = new Set(['UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD']);
 function assertNoUnmergedPaths(statusLines: readonly string[], chtCorePath: string): void {
   if (!statusLines.some(line => UNMERGED_CODES.has(line.substring(0, 2)))) return;
   const message =
-    `cht-core has unmerged paths at ${chtCorePath}; refuse to run cht-agent. ` +
+    `cht-core has unmerged paths at ${chtCorePath}. cht-agent refuses to run. ` +
     `Resolve conflicts and try again.`;
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
@@ -1520,8 +1520,8 @@ async function assertAtToplevel(chtCorePath: string): Promise<void> {
   const prefix = stdout.trim();
   if (!prefix) return;
   const message =
-    `${chtCorePath} is the subdirectory ${prefix} of a git repo, not its top level; refuse to run ` +
-    'cht-agent. Point CHT_CORE_PATH at the repo root.';
+    `${chtCorePath} is the subdirectory ${prefix} of a git repo, not its top level. cht-agent refuses to ` +
+    'run. Point CHT_CORE_PATH at the repo root.';
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
 
@@ -1544,8 +1544,8 @@ async function assertNoOperationInProgress(chtCorePath: string): Promise<void> {
   }
   if (found.length === 0) return;
   const message =
-    `cht-core at ${chtCorePath} is in the middle of a git operation (${found.join(', ')}); refuse to ` +
-    'run cht-agent. Finish or abort that operation, then run again.';
+    `cht-core at ${chtCorePath} is in the middle of a git operation (${found.join(', ')}). cht-agent ` +
+    'refuses to run. Finish or abort that operation, then run again.';
   throw new WorkspaceSafetyError('precondition', message, { lines: [message] });
 }
 

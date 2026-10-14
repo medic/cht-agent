@@ -204,7 +204,7 @@ describe('stash-screen', () => {
 
     const OLD_GIT: realWorkspace.GitVersion = { major: 2, minor: 33, text: '2.33.1' };
     const floorLines = (text: string) => [
-      `git ${text} is older than 2.34, the oldest git that cht-agent supports; refuse to run cht-agent. Nothing was changed.`,
+      `git ${text} is older than 2.34, the oldest git that cht-agent supports. cht-agent refuses to run. Nothing was changed.`,
       'With older git, cht-agent can miss your ignored files inside a new folder: the rollback can delete them, ' +
         'and the capture can add them to the generated files.',
       'Install git 2.34 or later, then run again. To run anyway at your own risk on git 2.31 to 2.33, set ' +
