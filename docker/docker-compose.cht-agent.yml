@@ -48,6 +48,8 @@ services:
       # .credentials.json mount below (for OAuth-based tools).
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CHT_CORE_PATH: /workspace/cht-core
+      # The same working copy on the host, where the operator runs the printed gates.
+      CHT_CORE_HOST_PATH: ${CHT_CORE_PATH}
       # CHT entry point on cht-agent-net (nginx joins via the #66 override)
       CHT_URL: ${CHT_URL:-https://nginx}
       NODE_ENV: development
