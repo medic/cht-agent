@@ -10,7 +10,9 @@
  * Lives here, in the style of shutdown.ts, so no new field has to travel
  * through the supervisor, the agent and the module input. A caller that never
  * sets it gets the default: no accepted leftovers and no resolver, which is
- * the headless behavior (a stash failure stops the run with its lines).
+ * the headless behavior (a stash failure stops the run with its lines). The
+ * default also has no `allowOldGit`, so the snapshot refuses below
+ * MIN_GIT_VERSION.
  */
 
 import type { StashFailureResolver } from '../layers/code-gen/modules/claude-code-cli/workspace';
