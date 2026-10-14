@@ -553,6 +553,30 @@ describe('workspace.ts', () => {
       );
     });
 
+    it('refuses, and never stashes, when one marker line is relative, also without a leading "-"', async () => {
+      const calls: string[] = [];
+      const ws = loadWorkspace({
+        'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
+        'git rev-parse --path-format=absolute': { stdout: '/tmp/cht-core/.git/MERGE_HEAD\n.git/CHERRY_PICK_HEAD\n' },
+        // The post-push check: the stash left no tracked change.
+        'git status --porcelain=v1': { stdout: '' },
+        'git status --porcelain': { stdout: ' M file.ts\n' },
+        'git stash push': { stdout: 'Saved\n' },
+        'git stash list -z': STASH_CREATED,
+      }, { lstat: sinon.stub().rejects(errno('ENOENT')) }, calls);
+      sinon.stub(console, 'log');
+      const outcome = await ws.snapshotChtCore('/tmp/cht-core').then(
+        () => ({ kind: undefined, message: undefined }),
+        (err: { kind?: string; message?: string }) => err,
+      );
+      expect(calls.some(c => c.startsWith('git stash push')), 'stashed').to.equal(false);
+      expect(outcome.kind).to.equal('precondition');
+      expect(outcome.message).to.equal(
+        'cht-agent could not read the in-progress operation markers (git printed ".git/CHERRY_PICK_HEAD", ' +
+          'not an absolute path); nothing was changed.',
+      );
+    });
+
     it('warns when the stashed work includes a .gitignore edit', async () => {
       const ws = loadWorkspace({
         'git rev-parse HEAD': { stdout: 'abc1234deadbeef\n' },
