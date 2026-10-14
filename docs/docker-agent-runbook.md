@@ -132,6 +132,8 @@ When the Test Environment Layer (#66) requests an environment, the agent
 # From the cht-agent repo: build the agent's edited working copy into images
 # (Model A rebuild-on-change) and start it, nginx joined to cht-agent-net
 CHT_CORE_REBUILD=1 scripts/test-env-up.sh ~/src/cht-core
+# When the agent asks for a restart, restart the services of the same stack
+scripts/test-env-restart.sh ~/src/cht-core
 ```
 
 > `scripts/test-env-up.sh` gives each checkout its own Compose project, internal
