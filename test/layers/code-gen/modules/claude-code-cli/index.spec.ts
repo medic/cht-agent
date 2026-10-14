@@ -66,7 +66,7 @@ describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
     const holder = await import('../../../../../src/utils/stash-policy');
     const resolveStashFailure = sinon.stub().resolves('abort');
     const onSpareStash = sinon.stub();
-    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash });
+    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash, allowOldGit: true });
     try {
       const snapshotStub = sinon.stub().resolves({ headSha: 'abc1234', stashSha: null, baselineUntracked: [] });
       const rollbackStub = sinon.stub().resolves({ reset: 'ok', clean: 'ok', stashPop: 'skipped', errors: [] });
@@ -84,7 +84,7 @@ describe('ClaudeCodeCLICodeGenModule (orchestrator)', () => {
       });
       sinon.stub(console, 'warn');
       await new ClaudeCodeCLICodeGenModule().generate(baseInput());
-      const expected = { acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash };
+      const expected = { acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash, allowOldGit: true };
       expect(snapshotStub.firstCall.args[1]).to.deep.equal(expected);
       expect(rollbackStub.firstCall.args[2]).to.deep.equal(expected);
     } finally {

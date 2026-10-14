@@ -104,12 +104,13 @@ describe('runApiCompileGate (claude-api compile gate)', () => {
     const holder = await import('../../../../../src/utils/stash-policy');
     const resolveStashFailure = sinon.stub().resolves('abort');
     const onSpareStash = sinon.stub();
-    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash });
+    holder.setStashPolicy({ acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash, allowOldGit: true });
     try {
       const run = load();
       await run(CHT, [file()]);
       const expected = {
-        acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash, logPrefix: '[claude-api compile-gate]',
+        acceptedLeftoverShas: ['a'.repeat(40)], resolveStashFailure, onSpareStash, allowOldGit: true,
+        logPrefix: '[claude-api compile-gate]',
       };
       expect(snapshotStub.firstCall.args[1]).to.deep.equal(expected);
       expect(rollbackStub.firstCall.args[2]).to.deep.equal(expected);
