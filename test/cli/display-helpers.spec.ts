@@ -13,8 +13,13 @@ import {
   displayResults,
   renderCrossFileIssueBanner,
   renderCompileGateSkipBanner,
+  renderWarningsBanner,
   validateEnvironment,
+  reportRunHalt,
+  logRunError,
 } from '../../src/cli/display-helpers';
+import { CodeGenHaltError } from '../../src/layers/code-gen/interface';
+import { WorkspaceSafetyError, reportSafetyError } from '../../src/layers/code-gen/modules/claude-code-cli/workspace';
 import {
   ContextAnalysisResult,
   CrossFileIssue,
@@ -120,6 +125,43 @@ describe('renderCompileGateSkipBanner (H.4)', () => {
     expect(banner).to.include('tsc not available in cht-core workspace');
     expect(banner).to.include('cd /home/me/cht-core && npm install');
     expect(banner).to.include('You may still accept the diff');
+  });
+
+  it('points at the lines above for a snapshot refusal, with no npm install', () => {
+    const banner = renderCompileGateSkipBanner(
+      'snapshot failed: git stash cannot put these changes back exactly, so cht-agent did not stash them.',
+      '/home/me/cht-core',
+    );
+    expect(banner).to.include('Reason: snapshot failed: git stash cannot put these changes back exactly');
+    expect(banner).to.include('See the lines above for the cause.');
+    expect(banner).to.not.include('npm install');
+  });
+
+  it('prints only the reason when cht-core is not a git repo', () => {
+    const banner = renderCompileGateSkipBanner(
+      'cht-core is not a git repo; compile gate needs snapshot/rollback',
+      '/home/me/cht-core',
+    );
+    expect(banner).to.include('Reason: cht-core is not a git repo; compile gate needs snapshot/rollback');
+    expect(banner).to.not.include('npm install');
+    expect(banner).to.not.include('See the lines above');
+  });
+});
+
+describe('renderWarningsBanner', () => {
+  it('renders each warning under one banner', () => {
+    const banner = renderWarningsBanner([
+      'Rollback could not remove these session files. Remove them before the next run, or the next run ' +
+        'treats them as your files: "nr/"',
+    ]);
+    expect(banner).to.include('WARNINGS');
+    expect(banner).to.include('- Rollback could not remove these session files. Remove them before the next run');
+    expect(banner).to.include('"nr/"');
+  });
+
+  it('renders nothing when there are no warnings', () => {
+    expect(renderWarningsBanner(undefined)).to.equal('');
+    expect(renderWarningsBanner([])).to.equal('');
   });
 });
 
@@ -538,5 +580,57 @@ describe('loadTicket (v9c.1)', () => {
     expect(out).to.include('Ticket file format:');
     expect(out).to.include('- help line 1');
     expect(out).to.include('- help line 2');
+  });
+});
+
+describe('reportRunHalt and logRunError', () => {
+  let errorSpy: sinon.SinonStub;
+  beforeEach(() => { errorSpy = sinon.stub(console, 'error'); });
+  afterEach(() => sinon.restore());
+
+  const printed = () => errorSpy.getCalls().map(c => c.args.map(String).join(' '));
+
+  it('prints the lines of a safety error once, then one short line, with no stack', () => {
+    const halt = new WorkspaceSafetyError('stash', 'git stash could not save your work', {
+      lines: ['git stash could not save your work', 'Fix the permissions, then run again.'],
+    });
+    expect(reportRunHalt(halt, 'Development')).to.equal(true);
+    expect(printed()).to.deep.equal([
+      '[cht-agent] git stash could not save your work',
+      '[cht-agent] Fix the permissions, then run again.',
+      '\n❌ Development stopped. See the lines above.',
+    ]);
+  });
+
+  it('prints only the short line for a safety error that a layer printed already', () => {
+    const halt = new WorkspaceSafetyError('drift', 'HEAD moved', { lines: ['HEAD moved'] });
+    reportSafetyError(halt, '[claude-code-cli]');
+    errorSpy.resetHistory();
+    expect(reportRunHalt(halt, 'Workflow')).to.equal(true);
+    expect(printed()).to.deep.equal(['\n❌ Workflow stopped. See the lines above.']);
+  });
+
+  it('prints the message of another halt with the cht-agent prefix', () => {
+    expect(reportRunHalt(new CodeGenHaltError('the run cannot go on'), 'Development')).to.equal(true);
+    expect(printed()).to.deep.equal([
+      '[cht-agent] the run cannot go on',
+      '\n❌ Development stopped. See the lines above.',
+    ]);
+  });
+
+  it('prints nothing, and gives false, for an error that is not a halt', () => {
+    expect(reportRunHalt(new Error('boom'), 'Development')).to.equal(false);
+    expect(reportRunHalt('a string', 'Development')).to.equal(false);
+    expect(printed()).to.deep.equal([]);
+  });
+
+  it('prints any other error with its heading, message and stack', () => {
+    const error = new Error('boom');
+    logRunError('\n❌ Error running development:', error);
+    const calls = errorSpy.getCalls();
+    expect(calls).to.have.length(3);
+    expect(calls[0].args).to.deep.equal(['\n❌ Error running development:', error]);
+    expect(calls[1].args).to.deep.equal(['Message:', 'boom']);
+    expect(calls[2].args).to.deep.equal(['Stack:', error.stack]);
   });
 });

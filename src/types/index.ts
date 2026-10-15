@@ -535,6 +535,8 @@ export interface CodeGenerationResult {
   confidence: number; // 0-1
   beadsSessionId?: string;
   crossFileIssues?: CrossFileIssue[];
+  /** Non-fatal notes for HC2 (see CodeGenModuleOutput.warnings); kept across refinement iterations. */
+  warnings?: string[];
   /** True when the compile gate did not run (e.g., tsc unavailable). HC2 banner reads this. */
   compileGateSkipped?: boolean;
   /** Human-readable reason associated with {@link compileGateSkipped}. */

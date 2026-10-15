@@ -44,6 +44,8 @@ import {
 } from '../workflows/orchestrator';
 import { getConfiguredModel } from '../llm/types';
 import { isUsingCLIProvider } from '../llm';
+import { logRunError, reportRunHalt } from './display-helpers';
+import { prepareStashPolicy } from './stash-screen';
 
 // Load environment variables
 dotenv.config();
@@ -102,6 +104,9 @@ const main = async (root: TraceRoot): Promise<void> => {
     const ticket = parseTicketFile(ticketPath);
     console.log('✅ Ticket parsed successfully!\n');
 
+    // The git version and leftover cht-agent stashes, before any LLM call
+    await prepareStashPolicy(chtCorePath);
+
     const modelName = getConfiguredModel();
     console.log(`🤖 Initializing Supervisors with model: ${modelName}\n`);
 
@@ -126,10 +131,8 @@ const main = async (root: TraceRoot): Promise<void> => {
       filesWritten: workflowResult.development?.filesWritten,
     } });
   } catch (error) {
-    console.error('\n❌ Error running workflow:', error);
-    if (error instanceof Error) {
-      console.error('Message:', error.message);
-      console.error('Stack:', error.stack);
+    if (!reportRunHalt(error, 'Workflow')) {
+      logRunError('\n❌ Error running workflow:', error);
     }
     throw error;
   }

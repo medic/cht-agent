@@ -30,6 +30,7 @@ import {
 import {
   renderCrossFileIssueBanner,
   renderCompileGateSkipBanner,
+  renderWarningsBanner,
 } from '../cli/display-helpers';
 
 const MAX_DEVELOPMENT_ITERATIONS = 3;
@@ -67,6 +68,8 @@ function displayCodeGenerationResults(codeGen: NonNullable<DevelopmentState['cod
   printNumberedList('✅ Implemented Requirements:', codeGen.implementedRequirements);
   printNumberedList('⏳ Pending Requirements:', codeGen.pendingRequirements);
   printNumberedList('📝 Notes:', codeGen.notes);
+  const warnings = renderWarningsBanner(codeGen.warnings);
+  if (warnings) console.log(warnings);
   if (codeGen.files.length > 0) {
     console.log(`\nGenerated Files:`);
     codeGen.files.forEach((file, i) => {
@@ -167,6 +170,11 @@ function displayCheckpointBanners(state: DevelopmentState, chtCorePath: string):
   const banner = renderCrossFileIssueBanner(state.codeGeneration?.crossFileIssues);
   if (banner) {
     console.log(banner);
+    console.log();
+  }
+  const warnings = renderWarningsBanner(state.codeGeneration?.warnings);
+  if (warnings) {
+    console.log(warnings);
     console.log();
   }
 }

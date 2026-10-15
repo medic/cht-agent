@@ -353,6 +353,7 @@ export class CodeGenerationAgent {
       confidence: this.calculateConfidence(validatedFiles, input, implemented, pending),
       beadsSessionId: llmResult.beadsSessionId,
       crossFileIssues: crossFileIssues.length > 0 ? crossFileIssues : undefined,
+      warnings: llmResult.warnings,
       compileGateSkipped: llmResult.compileGateSkipped,
       compileGateSkipReason: llmResult.compileGateSkipReason,
       tokensUsed: llmResult.tokensUsed,
@@ -695,6 +696,7 @@ export class CodeGenerationAgent {
     partialGeneration?: boolean;
     partialGenerationReason?: string;
     moduleCrossFileIssues?: import('../types').CrossFileIssue[];
+    warnings?: string[];
     compileGateSkipped?: boolean;
     compileGateSkipReason?: string;
     tokensUsed?: number;
@@ -717,6 +719,7 @@ export class CodeGenerationAgent {
       partialGeneration: moduleOutput.partialGeneration,
       partialGenerationReason: moduleOutput.partialGenerationReason,
       moduleCrossFileIssues: moduleOutput.crossFileIssues,
+      warnings: moduleOutput.warnings,
       compileGateSkipped: moduleOutput.compileGateSkipped,
       compileGateSkipReason: moduleOutput.compileGateSkipReason,
       tokensUsed: moduleOutput.tokensUsed,
